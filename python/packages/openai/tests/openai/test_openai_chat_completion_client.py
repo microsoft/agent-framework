@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import inspect
 import json
 import os
@@ -43,6 +44,27 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
     reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
+
+
+class _FakeAsyncStream:
+    """Test double for the SDK's AsyncStream: an async context manager over chunks."""
+
+    def __init__(self, chunks: Any) -> None:
+        self._chunks = chunks
+        self.closed = False
+
+    async def __aenter__(self) -> "_FakeAsyncStream":
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        self.closed = True
+
+    def __aiter__(self) -> Any:
+        async def generate() -> Any:
+            for chunk in self._chunks:
+                yield chunk
+
+        return generate()
 
 
 def test_init(openai_unit_test_env: dict[str, str]) -> None:
@@ -211,28 +233,45 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings.get("default_headers", {})
 
 
+@pytest.mark.parametrize(
+    ("inner_code", "expected_code"),
+    [
+        ("ResponsibleAIPolicyViolation", "ResponsibleAIPolicyViolation"),
+        ("ContentFiltered", "ContentFiltered"),
+        ("FutureContentFilterCode", "Unknown"),
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
 async def test_content_filter_exception_handling(
     openai_unit_test_env: dict[str, str],
+    inner_code: str,
+    expected_code: str,
+    stream: bool,
 ) -> None:
     """Test that content filter errors are properly handled."""
     client = OpenAIChatCompletionClient()
     messages = [Message(role="user", contents=["test message"])]
 
     # Create a mock BadRequestError with content_filter code
-    mock_response = MagicMock()
     mock_error = BadRequestError(
         message="Content filter error",
-        response=mock_response,
-        body={"error": {"code": "content_filter"}},
+        response=MagicMock(status_code=400),
+        body={"code": "content_filter", "innererror": {"code": inner_code}},
     )
-    mock_error.code = "content_filter"
 
     # Mock the client to raise the content filter error
     with (
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
-        pytest.raises(OpenAIContentFilterException),
+        pytest.raises(OpenAIContentFilterException) as exc_info,
     ):
-        await client._inner_get_response(messages=messages, options={})  # type: ignore
+        if stream:
+            async for _ in client.get_response(messages=messages, stream=True):
+                pass
+        else:
+            await client.get_response(messages=messages)
+
+    assert exc_info.value.content_filter_code.value == expected_code
+    assert exc_info.value.__cause__ is mock_error
 
 
 def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
@@ -549,15 +588,13 @@ def test_prepare_content_for_openai_data_content_image(
     assert result["type"] == "image_url"
     assert result["image_url"]["url"] == image_data_content.uri
 
-    # Test DataContent with non-image media type should use default model_dump
+    # Test DataContent with non-image media type is omitted instead of emitting
+    # Agent Framework's internal content shape.
     text_data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
 
     result = client._prepare_content_for_openai(text_data_content)  # type: ignore
 
-    # Should use default model_dump format
-    assert result["type"] == "data"
-    assert result["uri"] == text_data_content.uri
-    assert result["media_type"] == "text/plain"
+    assert result == {}
 
     # Test DataContent with audio media type
     audio_data_content = Content.from_uri(
@@ -586,6 +623,55 @@ def test_prepare_content_for_openai_data_content_image(
     # Data should contain just the base64 part, not the full data URI
     assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
     assert result["input_audio"]["format"] == "mp3"
+
+    # Test DataContent with MP3 audio using the registered media type
+    mpeg_data_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==",
+        media_type="audio/mpeg",
+    )
+
+    result = client._prepare_content_for_openai(mpeg_data_content)  # type: ignore
+
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
+    assert result["input_audio"]["format"] == "mp3"
+
+    # Test MP3 aliases with media type parameters and mixed case
+    parameterized_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==",
+        media_type="Audio/MPEG; codecs=mpeg-3",
+    )
+
+    result = client._prepare_content_for_openai(parameterized_content)  # type: ignore
+
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["format"] == "mp3"
+
+    unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,abc123", media_type="audio/ogg")
+
+    assert client._prepare_content_for_openai(unsupported_audio) == {}  # type: ignore
+
+
+def test_prepare_content_for_openai_non_mp3_mpeg_audio_is_unsupported() -> None:
+    """Test _prepare_content_for_openai omits MPEG audio that is not MP3."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    for media_type in ("audio/mpegurl", "audio/mpeg4-generic"):
+        content = Content.from_uri(uri=f"data:{media_type};base64,abc123", media_type=media_type)
+
+        assert client._prepare_content_for_openai(content) == {}  # type: ignore
+
+
+def test_prepare_message_for_openai_omits_unsupported_content() -> None:
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+    unsupported = Content.from_uri(uri="data:text/plain;base64,SGVsbG8=", media_type="text/plain")
+
+    prepared = client._prepare_message_for_openai(
+        Message(role="user", contents=[unsupported, Content.from_text("supported")])
+    )
+
+    assert prepared == [{"role": "user", "content": "supported"}]
+    assert client._prepare_message_for_openai(Message(role="user", contents=[unsupported])) == []
 
 
 def test_prepare_content_for_openai_image_url_detail(
@@ -1117,6 +1203,113 @@ def test_prepare_message_with_text_reasoning_before_function_call(
     assert prepared[0]["role"] == "assistant"
 
 
+def test_prepare_message_with_text_and_function_call_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Text, tool calls and reasoning from one assistant turn are sent as one assistant message.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/8382
+    Providers such as DeepSeek (thinking mode) reject the follow-up request when the turn is split
+    into a text-only assistant message and a tool-call assistant message, because the reasoning
+    field then only travels with the second one.
+    """
+    client = OpenAIChatCompletionClient()
+
+    mock_reasoning_data = {"effort": "medium", "summary": "Deciding to call a function"}
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="I'll check the weather in New York City for you."),
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "NYC"}'),
+            Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data)),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [
+        {
+            "role": "assistant",
+            "content": "I'll check the weather in New York City for you.",
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "NYC"}'},
+                }
+            ],
+            "reasoning_details": mock_reasoning_data,
+        }
+    ]
+
+
+def test_prepare_message_with_function_call_before_text_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Streaming can coalesce tool calls ahead of text; the turn is still one assistant message."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "NYC"}'),
+            Content.from_text(text="Checking the weather now."),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "Checking the weather now."
+    assert [call["id"] for call in prepared[0]["tool_calls"]] == ["call_abc"]
+
+
+def test_prepare_message_with_parallel_function_calls_after_text_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Parallel tool calls following text all attach to the same assistant message."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="Looking both up."),
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city": "NYC"}'),
+            Content.from_function_call(call_id="call_2", name="get_weather", arguments='{"city": "LA"}'),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "Looking both up."
+    assert [call["id"] for call in prepared[0]["tool_calls"]] == ["call_1", "call_2"]
+
+
+def test_prepare_message_with_image_between_text_and_function_call_stays_separate(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Only plain text and tool calls merge; other content keeps its own message and is not merged across."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="First."),
+            Content.from_uri(uri="https://example.com/image.png", media_type="image/png"),
+            Content.from_function_call(call_id="call_2", name="get_weather", arguments="{}"),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 3
+    assert prepared[0] == {"role": "assistant", "content": "First."}
+    assert prepared[1]["content"][0]["type"] == "image_url"
+    assert "content" not in prepared[2]
+    assert [call["id"] for call in prepared[2]["tool_calls"]] == ["call_2"]
+
+
 def test_function_approval_content_is_skipped_in_preparation(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1181,13 +1374,13 @@ def test_mixed_approval_resume_roles_serialize_function_result_as_tool(
 
     prepared = client._prepare_messages_for_openai(messages)
 
-    assert prepared[0] == {
-        "role": "tool",
-        "tool_call_id": "call_completed",
-        "content": "completed",
-    }
-    assert prepared[1]["role"] == "assistant"
-    assert "tool_call_id" not in prepared[1]
+    assert prepared == [
+        {
+            "role": "tool",
+            "tool_call_id": "call_completed",
+            "content": "completed",
+        }
+    ]
 
 
 def test_usage_content_in_streaming_response(
@@ -1228,8 +1421,8 @@ def test_usage_content_in_streaming_response(
     assert usage_content.usage_details["total_token_count"] == 150
 
 
-def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None:
-    """Test _parse_usage_from_openai emits standard and legacy mapped token details."""
+def test_parse_usage_preserves_zero_valued_optional_token_details() -> None:
+    """Test _parse_usage_from_openai preserves explicitly reported zero-valued token details."""
     client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
@@ -1237,19 +1430,23 @@ def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None
     mock_usage.completion_tokens = 50
     mock_usage.total_tokens = 150
     mock_usage.completion_tokens_details = MagicMock()
-    mock_usage.completion_tokens_details.accepted_prediction_tokens = None
-    mock_usage.completion_tokens_details.audio_tokens = None
+    mock_usage.completion_tokens_details.accepted_prediction_tokens = 0
+    mock_usage.completion_tokens_details.audio_tokens = 0
     mock_usage.completion_tokens_details.reasoning_tokens = 0
-    mock_usage.completion_tokens_details.rejected_prediction_tokens = None
+    mock_usage.completion_tokens_details.rejected_prediction_tokens = 0
     mock_usage.prompt_tokens_details = MagicMock()
-    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.audio_tokens = 0
     mock_usage.prompt_tokens_details.cached_tokens = 0
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
 
     details_dict = cast("dict[str, Any]", details)
+    assert details_dict["completion/accepted_prediction_tokens"] == 0
+    assert details_dict["completion/audio_tokens"] == 0
     assert details_dict["completion/reasoning_tokens"] == 0
     assert details["reasoning_output_token_count"] == 0
+    assert details_dict["completion/rejected_prediction_tokens"] == 0
+    assert details_dict["prompt/audio_tokens"] == 0
     assert details_dict["prompt/cached_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
 
@@ -1339,6 +1536,35 @@ def test_streaming_chunk_with_usage_and_text(
     assert text_content.text == "Hello world"
 
 
+def test_streaming_chunk_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+
+    client = OpenAIChatCompletionClient()
+    chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4o",
+        choices=[
+            Choice(
+                index=0,
+                delta=ChoiceDelta(refusal="I cannot help.", role="assistant"),
+                finish_reason=None,
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(chunk)
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "text"
+    assert update.contents[0].text == "I cannot help."
+    assert update.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
+
+
 def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     """Test that refusal content is parsed correctly."""
     from openai.types.chat.chat_completion import ChatCompletion, Choice
@@ -1373,6 +1599,107 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     assert len(message.contents) == 1
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot provide that information."
+    assert message.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
+
+
+def test_parse_text_and_refusal_preserves_both(openai_unit_test_env: dict[str, str]) -> None:
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    client = OpenAIChatCompletionClient()
+    response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="gpt-4o",
+        choices=[
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(
+                    role="assistant",
+                    content="Partial answer.",
+                    refusal="I cannot continue.",
+                ),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    parsed = client._parse_response_from_openai(response, {})
+
+    assert [(content.text, content.additional_properties) for content in parsed.messages[0].contents] == [
+        ("Partial answer.", {}),
+        (
+            "I cannot continue.",
+            {"core": {"model_output_kind": "refusal"}, "model_output_kind": "refusal"},
+        ),
+    ]
+
+
+def test_prepare_marked_refusal_uses_native_assistant_field_and_text_fallback(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    refusal = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+
+    assert client._prepare_message_for_openai(Message(role="assistant", contents=[refusal])) == [
+        {"role": "assistant", "content": None, "refusal": "I cannot help with that."}
+    ]
+    assert client._prepare_message_for_openai(Message(role="user", contents=[refusal])) == [
+        {"role": "user", "content": "I cannot help with that."}
+    ]
+
+
+def test_prepare_mixed_text_and_refusal_uses_one_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("Partial answer."),
+            Content.from_text(
+                "I cannot continue.",
+                additional_properties={"model_output_kind": "refusal"},
+            ),
+        ],
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {
+            "role": "assistant",
+            "content": "Partial answer.",
+            "refusal": "I cannot continue.",
+        }
+    ]
+
+
+def test_prepare_text_refusal_text_uses_one_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("A"),
+            Content.from_text("B", additional_properties={"model_output_kind": "refusal"}),
+            Content.from_text("C"),
+        ],
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {
+            "role": "assistant",
+            "content": "A\nC",
+            "refusal": "B",
+        }
+    ]
 
 
 def test_prepare_options_without_model(openai_unit_test_env: dict[str, str]) -> None:
@@ -1900,6 +2227,195 @@ async def test_streaming_exception_handling(
             pass
 
 
+def _make_content_chunk(text: str) -> Any:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    return ChatCompletionChunk.model_validate({
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "id": "stream-close",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": None,
+            }
+        ],
+    })
+
+
+async def test_streaming_final_response_preserves_latest_logprobs_across_null_chunks(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """The final aggregate keeps the latest token logprobs when later chunks omit them."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    first_logprobs = {"content": [{"token": "hel", "bytes": [104, 101, 108], "logprob": -0.1, "top_logprobs": []}]}
+    latest_logprobs = {"content": [{"token": "lo", "bytes": [108, 111], "logprob": -0.2, "top_logprobs": []}]}
+
+    def make_chunk(
+        *,
+        delta: dict[str, str],
+        logprobs: dict[str, Any] | None,
+        finish_reason: str | None = None,
+    ) -> ChatCompletionChunk:
+        return ChatCompletionChunk.model_validate({
+            "id": "stream-logprobs",
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                    "logprobs": logprobs,
+                }
+            ],
+        })
+
+    sdk_stream = _FakeAsyncStream([
+        make_chunk(delta={"role": "assistant"}, logprobs=None),
+        make_chunk(delta={"content": "hel"}, logprobs=first_logprobs),
+        make_chunk(delta={}, logprobs=None),
+        make_chunk(delta={"content": "lo"}, logprobs=latest_logprobs),
+        make_chunk(delta={}, logprobs=None, finish_reason="stop"),
+    ])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+            options={"logprobs": True},
+        ).get_final_response()
+
+    assert response.text == "hello"
+    assert response.additional_properties["logprobs"].model_dump(exclude_none=True) == latest_logprobs
+
+
+async def test_streaming_final_response_without_logprobs_has_no_logprobs_metadata(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A stream without token probabilities completes normally and exposes no logprobs metadata."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    terminal_chunk = ChatCompletionChunk.model_validate({
+        "id": "stream-no-logprobs",
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop", "logprobs": None}],
+    })
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("ordinary "), _make_content_chunk("text"), terminal_chunk])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+        ).get_final_response()
+
+    assert response.text == "ordinary text"
+    assert "logprobs" not in response.additional_properties
+
+
+async def test_streaming_closes_provider_stream_when_consumer_stops_early(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """An early consumer exit must close the SDK stream, not leave it to GC (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        # No manual close(): the async-with protocol is what an early break
+        # relies on to release the provider stream.
+        async with stream:
+            async for _ in stream:
+                break
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_when_transform_hook_raises(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A hook failing after a yielded update must also close the SDK stream (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    def failing_hook(update: Any) -> Any:
+        raise RuntimeError("hook blew up")
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        stream._transform_hooks.append(failing_hook)
+        with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_on_cancellation(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Cancellation after a yielded update must close the SDK stream too (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    async def cancelling_hook(update: Any) -> Any:
+        raise asyncio.CancelledError
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        stream._transform_hooks.append(cancelling_hook)
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in stream:
+                pass
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_on_completion(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Full consumption closes the SDK stream too, not just early exits."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("done")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        async for _ in stream:
+            pass
+
+    assert sdk_stream.closed
+
+
 async def test_streaming_feature_is_marked_when_request_is_sent(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1908,11 +2424,7 @@ async def test_streaming_feature_is_marked_when_request_is_sent(
         telemetry._feature_mask = 0
 
     async def create(**kwargs: Any) -> Any:
-        async def chunks() -> Any:
-            if False:
-                yield None
-
-        return chunks()
+        return _FakeAsyncStream([])
 
     with patch.object(client.client.chat.completions, "create", side_effect=create):
         stream = client._inner_get_response(
@@ -2338,6 +2850,267 @@ def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
     assert not any(c.type == "function_call" for c in update.contents)
 
 
+def test_streaming_tool_call_preserves_choice_local_index_scope(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    chunk = ChatCompletionChunk.model_validate({
+        "id": "test-tool-chunk",
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-a",
+                            "type": "function",
+                            "function": {"name": "first", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            },
+            {
+                "index": 1,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-b",
+                            "type": "function",
+                            "function": {"name": "second", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            },
+        ],
+    })
+
+    update = client._parse_response_update_from_openai(chunk)
+    function_calls = [content for content in update.contents if content.type == "function_call"]
+
+    assert [content.additional_properties["tool_call_index"] for content in function_calls] == [0, 0]
+    assert [content.additional_properties["tool_call_choice_index"] for content in function_calls] == [0, 1]
+
+
+async def test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+
+    def chunks() -> list[ChatCompletionChunk]:
+        common = {
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "test-model",
+        }
+        return [
+            ChatCompletionChunk.model_validate({
+                **common,
+                "id": "opening",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "first", "arguments": '{"a":'},
+                                },
+                                {
+                                    "index": 1,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "second", "arguments": '{"b":'},
+                                },
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                    {
+                        "index": 1,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "third", "arguments": '{"c":'},
+                                }
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                ],
+            }),
+            ChatCompletionChunk.model_validate({
+                **common,
+                "id": "continuation",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {"index": 0, "type": "function", "function": {"arguments": "1}"}},
+                                {"index": 1, "type": "function", "function": {"arguments": "2}"}},
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                    {
+                        "index": 1,
+                        "delta": {"tool_calls": [{"index": 0, "type": "function", "function": {"arguments": "3}"}}]},
+                        "finish_reason": None,
+                    },
+                ],
+            }),
+        ]
+
+    async def create(**kwargs: Any) -> Any:
+        return _FakeAsyncStream(chunks())
+
+    request_occurrence_ids: list[dict[tuple[int, int], str | None]] = []
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        for _ in range(2):
+            response_stream = client._inner_get_response(
+                messages=[Message(role="user", contents=["test"])], stream=True, options={}
+            )
+            assert isinstance(response_stream, ResponseStream)
+            calls = [
+                content
+                async for update in response_stream
+                for content in update.contents
+                if content.type == "function_call"
+            ]
+            by_index: dict[tuple[int, int], list[Content]] = {}
+            for call in calls:
+                key = (
+                    call.additional_properties["tool_call_choice_index"],
+                    call.additional_properties["tool_call_index"],
+                )
+                by_index.setdefault(key, []).append(call)
+
+            assert set(by_index) == {(0, 0), (0, 1), (1, 0)}
+            assert all(len(fragments) == 2 for fragments in by_index.values())
+            assert all(
+                fragments[0].id == fragments[1].id
+                and fragments[0].call_id == fragments[1].call_id == "reused-provider-id"
+                for fragments in by_index.values()
+            )
+            occurrence_ids = {key: fragments[0].id for key, fragments in by_index.items()}
+            assert len(set(occurrence_ids.values())) == 3
+            final_response = await response_stream.get_final_response()
+            final_calls = [
+                content
+                for message in final_response.messages
+                for content in message.contents
+                if content.type == "function_call"
+            ]
+            assert [(call.name, call.call_id, call.parse_arguments()) for call in final_calls] == [
+                ("first", "reused-provider-id", {"a": 1}),
+                ("second", "reused-provider-id", {"b": 2}),
+                ("third", "reused-provider-id", {"c": 3}),
+            ]
+            request_occurrence_ids.append(occurrence_ids)
+
+    assert set(request_occurrence_ids[0].values()).isdisjoint(request_occurrence_ids[1].values())
+
+
+async def test_streaming_tool_call_adopts_late_provider_id_without_changing_occurrence(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+    common = {
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+    }
+    chunks = [
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "opening",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": '{"value":'},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "continuation",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "late-service-id",
+                                "type": "function",
+                                "function": {"arguments": "1}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }),
+    ]
+
+    async def create(**kwargs: Any) -> Any:
+        return _FakeAsyncStream(chunks)
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response_stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], stream=True, options={}
+        )
+        assert isinstance(response_stream, ResponseStream)
+        fragments = [
+            content
+            async for update in response_stream
+            for content in update.contents
+            if content.type == "function_call"
+        ]
+
+    assert len(fragments) == 2
+    assert fragments[0].id
+    assert fragments[0].id == fragments[1].id
+    assert [fragment.call_id for fragment in fragments] == ["", "late-service-id"]
+    final_response = await response_stream.get_final_response()
+    final_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+    assert [(call.id, call.call_id, call.name, call.parse_arguments()) for call in final_calls] == [
+        (fragments[0].id, "late-service-id", "lookup", {"value": 1})
+    ]
+
+
 # endregion
 
 
@@ -2442,8 +3215,11 @@ def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
     assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
 
 
-def test_prepare_options_prompt_cache_options_passthrough() -> None:
+def test_prepare_options_prompt_cache_options_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     """Request-level prompt_cache_options reaches the Chat Completions run options."""
+    import agent_framework_openai._chat_completion_client as chat_completion_module
+
+    monkeypatch.setattr(chat_completion_module, "_prompt_cache_options_supported", True)
     client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
     run_options = client._prepare_options(
         [Message(role="user", contents=[Content.from_text("hi")])],
@@ -2642,6 +3418,83 @@ def test_hooks_roundtrip_vllm_reasoning(openai_unit_test_env: dict[str, str]) ->
     assert len(prepared) == 1
     assert prepared[0]["content"] == "42."
     assert prepared[0]["reasoning"] == "Because reasons."
+
+
+def test_hooks_roundtrip_reasoning_content_with_text_and_function_call_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """End-to-end: DeepSeek-style ``reasoning_content`` next to text and a tool call stays on one message.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/8382
+    """
+    from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
+
+    def deepseek_parser(message: Any, contents: list[Content]) -> list[Content]:
+        reasoning_content = getattr(message, "reasoning_content", None)
+        if isinstance(reasoning_content, str) and reasoning_content:
+            return [*contents, Content.from_text_reasoning(protected_data=json.dumps(reasoning_content))]
+        return contents
+
+    def deepseek_preparer(message: Message, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for prepared_message in messages:
+            if "reasoning_details" in prepared_message:
+                prepared_message["reasoning_content"] = prepared_message.pop("reasoning_details")
+        return messages
+
+    client = OpenAIChatCompletionClient(response_parser=deepseek_parser, message_preparer=deepseek_preparer)
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="I'll check the weather in New York City for you.",
+        tool_calls=[
+            ChatCompletionMessageToolCall(
+                id="call_repro_0001",
+                type="function",
+                function=Function(name="get_weather", arguments='{"location": "New York City"}'),
+            )
+        ],
+        reasoning_content="The user wants the weather, so I should call get_weather.",
+    )
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message, model="deepseek-flash"), {})
+    prepared = client._prepare_message_for_openai(parsed.messages[0])
+
+    # One assistant message carries content, tool_calls and the echoed reasoning field, so the
+    # provider sees the reasoning on the message that also carries the content.
+    assert prepared == [
+        {
+            "role": "assistant",
+            "content": "I'll check the weather in New York City for you.",
+            "tool_calls": [
+                {
+                    "id": "call_repro_0001",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"location": "New York City"}'},
+                }
+            ],
+            "reasoning_content": "The user wants the weather, so I should call get_weather.",
+        }
+    ]
+
+
+def test_message_preparer_hook_reasoning_text_before_function_call_is_not_swallowed(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Hook-surfaced reasoning text keeps its own dict, so a preparer can still correlate and remove it."""
+    client = OpenAIChatCompletionClient(message_preparer=_vllm_reasoning_preparer)
+    reasoning = Content.from_text_reasoning(
+        text="Need the tool.", additional_properties={_VLLM_REASONING_FIELD_KEY: "reasoning"}
+    )
+    message = Message(
+        role="assistant",
+        contents=[reasoning, Content.from_function_call(call_id="call_1", name="get_weather", arguments="{}")],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert "content" not in prepared[0]
+    assert [call["id"] for call in prepared[0]["tool_calls"]] == ["call_1"]
+    assert prepared[0]["reasoning"] == "Need the tool."
 
 
 def test_no_hooks_keeps_default_behavior(openai_unit_test_env: dict[str, str]) -> None:

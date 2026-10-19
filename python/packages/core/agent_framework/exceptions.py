@@ -82,6 +82,12 @@ class ChatClientException(AgentFrameworkException):
     pass
 
 
+class ResponseInvalidatedException(ChatClientException):
+    """A provider invalidated partial response output, so its local function calls must not execute."""
+
+    pass
+
+
 class ChatClientInvalidAuthException(ChatClientException):
     """An authentication error occurred in a chat client."""
 
@@ -182,12 +188,12 @@ class ToolExecutionException(ToolException):
 
 
 class UserInputRequiredException(ToolException):
-    """Raised when a tool wrapping a sub-agent requires user input to proceed.
+    """Raised when a tool requires user input to proceed.
 
-    This exception carries the ``user_input_request`` Content items emitted by
-    the sub-agent (e.g., ``oauth_consent_request``, ``function_approval_request``)
-    so the tool invocation layer can propagate them to the parent agent's response
-    instead of swallowing them as a generic tool error.
+    This exception carries ``user_input_request`` Content items so the tool
+    invocation layer can propagate them instead of swallowing them as a generic
+    tool error. ``Agent.as_tool()`` handles unresolved child function approvals
+    separately and fails the delegated invocation.
 
     Args:
         contents: The user-input-request Content items from the sub-agent response.

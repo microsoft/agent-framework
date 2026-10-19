@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import sys
 import uuid
+import warnings
 from binascii import Error as BinasciiError
-from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
-from functools import wraps
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 import httpx
@@ -19,8 +20,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionTool,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
 )
 from agent_framework._middleware import ChatMiddlewareLayer
@@ -28,10 +29,11 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.observability import ChatTelemetryLayer
 
-from ._event_converters import AGUIEventConverter
+from ._event_converters import AGUIEventConverter, _finalize_agui_response
 from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
+from ._state import STATE_CARRIER_KEY
 from ._utils import convert_tools_to_agui_format
 
 if sys.version_info >= (3, 13):
@@ -55,15 +57,6 @@ if TYPE_CHECKING:
 logger: logging.Logger = logging.getLogger("agent_framework.ag_ui")
 
 
-def _unwrap_server_function_call_contents(contents: MutableSequence[Content | dict[str, Any]]) -> None:
-    """Replace server_function_call instances with their underlying call content."""
-    for idx, content in enumerate(contents):
-        if content.type == "server_function_call":  # type: ignore[union-attr]
-            contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
-
-
-BaseChatClientT = TypeVar("BaseChatClientT", bound=type[BaseChatClient[Any]])
-
 AGUIChatOptionsT = TypeVar(
     "AGUIChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
@@ -72,47 +65,54 @@ AGUIChatOptionsT = TypeVar(
 )
 
 
-def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClientT:
-    """Class decorator that unwraps server-side function calls after tool handling."""
-
-    original_get_response = client.get_response
-
-    @wraps(original_get_response)
-    def response_wrapper(
-        self, *args: Any, stream: bool = False, **kwargs: Any
-    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        if stream:
-            stream_response = original_get_response(self, *args, stream=True, **kwargs)
-            if isinstance(stream_response, ResponseStream):
-                return stream_response.with_transform_hook(_map_update)
-            return ResponseStream(_stream_wrapper_impl(stream_response))
-        return _response_wrapper_impl(self, original_get_response, *args, **kwargs)
-
-    async def _response_wrapper_impl(self, original_func: Any, *args: Any, **kwargs: Any) -> ChatResponse:
-        """Non-streaming wrapper implementation."""
-        response = await original_func(self, *args, stream=False, **kwargs)
-        if response.messages:
-            for message in response.messages:
-                _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
-        return response
-
-    async def _stream_wrapper_impl(stream: Any) -> AsyncIterable[ChatResponseUpdate]:
-        """Streaming wrapper implementation."""
-        if isinstance(stream, Awaitable):
-            stream = await stream
-        async for update in stream:
-            _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
-            yield update
-
-    def _map_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
-        _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
-        return update
-
-    client.get_response = response_wrapper  # type: ignore[assignment]
-    return client
+def _is_state_carrier_message(message: Message) -> bool:
+    """Return whether a message is a dedicated, explicitly marked state carrier."""
+    if len(message.contents) != 1:
+        return False
+    content = message.contents[0]
+    return isinstance(content, Content) and (content.additional_properties or {}).get(STATE_CARRIER_KEY) is True
 
 
-@_apply_server_function_call_unwrap
+def _decode_json_state(content: Content) -> dict[str, Any] | None:
+    """Decode a base64 JSON state content, returning None for invalid input."""
+    if content.type != "data" or content.media_type != "application/json":
+        return None
+
+    try:
+        uri = content.uri
+        prefix, _, encoded_data = uri.partition(",")  # type: ignore[union-attr]
+        if not prefix.startswith("data:"):
+            return None
+
+        media_type, *parameters = prefix[5:].split(";")
+        if media_type != "application/json" or "base64" not in parameters:
+            return None
+
+        decoded_bytes = base64.b64decode(encoded_data, validate=True)
+        state = json.loads(decoded_bytes.decode("utf-8"))
+        if not isinstance(state, dict):
+            logger.warning("AG-UI state carrier JSON must decode to an object")
+            return None
+        return state
+    except (BinasciiError, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError) as e:
+        logger.warning(f"Failed to extract state from message: {e}")
+        return None
+
+
+def _extract_legacy_json_state(message: Message) -> dict[str, Any] | None:
+    """Extract the historical implicit state convention from a final state-only message."""
+    if len(message.contents) != 1:
+        return None
+
+    content = message.contents[0]
+    if not isinstance(content, Content):
+        return None
+    if (content.additional_properties or {}).get(STATE_CARRIER_KEY) is True:
+        return None
+
+    return _decode_json_state(content)
+
+
 class AGUIChatClient(
     FunctionInvocationLayer[AGUIChatOptionsT],
     ChatMiddlewareLayer[AGUIChatOptionsT],
@@ -228,7 +228,10 @@ class AGUIChatClient(
 
         Args:
             endpoint: The AG-UI server endpoint URL (e.g., "http://localhost:8888/")
-            http_client: Optional httpx.AsyncClient instance. If None, one will be created.
+            http_client: Optional httpx.AsyncClient instance. If None, creates a client that does not
+                persist response cookies. Supplied clients retain their cookie behavior and remain
+                caller-owned; scope cookie-based authentication to a single authenticated principal
+                rather than sharing it across users.
             timeout: Request timeout in seconds (default: 60.0)
             additional_properties: Additional properties to store
             middleware: Optional middleware to apply to the client.
@@ -246,7 +249,7 @@ class AGUIChatClient(
         )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the internally created HTTP client, leaving supplied clients open."""
         await self._http_service.close()
 
     async def __aenter__(self) -> Self:
@@ -257,60 +260,45 @@ class AGUIChatClient(
         """Exit async context manager."""
         await self.close()
 
-    def _register_server_tool_placeholder(self, tool_name: str) -> None:
-        """Register a declaration-only placeholder so function invocation skips execution."""
-
-        config = getattr(self, "function_invocation_configuration", None)
-        if not isinstance(config, dict):
-            return
-        additional_tools = list(config.get("additional_tools", []))
-        if any(getattr(tool, "name", None) == tool_name for tool in additional_tools):
-            return
-
-        placeholder: FunctionTool = FunctionTool(
-            name=tool_name,
-            description="Server-managed tool placeholder (AG-UI)",
-            func=None,
-        )
-        additional_tools.append(placeholder)
-        config["additional_tools"] = additional_tools
-        registered: set[str] = getattr(self, "_registered_server_tools", set())
-        registered.add(tool_name)
-        self._registered_server_tools = registered
-        logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
-
-    def _extract_state_from_messages(self, messages: Sequence[Message]) -> tuple[list[Message], dict[str, Any] | None]:
-        """Extract state from last message if present.
+    def _extract_state_from_messages(
+        self,
+        messages: Sequence[Message],
+        *,
+        allow_legacy_state_carrier: bool = False,
+    ) -> tuple[list[Message], dict[str, Any] | None]:
+        """Extract explicitly marked state from client-controlled message history.
 
         Args:
             messages: List of chat messages
+            allow_legacy_state_carrier: Whether to recognize the deprecated implicit
+                final base64 JSON state convention.
 
         Returns:
             Tuple of (messages_without_state, state_dict)
         """
-        if not messages:
-            return list(messages), None
+        messages_to_send: list[Message] = []
+        state: dict[str, Any] | None = None
 
-        last_message = messages[-1]
+        for message in messages:
+            if _is_state_carrier_message(message):
+                content = cast(Content, message.contents[0])
+                if (extracted_state := _decode_json_state(content)) is not None:
+                    state = extracted_state
+                continue
+            messages_to_send.append(message)
 
-        for content in last_message.contents:
-            if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
-                try:
-                    uri = content.uri
-                    prefix, _, encoded_data = uri.partition(",")  # type: ignore[union-attr]
-                    media_type, *parameters = prefix[5:].split(";")
-                    if prefix.startswith("data:") and media_type == "application/json" and "base64" in parameters:
-                        import base64
+        if allow_legacy_state_carrier and messages and not _is_state_carrier_message(messages[-1]):
+            legacy_state = _extract_legacy_json_state(messages[-1])
+            if legacy_state is not None:
+                messages_to_send.pop()
+                state = legacy_state
+                warnings.warn(
+                    "Implicit AG-UI JSON state extraction is deprecated; use state_carrier() instead.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
 
-                        decoded_bytes = base64.b64decode(encoded_data, validate=True)
-                        state = json.loads(decoded_bytes.decode("utf-8"))
-
-                        messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
-                        return messages_without_state, state
-                except (BinasciiError, json.JSONDecodeError, ValueError, KeyError) as e:
-                    logger.warning(f"Failed to extract state from message: {e}")
-
-        return list(messages), None
+        return messages_to_send, state
 
     def _convert_messages_to_agui_format(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Convert Agent Framework messages to AG-UI format.
@@ -369,17 +357,19 @@ class AGUIChatClient(
                     options=options,
                     **kwargs,
                 ),
-                finalizer=ChatResponse.from_updates,
+                finalizer=_finalize_agui_response,
             )
 
         async def _get_response() -> ChatResponse:
-            return await ChatResponse.from_update_generator(
-                self._streaming_impl(
+            updates = [
+                update
+                async for update in self._streaming_impl(
                     messages=messages,
                     options=options,
                     **kwargs,
                 )
-            )
+            ]
+            return _finalize_agui_response(updates)
 
         return _get_response()
 
@@ -401,7 +391,10 @@ class AGUIChatClient(
             ChatResponseUpdate objects
         """
         mark_feature_used(FeatureIndex.AG_UI)
-        messages_to_send, state = self._extract_state_from_messages(messages)
+        messages_to_send, state = self._extract_state_from_messages(
+            messages,
+            allow_legacy_state_carrier=options.get("allow_legacy_state_carrier") is True,
+        )
 
         thread_id = self._get_thread_id(options)
         run_id = f"run_{uuid.uuid4().hex}"
@@ -437,7 +430,7 @@ class AGUIChatClient(
 
         available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
 
-        async for event in self._http_service.post_run(
+        events = self._http_service.post_run(
             thread_id=thread_id,
             run_id=run_id,
             messages=agui_messages,
@@ -445,29 +438,50 @@ class AGUIChatClient(
             tools=agui_tools,
             available_interrupts=_serialize_available_interrupts(cast(Sequence[Any] | None, available_interrupts)),
             resume=_serialize_resume(options.get("resume")),
-        ):
-            logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
-            update = converter.convert_event(event)
-            if update is not None:
-                logger.debug(
-                    "[AGUIChatClient] Converted update",
-                    extra={"role": update.role, "contents": [type(c).__name__ for c in update.contents]},
-                )
-                # Distinguish client vs server tools
-                for i, content in enumerate(update.contents):
-                    if content.type == "function_call":
-                        logger.debug(
-                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
-                        )
-                        if content.name in client_tool_set:
-                            # Client tool - let function invocation execute it
-                            if not content.additional_properties:
-                                content.additional_properties = {}
-                            content.additional_properties["agui_thread_id"] = thread_id
-                        else:
-                            # Server tool - wrap so function invocation ignores it
-                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
-                            self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
-                            update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
+        )
+        body_failed = False
+        local_client_tool_call_started = False
+        try:
+            async for event in events:
+                logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
+                event_type = str(event.get("type", "")).upper()
+                if event_type == "RUN_ERROR" and local_client_tool_call_started:
+                    raise ResponseInvalidatedException(
+                        "The AG-UI server invalidated partial output containing a local client tool call."
+                    )
+                update = converter.convert_event(event)
+                if update is not None:
+                    logger.debug(
+                        "[AGUIChatClient] Converted update",
+                        extra={"role": update.role, "contents": [type(c).__name__ for c in update.contents]},
+                    )
+                    # Distinguish client vs server tools
+                    for content in update.contents:
+                        if content.type == "function_call":
+                            logger.debug(
+                                f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
+                            )
+                            if content.name in client_tool_set:
+                                local_client_tool_call_started = True
+                                if not content.additional_properties:
+                                    content.additional_properties = {}
+                                content.additional_properties["agui_thread_id"] = thread_id
+                            else:
+                                content.hosted = True
 
-                yield update
+                    yield update
+        except GeneratorExit:
+            # An explicit close() has no body failure to take precedence over cleanup.
+            raise
+        except BaseException:
+            body_failed = True
+            raise
+        finally:
+            close = getattr(events, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:
+                    if not body_failed:
+                        raise
+                    logger.warning("AG-UI event cleanup failed while handling an existing exception.", exc_info=True)

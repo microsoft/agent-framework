@@ -291,7 +291,7 @@ class RawOpenAIEmbeddingClient(
 
         encoding = kwargs.get("encoding_format", "float")
         embeddings: list[Embedding[list[float]]] = []
-        for item in response.data:
+        for item in sorted(response.data, key=lambda item: item.index):
             vector: list[float]
             if encoding == "base64" and isinstance(item.embedding, str):
                 # Decode base64-encoded floats (little-endian IEEE 754)
@@ -331,7 +331,7 @@ class OpenAIEmbeddingClient(
         self,
         *,
         model: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
@@ -368,7 +368,7 @@ class OpenAIEmbeddingClient(
         azure_endpoint: str | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         api_version: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
@@ -407,7 +407,7 @@ class OpenAIEmbeddingClient(
         self,
         *,
         model: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,

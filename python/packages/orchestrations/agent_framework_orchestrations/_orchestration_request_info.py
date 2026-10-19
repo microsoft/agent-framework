@@ -41,6 +41,24 @@ def resolve_request_info_filter(agents: list[str | SupportsAgentRun] | None) -> 
     return result
 
 
+def validate_request_info_filter(request_info_filter: set[str] | None, agent_ids: list[str]) -> None:
+    """Raise if the request info filter names an agent that is not a participant.
+
+    Args:
+        request_info_filter: Agent IDs passed to ``with_request_info(agents=...)``. Empty or None means all agents.
+        agent_ids: IDs of the agent participants in the orchestration.
+
+    Raises:
+        ValueError: If a name in the filter does not match any agent participant.
+    """
+    unknown = sorted((request_info_filter or set()) - set(agent_ids))
+    if unknown:
+        raise ValueError(
+            f"with_request_info() names agents that are not agent participants: "
+            f"{', '.join(repr(name) for name in unknown)}. Agent participants: {', '.join(agent_ids)}."
+        )
+
+
 @dataclass
 class AgentRequestInfoResponse:
     """Response containing additional information requested from users for agents.
@@ -181,6 +199,7 @@ class AgentApprovalExecutor(WorkflowExecutor):
         context_mode: Literal["full", "last_agent", "custom"] | None = None,
         *,
         allow_direct_output: bool = False,
+        ensure_trailing_user_turn: bool = False,
     ) -> None:
         """Initialize the AgentApprovalExecutor.
 
@@ -192,8 +211,13 @@ class AgentApprovalExecutor(WorkflowExecutor):
                 downstream participant). Set this when this executor is the workflow's
                 terminator — so the user-approved final response surfaces as a workflow
                 ``output`` event.
+            ensure_trailing_user_turn: If True, appends a synthetic user continuation
+                message when the cache ends on an assistant message. Some chat-completions
+                providers return empty text when the prompt ends on ``assistant``.
+                Defaults to False.
         """
         self._context_mode: Literal["full", "last_agent", "custom"] | None = context_mode
+        self._ensure_trailing_user_turn = ensure_trailing_user_turn
         self._description = agent.description
 
         super().__init__(
@@ -217,17 +241,17 @@ class AgentApprovalExecutor(WorkflowExecutor):
         agent_executor = AgentExecutor(
             agent,
             context_mode=self._context_mode,
+            ensure_trailing_user_turn=self._ensure_trailing_user_turn,
         )
         request_info_cls = _TerminalAgentRequestInfoExecutor if terminal else AgentRequestInfoExecutor
         request_info_executor = request_info_cls(id="agent_request_info_executor")
 
-        # Both inner executors yield the inner workflow's terminal output (the agent
-        # during its turn; the _TerminalAgentRequestInfoExecutor after approval), so
-        # both must be designated for WorkflowExecutor.get_outputs() to surface them.
+        # Only the request info executor surfaces approved responses. The agent's
+        # unapproved response remains available through the request_info event.
         return (
             WorkflowBuilder(
                 start_executor=agent_executor,
-                output_from=[agent_executor, request_info_executor],
+                output_from=[request_info_executor],
             )
             # Create a loop between agent executor and request info executor
             .add_edge(agent_executor, request_info_executor)

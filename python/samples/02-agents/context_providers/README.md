@@ -57,3 +57,30 @@ These samples demonstrate how to use context providers to enrich agent conversat
 - Azure CLI authentication (`az login`)
 
 See each subfolder's README for provider-specific prerequisites.
+
+## Application-controlled modes
+
+Configure `AgentModeProvider(expose_mode_set=False)` to hide the built-in setter
+when your application owns mode changes. Use `expose_mode_get=False` to hide the
+getter independently, or set both flags to `False` to expose neither tool. Both
+flags default to `True`. Mode state, per-turn workflow instructions, and external
+mode-change notifications remain active even when both tools are hidden.
+
+Pass the configured provider through `create_harness_agent(mode_provider=...)`
+(or `Agent(context_providers=[...])`). Supply any replacement tool, such as
+`update_mode`, through the existing `tools` argument. Keep that tool and your UI
+on the same session-backed state by using `get_agent_mode` and `set_agent_mode`
+with the provider's `source_id` and `available_modes`, and its `default_mode` when
+reading. A replacement tool should call `set_agent_mode(..., notify=False)`
+because the agent already observes the tool result; this also clears any pending
+external-change notification. UI-driven changes retain the default `notify=True`
+so the agent sees the external change on its next run. Do not disable the entire
+provider with `disable_mode=True`.
+
+Built-in guidance only advertises enabled tools. Without the built-in setter,
+it defers approved transitions to the application's configured mode-change
+mechanism. Supply replacement-specific guidance through the existing
+`instructions` and `mode_instructions` options; caller-supplied text is not
+rewritten when a tool is hidden, and existing placeholders still expand.
+These flags only omit tools contributed by this provider: they do not filter
+application-supplied tools or prevent application code from changing mode state.

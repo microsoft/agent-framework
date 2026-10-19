@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Anthropic.Services;
@@ -10,6 +12,11 @@ namespace Anthropic.Services;
 /// <summary>
 /// Provides extension methods for the <see cref="IBetaService"/> class.
 /// </summary>
+/// <remarks>
+/// <b>NOTE:</b> These extensions depend on Anthropic beta services and are experimental. They may change in non-major
+/// releases as the underlying beta services evolve.
+/// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIAnthropicBetaServices)]
 public static class AnthropicBetaServiceExtensions
 {
     /// <summary>
@@ -31,6 +38,10 @@ public static class AnthropicBetaServiceExtensions
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>The created <see cref="ChatClientAgent"/> AI agent.</returns>
+    /// <remarks>
+    /// <b>NOTE:</b> This extension depends on Anthropic beta services and is experimental. It may change in non-major
+    /// releases as the underlying beta services evolve.
+    /// </remarks>
     public static ChatClientAgent AsAIAgent(
         this IBetaService betaService,
         string model,
@@ -82,6 +93,10 @@ public static class AnthropicBetaServiceExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the Anthropic Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="betaService"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// <b>NOTE:</b> This extension depends on Anthropic beta services and is experimental. It may change in non-major
+    /// releases as the underlying beta services evolve.
+    /// </remarks>
     public static ChatClientAgent AsAIAgent(
         this IBetaService betaService,
         ChatClientAgentOptions options,

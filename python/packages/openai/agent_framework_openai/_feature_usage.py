@@ -1,12 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
+from collections.abc import MutableMapping
 from enum import IntEnum
+from typing import TYPE_CHECKING, Protocol
+from urllib.parse import urlsplit
 
-import httpx
 from agent_framework._telemetry import USER_AGENT_KEY, apply_feature_token, remove_feature_token
-from openai import DefaultAsyncHttpxClient
+
+if TYPE_CHECKING:
+    from openai import DefaultAsyncHttpxClient
 
 
 class FeatureIndex(IntEnum):
@@ -22,21 +28,18 @@ _AZURE_OPENAI_ORIGIN_SUFFIXES = (
 )
 
 
-class _FeatureUsageAsyncHttpxClient(DefaultAsyncHttpxClient):
-    """OpenAI-default HTTP client that preserves the SDK's GC cleanup behavior."""
+class _HttpRequest(Protocol):
+    @property
+    def headers(self) -> MutableMapping[str, str]: ...
 
-    def __del__(self) -> None:
-        if self.is_closed:
-            return
-        with contextlib.suppress(Exception):
-            asyncio.get_running_loop().create_task(self.aclose())
+    @property
+    def url(self) -> object: ...
 
 
-def _is_approved_origin(url: httpx.URL | str, suffixes: tuple[str, ...]) -> bool:
-    if isinstance(url, str):
-        url = httpx.URL(url)
-    host = (url.host or "").rstrip(".").lower()
-    return url.scheme == "https" and any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
+def _is_approved_origin(url: str, suffixes: tuple[str, ...]) -> bool:
+    parsed_url = urlsplit(url)
+    host = (parsed_url.hostname or "").rstrip(".").lower()
+    return parsed_url.scheme == "https" and any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
 
 
 def create_feature_usage_http_client(
@@ -44,12 +47,22 @@ def create_feature_usage_http_client(
     approved_origin_suffixes: tuple[str, ...] = _AZURE_OPENAI_ORIGIN_SUFFIXES,
 ) -> DefaultAsyncHttpxClient:
     """Create the OpenAI SDK default client with destination-aware feature stamping."""
+    from openai import DefaultAsyncHttpxClient
 
-    async def stamp_feature_usage(request: httpx.Request) -> None:  # ruff:ignore[unused-async]
+    class _FeatureUsageAsyncHttpxClient(DefaultAsyncHttpxClient):
+        """OpenAI-default HTTP client that preserves the SDK's GC cleanup behavior."""
+
+        def __del__(self) -> None:
+            if self.is_closed:
+                return
+            with contextlib.suppress(Exception):
+                asyncio.get_running_loop().create_task(self.aclose())
+
+    async def stamp_feature_usage(request: _HttpRequest) -> None:  # ruff:ignore[unused-async]
         user_agent = request.headers.get(USER_AGENT_KEY, "")
         request.headers[USER_AGENT_KEY] = (
             apply_feature_token(user_agent)
-            if _is_approved_origin(request.url, approved_origin_suffixes)
+            if _is_approved_origin(str(request.url), approved_origin_suffixes)
             else remove_feature_token(user_agent)
         )
 

@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING, Any
 
 from ._agent import AgentFrameworkAgent
 from ._client import AGUIChatClient
-from ._endpoint import add_agent_framework_fastapi_endpoint
+from ._endpoint import AuthorizationScopeResolver, add_agent_framework_fastapi_endpoint
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
+from ._message_adapters import agent_framework_messages_to_agui_host_history
 from ._snapshots import (
     DEFAULT_MAX_THREAD_SNAPSHOTS,
     AGUIThreadID,
@@ -19,7 +20,7 @@ from ._snapshots import (
     SnapshotScope,
     SnapshotScopeResolver,
 )
-from ._state import state_update
+from ._state import state_carrier, state_update
 from ._types import AgentState, AGUIChatOptions, AGUIRequest, PredictStateConfig, RunMetadata
 from ._workflow import AgentFrameworkWorkflow, WorkflowFactory
 
@@ -37,8 +38,10 @@ DEFAULT_TAGS = ["AG-UI"]
 __all__ = [
     "AgentFrameworkAgent",
     "AgentFrameworkWorkflow",
+    "AuthorizationScopeResolver",
     "WorkflowFactory",
     "add_agent_framework_fastapi_endpoint",
+    "agent_framework_messages_to_agui_host_history",
     "AGUIChatClient",
     "AGUIChatOptions",
     "AGUIEventConverter",
@@ -55,6 +58,7 @@ __all__ = [
     "SnapshotScopeResolver",
     "DEFAULT_MAX_THREAD_SNAPSHOTS",
     "DEFAULT_TAGS",
+    "state_carrier",
     "state_update",
     "__version__",
     # A2UI (lazy — require ag-ui-a2ui-toolkit)

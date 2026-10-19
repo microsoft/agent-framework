@@ -6,13 +6,14 @@ We recommend two common installation paths depending on your use case.
 
 ### 1. Development mode
 
-If you are exploring or developing locally, install the entire framework with all sub-packages:
+If you are exploring or developing locally, install the standard framework package set:
 
 ```bash
 pip install agent-framework
 ```
 
-This installs the core and every integration package, making sure that all features are available without additional steps. This is the simplest way to get started.
+This installs the core and the standard integration packages. Experimental Lab modules are installed separately
+with `pip install agent-framework-lab`.
 
 ### 2. Selective install
 
@@ -38,8 +39,26 @@ This selective approach is useful when you know which integrations you need, and
 
 Supported Platforms:
 
-- Python: 3.10+
+- Python: 3.10–3.15
 - OS: Windows, macOS, Linux
+
+Python 3.10 remains supported and tested for this release, but it is deprecated
+because upstream Python 3.10 has reached end of life. New environments should
+use Python 3.11 or later. A future Agent Framework release will raise the
+minimum version separately; this release does not remove Python 3.10 from
+package metadata or CI.
+
+### Python 3.15 limitations
+
+`pip install agent-framework` resolves and imports on Python 3.15, but it does
+not provide exactly the same feature set as Python 3.14:
+
+| Area | Python 3.15 impact |
+| --- | --- |
+| Declarative Power Fx | `agent-framework-declarative` is installed, but its `powerfx` dependency is not. YAML values beginning with `=` produce a warning and remain unchanged instead of being evaluated. Declarative agents or workflows that rely on expressions may therefore use invalid literal values or fail later. |
+| Redis | `agent-framework-redis` is omitted from the standard install because RedisVL declares `Requires-Python <3.15`. Redis imports and Redis-backed history, context, and vector storage are unavailable. |
+| Hyperlight | `agent-framework-hyperlight` is omitted because no compatible Python 3.15 sandbox backend wheel is published. Hyperlight CodeAct and its `execute_code` tool are unavailable. |
+| AG-UI A2UI | The base `agent-framework-ag-ui` package works, but pip cannot install its optional `a2ui` extra because `ag-ui-a2ui-toolkit` declares `Requires-Python <3.15`. |
 
 ## 1. Setup API Keys
 
@@ -258,4 +277,6 @@ For more advanced orchestration patterns including Sequential, Concurrent, Group
 - [Python Package Documentation](https://github.com/microsoft/agent-framework/tree/main/python)
 - [.NET Package Documentation](https://github.com/microsoft/agent-framework/tree/main/dotnet)
 - [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
-- Learn docs are coming soon.
+- [Learn: Agent Framework Overview](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)
+- [Learn: Quick Start](https://learn.microsoft.com/agent-framework/tutorials/quick-start)
+- [Learn: Tutorials](https://learn.microsoft.com/agent-framework/get-started/)

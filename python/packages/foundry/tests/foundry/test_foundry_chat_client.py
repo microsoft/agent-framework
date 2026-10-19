@@ -2,21 +2,39 @@
 
 from __future__ import annotations
 
+import asyncio
+import builtins
 import inspect
+import json
 import os
 import sys
 import warnings
 from functools import wraps
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import agent_framework._telemetry as telemetry
 import pytest
-from agent_framework import Agent, ChatResponse, Content, Message, SupportsChatGetResponse, tool
+from agent_framework import (
+    Agent,
+    ChatResponse,
+    Content,
+    FunctionInvocationConfiguration,
+    Message,
+    SupportsChatGetResponse,
+    tool,
+)
+from agent_framework._sessions import AgentSession
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
-from agent_framework_openai import OpenAIContentFilterException
+from agent_framework_openai import (
+    OpenAIChatClient,
+    OpenAIChatOptions,
+    OpenAIContentFilterException,
+    OpenAIContinuationToken,
+)
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
@@ -24,12 +42,14 @@ from azure.core.pipeline import Pipeline
 from azure.core.pipeline.policies import RedirectPolicy, UserAgentPolicy
 from azure.core.pipeline.transport import HttpRequest, HttpResponse, HttpTransport
 from azure.identity import AzureCliCredential
-from openai import BadRequestError
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 
 class OutputStruct(BaseModel):
@@ -39,12 +59,29 @@ class OutputStruct(BaseModel):
     weather: str | None = None
 
 
-def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
+class FoundryReasoningItem(BaseModel):
+    """Minimal Foundry reasoning item used to verify provider-native replay."""
+
+    type: str = "reasoning"
+    id: str
+    response_id: str
+    summary: list[Any]
+    content: list[Any]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://project.services.ai.azure.com/api/projects/test",
+        "https://project.openai.azure.com/openai/v1/embeddings",
+    ],
+)
+def test_foundry_feature_usage_policy_refreshes_user_agent(url: str) -> None:
     with telemetry._feature_mask_lock:
         telemetry._feature_mask = 0
     mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
     request = MagicMock()
-    request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
+    request.http_request.url = url
     request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
     FeatureUsagePolicy().on_request(request)
 
@@ -505,6 +542,224 @@ async def test_get_response_preserves_explicit_encrypted_reasoning_opt_in() -> N
     assert response.response_id == "response_123"
 
 
+async def test_stateless_replay_uses_foundry_reasoning_item_without_encrypted_content() -> None:
+    reasoning_item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_background",
+        summary=[],
+        content=[],
+    )
+    function_call = MagicMock(
+        type="function_call",
+        id="fc_foundry",
+        call_id="call_foundry",
+        arguments='{"step":1}',
+        status="completed",
+    )
+    function_call.name = "lookup_probe"
+    mock_response = MagicMock(
+        id="resp_background",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[reasoning_item, function_call],
+        usage=None,
+        conversation=None,
+        status="completed",
+        incomplete_details=None,
+    )
+
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    response = client._parse_response_from_openai(mock_response, options={"store": False})
+
+    messages = [
+        Message(role="user", contents=["Run the probe."]),
+        *response.messages,
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_foundry", result="probe-result-step-1")],
+        ),
+    ]
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Run the probe."}],
+        },
+        {
+            "type": "reasoning",
+            "id": "rs_foundry",
+            "response_id": "resp_background",
+            "summary": [],
+            "content": [],
+        },
+        {
+            "call_id": "call_foundry",
+            "id": "fc_foundry",
+            "type": "function_call",
+            "name": "lookup_probe",
+            "arguments": '{"step":1}',
+            "status": "completed",
+        },
+        {
+            "call_id": "call_foundry",
+            "type": "function_call_output",
+            "output": "probe-result-step-1",
+        },
+    ]
+
+
+def test_streaming_stateless_replay_prefers_completed_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.output_index = 0
+    added.item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_incomplete",
+        summary=[],
+        content=[],
+    )
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.output_index = 0
+    done.item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_complete",
+        summary=[],
+        content=[],
+    )
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(added, {}, {}),
+        client._parse_chunk_from_openai(done, {}, {}),
+    ])
+
+    reasoning_items = client._prepare_reasoning_items_for_openai(response.messages)
+
+    assert reasoning_items == {
+        "rs_foundry": {
+            "type": "reasoning",
+            "id": "rs_foundry",
+            "response_id": "resp_complete",
+            "summary": [],
+            "content": [],
+        }
+    }
+
+
+async def test_stateless_replay_accepts_canonical_foundry_reasoning_metadata() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    reasoning_item = {
+        "type": "reasoning",
+        "id": "rs_canonical",
+        "response_id": "resp_canonical",
+        "summary": [],
+        "content": [],
+    }
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_canonical",
+                    text="",
+                    additional_properties={"foundry": {"reasoning_item": reasoning_item}},
+                ),
+                Content.from_function_call(
+                    call_id="call_canonical",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_canonical", result="probe-result-step-1")],
+        ),
+    ]
+
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"][0] == reasoning_item
+
+
+async def test_stateless_replay_rejects_incomplete_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_incomplete", text=""),
+                Content.from_function_call(
+                    call_id="call_incomplete",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_incomplete", result="probe-result-step-1")],
+        ),
+    ]
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_incomplete.*required reasoning replay data is missing or invalid",
+    ):
+        await client._prepare_request(messages, {"store": False})
+
+
+async def test_stateless_replay_rejects_malformed_stored_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_malformed",
+                    text="",
+                    additional_properties={
+                        "__foundry_reasoning_replay_item__": {
+                            "id": "rs_malformed",
+                        }
+                    },
+                ),
+                Content.from_function_call(
+                    call_id="call_malformed",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_malformed", result="probe-result-step-1")],
+        ),
+    ]
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_malformed.*required reasoning replay data is missing or invalid",
+    ):
+        await client._prepare_request(messages, {"store": False})
+
+
 async def test_web_search_tool_with_location() -> None:
     mock_openai_client = _make_mock_openai_client()
     project_client = MagicMock()
@@ -619,6 +874,28 @@ async def test_chat_message_parsing_with_function_calls() -> None:
             "output": "Function executed successfully",
         },
     ]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        pytest.param([], "", id="empty-list"),
+        pytest.param([{"value": 1}], '[{"value": 1}]', id="non-empty-list"),
+    ],
+)
+def test_foundry_function_result_list_respects_rich_output_capability(
+    output: list[dict[str, Any]],
+    expected: str,
+) -> None:
+    mock_openai_client = _make_mock_openai_client()
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    content = Content("function_result", call_id="test-call-id", result=output)
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["output"] == expected
 
 
 async def test_content_filter_exception() -> None:
@@ -773,6 +1050,71 @@ def test_get_mcp_tool_with_project_connection_id() -> None:
     assert tool_config["server_label"] == "Docs_MCP"
     # ``server_url`` should not be fabricated when only a project connection is supplied.
     assert "server_url" not in tool_config
+
+
+@pytest.mark.parametrize("allowed_tools", [None, [], ["read_only"]], ids=["omitted", "empty", "nonempty"])
+@pytest.mark.parametrize(
+    ("url", "project_connection_id"),
+    [
+        param("https://mcp.example", None, id="url"),
+        param(None, "conn-123", id="connection"),
+        param("https://mcp.example", "conn-123", id="url-and-connection"),
+    ],
+)
+async def test_get_mcp_tool_preserves_allowed_tools_in_request(
+    allowed_tools: list[str] | None, url: str | None, project_connection_id: str | None
+) -> None:
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="Docs MCP",
+        url=url,
+        project_connection_id=project_connection_id,
+        allowed_tools=allowed_tools,
+        headers={"Authorization": "Bearer test-token"},
+        approval_mode="never_require",
+    )
+    expected: dict[str, Any] = {
+        "type": "mcp",
+        "server_label": "Docs_MCP",
+        "require_approval": "never",
+    }
+    if url is not None:
+        expected["server_url"] = url
+    if project_connection_id is not None:
+        expected["project_connection_id"] = project_connection_id
+    else:
+        expected["headers"] = {"Authorization": "Bearer test-token"}
+    if allowed_tools is not None:
+        expected["allowed_tools"] = allowed_tools
+    assert dict(tool_config) == expected
+
+    requests: list[dict[str, Any]] = []
+
+    def handle_request(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        await client.get_response([Message(role="user", contents=["Hello"])], options={"tools": [tool_config]})
+
+    assert len(requests) == 1
+    assert requests[0]["tools"] == [expected]
 
 
 def test_get_mcp_tool_requires_url_or_project_connection_id() -> None:
@@ -1039,6 +1381,59 @@ async def test_integration_options(
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_integration_tests_disabled
+@pytest.mark.parametrize("store", [True, False])
+@_with_foundry_debug()
+async def test_integration_background_local_tool_loop(store: bool) -> None:
+    executions: list[int] = []
+
+    @tool(approval_mode="never_require")
+    def lookup_probe(step: int) -> str:
+        """Return a deterministic marker for the requested step."""
+        executions.append(step)
+        return f"probe-result-step-{step}"
+
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
+    client.function_invocation_configuration["max_iterations"] = 4
+    agent = Agent(
+        client=client,
+        name=f"background_tool_probe_store_{str(store).lower()}",
+        instructions=(
+            "Call lookup_probe with step=1 exactly once. "
+            "After receiving the tool result, return that exact result and do not call any tool again."
+        ),
+        tools=[lookup_probe],
+        default_options=OpenAIChatOptions(
+            store=store,
+            allow_multiple_tool_calls=False,
+            tool_choice={"mode": "required", "required_function_name": "lookup_probe"},
+        ),
+    )
+    session = AgentSession()
+
+    response = await agent.run(
+        "Run the probe.",
+        session=session,
+        options=OpenAIChatOptions(background=True),
+    )
+    deadline = asyncio.get_running_loop().time() + 180
+    while response.continuation_token is not None:
+        if asyncio.get_running_loop().time() >= deadline:
+            pytest.fail("Background local-tool probe did not finish within 180 seconds.")
+        await asyncio.sleep(1)
+        response = await agent.run(
+            session=session,
+            options=OpenAIChatOptions(
+                continuation_token=cast(OpenAIContinuationToken, response.continuation_token),
+            ),
+        )
+
+    assert executions == [1]
+    assert response.text == "probe-result-step-1"
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_web_search() -> None:
     client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
@@ -1294,6 +1689,48 @@ def test_get_computer_use_tool() -> None:
     assert tool_obj.environment == "browser"
     assert tool_obj.display_width == 1920
     assert tool_obj.display_height == 1080
+
+
+def test_get_computer_tool_uses_non_preview_sdk_model() -> None:
+    from azure.ai.projects.models import ComputerTool
+
+    tool = FoundryChatClient.get_computer_tool()
+    assert isinstance(tool, ComputerTool)
+    assert tool.type == "computer"
+    assert isinstance(RawFoundryChatClient.get_computer_tool(), ComputerTool)
+
+
+def test_foundry_computer_result_without_screenshot_is_rejected() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=mock_project_client, model="test-model")
+    result = Content.from_computer_tool_result(call_id="call_1")
+
+    with pytest.raises(ChatClientInvalidRequestException, match="Computer results require a call_id and screenshot"):
+        client._prepare_content_for_openai("tool", result)
+
+
+def test_get_computer_tool_fails_only_when_invoked_with_older_sdk() -> None:
+    original_import = builtins.__import__
+
+    def missing_computer_tool(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "azure.ai.projects.models" and "ComputerTool" in fromlist:
+            raise ImportError("cannot import name 'ComputerTool' from azure.ai.projects.models")
+        return original_import(name, globals, locals, fromlist, level)
+
+    with (
+        patch.object(builtins, "__import__", side_effect=missing_computer_tool),
+        pytest.raises(ImportError, match=r"ComputerTool from azure-ai-projects>=2\.3\.0") as exc_info,
+    ):
+        FoundryChatClient.get_computer_tool()
+    assert "Upgrade azure-ai-projects to >=2.3.0 to use this tool." in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, ImportError)
 
 
 @pytest.mark.filterwarnings("ignore::FutureWarning")
@@ -1584,6 +2021,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert update.raw_representation is mock_event
 
 
+async def test_get_response_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming response carrying an oauth_consent_request output item surfaces the consent link."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        response = await client.get_response([Message(role="user", contents=["List my repos"])])
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
+
+
 def test_agent_accepts_foundry_chat_clients() -> None:
     mock_project = MagicMock()
     mock_openai = _make_mock_openai_client()
@@ -1596,3 +2071,232 @@ def test_agent_accepts_foundry_chat_clients() -> None:
     client = FoundryChatClient(project_client=mock_project, model="test-model")
     agent = Agent(client=client, instructions="test agent")
     assert agent.client is client
+
+
+_CONCURRENCY_MARKERS = ("first", "second")
+
+
+def _concurrency_response(marker: str, model: str) -> dict[str, Any]:
+    return {
+        "id": f"response-{marker}",
+        "created_at": 0,
+        "model": model,
+        "object": "response",
+        "output": [
+            {
+                "id": f"function-{marker}",
+                "type": "function_call",
+                "call_id": f"call-{marker}",
+                "name": "remote_lookup",
+                "arguments": json.dumps({"prompt": marker}),
+                "status": "completed",
+            },
+            {
+                "id": f"message-{marker}",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": f"response for {marker}",
+                        "annotations": [],
+                        "logprobs": [],
+                    }
+                ],
+            },
+        ],
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+        "status": "completed",
+    }
+
+
+def _concurrency_stream_events(marker: str, model: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": 0,
+            "item": {
+                "id": f"function-{marker}",
+                "type": "function_call",
+                "call_id": f"call-{marker}",
+                "name": "remote_lookup",
+                "arguments": "",
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "item_id": f"function-{marker}",
+            "output_index": 0,
+            "sequence_number": 1,
+            "delta": json.dumps({"prompt": marker}),
+        },
+        {
+            "type": "response.output_text.delta",
+            "content_index": 0,
+            "delta": f"response for {marker}",
+            "item_id": f"message-{marker}",
+            "logprobs": [],
+            "output_index": 1,
+            "sequence_number": 2,
+        },
+        {
+            "type": "response.completed",
+            "sequence_number": 3,
+            "response": _concurrency_response(marker, model),
+        },
+    ]
+
+
+class _ResponsesTransport:
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self.requests: dict[str, list[dict[str, Any]]] = {marker: [] for marker in _CONCURRENCY_MARKERS}
+        self.active_requests = 0
+        self.max_active_requests = 0
+        self._both_calls_started = asyncio.Event()
+
+    async def __call__(self, request: Any) -> Any:
+        body = request.content.decode()
+        marker = next((marker for marker in _CONCURRENCY_MARKERS if marker in body), None)
+        if marker is None:
+            raise AssertionError(f"Expected one of {_CONCURRENCY_MARKERS} in the request body: {body[:200]!r}")
+        self.requests[marker].append(json.loads(body))
+        self.active_requests += 1
+        self.max_active_requests = max(self.max_active_requests, self.active_requests)
+        if self.active_requests == 2:
+            self._both_calls_started.set()
+        try:
+            try:
+                await asyncio.wait_for(self._both_calls_started.wait(), timeout=5)
+            except TimeoutError as exc:
+                raise AssertionError("Concurrent chat requests did not overlap within 5 seconds") from exc
+            if self.requests[marker][-1].get("stream"):
+                content = "".join(
+                    f"data: {json.dumps(event)}\n\n" for event in _concurrency_stream_events(marker, self.model)
+                )
+                return _OPENAI_HTTPX.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    content=f"{content}data: [DONE]\n\n",
+                )
+            return _OPENAI_HTTPX.Response(200, json=_concurrency_response(marker, self.model))
+        finally:
+            self.active_requests -= 1
+
+
+class _ProjectClient:
+    def __init__(self, client: AsyncOpenAI) -> None:
+        self._client = client
+
+    def get_openai_client(self, **kwargs: Any) -> AsyncOpenAI:
+        del kwargs
+        return self._client
+
+
+def _build_concurrency_client(
+    provider: str,
+    model: str,
+    transport: _ResponsesTransport,
+) -> tuple[OpenAIChatClient[Any] | FoundryChatClient, AsyncOpenAI]:
+    async_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(transport)),
+    )
+    function_invocation_configuration: FunctionInvocationConfiguration = {"enabled": False}
+    if provider == "foundry":
+        project_client = _ProjectClient(async_client)
+        return (
+            FoundryChatClient(
+                project_client=cast(Any, project_client),
+                model=model,
+                function_invocation_configuration=function_invocation_configuration,
+            ),
+            async_client,
+        )
+    return (
+        OpenAIChatClient(
+            model=model,
+            async_client=async_client,
+            function_invocation_configuration=function_invocation_configuration,
+        ),
+        async_client,
+    )
+
+
+async def _run_concurrent_agent(
+    client: OpenAIChatClient[Any] | FoundryChatClient,
+    prompt: str,
+    *,
+    stream: bool,
+) -> tuple[str, set[str], set[str], AgentSession]:
+    agent = Agent(client=client)
+    session = agent.get_session(service_session_id=f"previous-{prompt}")
+    if stream:
+        text_parts: list[str] = []
+        call_ids: set[str] = set()
+        arguments: set[str] = set()
+        async for update in agent.run(prompt, session=session, stream=True):
+            for content in update.contents:
+                if content.type == "text" and content.text is not None:
+                    text_parts.append(content.text)
+                elif content.type == "function_call" and content.call_id is not None:
+                    call_ids.add(content.call_id)
+                    arguments.add(str(content.arguments))
+        return "".join(text_parts), call_ids, arguments, session
+
+    response = await agent.run(prompt, session=session, stream=False)
+    call_contents = [
+        content for message in response.messages for content in message.contents if content.type == "function_call"
+    ]
+    return (
+        response.text,
+        {content.call_id for content in call_contents if content.call_id is not None},
+        {str(content.arguments) for content in call_contents},
+        session,
+    )
+
+
+@pytest.mark.parametrize("provider", ["openai", "foundry"])
+@pytest.mark.parametrize(
+    ("first_stream", "second_stream"),
+    [(False, False), (True, True), (True, False)],
+    ids=["non-streaming", "streaming", "mixed"],
+)
+async def test_shared_chat_client_keeps_concurrent_agent_runs_isolated(
+    provider: str,
+    first_stream: bool,
+    second_stream: bool,
+) -> None:
+    model = "test-model"
+    transport = _ResponsesTransport(model)
+    client, async_client = _build_concurrency_client(provider, model, transport)
+
+    try:
+        first, second = await asyncio.gather(
+            _run_concurrent_agent(client, "first", stream=first_stream),
+            _run_concurrent_agent(client, "second", stream=second_stream),
+        )
+    finally:
+        await async_client.close()
+
+    first_text, first_call_ids, first_arguments, first_session = first
+    second_text, second_call_ids, second_arguments, second_session = second
+    assert first_text == "response for first"
+    assert second_text == "response for second"
+    assert first_call_ids == {"call-first"}
+    assert second_call_ids == {"call-second"}
+    assert json.dumps({"prompt": "first"}) in first_arguments
+    assert json.dumps({"prompt": "second"}) in second_arguments
+    assert transport.requests["first"][0]["previous_response_id"] == "previous-first"
+    assert transport.requests["second"][0]["previous_response_id"] == "previous-second"
+    assert all("second" not in json.dumps(request) for request in transport.requests["first"])
+    assert all("first" not in json.dumps(request) for request in transport.requests["second"])
+    assert first_session.service_session_id == "response-first"
+    assert second_session.service_session_id == "response-second"
+    assert transport.max_active_requests == 2

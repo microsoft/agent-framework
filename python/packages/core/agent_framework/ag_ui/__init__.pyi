@@ -8,10 +8,13 @@ from agent_framework_ag_ui import (
     AGUIHttpService,
     AGUIThreadSnapshot,
     AGUIThreadSnapshotStore,
+    AuthorizationScopeResolver,
     InMemoryAGUIThreadSnapshotStore,
     SnapshotScopeResolver,
     __version__,
     add_agent_framework_fastapi_endpoint,
+    agent_framework_messages_to_agui_host_history,
+    state_carrier,
     state_update,
 )
 
@@ -23,9 +26,12 @@ __all__ = [
     "AGUIThreadSnapshotStore",
     "AgentFrameworkAgent",
     "AgentFrameworkWorkflow",
+    "AuthorizationScopeResolver",
     "InMemoryAGUIThreadSnapshotStore",
     "SnapshotScopeResolver",
     "__version__",
     "add_agent_framework_fastapi_endpoint",
+    "agent_framework_messages_to_agui_host_history",
+    "state_carrier",
     "state_update",
 ]

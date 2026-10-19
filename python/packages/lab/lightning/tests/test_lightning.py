@@ -126,7 +126,9 @@ async def test_observability(workflow_two_agents: Workflow):
             |                    |
         [chat gpt-4o]        [chat gpt-4o]
     """
-    pytest.importorskip("agentlightning")
+    # agentlightning imports optional proxy dependencies that may fail independently.
+    # Keep this optional observability test skippable when any such import is broken.
+    pytest.importorskip("agentlightning", exc_type=ImportError)
     from agent_framework_lab_lightning import AgentFrameworkTracer
     from agentlightning.adapter import TracerTraceToTriplet
 

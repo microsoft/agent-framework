@@ -293,6 +293,112 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
         Assert.Contains("error", results[0].Snippet);
     }
 
+    // Both stores number through AgentFileStore.ScanContent, so the line, terminator and snippet-offset
+    // rules are pinned once in AgentFileStoreContractTests. These cover the same ground against real
+    // files, where content arrives through a decoded read rather than an in-memory string.
+
+    [Fact]
+    public async Task SearchFilesAsync_ReportsLinesVerbatimAsync()
+    {
+        // Arrange
+        await this._store.WriteAsync("notes.md", "Line one\nLine two with match\nLine three\nLine four with match");
+
+        // Act
+        var results = await this._store.SearchAsync("", "match");
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(2, results[0].MatchingLines.Count);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+        // Lines are reported verbatim, so an interior line keeps its terminator.
+        Assert.Equal("Line two with match\n", results[0].MatchingLines[0].Line);
+        Assert.Equal(4, results[0].MatchingLines[1].LineNumber);
+        // The last line has no terminator in the content, so none is reported.
+        Assert.Equal("Line four with match", results[0].MatchingLines[1].Line);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_ReportsCrlfLinesVerbatimAsync()
+    {
+        // Arrange
+        await this._store.WriteAsync("notes.md", "alpha\r\nbeta match\r\ngamma\r\n");
+
+        // Act
+        var results = await this._store.SearchAsync("", "match");
+
+        // Assert — the CRLF is preserved, so the line can be fed back to replace_lines unchanged.
+        Assert.Single(results);
+        Assert.Single(results[0].MatchingLines);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+        Assert.Equal("beta match\r\n", results[0].MatchingLines[0].Line);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_TrailingNewline_DoesNotReportAnExtraLineAsync()
+    {
+        // Arrange — a newline-terminated file has as many lines as the line editor sees, not one more.
+        await this._store.WriteAsync("notes.md", "a\nb\n");
+
+        // Act — a pattern that also matches an empty line.
+        var results = await this._store.SearchAsync("", "^.*$");
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(2, results[0].MatchingLines.Count);
+        Assert.Equal("a\n", results[0].MatchingLines[0].Line);
+        Assert.Equal("b\n", results[0].MatchingLines[1].Line);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_LoneCarriageReturn_SplitsLikeTheLineEditorAsync()
+    {
+        // Arrange — a lone '\r' terminates a line for the line editor, so grep must agree.
+        await this._store.WriteAsync("notes.md", "alpha\rbeta match\rgamma");
+
+        // Act
+        var results = await this._store.SearchAsync("", "match");
+
+        // Assert
+        Assert.Single(results);
+        Assert.Single(results[0].MatchingLines);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+        Assert.Equal("beta match\r", results[0].MatchingLines[0].Line);
+    }
+
+    [Theory]
+    [InlineData("alpha\r\nbeta match\r\ngamma\r\n")]
+    [InlineData("alpha\rbeta match\rgamma")]
+    [InlineData("alpha\nbeta match\ngamma\n")]
+    public async Task SearchFilesAsync_EndAnchoredPatternMatchesRegardlessOfTerminatorAsync(string content)
+    {
+        // Arrange — the pattern anchors to the end of the line's text, which is "beta match".
+        await this._store.WriteAsync("notes.md", content);
+
+        // Act
+        var results = await this._store.SearchAsync("", "match$");
+
+        // Assert — the terminator is not part of the text the pattern is matched against.
+        Assert.Single(results);
+        Assert.Single(results[0].MatchingLines);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_SnippetIsAnchoredAtTheMatchAsync()
+    {
+        // Arrange — the leading line is long enough that the ±50 char snippet window is not clamped to
+        // the start of the file, so an off-by-one in the per-line offset would shift the snippet.
+        string padding = new('x', 60);
+        await this._store.WriteAsync("notes.md", $"{padding}\nneedle\n");
+
+        // Act
+        var results = await this._store.SearchAsync("", "needle");
+
+        // Assert — the match starts at index 61, so the snippet starts at index 11.
+        Assert.Single(results);
+        Assert.Equal($"{new string('x', 49)}\nneedle\n", results[0].Snippet);
+    }
+
     [Fact]
     public async Task SearchFilesAsync_GlobFilter_ExcludesNonMatchingAsync()
     {

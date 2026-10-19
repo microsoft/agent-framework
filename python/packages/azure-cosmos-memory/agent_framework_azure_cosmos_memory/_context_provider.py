@@ -9,7 +9,9 @@ This module provides ``CosmosMemoryContextProvider``, built on the
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -17,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._settings import load_settings
-from agent_framework._telemetry import mark_feature_used
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 
 from ._feature_usage import FeatureIndex
 
@@ -110,7 +112,8 @@ class CosmosMemoryContextProvider(ContextProvider):
             cosmos_database: Cosmos DB database name.
                 Can be set via ``COSMOS_DATABASE``.
             foundry_endpoint: Azure AI Foundry project endpoint for LLM and embeddings.
-                Can be set via ``FOUNDRY_ENDPOINT``.
+                Can be set via ``FOUNDRY_PROJECT_ENDPOINT``. The legacy
+                ``FOUNDRY_ENDPOINT`` name remains supported as a fallback.
             embedding_model: Embedding model deployment name. Required (no default) when the
                 provider builds the client; can be set via ``EMBEDDING_MODEL``. There is no safe
                 long-term default, so an unset value raises rather than silently targeting a model
@@ -147,12 +150,20 @@ class CosmosMemoryContextProvider(ContextProvider):
             SettingNotFoundError: If ``cosmos_endpoint``, ``foundry_endpoint``, ``embedding_model``,
                 or ``chat_model`` cannot be resolved from arguments or the environment (only when
                 ``memory_client`` is not supplied).
+            ValueError: If ``top_k`` is not positive, or ``min_confidence`` is outside 0.0-1.0.
         """
         super().__init__(source_id)
 
         # Track whether we created the client (and thus should close it in __aexit__)
         # vs. received a pre-created client (which the caller owns and should close)
         self._should_close_client = False
+        # Both values reach the toolkit on every retrieval, where bad ones fail silently: a
+        # non-positive top_k makes the toolkit raise (logged per turn, no memories), and a
+        # min_confidence outside 0.0-1.0 either matches nothing or drops the filter entirely.
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than 0")
+        if not 0.0 <= min_confidence <= 1.0:
+            raise ValueError("min_confidence must be between 0.0 and 1.0")
         self.top_k = top_k
         self.min_confidence = min_confidence
         self.memory_types: list[MemoryType] = list(memory_types) if memory_types else ["fact", "procedural"]
@@ -193,7 +204,9 @@ class CosmosMemoryContextProvider(ContextProvider):
                 CosmosMemorySettings,
                 cosmos_endpoint=cosmos_endpoint,
                 cosmos_database=cosmos_database,
-                foundry_endpoint=foundry_endpoint,
+                # Prefer the repository-wide project endpoint name. ``load_settings`` still
+                # resolves the legacy FOUNDRY_ENDPOINT variable when this override is absent.
+                foundry_endpoint=foundry_endpoint or os.getenv("FOUNDRY_PROJECT_ENDPOINT"),
                 embedding_model=embedding_model,
                 chat_model=chat_model,
                 required_fields=["cosmos_endpoint", "foundry_endpoint", "embedding_model", "chat_model"],
@@ -205,6 +218,11 @@ class CosmosMemoryContextProvider(ContextProvider):
             # toolkit client, whose deployment-name parameters are non-optional ``str``.
             embedding_model = cast("str", settings.get("embedding_model"))
             chat_model = cast("str", settings.get("chat_model"))
+
+            # Defer the import because the package exports this provider before setting its version.
+            from . import __version__
+
+            user_agent = f"{get_user_agent()} agent-framework-azure-cosmos-memory/{__version__}"
 
             # Authentication: if the caller supplies a credential, wire it into both the Cosmos
             # and AI Foundry clients and disable the toolkit's default-credential creation.
@@ -221,6 +239,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     cosmos_credential=credential,
                     ai_foundry_credential=credential,
                     use_default_credential=False,
+                    user_agent=user_agent,
                     cadence_thresholds=cadence_thresholds or None,
                 )
             else:
@@ -231,6 +250,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     embedding_deployment_name=embedding_model,
                     chat_deployment_name=chat_model,
                     use_default_credential=True,
+                    user_agent=user_agent,
                     cadence_thresholds=cadence_thresholds or None,
                 )
             self._should_close_client = True
@@ -238,6 +258,12 @@ class CosmosMemoryContextProvider(ContextProvider):
         self.memory_client = memory_client
         self._cosmos_endpoint = cosmos_endpoint
         self._foundry_endpoint = foundry_endpoint
+        procedural_builder = getattr(self.memory_client, "build_procedural_context", None)
+        self._supports_toolkit_03_retrieval = (
+            "include_episodes" in inspect.signature(self.memory_client.search_cosmos).parameters
+            and procedural_builder is not None
+            and "task" in inspect.signature(procedural_builder).parameters
+        )
 
     def _resolve_user_id(self, state: dict[str, Any], session: AgentSession) -> str:
         """Resolve the user id for memory scoping.
@@ -358,26 +384,51 @@ class CosmosMemoryContextProvider(ContextProvider):
         # Get user_id from state or session (warns once if no stable user_id was provided)
         user_id = self._resolve_user_id(state, session)
 
-        # Memory search and user-summary retrieval are independent: the user summary
-        # provides baseline context even when no memories match the query, so a failure
-        # in one must not suppress the other. They get separate error handling.
-        try:
-            results = await self.memory_client.search_cosmos(
-                search_terms=query_text,
-                user_id=user_id,
-                top_k=self.top_k,
-                memory_types=[str(t) for t in self.memory_types],
-                min_confidence=self.min_confidence,
-            )
+        memory_sections: list[str] = []
 
-            if results:
-                # Format and inject memories
-                memory_content = self._format_memories(results)
-                context.extend_messages(
-                    self.source_id, [Message(role="user", contents=[f"{self.context_prompt}\n{memory_content}"])]
+        # Toolkit 0.3.0b2 compiles task-aware procedures separately. Older supported
+        # clients keep their existing generic procedural search behavior.
+        search_memory_types = [
+            str(memory_type)
+            for memory_type in self.memory_types
+            if not self._supports_toolkit_03_retrieval or memory_type != "procedural"
+        ]
+        if search_memory_types:
+            try:
+                search_kwargs: dict[str, Any] = {
+                    "search_terms": query_text,
+                    "user_id": user_id,
+                    "top_k": self.top_k,
+                    "memory_types": search_memory_types,
+                    "min_confidence": self.min_confidence,
+                }
+                if self._supports_toolkit_03_retrieval:
+                    search_kwargs["include_episodes"] = "episodic" in self.memory_types
+
+                results = await self.memory_client.search_cosmos(**search_kwargs)
+                if results:
+                    memory_sections.append(self._format_memories(results))
+            except Exception as e:
+                logger.warning("Failed to retrieve memories: %s", e, exc_info=True)
+
+        if self._supports_toolkit_03_retrieval and "procedural" in self.memory_types:
+            try:
+                procedural_builder = cast("Any", self.memory_client.build_procedural_context)
+                procedural_context = await procedural_builder(
+                    user_id=user_id,
+                    task=query_text,
                 )
-        except Exception as e:
-            logger.warning("Failed to retrieve memories: %s", e, exc_info=True)
+                if procedural_context and procedural_context.strip():
+                    memory_sections.append(procedural_context.strip())
+            except Exception as e:
+                logger.warning("Failed to retrieve procedural context: %s", e, exc_info=True)
+
+        if memory_sections:
+            memory_content = "\n".join(memory_sections)
+            context.extend_messages(
+                self.source_id,
+                [Message(role="user", contents=[f"{self.context_prompt}\n{memory_content}"])],
+            )
 
         # Retrieve and inject user summary as untrusted context.
         # This is INDEPENDENT of search results - even if no memories match the query,
@@ -437,7 +488,9 @@ class CosmosMemoryContextProvider(ContextProvider):
 
         # TODO(atty57): The toolkit renamed add_cosmos -> upsert_memory (same kwargs); accept either
         # until the declared azure-cosmos-agent-memory floor is past the rename, then inline it.
-        write_turn = getattr(self.memory_client, "upsert_memory", None) or self.memory_client.add_cosmos
+        write_turn = getattr(self.memory_client, "upsert_memory", None)
+        if write_turn is None:
+            write_turn = getattr(self.memory_client, "add_cosmos")  # ruff: ignore[get-attr-with-constant]
 
         try:
             # Store input messages (skip empty/whitespace-only content to avoid junk turns)

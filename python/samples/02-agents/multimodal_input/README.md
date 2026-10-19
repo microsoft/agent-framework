@@ -44,7 +44,7 @@ Optionally for Azure OpenAI:
 # Example: Pass the Foundry project endpoint directly
 client = FoundryChatClient(
     credential=AzureCliCredential(),
-    project_endpoint="https://your-project.services.ai.azure.com",
+    project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
     model="your-deployment-name",
 )
 ```

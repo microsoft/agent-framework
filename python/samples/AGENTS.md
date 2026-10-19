@@ -10,7 +10,8 @@ python/samples/
 ├── 01-get-started/          # Progressive tutorial (steps 01–07)
 ├── 02-agents/               # Deep-dive concept samples
 │   ├── tools/               # Tool patterns (function, approval, schema, etc.)
-│   ├── middleware/           # One file per middleware concept
+│   ├── vector_stores/       # Vector models, filters, in-memory search, and tools
+│   ├── middleware/          # One file per middleware concept
 │   ├── conversations/       # Thread, storage, suspend/resume
 │   ├── providers/           # One sub-folder per provider (azure_ai/, openai/, etc.)
 │   ├── context_providers/   # Memory & context injection
@@ -75,6 +76,10 @@ Durable Task and Azure Functions samples are maintained in the [Durable Agent Fr
 
 All canonical samples (01-get-started) use **Microsoft Foundry project-backed chat** via `FoundryChatClient`
 with a Microsoft Foundry project endpoint:
+
+Whenever a sample, README, or comment shows a literal Foundry project endpoint, use the full project-scoped form
+`https://your-account.services.ai.azure.com/api/projects/your-project`. Do not shorten the example to the
+account-level endpoint.
 
 ```python
 import os

@@ -7,9 +7,9 @@ import inspect
 import logging
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, cast, overload, runtime_checkable
 
 from ._clients import SupportsChatGetResponse
 from ._feature_stage import ExperimentalFeature, experimental
@@ -19,6 +19,7 @@ from ._types import (
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     normalize_messages,
@@ -151,6 +152,72 @@ class MiddlewareType(str, Enum):
     CHAT = "chat"
 
 
+def _select_run_level_tools(tools: Any, options: Mapping[str, Any] | None) -> Any:
+    """Select this invocation's run-level tool source.
+
+    The named ``tools`` parameter takes precedence over a ``tools`` entry in the
+    options mapping. This is the framework's single statement of that rule — the run-start
+    resolution (:meth:`AgentContext._resolve_run_start_tools`, projected into
+    ``agent_startup`` by observability middleware) and the run's own setup
+    (``Agent._prepare_run_context``) both consume it, so the run-start view can never
+    disagree with what the run executes.
+    """
+    if tools is not None:
+        return tools
+    if options is not None:
+        return options.get("tools")
+    return None
+
+
+def _materialize_tool_container(tools: Any) -> Any:
+    """Materialize one-shot iterable tool containers into lists, tools untouched.
+
+    ``normalize_tools`` recursively flattens any iterable tool collection — including
+    the ``.tools`` collection of wrapper objects — so generators and other single-pass
+    iterables are supported containers at every nesting level; but each observer that
+    iterates one consumes it for everyone after it. This walks exactly the container
+    shapes that flattening walks (in flattening's own order) and lists them once,
+    without converting any tool: middleware must keep seeing the caller's original
+    tool objects, so identity-based policy checks still fire. Tool leaves pass through
+    untouched, and any container or wrapper whose contents needed no materialization
+    keeps its identity. A wrapper whose ``.tools`` collection is one-shot (or holds a
+    one-shot) cannot be preserved without mutating the caller's object, so exactly
+    that case is expanded into its materialized tools — the same contents flattening
+    would have produced from it.
+    """
+    from pydantic import BaseModel
+
+    from ._mcp import MCPTool
+    from ._tools import FunctionTool
+
+    def materialize(value: Any) -> Any:
+        # Tool leaves flattening never iterates, in flattening's own order.
+        if value is None or isinstance(value, (FunctionTool, dict, MCPTool, str, bytes, bytearray)) or callable(value):
+            return cast("Any", value)
+        # Wrapper objects exposing an iterable ``.tools`` collection (mapping-like
+        # toolboxes, pydantic wrappers): flattening reads and iterates that attribute
+        # — before its Mapping/BaseModel exclusions — so its contents must be
+        # materialized here too.
+        collection = getattr(value, "tools", None)
+        if isinstance(collection, Iterable) and not isinstance(collection, (str, bytes, bytearray, Mapping)):
+            items = [materialize(item) for item in cast("Iterable[Any]", collection)]
+            if isinstance(collection, Collection) and all(
+                new is old for new, old in zip(items, cast("Collection[Any]", collection))
+            ):
+                # The collection is safely re-iterable and its contents needed no
+                # materialization: keep the wrapper itself.
+                return value
+            return items
+        if isinstance(value, (Mapping, BaseModel)) or not isinstance(value, Iterable):
+            return cast("Any", value)
+        items = [materialize(item) for item in cast("Iterable[Any]", value)]
+        if isinstance(value, Sequence) and all(new is old for new, old in zip(items, cast("Sequence[Any]", value))):
+            return cast("Any", value)
+        return items
+
+    return materialize(tools)
+
+
 class AgentContext:
     """Context object for agent middleware invocations.
 
@@ -218,7 +285,12 @@ class AgentContext:
             Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[AgentResponse], AgentResponse | Awaitable[AgentResponse]]]
+        stream_result_hooks: Sequence[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ]
         | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
@@ -260,11 +332,97 @@ class AgentContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[AgentResponse[Any]], Sequence[AgentResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
+        self._stream_terminal_result_transforms: list[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ] = []
+        self._stream_terminal_result_gates: list[Callable[[AgentResponse[Any]], object]] = []
+        self._stream_terminal_result_to_updates: (
+            Callable[[AgentResponse[Any]], Sequence[AgentResponseUpdate]] | None
+        ) = None
+        self._stream_terminal_result_is_authoritative = False
+        self._stream_release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._stream_release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
         # Set by egress-enforcement middleware (agent-hooks): the run-persistence gate
         # covering this pipeline's run. The final handler offers it for adoption by
         # the run it starts (see _sessions._offer_run_persistence_gate_claim), so the
         # gate binds to that run's identity and never to middleware-initiated runs.
         self._run_persistence_gate: _RunPersistenceGate | None = None
+
+    @property
+    def stream_update_transforms(
+        self,
+    ) -> list[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]]:
+        """Transforms applied to agent updates after the middleware chain unwinds."""
+        return self.stream_transform_hooks
+
+    @stream_update_transforms.setter
+    def stream_update_transforms(
+        self,
+        transforms: Sequence[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]],
+    ) -> None:
+        self.stream_transform_hooks = list(transforms)
+
+    @property
+    def stream_result_transforms(
+        self,
+    ) -> list[
+        Callable[
+            [AgentResponse[Any]],
+            AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+        ]
+    ]:
+        """Transforms applied to the finalized agent response after middleware unwinds."""
+        return self.stream_result_hooks
+
+    @stream_result_transforms.setter
+    def stream_result_transforms(
+        self,
+        transforms: Sequence[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ],
+    ) -> None:
+        self.stream_result_hooks = list(transforms)
+
+    def _resolve_run_start_tools(self) -> list[ToolTypes]:
+        """Resolve the run-start tool list for this invocation, normalized.
+
+        This is the framework's one statement of the run-start tool policy, kept next
+        to the run-option rules it mirrors so they evolve together (middleware such as
+        agent-hooks reads it instead of re-deriving the precedence): the agent's
+        declared tools (:class:`~agent_framework.Agent` keeps them in
+        ``default_options["tools"]``; other agent implementations may expose a
+        ``tools`` attribute) followed by this invocation's run-level tools, where the
+        named ``tools`` parameter takes precedence over a ``tools`` entry in the
+        options mapping — matching the run's own resolution in
+        ``Agent._prepare_run_context``. Tools registered later in the run (context
+        providers during run preparation, MCP servers expanding at connect time,
+        progressive tool exposure) are deliberately not part of the run-start view.
+
+        Normalization errors propagate; callers that must not fail should guard.
+        """
+        from ._tools import normalize_tools
+
+        declared_options = getattr(self.agent, "default_options", None)
+        declared: Any = (
+            cast("Mapping[str, Any]", declared_options).get("tools") if isinstance(declared_options, Mapping) else None
+        )
+        if declared is None:
+            declared = getattr(self.agent, "tools", None)
+        run_level = _select_run_level_tools(self.tools, self.options)
+        return [*normalize_tools(declared), *normalize_tools(run_level)]
 
 
 class FunctionInvocationContext:
@@ -275,12 +433,34 @@ class FunctionInvocationContext:
 
     Attributes:
         function: The function being invoked.
-        arguments: The validated arguments for the function.
+        arguments: The function arguments. In the automatic function-calling loop,
+                schema-compatible provider arguments retain the existing normalized
+                mapping contract. If provisional normalization rejects provider
+                arguments, middleware instead receives the raw JSON-parsed mapping and
+                may repair it before calling ``call_next()``. The innermost handler
+                validates changed or previously invalid arguments immediately before
+                execution, then stores the normalized mapping back on this attribute.
+                Middleware that short-circuits without calling ``call_next()`` skips
+                final validation and function execution.
         session: The agent session for this invocation, if any.
         metadata: Metadata dictionary for sharing data between function middleware.
-        result: Function execution result. Can be observed after calling ``call_next()``
-                to see the actual execution result or can be set to override the execution result.
+        result: Function execution result. This attribute carries no guaranteed type.
+                The pipeline assigns :meth:`FunctionTool.invoke`'s output — a
+                ``list[Content]``, or the wrapped function's raw return value when the
+                tool is configured with ``result_parser=SKIP_PARSING`` — at the innermost
+                link of the chain, so only the innermost middleware observes it directly.
+                Every middleware above observes whatever the ones below it left behind,
+                and any middleware may overwrite it with a value of any type. On the way
+                out, only ``list[Content]`` and ``str`` survive intact: every other value,
+                a bare ``Content`` included, is stringified into a single text item, so
+                rebuild the list rather than assigning one item back. The exception is a
+                bare ``Content`` of type ``function_approval_request``, which the
+                invocation layer passes through untouched to drive the approval flow.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+        parent_service_session_state_keys: Provider-owned keys in ``session.state`` declared by the invoking
+                parent agent and its client. The automatic function-calling loop supplies this value. Custom loops
+                that directly invoke an agent tool with session propagation must provide it explicitly, including
+                an empty collection when the parent declares no such keys.
         tools: The live, mutable list of tools available to the model for the current
                 agent run, or ``None`` when the function is invoked outside of a
                 function-calling loop (for example via ``FunctionTool.invoke`` directly).
@@ -328,19 +508,25 @@ class FunctionInvocationContext:
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,
         tools: list[ToolTypes] | None = None,
+        parent_service_session_state_keys: Collection[str] | None = None,
     ) -> None:
         """Initialize the FunctionInvocationContext.
 
         Args:
             function: The function being invoked.
-            arguments: The validated arguments for the function.
+            arguments: The function arguments. Automatic invocation supplies a normalized
+                mapping when provisional validation succeeds, otherwise the raw JSON-parsed
+                mapping so middleware can repair it before final validation.
             session: The agent session for this invocation, if any.
             metadata: Metadata dictionary for sharing data between function middleware.
-            result: Function execution result.
+            result: Function execution result. Observed and overridden values do not
+                share a type; see the class docstring before type-checking it.
             kwargs: Additional runtime keyword arguments forwarded to the function invocation.
             tools: The live, mutable list of tools for the current agent run. When provided,
                 this is the same list object the model sees on the next iteration, so
                 appending or removing tools changes the model's available tools.
+            parent_service_session_state_keys: Provider-owned keys declared by the invoking parent agent and client,
+                or ``None`` when the invocation path cannot establish that ownership.
         """
         self.function = function
         self.arguments = arguments
@@ -348,6 +534,9 @@ class FunctionInvocationContext:
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}
+        self.parent_service_session_state_keys: frozenset[str] | None = (
+            frozenset(parent_service_session_state_keys) if parent_service_session_state_keys is not None else None
+        )
         self.tools = tools
 
     @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
@@ -459,6 +648,11 @@ class ChatContext:
         stream_result_hooks: Hooks applied to the finalized response (after finalizer).
         stream_cleanup_hooks: Hooks executed after stream consumption (before finalizer).
 
+    Middleware that constructs provider-local replacement messages can call
+    :meth:`record_message_replacement` before downstream middleware runs. The replacement
+    remains call-local, but compaction summaries derived from it can be reconciled back to
+    the caller-owned source messages.
+
     Examples:
         .. code-block:: python
 
@@ -497,7 +691,13 @@ class ChatContext:
             Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[ChatResponse], ChatResponse | Awaitable[ChatResponse]]] | None = None,
+        stream_result_hooks: Sequence[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ]
+        | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
         """Initialize the ChatContext.
@@ -530,6 +730,119 @@ class ChatContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[ChatResponse[Any]], Sequence[ChatResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
+        self._stream_terminal_result_transforms: list[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ] = []
+        self._stream_terminal_result_gates: list[Callable[[ChatResponse[Any]], object]] = []
+        self._stream_terminal_result_to_updates: Callable[[ChatResponse[Any]], Sequence[ChatResponseUpdate]] | None = (
+            None
+        )
+        self._stream_terminal_result_is_authoritative = False
+        self._stream_release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._stream_release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
+        self._message_replacements: list[tuple[Message, tuple[Message, ...]]] = []
+        self._fallback_reconciliation_messages: list[Message] | None = None
+
+    @property
+    def stream_update_transforms(
+        self,
+    ) -> list[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]]:
+        """Transforms applied to chat updates after the middleware chain unwinds."""
+        return self.stream_transform_hooks
+
+    @stream_update_transforms.setter
+    def stream_update_transforms(
+        self,
+        transforms: Sequence[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]],
+    ) -> None:
+        self.stream_transform_hooks = list(transforms)
+
+    @property
+    def stream_result_transforms(
+        self,
+    ) -> list[
+        Callable[
+            [ChatResponse[Any]],
+            ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+        ]
+    ]:
+        """Transforms applied to the finalized chat response after middleware unwinds."""
+        return self.stream_result_hooks
+
+    @stream_result_transforms.setter
+    def stream_result_transforms(
+        self,
+        transforms: Sequence[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ],
+    ) -> None:
+        self.stream_result_hooks = list(transforms)
+
+    def record_message_replacement(
+        self,
+        replacement: Message,
+        sources: Message | Sequence[Message],
+    ) -> Message:
+        """Record replacement provenance for downstream compaction reconciliation.
+
+        This method does not modify :attr:`messages` or persist ``replacement``. It records
+        that the replacement carries content derived from caller-owned source messages, so
+        a downstream compaction summary can durably exclude and summarize those sources.
+        When one source becomes multiple replacement messages, record every replacement;
+        reconciliation rejects summaries that cover only part of the split.
+
+        Args:
+            replacement: A middleware-created replacement message.
+            sources: One or more messages replaced by ``replacement``.
+
+        Returns:
+            The replacement message, for convenient use while rebuilding a message list.
+
+        Raises:
+            TypeError: If ``replacement`` or any source is not a :class:`Message`.
+            ValueError: If no sources are provided or the replacement is also a source.
+        """
+        if not isinstance(replacement, Message):
+            raise TypeError("replacement must be a Message")
+
+        if isinstance(sources, Message):
+            source_messages = (sources,)
+        elif isinstance(sources, Sequence) and not isinstance(sources, (str, bytes, bytearray)):
+            source_messages = tuple(sources)
+        else:
+            raise TypeError("sources must be a Message or a sequence of Message objects")
+
+        if not source_messages:
+            raise ValueError("sources must contain at least one Message")
+
+        unique_sources: list[Message] = []
+        seen_source_identities: set[int] = set()
+        for source in source_messages:
+            if not isinstance(source, Message):
+                raise TypeError("sources must contain only Message objects")
+            if source is replacement:
+                raise ValueError("replacement cannot also be one of its sources")
+            source_identity = id(source)
+            if source_identity in seen_source_identities:
+                continue
+            seen_source_identities.add(source_identity)
+            unique_sources.append(source)
+
+        self._message_replacements.append((replacement, tuple(unique_sources)))
+        return replacement
 
 
 class AgentMiddleware(ABC):
@@ -591,12 +904,33 @@ class AgentMiddleware(ABC):
         ...
 
 
+@runtime_checkable
+class _ApprovalResponseObserver(Protocol):
+    """Private capability for authenticated approval lifecycle notifications."""
+
+    def _on_approval_responses(
+        self,
+        responses: Sequence[Content],
+        *,
+        session: AgentSession | None,
+    ) -> None:
+        """Observe non-executing responses already bound to authoritative state."""
+
+
 class FunctionMiddleware(ABC):
     """Abstract base class for function middleware that can intercept function invocations.
 
     Function middleware allows you to intercept and modify function/tool invocations before
-    and after execution. You can validate arguments, cache results, log invocations, or
-    override function execution.
+    and after execution. On entry, schema-compatible calls retain normalized arguments.
+    When provisional normalization rejects provider arguments, middleware receives the raw
+    JSON-parsed mapping so it can repair provider-specific deviations before calling
+    ``call_next()``. The innermost handler validates changed or previously invalid arguments
+    immediately before execution and updates ``context.arguments`` with normalized values.
+    You can also cache results, log invocations, or override function execution.
+
+    Argument-repair middleware must run before security or policy middleware so those
+    layers inspect the effective invocation. Changing arguments after security middleware
+    has processed them fails closed with :class:`MiddlewareFailure`.
 
     Note:
         FunctionMiddleware is an abstract base class. You must subclass it and implement
@@ -649,8 +983,13 @@ class FunctionMiddleware(ABC):
 
         Args:
             context: Function invocation context containing function, arguments, and metadata.
-                    MiddlewareTypes can set context.result to override execution, or observe
-                    the actual execution result after calling call_next().
+                    Before ``call_next()``, automatic invocation exposes normalized
+                    arguments for schema-compatible calls and raw JSON-parsed arguments
+                    when provisional validation failed. Middleware may inspect or replace
+                    either mapping. After ``call_next()`` reaches the function, arguments
+                    contain their validated, normalized values. MiddlewareTypes can set
+                    context.result to override execution, or observe the actual execution
+                    result after calling call_next().
             call_next: Function to call the next middleware or final function execution.
                   Does not return anything - all data flows through the context.
 
@@ -658,6 +997,13 @@ class FunctionMiddleware(ABC):
             MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
             or observe context.result after calling call_next() for actual results.
+            The observed value has no guaranteed type: the innermost middleware sees
+            :meth:`FunctionTool.invoke`'s output — ``list[Content]``, or the raw return
+            value under ``SKIP_PARSING`` — while an outer one sees whatever the inner
+            middleware left. Overriding with anything but ``list[Content]`` or ``str``
+            collapses the result into a single stringified text item, except a bare
+            ``Content`` of type ``function_approval_request``, which passes through
+            untouched to drive the approval flow.
         """
         ...
 
@@ -1012,6 +1358,26 @@ class BaseMiddlewarePipeline(ABC):
             )
 
 
+def _warn_unbuffered_result_gates(stream: ResponseStream[Any, Any]) -> None:
+    """Warn when result gates are registered on a stream that releases updates unbuffered.
+
+    A result gate runs at finalization, so on an unbuffered stream the consumer has already
+    received every update by the time the gate raises: the gate fails open. Buffering holds
+    the updates until the gates pass. The check reads the final stream state, so gates and
+    buffering a middleware configured directly on the stream are reflected too.
+    """
+    if not stream._stream_updates:  # pyright: ignore[reportPrivateUsage]
+        return
+    if not (stream._result_gates_before or stream._result_gates_after):  # pyright: ignore[reportPrivateUsage]
+        return
+    logger.warning(
+        "Result gates are registered on a streamed run that releases updates unbuffered; "
+        "updates reach the consumer before the gates run, so a gate that raises cannot hold "
+        "the answer back. Enable buffering (stream_buffer_updates=True or buffer_updates()) "
+        "to make the gates blocking."
+    )
+
+
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes agent middleware in a chain.
 
@@ -1090,12 +1456,39 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in reversed(context.stream_update_transforms):
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in reversed(context.stream_result_transforms):
                 context.result.with_result_hook(result_hook)
+            for gate in reversed(context.stream_update_gates_before):
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_update_gates_after):
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in reversed(context.stream_result_gates_before):
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_result_gates_after):
+                context.result.with_result_gate(gate, phase="after_transform")
+            for transform in context._stream_terminal_result_transforms:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_transform(transform)  # pyright: ignore[reportPrivateUsage]
+            for gate in context._stream_terminal_result_gates:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_gate(gate)  # pyright: ignore[reportPrivateUsage]
+            if context._stream_terminal_result_to_updates is not None:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_to_updates(  # pyright: ignore[reportPrivateUsage]
+                    context._stream_terminal_result_to_updates  # pyright: ignore[reportPrivateUsage]
+                )
+            if context._stream_terminal_result_is_authoritative:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_authoritative_terminal_result()  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_hook(hook)  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_error_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
+            _warn_unbuffered_result_gates(context.result)
         return context.result
 
 
@@ -1123,6 +1516,19 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
     def matches(self, middleware: Sequence[FunctionMiddlewareTypes]) -> bool:
         """Return whether this pipeline was built from the provided middleware sequence."""
         return self._source_middleware == tuple(middleware)
+
+    def _notify_approval_responses(
+        self,
+        responses: Sequence[Content],
+        *,
+        session: AgentSession | None,
+    ) -> None:
+        """Notify class-based middleware implementing the private observer capability."""
+        for middleware in self._middleware:
+            if isinstance(middleware, _ApprovalResponseObserver):
+                middleware._on_approval_responses(  # pyright: ignore[reportPrivateUsage]
+                    responses, session=session
+                )
 
     def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.
@@ -1246,7 +1652,13 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
 
             async def current_handler() -> None:
                 # MiddlewareTermination bubbles up to execute() to skip post-processing
-                await self._middleware[index].process(context, create_next_handler(index + 1))
+                try:
+                    await self._middleware[index].process(context, create_next_handler(index + 1))
+                finally:
+                    if context._fallback_reconciliation_messages is None:  # pyright: ignore[reportPrivateUsage]
+                        context._fallback_reconciliation_messages = list(  # pyright: ignore[reportPrivateUsage]
+                            context.messages
+                        )
 
             return current_handler
 
@@ -1255,12 +1667,39 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in reversed(context.stream_update_transforms):
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in reversed(context.stream_result_transforms):
                 context.result.with_result_hook(result_hook)
+            for gate in reversed(context.stream_update_gates_before):
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_update_gates_after):
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in reversed(context.stream_result_gates_before):
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_result_gates_after):
+                context.result.with_result_gate(gate, phase="after_transform")
+            for transform in context._stream_terminal_result_transforms:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_transform(transform)  # pyright: ignore[reportPrivateUsage]
+            for gate in context._stream_terminal_result_gates:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_gate(gate)  # pyright: ignore[reportPrivateUsage]
+            if context._stream_terminal_result_to_updates is not None:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_to_updates(  # pyright: ignore[reportPrivateUsage]
+                    context._stream_terminal_result_to_updates  # pyright: ignore[reportPrivateUsage]
+                )
+            if context._stream_terminal_result_is_authoritative:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_authoritative_terminal_result()  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_hook(hook)  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_error_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
+            _warn_unbuffered_result_gates(context.result)
         return context.result
 
 
@@ -1384,7 +1823,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             function_invocation_kwargs=function_invocation_kwargs,
         )
         source_messages = messages if isinstance(messages, list) else None
-        baseline_message_ids = {id(message) for message in messages}
+        source_message_identities = {id(message) for message in messages}
         middleware_messages = cast("list[Message]", context.messages)
         downstream_messages: list[Message] | None = None
 
@@ -1410,10 +1849,24 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
                 if source_messages is not None:
                     from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
 
+                    if downstream_messages is not None:
+                        reconciliation_messages = downstream_messages
+                    else:
+                        fallback_reconciliation_messages = (
+                            context._fallback_reconciliation_messages  # pyright: ignore[reportPrivateUsage]
+                        )
+                        reconciliation_messages = (
+                            fallback_reconciliation_messages
+                            if fallback_reconciliation_messages is not None
+                            else middleware_messages
+                        )
+
                     _reconcile_compaction_summaries(
                         source_messages,
-                        downstream_messages if downstream_messages is not None else middleware_messages,
-                        baseline_message_ids,
+                        reconciliation_messages,
+                        source_message_identities,
+                        message_replacements=context._message_replacements,  # pyright: ignore[reportPrivateUsage]
+                        warn_on_rejection=True,
                     )
 
         if stream:
@@ -1573,6 +2026,32 @@ class AgentMiddlewareLayer:
         effective_function_invocation_kwargs = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
+        # Select the winning run-level tool route first, then materialize only that
+        # source: the losing route is never iterated — a losing one-shot options
+        # entry stays untouched for its owner and cannot raise or trigger side
+        # effects — and it is dropped from the forwarded options (on a copy), so no
+        # layer below (telemetry serialization, run setup) ever consumes or records a
+        # source the run will not use. Materialization covers the nested collection
+        # forms normalize_tools recursively flattens, so every observer of the run —
+        # middleware pipeline, telemetry, run setup — shares one re-iterable
+        # structure of the caller's original tool objects: observation never consumes
+        # the run's tool source, and identity-based policy checks (for example
+        # rejecting one specific privileged callable) keep seeing exactly what the
+        # caller supplied.
+        selected_tools = _select_run_level_tools(tools, options)
+        materialized_tools = _materialize_tool_container(selected_tools)
+        if tools is not None:
+            tools = materialized_tools
+            if options is not None and "tools" in options:
+                options = cast(
+                    "ChatOptions[Any]",
+                    {key: item for key, item in options.items() if key != "tools"},
+                )
+        elif materialized_tools is not selected_tools:
+            # The options mapping supplied the winner; swap the materialized value in
+            # on a copy (the caller's mapping is never mutated).
+            options = cast("ChatOptions[Any]", {**cast("Mapping[str, Any]", options), "tools": materialized_tools})
+
         # Execute with middleware if available
         if not pipeline.has_middlewares:
             return super().run(  # type: ignore[misc, no-any-return]
@@ -1673,9 +2152,19 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
         # Must have at least 2 parameters (context and call_next)
         if len(params) >= 2:
-            first_param = params[0]
-            if hasattr(first_param.annotation, "__name__"):
-                annotation_name = first_param.annotation.__name__
+            annotation = params[0].annotation
+            # Postponed (``from __future__ import annotations``) or quoted annotations are
+            # strings; match them by class name without evaluating them.
+            annotation_name: str | None
+            if isinstance(annotation, str):
+                annotation = annotation.strip()
+                # A quoted annotation under postponed evaluation keeps its quotes, e.g. "'ChatContext'".
+                if len(annotation) >= 2 and annotation[0] == annotation[-1] and annotation[0] in "'\"":
+                    annotation = annotation[1:-1].strip()
+                annotation_name = annotation.rsplit(".", 1)[-1].strip()
+            else:
+                annotation_name = getattr(annotation, "__name__", None)
+            if annotation_name is not None:
                 if annotation_name == "AgentContext":
                     param_type = MiddlewareType.AGENT
                 elif annotation_name == "FunctionInvocationContext":

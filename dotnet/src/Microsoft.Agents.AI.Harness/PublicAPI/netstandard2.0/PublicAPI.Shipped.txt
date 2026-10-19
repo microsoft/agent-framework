@@ -1,0 +1,72 @@
+﻿#nullable enable
+Microsoft.Agents.AI.HarnessAgent
+Microsoft.Agents.AI.HarnessAgent.HarnessAgent(Microsoft.Extensions.AI.IChatClient! chatClient, Microsoft.Agents.AI.HarnessAgentOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> void
+Microsoft.Agents.AI.HarnessAgentOptions
+Microsoft.Agents.AI.HarnessAgentOptions.AIContextProviders.get -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIContextProvider!>?
+Microsoft.Agents.AI.HarnessAgentOptions.AIContextProviders.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.AgentModeProviderOptions.get -> Microsoft.Agents.AI.AgentModeProviderOptions?
+Microsoft.Agents.AI.HarnessAgentOptions.AgentModeProviderOptions.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.AgentSkillsSource.get -> Microsoft.Agents.AI.AgentSkillsSource?
+Microsoft.Agents.AI.HarnessAgentOptions.AgentSkillsSource.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.ChatHistoryProvider.get -> Microsoft.Agents.AI.ChatHistoryProvider?
+Microsoft.Agents.AI.HarnessAgentOptions.ChatHistoryProvider.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.ChatOptions.get -> Microsoft.Extensions.AI.ChatOptions?
+Microsoft.Agents.AI.HarnessAgentOptions.ChatOptions.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.Description.get -> string?
+Microsoft.Agents.AI.HarnessAgentOptions.Description.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableAgentModeProvider.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableAgentModeProvider.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableAgentSkillsProvider.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableAgentSkillsProvider.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableApprovalNotRequiredFunctionBypassing.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableApprovalNotRequiredFunctionBypassing.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableApprovalResponseBinding.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableApprovalResponseBinding.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableFileMemory.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableFileMemory.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableOpenTelemetry.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableOpenTelemetry.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableTodoProvider.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableTodoProvider.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableToolAutoApproval.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableToolAutoApproval.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.DisableWebSearch.get -> bool
+Microsoft.Agents.AI.HarnessAgentOptions.DisableWebSearch.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.HarnessAgentOptions() -> void
+Microsoft.Agents.AI.HarnessAgentOptions.HarnessInstructions.get -> string?
+Microsoft.Agents.AI.HarnessAgentOptions.HarnessInstructions.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.Id.get -> string?
+Microsoft.Agents.AI.HarnessAgentOptions.Id.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.MaximumIterationsPerRequest.get -> int?
+Microsoft.Agents.AI.HarnessAgentOptions.MaximumIterationsPerRequest.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.Name.get -> string?
+Microsoft.Agents.AI.HarnessAgentOptions.Name.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.OpenTelemetrySourceName.get -> string?
+Microsoft.Agents.AI.HarnessAgentOptions.OpenTelemetrySourceName.set -> void
+Microsoft.Agents.AI.HarnessAgentOptions.ToolApprovalAgentOptions.get -> Microsoft.Agents.AI.ToolApprovalAgentOptions?
+Microsoft.Agents.AI.HarnessAgentOptions.ToolApprovalAgentOptions.set -> void
+Microsoft.Extensions.AI.ChatClientHarnessExtensions
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.BackgroundAgents.get -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.BackgroundAgents.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.BackgroundAgentsProviderOptions.get -> Microsoft.Agents.AI.BackgroundAgentsProviderOptions?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.BackgroundAgentsProviderOptions.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.CompactionStrategy.get -> Microsoft.Agents.AI.Compaction.CompactionStrategy?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.CompactionStrategy.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.DisableCompaction.get -> bool
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.DisableCompaction.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.FileAccessProviderOptions.get -> Microsoft.Agents.AI.FileAccessProviderOptions?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.FileAccessProviderOptions.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.FileAccessStore.get -> Microsoft.Agents.AI.AgentFileStore?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.FileAccessStore.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.FileMemoryStore.get -> Microsoft.Agents.AI.AgentFileStore?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.FileMemoryStore.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.LoopAgentOptions.get -> Microsoft.Agents.AI.LoopAgentOptions?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.LoopAgentOptions.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.LoopEvaluators.get -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.LoopEvaluator!>?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.LoopEvaluators.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.MaxContextWindowTokens.get -> int?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.MaxContextWindowTokens.set -> void
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.MaxOutputTokens.get -> int?
+[MAAI001]Microsoft.Agents.AI.HarnessAgentOptions.MaxOutputTokens.set -> void
+const Microsoft.Agents.AI.HarnessAgent.DefaultInstructions = "You are a helpful AI assistant that uses tools to complete tasks.\n\n## General guidelines\n\n- Think through the task before acting. Break complex work into clear steps.\n- Use the tools available to you to gather information, perform actions, and verify results.\n- Explain your reasoning and thought process as you work through tasks.\n- Explain what you learned and what you are going to do next between tool calls, so the user can follow along with your thought process.\n- Avoid making more than 4 tool calls in a row without explaining what you are doing.\n- If a tool call fails or returns unexpected results, adapt your approach rather than repeating the same call.\n- When you have completed the task, present a clear and concise summary of what you did and what you found." -> string!
+static Microsoft.Extensions.AI.ChatClientHarnessExtensions.AsHarnessAgent(this Microsoft.Extensions.AI.IChatClient! chatClient, Microsoft.Agents.AI.HarnessAgentOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> Microsoft.Agents.AI.HarnessAgent!

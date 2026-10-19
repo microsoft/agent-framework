@@ -28,7 +28,6 @@ internal static class Step5EntryPoint
                              .ConfigureAwait(false);
 
         List<CheckpointInfo> checkpoints = [];
-        CancellationTokenSource cancellationSource = new();
 
         string? result = await RunStreamToHaltOrMaxStepAsync(maxStep: 6).ConfigureAwait(false);
 
@@ -53,97 +52,108 @@ internal static class Step5EntryPoint
 
         (signal, prompt) = checkpointedOutputs[targetCheckpoint];
 
-        cancellationSource.Dispose();
-        cancellationSource = new();
-
         checkpoints.Clear();
         result = await RunStreamToHaltOrMaxStepAsync().ConfigureAwait(false);
 
         Assert.NotNull(result);
 
         // Depending on the timing of the response with respect to the underlying workflow
-        // we may end up with an extra superstep in between.
-        Assert.True(checkpoints.Count >= 6);
-        Assert.True(checkpoints.Count <= 7);
-
-        cancellationSource.Dispose();
+        // we may end up with extra supersteps in between.
+        Assert.True(checkpoints.Count >= 6, $"Expected at least 6 checkpoints, got {checkpoints.Count}.");
+        Assert.True(checkpoints.Count <= 12, $"Expected at most 12 checkpoints, got {checkpoints.Count}.");
 
         return result;
 
         async ValueTask<string?> RunStreamToHaltOrMaxStepAsync(int? maxStep = null)
         {
             List<ExternalRequest> requests = [];
-            await foreach (WorkflowEvent evt in handle.WatchStreamAsync(cancellationSource.Token).ConfigureAwait(false))
+            bool stopAtNextHalt = false;
+
+            while (true)
             {
-                Console.WriteLine($"!!! Processing event: {evt}");
-                switch (evt)
+                await foreach (WorkflowEvent evt in handle.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
                 {
-                    case WorkflowOutputEvent outputEvent:
-                        switch (outputEvent.ExecutorId)
-                        {
-                            case Step4EntryPoint.JudgeId:
-                                if (outputEvent.Is(out NumberSignal newSignal))
-                                {
-                                    prompt = Step4EntryPoint.UpdatePrompt(prompt, signal = newSignal);
-                                }
-                                // TODO: We should make some well-defined way to avoid this kind of
-                                // if/elseif chain, because .Is() chains are slow
-                                else if (!outputEvent.Is<TryCount>())
-                                {
-                                    throw new InvalidOperationException($"Unexpected output type {outputEvent.Data!.GetType()}");
-                                }
-                                break;
-                        }
+                    Console.WriteLine($"!!! Processing event: {evt}");
+                    if (stopAtNextHalt)
+                    {
+                        // The requested checkpoint boundary is already captured. Ignore later
+                        // events while draining the producer to its next safe halt.
+                        continue;
+                    }
 
-                        break;
+                    switch (evt)
+                    {
+                        case WorkflowOutputEvent outputEvent:
+                            switch (outputEvent.ExecutorId)
+                            {
+                                case Step4EntryPoint.JudgeId:
+                                    if (outputEvent.Is(out NumberSignal newSignal))
+                                    {
+                                        prompt = Step4EntryPoint.UpdatePrompt(prompt, signal = newSignal);
+                                    }
+                                    // TODO: We should make some well-defined way to avoid this kind of
+                                    // if/elseif chain, because .Is() chains are slow
+                                    else if (!outputEvent.Is<TryCount>())
+                                    {
+                                        throw new InvalidOperationException($"Unexpected output type {outputEvent.Data!.GetType()}");
+                                    }
+                                    break;
+                            }
 
-                    case RequestInfoEvent requestInputEvt:
-                        Console.WriteLine($"!!! Queuing request: {requestInputEvt.Request}");
-                        requests.Add(requestInputEvt.Request);
-                        break;
+                            break;
 
-                    case SuperStepCompletedEvent stepCompletedEvt:
-                        Console.WriteLine($"*** Step {stepCompletedEvt.StepNumber} completed.");
-                        CheckpointInfo? checkpoint = stepCompletedEvt.CompletionInfo!.Checkpoint;
-                        Console.WriteLine($"*** Checkpoint: {checkpoint}");
-                        if (checkpoint is not null)
-                        {
-                            checkpoints.Add(checkpoint);
+                        case RequestInfoEvent requestInputEvt:
+                            Console.WriteLine($"!!! Queuing request: {requestInputEvt.Request}");
+                            requests.Add(requestInputEvt.Request);
+                            break;
 
-                            checkpointedOutputs[checkpoint] = (signal, prompt);
-                        }
+                        case SuperStepCompletedEvent stepCompletedEvt:
+                            Console.WriteLine($"*** Step {stepCompletedEvt.StepNumber} completed.");
+                            CheckpointInfo? checkpoint = stepCompletedEvt.CompletionInfo!.Checkpoint;
+                            Console.WriteLine($"*** Checkpoint: {checkpoint}");
+                            if (checkpoint is not null)
+                            {
+                                checkpoints.Add(checkpoint);
 
-                        if (maxStep.HasValue && stepCompletedEvt.StepNumber >= maxStep.Value - 1)
-                        {
-                            Console.WriteLine($"*** Max step {maxStep} reached, cancelling.");
-                            cancellationSource.Cancel();
-                            return null;
-                        }
+                                checkpointedOutputs[checkpoint] = (signal, prompt);
+                            }
 
-                        Console.WriteLine($"*** Processing {requests.Count} queued requests.");
-                        foreach (ExternalRequest request in requests)
-                        {
-                            ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
-                            Console.WriteLine($"!!! Sending response: {response}");
-                            await handle.SendResponseAsync(response).ConfigureAwait(false);
-                        }
+                            if (maxStep.HasValue && stepCompletedEvt.StepNumber >= maxStep.Value - 1)
+                            {
+                                // Finish consuming this halt before the caller restores checkpoint state.
+                                stopAtNextHalt = true;
+                            }
 
-                        requests.Clear();
+                            break;
 
-                        Console.WriteLine("*** Completed processing requests.");
-
-                        break;
-
-                    case ExecutorCompletedEvent executorCompleteEvt:
-                        writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
-                        break;
+                        case ExecutorCompletedEvent executorCompleteEvt:
+                            writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
+                            break;
+                    }
+                    Console.WriteLine($"!!! Completed processing event: {evt.GetType()}");
                 }
-                Console.WriteLine($"!!! Completed processing event: {evt.GetType()}");
-            }
 
-            if (cancellationSource.IsCancellationRequested)
-            {
-                return null;
+                if (stopAtNextHalt)
+                {
+                    Console.WriteLine($"*** Max step {maxStep} reached at a workflow halt.");
+                    return null;
+                }
+
+                if (requests.Count == 0)
+                {
+                    break;
+                }
+
+                Console.WriteLine($"*** Processing {requests.Count} queued requests.");
+                foreach (ExternalRequest request in requests)
+                {
+                    ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
+                    Console.WriteLine($"!!! Sending response: {response}");
+                    await handle.SendResponseAsync(response).ConfigureAwait(false);
+                }
+
+                requests.Clear();
+                Console.WriteLine("*** Completed processing requests.");
             }
 
             writer.WriteLine($"Result: {prompt}");

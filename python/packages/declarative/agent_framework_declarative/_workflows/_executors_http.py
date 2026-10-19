@@ -6,9 +6,8 @@ Mirrors the .NET ``HttpRequestExecutor``: dispatches an HTTP request through the
 configured :class:`HttpRequestHandler`, parses the response body, and assigns
 the parsed body and response headers to the declared state paths.
 
-Security note: response bodies can echo secrets and may be very large. Diagnostic
-messages produced for non-2xx responses truncate the body to 256 characters and
-collapse CR/LF/TAB to spaces (parity with .NET ``FormatBodyForDiagnostics``).
+Response bodies are excluded from non-2xx exceptions because they may contain
+private backend data. Request URLs and status codes remain available for diagnostics.
 """
 
 from __future__ import annotations
@@ -40,10 +39,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-_MAX_BODY_DIAGNOSTIC_LENGTH = 256
-_BODY_TRUNCATION_SUFFIX = " \u2026 [truncated]"
-
-
 # Body discriminator aliases. Long forms match the .NET object-model type
 # names so YAML produced by .NET round-trips. Short forms are the .NET YAML
 # convention used in test fixtures.
@@ -67,24 +62,6 @@ def _get_path(action_def: Mapping[str, Any], key: str) -> str | None:
         path = value.get("path")  # type: ignore[reportUnknownMemberType, reportUnknownVariableType]
         return path if isinstance(path, str) and path else None
     return None
-
-
-def _format_body_for_diagnostics(body: str | None) -> str:
-    """Truncate and sanitise a response body for inclusion in error messages.
-
-    Mirrors the .NET ``FormatBodyForDiagnostics`` helper:
-
-    - Empty/None -> empty string.
-    - Replaces CR/LF/TAB with spaces.
-    - Truncates to 256 chars with a unicode-ellipsis ``[truncated]`` suffix.
-    """
-    if not body:
-        return ""
-
-    truncated = len(body) > _MAX_BODY_DIAGNOSTIC_LENGTH
-    head = body[:_MAX_BODY_DIAGNOSTIC_LENGTH] if truncated else body
-    sanitized = head.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-    return sanitized + _BODY_TRUNCATION_SUFFIX if truncated else sanitized
 
 
 def _parse_response_body(body: str | None) -> Any:
@@ -148,8 +125,8 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
       an Assistant :class:`agent_framework.Message` to
       ``System.conversations.{id}.messages``.
     - On non-2xx, still publishes ``responseHeaders`` (diagnostic) and raises
-      :class:`DeclarativeActionError` with a status-coded message containing a
-      truncated/sanitised body preview.
+      :class:`DeclarativeActionError` with the request URL and status code,
+      without including the response body.
 
     Transport errors (``httpx.TimeoutException``, ``TimeoutError``,
     ``httpx.HTTPError``) become :class:`DeclarativeActionError`. ``CancelledError``
@@ -229,12 +206,7 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
 
         # Non-success path: still publish headers diagnostically, then raise.
         self._assign_response_headers(state, result)
-        body_preview = _format_body_for_diagnostics(result.body)
-        if body_preview:
-            message = f"HTTP request to '{url}' failed with status code {result.status_code}. Body: '{body_preview}'"
-        else:
-            message = f"HTTP request to '{url}' failed with status code {result.status_code}."
-        raise DeclarativeActionError(message)
+        raise DeclarativeActionError(f"HTTP request to '{url}' failed with status code {result.status_code}.")
 
     # ----- Field resolution ----------------------------------------------------
 

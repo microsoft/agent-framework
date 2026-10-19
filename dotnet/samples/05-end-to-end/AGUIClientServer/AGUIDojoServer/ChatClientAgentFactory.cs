@@ -1,35 +1,38 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Text.Json;
 using AGUIDojoServer.AgenticUI;
 using AGUIDojoServer.BackendToolRendering;
 using AGUIDojoServer.PredictiveStateUpdates;
 using AGUIDojoServer.SharedState;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 
 namespace AGUIDojoServer;
 
 internal static class ChatClientAgentFactory
 {
-    private static AzureOpenAIClient? s_azureOpenAIClient;
+    private static OpenAIClient? s_azureOpenAIClient;
     private static string? s_deploymentName;
 
     public static void Initialize(IConfiguration configuration)
     {
-        string endpoint = configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+        Uri endpoint = AzureOpenAIEndpoint.From(
+            configuration["AZURE_OPENAI_ENDPOINT"])
+            ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         s_deploymentName = configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        s_azureOpenAIClient = new AzureOpenAIClient(
-            new Uri(endpoint),
-            new DefaultAzureCredential());
+        s_azureOpenAIClient = new OpenAIClient(
+            new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+            new OpenAIClientOptions { Endpoint = endpoint });
     }
 
     public static ChatClientAgent CreateAgenticChat()
@@ -134,6 +137,18 @@ internal static class ChatClientAgentFactory
         {
             Name = "PredictiveStateUpdatesAgent",
             Description = "An agent that demonstrates predictive state updates using Azure OpenAI",
+            // write_document runs on the server without approval, while confirm_changes runs on the client.
+            // If the model requests both in one response, the function-invocation loop returns both calls
+            // unexecuted because confirm_changes is only a declaration on the server. Bypassing saves
+            // write_document in the server session and initially exposes only confirm_changes.
+            // The client executes confirm_changes and sends its result with the original call ID in
+            // a continuation request for the same thread. On that next request, the server executes
+            // the saved write_document call. Its call and matching result then reach the client in
+            // the continuation stream as completed history, not as a request for client-side execution.
+            // Program.cs registers a session store keyed by this agent's name so the deferred call
+            // survives across HTTP requests; without it, the call is lost when the client continues.
+            // Execution therefore uses the stored call, not a call reconstructed from client-supplied history.
+            EnableInvocableFunctionBypassing = true,
             ChatOptions = new ChatOptions
             {
                 Instructions = """

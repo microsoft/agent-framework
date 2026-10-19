@@ -2,7 +2,7 @@
 
 import sys
 import typing
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import InitVar, is_dataclass
 from types import ModuleType, UnionType
 from typing import Any, Literal, TypeGuard, Union, cast, get_args, get_origin, get_type_hints
@@ -55,14 +55,29 @@ def contains_typevar(annotation: Any) -> bool:
     return any(contains_typevar(arg) for arg in get_args(annotation))
 
 
+def _resolve_function_annotations(  # pyright: ignore[reportUnusedFunction]
+    func: Callable[..., Any], params: Sequence[Any]
+) -> dict[str, Any]:
+    """Resolve function annotations and fall back to raw parameter annotations on failure.
+
+    ``typing.get_type_hints`` resolves postponed annotations, but a single unresolved
+    forward reference prevents it from returning any hints. Keeping the raw annotations
+    in that case lets the caller produce its normal, parameter-specific validation error.
+    """
+    try:
+        return get_type_hints(func)
+    except (NameError, AttributeError, RecursionError):
+        return {param.name: param.annotation for param in params}
+
+
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
-    """Check if the given agent is a Agent.
+    """Check if the given agent is an Agent.
 
     Args:
         agent (Any): The agent to check.
 
     Returns:
-        TypeGuard[Agent]: True if the agent is a Agent, False otherwise.
+        TypeGuard[Agent]: True if the agent is an Agent, False otherwise.
     """
     return isinstance(agent, Agent)
 
@@ -176,6 +191,14 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     if origin is None:
         return isinstance(data, target_type)
 
+    # Case 1b: target_type is Literal[...]
+    # isinstance() cannot be used with Literal, so match by allowed values with
+    # strict member types, mirroring ``_matches_annotation``. Without this,
+    # executors whose handlers declare Literal message annotations crash at
+    # delivery time (Executor.can_handle/_find_handler call this directly).
+    if origin is Literal:
+        return any(type(data) is type(member) and data == member for member in args)
+
     # Case 2: target_type is Optional[T] or Union[T1, T2, ...]
     # Optional[T] is really just as Union[T, None]
     if origin is UnionType:
@@ -228,8 +251,6 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
 
 def _matches_annotation(data: Any, annotation: Any) -> bool:
     """Check an annotation that may not be runtime-checkable, treating unchecked ones as a match."""
-    if get_origin(annotation) is Literal:
-        return any(data == member and type(data) is type(member) for member in get_args(annotation))
     try:
         return is_instance_of(data, annotation)
     except TypeError:
@@ -450,6 +471,11 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     if target_type is Any:
         return True
 
+    # Case 0b: source_type is Any - the value can be of any type, so it is compatible with every
+    # target, the same way static type checkers treat Any.
+    if source_type is Any:
+        return True
+
     # Case 1: exact type match
     if source_type == target_type:
         return True
@@ -458,6 +484,28 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     source_args = get_args(source_type)
     target_origin = get_origin(target_type)
     target_args = get_args(target_type)
+
+    # A bare alias from `typing` (typing.Sequence, typing.List) has an origin but no type
+    # arguments; treat it as the bare container class it stands for.
+    if source_origin is not None and not source_args and isinstance(source_origin, type):
+        source_type, source_origin = source_origin, None
+    if target_origin is not None and not target_args and isinstance(target_origin, type):
+        target_type, target_origin = target_origin, None
+
+    # Case 1b: source is Literal[...] - it only holds its listed values, so it is compatible when every value fits
+    # the target or one of its union members: a Literal member by value (is_instance_of), any other member through
+    # the value's own type.
+    if source_origin is Literal:
+        targets = target_args if target_origin is Union or target_origin is UnionType else (target_type,)
+        return all(
+            any(
+                is_instance_of(value, target)
+                if get_origin(target) is Literal
+                else is_type_compatible(type(value), target)
+                for target in targets
+            )
+            for value in cast(tuple[object, ...], source_args)
+        )
 
     # Case 2: target is Union/Optional - source is compatible if it matches any target member
     if target_origin is Union or target_origin is UnionType:
@@ -485,6 +533,20 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
                 # Handle cases where issubclass doesn't work (e.g., with special forms)
                 return False
         return source_type == target_type
+
+    # A bare container class on one side (list[str] -> list, or list -> list[str]):
+    # the unparameterized side accepts any element type, so compare the containers.
+    # issubclass raises TypeError for a Protocol that is not runtime_checkable.
+    if target_origin is None and isinstance(target_type, type) and isinstance(source_origin, type):
+        try:
+            return issubclass(source_origin, target_type)
+        except TypeError:
+            return False
+    if source_origin is None and isinstance(source_type, type) and isinstance(target_origin, type):
+        try:
+            return issubclass(source_type, target_origin)
+        except TypeError:
+            return False
 
     # Case 5: different container types are not compatible
     if source_origin != target_origin:

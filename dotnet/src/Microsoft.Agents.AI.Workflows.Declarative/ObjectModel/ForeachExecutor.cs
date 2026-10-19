@@ -26,9 +26,11 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     private const string IndexStateKey = nameof(_index);
     private const string ValuesStateKey = nameof(_values);
     private const string HasValueStateKey = nameof(HasValue);
+    private const string SensitivityStateKey = nameof(_sensitivity);
 
     private int _index;
     private FormulaValue[] _values;
+    private SensitivityLevel _sensitivity;
 
     public ForeachExecutor(Foreach model, WorkflowFormulaState state)
         : base(model, state)
@@ -47,14 +49,16 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         this._index = 0;
 
         EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
-        if (expressionResult.Value is TableDataValue tableValue)
+        DataValue items = this.GetNonSensitiveValue(expressionResult, "loop items");
+        if (items is TableDataValue tableValue)
         {
             this._values = [.. tableValue.Values.Select(ToLoopValue)];
         }
         else
         {
-            this._values = [expressionResult.Value.ToFormula()];
+            this._values = [items.ToFormula()];
         }
+        this._sensitivity = expressionResult.Sensitivity;
 
         await this.ResetStateAsync(context, cancellationToken).ConfigureAwait(false);
 
@@ -67,7 +71,15 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         {
             FormulaValue value = this._values[this._index];
 
-            await context.QueueStateUpdateAsync(Throw.IfNull(this.Model.Value), value, cancellationToken).ConfigureAwait(false);
+            PropertyPath valuePath = Throw.IfNull(this.Model.Value);
+            if (context is DeclarativeWorkflowContext)
+            {
+                await this.AssignAsync(valuePath, value, context, this._sensitivity).ConfigureAwait(false);
+            }
+            else
+            {
+                await context.QueueStateUpdateAsync(valuePath, value, cancellationToken).ConfigureAwait(false);
+            }
 
             if (this.Model.Index is not null)
             {
@@ -122,6 +134,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         await context.QueueStateUpdateAsync(IndexStateKey, this._index, cancellationToken: cancellationToken).ConfigureAwait(false);
         await context.QueueStateUpdateAsync(ValuesStateKey, portableValues, cancellationToken: cancellationToken).ConfigureAwait(false);
         await context.QueueStateUpdateAsync(HasValueStateKey, this.HasValue, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(SensitivityStateKey, this._sensitivity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
     }
@@ -144,8 +157,12 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
             return;
         }
 
-        this._values = [.. savedValues.Select(value => value.ToFormula())];
+        SensitivityLevel sensitivity =
+            await context.ReadStateAsync<SensitivityLevel>(SensitivityStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._values = [.. this.GetNonSensitiveValue(new EvaluationResult<PortableValue[]>(savedValues, sensitivity), "loop items")
+            .Select(value => value.ToFormula())];
         this._index = await context.ReadStateAsync<int>(IndexStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         this.HasValue = await context.ReadStateAsync<bool>(HasValueStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._sensitivity = sensitivity;
     }
 }

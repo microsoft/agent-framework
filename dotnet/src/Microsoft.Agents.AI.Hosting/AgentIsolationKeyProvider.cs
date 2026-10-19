@@ -17,6 +17,13 @@ namespace Microsoft.Agents.AI.Hosting;
 /// Derived classes implement the key resolution logic appropriate to their hosting environment.
 /// </para>
 /// <para>
+/// Isolation does not authenticate callers or authorize access to agents and tools. Resolve keys from
+/// trusted identity context and ensure they uniquely identify the intended user, tenant, or composite
+/// boundary. Unvalidated request headers and continuation identifiers are not trusted identity.
+/// HTTP hosts must separately authenticate callers and enforce endpoint authorization. Registering a
+/// provider does not automatically partition application-owned memory, files, caches, or other stores.
+/// </para>
+/// <para>
 /// When a key is unavailable or cannot be determined, implementations should return <see langword="null"/>.
 /// Consuming stores can then enforce strict behavior (throwing an exception) or fall back to unscoped
 /// storage based on their configuration.

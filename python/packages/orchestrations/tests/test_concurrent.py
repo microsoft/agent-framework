@@ -55,6 +55,13 @@ def test_concurrent_builder_rejects_duplicate_executors() -> None:
         ConcurrentBuilder(participants=[a, b])
 
 
+def test_concurrent_builder_uses_stable_default_and_custom_name() -> None:
+    participants = [_FakeAgentExec("agentA", "A"), _FakeAgentExec("agentB", "B")]
+
+    assert ConcurrentBuilder(participants=participants).build().name == "Concurrent"
+    assert ConcurrentBuilder(name="custom-concurrent", participants=participants).build().name == "custom-concurrent"
+
+
 async def test_concurrent_default_aggregator_emits_assistants_only() -> None:
     """Default aggregator yields a single AgentResponse with one assistant message per participant.
 
@@ -138,6 +145,34 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
     assert output == "One | Two"
 
 
+class _AsyncCallableAggregator:
+    """Aggregator object whose __call__ is async, for example one that holds a client."""
+
+    async def __call__(self, results: list[AgentExecutorResponse]) -> str:
+        return " | ".join(sorted(r.agent_response.text for r in results))
+
+
+async def _join_texts(results: list[AgentExecutorResponse]) -> str:
+    return " | ".join(sorted(r.agent_response.text for r in results))
+
+
+@pytest.mark.parametrize(
+    "aggregator",
+    [
+        pytest.param(_AsyncCallableAggregator(), id="async_callable_object"),
+        pytest.param(lambda results: _join_texts(results), id="callable_returning_coroutine"),
+    ],
+)
+async def test_concurrent_custom_aggregator_awaits_awaitable_result(aggregator: Any) -> None:
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(aggregator).build()
+    result = await wf.run("prompt: awaitable aggregator")
+
+    assert result.get_outputs() == ["One | Two"]
+
+
 def test_concurrent_custom_aggregator_uses_callback_name_for_id() -> None:
     e1 = _FakeAgentExec("agentA", "One")
     e2 = _FakeAgentExec("agentB", "Two")
@@ -210,6 +245,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     )
 
     wf = ConcurrentBuilder(participants=list(participants), checkpoint_storage=storage).build()
+    assert wf.name == "Concurrent"
 
     baseline_output: AgentResponse | None = None
     async for ev in wf.run("checkpoint concurrent", stream=True):

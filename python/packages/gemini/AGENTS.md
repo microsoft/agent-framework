@@ -1,15 +1,25 @@
 # Gemini Package (agent-framework-gemini)
 
-Integration with Google's Gemini Developer API and Vertex AI via the `google-genai` SDK.
+Integration with Google's Gemini Developer API and Enterprise (Vertex AI) via the `google-genai` SDK.
+The shared `_sdk_client.create_genai_client` resolves authentication, backend mode,
+and service URL for chat and embeddings.
 
 ## Core Classes
 
 - **`RawGeminiChatClient`** - Lightweight chat client without any layers, for custom pipeline composition
 - **`GeminiChatClient`** - Full-featured chat client with function invocation, middleware, and telemetry
 - **`GeminiChatOptions`** - Options TypedDict for Gemini-specific parameters
-- **`GeminiSettings`** - Settings loaded from environment variables
-- **`GoogleGeminiSettings`** - SDK-standard `GOOGLE_*` settings loaded from environment variables
+- **`GoogleGeminiSettings`** - Shared `GOOGLE_*` environment settings for chat and embeddings
 - **`ThinkingConfig`** - Configuration for extended thinking
+- **`RawGeminiEmbeddingClient`** - Text and multimodal embeddings without telemetry
+- **`GeminiEmbeddingClient`** - Text and multimodal embeddings with telemetry (defaults to stable `gemini-embedding-2`)
+- **`GeminiEmbeddingOptions`** - Per-call embedding model, dimensions, text task, and document title
+
+`GeminiEmbeddingClient` supports only `gemini-embedding-2` and `gemini-embedding-2-preview`,
+requiring per-call task instructions for text strings. Multimodal Google SDK `Content` or
+media `Part` inputs receive no task prefix, even with mixed text-and-media parts. Text-only
+SDK content is rejected so callers cannot bypass the task requirement. Enterprise accepts
+one content per request; the client splits batches there while keeping input order.
 
 ## Gemini-specific Options
 
@@ -33,4 +43,16 @@ from agent_framework.gemini import GeminiChatClient
 
 client = GeminiChatClient(model="gemini-2.5-flash")
 response = await client.get_response([Message(role="user", contents=[Content.from_text("Hello")])])
+```
+
+```python
+from agent_framework.gemini import GeminiEmbeddingClient
+
+client = GeminiEmbeddingClient()
+try:
+    result = await client.get_embeddings(
+        ["A document"], options={"task_type": "RETRIEVAL_DOCUMENT", "dimensions": 768}
+    )
+finally:
+    await client.close()
 ```

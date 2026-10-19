@@ -207,9 +207,104 @@ public class InMemoryAgentFileStoreTests
         Assert.Single(results);
         Assert.Equal(2, results[0].MatchingLines.Count);
         Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
-        Assert.Equal("Line two with match", results[0].MatchingLines[0].Line);
+        // Lines are reported verbatim, so an interior line keeps its terminator.
+        Assert.Equal("Line two with match\n", results[0].MatchingLines[0].Line);
         Assert.Equal(4, results[0].MatchingLines[1].LineNumber);
+        // The last line has no terminator in the content, so none is reported.
         Assert.Equal("Line four with match", results[0].MatchingLines[1].Line);
+    }
+
+    [Fact]
+    public async Task SearchFiles_ReportsCrlfLinesVerbatimAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("folder/notes.md", "alpha\r\nbeta match\r\ngamma\r\n");
+
+        // Act
+        var results = await store.SearchAsync("folder", "match");
+
+        // Assert — the CRLF is preserved, so the line can be fed back to replace_lines unchanged.
+        Assert.Single(results);
+        Assert.Single(results[0].MatchingLines);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+        Assert.Equal("beta match\r\n", results[0].MatchingLines[0].Line);
+    }
+
+    [Fact]
+    public async Task SearchFiles_TrailingNewline_DoesNotReportAnExtraLineAsync()
+    {
+        // Arrange — a newline-terminated file has as many lines as the line editor sees, not one more.
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("folder/notes.md", "a\nb\n");
+
+        // Act — a pattern that also matches an empty line.
+        var results = await store.SearchAsync("folder", "^.*$");
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(2, results[0].MatchingLines.Count);
+        Assert.Equal("a\n", results[0].MatchingLines[0].Line);
+        Assert.Equal("b\n", results[0].MatchingLines[1].Line);
+    }
+
+    [Fact]
+    public async Task SearchFiles_LoneCarriageReturn_SplitsLikeTheLineEditorAsync()
+    {
+        // Arrange — a lone '\r' terminates a line for the line editor, so grep must agree.
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("folder/notes.md", "alpha\rbeta match\rgamma");
+
+        // Act
+        var results = await store.SearchAsync("folder", "match");
+
+        // Assert
+        Assert.Single(results);
+        Assert.Single(results[0].MatchingLines);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+        Assert.Equal("beta match\r", results[0].MatchingLines[0].Line);
+    }
+
+    [Theory]
+    [InlineData("alpha\r\nbeta match\r\ngamma\r\n")]
+    [InlineData("alpha\rbeta match\rgamma")]
+    [InlineData("alpha\nbeta match\ngamma\n")]
+    public async Task SearchFiles_EndAnchoredPatternMatchesRegardlessOfTerminatorAsync(string content)
+    {
+        // Arrange — the pattern anchors to the end of the line's text, which is "beta match".
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("folder/notes.md", content);
+
+        // Act
+        var results = await store.SearchAsync("folder", "match$");
+
+        // Assert — the terminator is not part of the text the pattern is matched against.
+        Assert.Single(results);
+        Assert.Single(results[0].MatchingLines);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r")]
+    [InlineData("\r\n")]
+    public async Task SearchFiles_SnippetIsAnchoredAtTheMatchAsync(string terminator)
+    {
+        // Arrange — the leading line is long enough that the ±50 char snippet window is not clamped to
+        // the start of the file, so an off-by-one in the per-line offset would shift the snippet. Every
+        // terminator length is covered: advancing by content length plus one would pass LF and CR but
+        // fall a character short on CRLF.
+        var store = new InMemoryAgentFileStore();
+        string padding = new('x', 60);
+        await store.WriteAsync("folder/notes.md", $"{padding}{terminator}needle{terminator}");
+
+        // Act
+        var results = await store.SearchAsync("folder", "needle");
+
+        // Assert — the snippet starts 50 characters before the match, which lands that many characters
+        // into the padding minus the terminator the match sits behind.
+        Assert.Single(results);
+        Assert.Equal($"{new string('x', 50 - terminator.Length)}{terminator}needle{terminator}", results[0].Snippet);
     }
 
     [Fact]

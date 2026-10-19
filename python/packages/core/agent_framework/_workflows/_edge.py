@@ -863,14 +863,16 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
             for case in cases:
                 if isinstance(case, SwitchCaseEdgeGroupDefault):
                     return [case.target_id]
-                try:
-                    if case.condition(message):
-                        return [case.target_id]
-                except Exception as exc:  # pragma: no cover - defensive logging
-                    logger.warning("Error evaluating condition for case %s: %s", case.target_id, exc)
+                # Errors raised by a case predicate deliberately surface to the caller, matching
+                # `Edge.should_route`. Swallowing them would route the message to the default
+                # branch, turning a broken predicate into silent misrouting rather than a
+                # visible failure. `FanOutEdgeRunner` records the error on the edge-group span.
+                if case.condition(message):
+                    return [case.target_id]
             raise RuntimeError("No matching case found in SwitchCaseEdgeGroup")
 
-        target_ids = [case.target_id for case in cases]
+        # Several cases may route to the same executor, so keep one edge per target.
+        target_ids = list(dict.fromkeys(case.target_id for case in cases))
         # Call FanOutEdgeGroup constructor directly to avoid type checking issues
         edges = [Edge(source_id=source_id, target_id=target) for target in target_ids]
         EdgeGroup.__init__(self, edges, id=id, type=self.__class__.__name__)

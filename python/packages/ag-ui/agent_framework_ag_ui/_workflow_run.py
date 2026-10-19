@@ -8,7 +8,7 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from functools import partial
 from types import UnionType
 from typing import Any, Union, cast, get_args, get_origin, get_type_hints
@@ -33,6 +33,7 @@ from agent_framework import (
     Content,
     Message,
     Workflow,
+    WorkflowEvent,
     WorkflowRunState,
 )
 from agent_framework._workflows._typing_utils import (  # pyright: ignore[reportPrivateUsage]
@@ -56,10 +57,14 @@ from ._run_common import (
     _normalize_resume_interrupts,
     _resume_contract_error,
 )
-from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
+from ._utils import _function_call_is_hosted, canonical_function_arguments, generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
 
+_BASELINE_OMITTED = object()
+
+
+_PUBLIC_WORKFLOW_ERROR_MESSAGE = "Workflow execution failed."
 
 _TERMINAL_STATES: set[str] = {
     WorkflowRunState.IDLE.value,
@@ -127,7 +132,10 @@ def _workflow_interrupt_value(request_data: Any) -> Any:
     return {"data": safe_request_data}
 
 
-def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) -> dict[str, Any]:
+def _workflow_interrupt_metadata(
+    request_payload: dict[str, Any],
+    value: Any,
+) -> dict[str, Any]:
     """Build Agent Framework metadata for workflow request_info interrupts."""
     agent_framework_metadata = {
         key: make_json_safe(value)
@@ -143,6 +151,99 @@ def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) ->
         if value is not None
     }
     return {"agent_framework": agent_framework_metadata}
+
+
+def _attach_checkpoint_id_to_interrupts(
+    interrupts: list[dict[str, Any]],
+    checkpoint_id: str | None,
+) -> list[dict[str, Any]]:
+    """Attach ``checkpoint_id`` to each interrupt's ``metadata.agent_framework``.
+
+    Multi-worker hosts need the pause checkpoint on the wire so the next resume can pass
+    ``forwardedProps.checkpoint_id`` without a side-channel lookup. No-op when checkpointing
+    is inactive or the id is already present.
+    """
+    if not checkpoint_id or not interrupts:
+        return interrupts
+
+    attached: list[dict[str, Any]] = []
+    for interrupt in interrupts:
+        entry = dict(interrupt)
+        metadata = entry.get("metadata")
+        if isinstance(metadata, dict):
+            metadata = dict(metadata)
+        else:
+            metadata = {}
+        agent_framework = metadata.get("agent_framework")
+        if isinstance(agent_framework, dict):
+            agent_framework = dict(agent_framework)
+        else:
+            agent_framework = {}
+        agent_framework.setdefault("checkpoint_id", checkpoint_id)
+        metadata["agent_framework"] = agent_framework
+        entry["metadata"] = metadata
+        attached.append(entry)
+    return attached
+
+
+def _interrupt_request_ids(interrupts: list[dict[str, Any]]) -> set[str]:
+    return {str(item["id"]) for item in interrupts if item.get("id") is not None}
+
+
+async def _pause_checkpoint_id_for_interrupts(
+    *,
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    interrupts: list[dict[str, Any]],
+    known_checkpoint_id: str | None = None,
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
+) -> str | None:
+    """Resolve the pause checkpoint for *this* run's interrupts via core.
+
+    When ``baseline_checkpoint_id`` is omitted, core uses the baseline captured at
+    ``workflow.run()`` start. Pass ``None`` explicitly for short-circuit paths that
+    did not call ``run()`` and should advertise the current runner id when present.
+    """
+    if not interrupts:
+        return None
+
+    resolve = getattr(workflow, "resolve_pause_checkpoint_id", None)
+    if not callable(resolve):
+        return None
+
+    # getattr returns a plain object to the type checker; cast to an awaitable callable.
+    resolve_fn = cast(
+        Callable[..., Awaitable[str | None]],
+        resolve,
+    )
+    kwargs: dict[str, Any] = {
+        "checkpoint_storage": checkpoint_storage,
+        "known_checkpoint_id": known_checkpoint_id,
+    }
+    if baseline_checkpoint_id is not _BASELINE_OMITTED:
+        kwargs["baseline_checkpoint_id"] = baseline_checkpoint_id
+    return await resolve_fn(_interrupt_request_ids(interrupts), **kwargs)
+
+
+async def _interrupts_with_pause_checkpoint(
+    *,
+    interrupts: list[dict[str, Any]],
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    known_checkpoint_id: str | None = None,
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
+) -> list[dict[str, Any]]:
+    """Attach a run-scoped pause checkpoint id to interrupts when available."""
+    if not interrupts:
+        return interrupts
+    pause_checkpoint_id = await _pause_checkpoint_id_for_interrupts(
+        workflow=workflow,
+        checkpoint_storage=checkpoint_storage,
+        interrupts=interrupts,
+        known_checkpoint_id=known_checkpoint_id,
+        baseline_checkpoint_id=baseline_checkpoint_id,
+    )
+    return _attach_checkpoint_id_to_interrupts(interrupts, pause_checkpoint_id)
 
 
 async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
@@ -168,7 +269,9 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
 
 async def _pending_request_events_from_checkpoint(
     checkpoint_id: str,
-    checkpoint_storage: CheckpointStorage,
+    checkpoint_storage: CheckpointStorage | None = None,
+    *,
+    workflow: Any | None = None,
 ) -> dict[str, Any]:
     """Read pending request_info events from a persisted checkpoint without restoring it.
 
@@ -179,16 +282,34 @@ async def _pending_request_events_from_checkpoint(
     exposes them without running any executor ``on_checkpoint_restore`` hook; the single
     ``workflow.run(checkpoint_id=...)`` then performs the one real restore, so the
     restore -- and every custom restore hook -- runs exactly once per resume.
+
+    ``checkpoint_storage`` is preferred when provided. Otherwise the workflow's
+    effective builder/runtime storage is used when ``has_checkpointing()`` is true,
+    so AG-UI can round-trip pause IDs emitted from ``WorkflowBuilder(checkpoint_storage=...)``
+    without requiring a duplicate AG-UI storage argument.
     """
     try:
-        checkpoint = await checkpoint_storage.load(checkpoint_id)
+        if checkpoint_storage is not None:
+            checkpoint = await checkpoint_storage.load(checkpoint_id)
+        else:
+            context = getattr(getattr(workflow, "_runner", None), "context", None)
+            if context is None or not context.has_checkpointing():
+                raise ValueError(
+                    "Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage "
+                    "(or WorkflowBuilder checkpoint storage on the workflow instance)."
+                )
+            checkpoint = await context.load_checkpoint(checkpoint_id)
+    except ValueError:
+        raise
     except Exception:
         logger.warning(
             "Could not load checkpoint for resume-response coercion; the core run will surface any error.",
             exc_info=True,
         )
         return {}
-    return dict(checkpoint.pending_request_info_events)
+    if checkpoint is None:
+        return {}
+    return dict(checkpoint.pending_request_info_events or {})
 
 
 def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | None:
@@ -206,11 +327,7 @@ def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | N
     ):
         workflow_metadata = _workflow_interrupt_metadata(request_payload, value)["agent_framework"]
         workflow_metadata.pop("type", None)
-        response_schema = (
-            _approval_response_schema()
-            if request_data.function_call.additional_properties.get("server_label")
-            else None
-        )
+        response_schema = _approval_response_schema() if _function_call_is_hosted(request_data.function_call) else None
         return _approval_interrupt_for_function_call(
             interrupt_id=str(request_payload["request_id"]),
             function_call=request_data.function_call,
@@ -340,27 +457,6 @@ def _resume_error_for_pending_workflow_requests(
                 code="WORKFLOW_RESUME_INVALID",
             )
     return None
-
-
-def _consume_cancelled_workflow_requests(workflow: Workflow, resume_entries: list[dict[str, Any]]) -> None:
-    """Remove cancelled workflow requests from runner and owning agent-executor state."""
-    cancelled_ids = {str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"}
-    if not cancelled_ids:
-        return
-
-    runner_context = getattr(workflow, "_runner_context", None)
-    pending_events = getattr(runner_context, "_pending_request_info_events", None)
-    if not isinstance(pending_events, dict):
-        return
-    pending_events = cast(dict[str, Any], pending_events)
-
-    for interrupt_id in cancelled_ids:
-        request_event = pending_events.pop(interrupt_id, None)
-        source_executor_id = getattr(request_event, "source_executor_id", None)
-        executor = workflow.executors.get(source_executor_id) if source_executor_id else None
-        pending_agent_requests = getattr(executor, "_pending_agent_requests", None)
-        if isinstance(pending_agent_requests, dict):
-            cast(dict[str, Any], pending_agent_requests).pop(interrupt_id, None)
 
 
 def _coerce_json_value(value: Any) -> Any:
@@ -499,9 +595,9 @@ def _coerce_compact_approval_response(request_data: Content, candidate: dict[str
     standard_edited_arguments = candidate.get("editedArgs")
     if request_data.function_call is None:
         return None
-    if (
-        direct_edited_arguments or standard_edited_arguments is not None
-    ) and request_data.function_call.additional_properties.get("server_label"):
+    if (direct_edited_arguments or standard_edited_arguments is not None) and _function_call_is_hosted(
+        request_data.function_call
+    ):
         return None
 
     original_arguments = request_data.function_call.parse_arguments() or {}
@@ -530,6 +626,10 @@ def _coerce_compact_approval_response(request_data: Content, candidate: dict[str
         call_id=request_data.function_call.call_id or "",
         name=request_data.function_call.name or "",
         arguments=final_arguments,
+        id=request_data.function_call.id,
+        hosted=request_data.function_call.hosted,
+        server_name=request_data.function_call.server_name,
+        status=request_data.function_call.status,
         informational_only=request_data.function_call.informational_only,
         annotations=request_data.function_call.annotations,
         additional_properties=request_data.function_call.additional_properties,
@@ -774,12 +874,15 @@ def _coerce_responses_for_pending_requests(
 def _coerce_responses_for_pending_requests_strict(
     responses: dict[str, Any],
     pending_events: dict[str, Any],
+    *,
+    on_conversational_responses: Callable[[list[Any]], None] | None = None,
 ) -> tuple[dict[str, Any], RunErrorEvent | None]:
     """Coerce resume responses or return RUN_ERROR for invalid pending response payloads."""
     if not responses or not pending_events:
         return responses, None
 
     normalized: dict[str, Any] = {}
+    conversational_values: list[Any] = []
     pending_by_id: dict[str, Any] = {}
     for request_id, event in pending_events.items():
         pending_by_id[str(request_id)] = event
@@ -820,6 +923,14 @@ def _coerce_responses_for_pending_requests_strict(
                 ),
             )
         normalized[request_key] = coerced_value
+        # Typed execution controls must never become conversational snapshot history.
+        # Use the response execution actually accepts, including JSON-string Content.
+        if not isinstance(coerced_value, bool) and not (
+            isinstance(coerced_value, Content) and coerced_value.type == "function_approval_response"
+        ):
+            conversational_values.append(coerced_value)
+    if on_conversational_responses is not None:
+        on_conversational_responses(conversational_values)
     return normalized, None
 
 
@@ -931,6 +1042,17 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
     if isinstance(payload, AgentResponseUpdate):
         contents = list(payload.contents or [])
         role_field = payload.role
+        if role_field is None:
+            # ``role`` is optional and streamed continuation chunks routinely omit it.
+            # Keep their text -- previously dropped, so role-less text surfaced as a
+            # CUSTOM workflow_output instead of reasoning/assistant text -- alongside tool
+            # content. Approval requests stay excluded (see _TOOL_CONTENT_TYPES): a
+            # role-less approval interrupt from streamed content has no pending request to
+            # resume against.
+            role_less_contents = [
+                content for content in contents if content.type == "text" or content.type in _TOOL_CONTENT_TYPES
+            ]
+            return role_less_contents or None
         if isinstance(role_field, str):
             role = role_field
         else:
@@ -954,6 +1076,30 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
     return None
 
 
+def _as_reasoning_content(content: Content) -> Content:
+    """Re-tag plain text content as ``text_reasoning``.
+
+    Intermediate workflow output should surface as AG-UI reasoning (a collapsible
+    "thinking" block) rather than a final assistant message. Only ``text`` content
+    is converted; tool calls, results, and other content types pass through
+    unchanged so they still emit as their native AG-UI events.
+    """
+    if content.type != "text":
+        return content
+    return Content.from_text_reasoning(
+        id=content.id,
+        text=content.text,
+        # Carry encrypted reasoning metadata through unchanged: _emit_text_reasoning
+        # turns protected_data into a ReasoningEncryptedValueEvent and an
+        # ``encryptedValue`` on the snapshot entry, so dropping it here would break
+        # reasoning state continuity for intermediate content that carries it.
+        protected_data=content.protected_data,
+        annotations=content.annotations,
+        additional_properties=content.additional_properties or None,
+        raw_representation=content.raw_representation,
+    )
+
+
 def _event_name(event: Any) -> str:
     event_type = getattr(event, "type", None)
     if isinstance(event_type, str) and event_type:
@@ -975,8 +1121,9 @@ def _custom_event_value(event: Any) -> Any:
 
 
 def _details_message(details: Any) -> str:
+    """Extract an internal diagnostic message for server-side logging only."""
     if details is None:
-        return "Workflow execution failed."
+        return _PUBLIC_WORKFLOW_ERROR_MESSAGE
     if hasattr(details, "message"):
         message = getattr(details, "message")
         if isinstance(message, str) and message:
@@ -1000,8 +1147,14 @@ async def run_workflow_stream(
     *,
     checkpoint_storage: CheckpointStorage | None = None,
     checkpoint_id: str | None = None,
+    pending_request_events: dict[str, Any] | None = None,
+    on_conversational_responses: Callable[[list[Any]], None] | None = None,
+    resolved_thread_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run a Workflow and emit AG-UI protocol events.
+
+    Execution failures expose a generic message and error code. Internal messages
+    and tracebacks are logged server-side, not included in public error events.
 
     Args:
         input_data: Normalized AG-UI request payload (a ``RunAgentInput`` dump).
@@ -1014,9 +1167,13 @@ async def run_workflow_stream(
             mirroring ``Workflow.run(checkpoint_id=...)``. Any incoming messages are
             treated as request-info responses (or ignored) rather than a new
             start-executor message, so resume stays consistent with the core API.
+        pending_request_events: Optional effective pending requests already resolved by the wrapper.
+        on_conversational_responses: Optional callback for validated non-control responses.
+        resolved_thread_id: Optional thread id already resolved by the caller, reported in protocol events instead of
+            generating a new one when the request omits it.
     """
     supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-    thread_id = supplied_thread_id or str(uuid.uuid4())
+    thread_id = resolved_thread_id or supplied_thread_id or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     if available_interrupts:
@@ -1040,10 +1197,18 @@ async def run_workflow_stream(
     # persisted pending set instead. Only do so when a resume payload is present, so a
     # pure checkpoint restore still surfaces its pending interrupts instead of tripping
     # the "resume required" contract.
-    if checkpoint_id is not None and resume_payload is not None:
-        if checkpoint_storage is None:
+    if pending_request_events is not None:
+        pending_before_run = pending_request_events
+    elif checkpoint_id is not None and resume_payload is not None:
+        # Prefer the explicit AG-UI storage argument; otherwise allow the workflow's
+        # builder/runtime storage so builder-emitted pause IDs remain round-trippable.
+        if checkpoint_storage is None and not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
             raise ValueError("Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage.")
-        pending_before_run = await _pending_request_events_from_checkpoint(checkpoint_id, checkpoint_storage)
+        pending_before_run = await _pending_request_events_from_checkpoint(
+            checkpoint_id,
+            checkpoint_storage,
+            workflow=workflow,
+        )
     else:
         pending_before_run = await _pending_request_events(workflow)
     pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
@@ -1082,13 +1247,20 @@ async def run_workflow_stream(
         if request_id in pending_interrupt_ids
     }
     responses = _merge_workflow_response_sources(resume_responses, message_responses)
-    responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
+    responses, response_error = _coerce_responses_for_pending_requests_strict(
+        responses, pending_before_run, on_conversational_responses=on_conversational_responses
+    )
     if response_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield response_error
         return
     if cancelled_request_ids:
-        _consume_cancelled_workflow_requests(workflow, resume_entries)
+        await workflow.cancel_pending_requests(
+            cancelled_request_ids,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+        )
+        checkpoint_id = None
         pending_before_run = {
             request_id: request_event
             for request_id, request_event in pending_before_run.items()
@@ -1114,12 +1286,30 @@ async def run_workflow_stream(
             interrupt_event_value = _workflow_interrupt_event_value(request_payload)
             if interrupt_event_value is not None:
                 yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
+        )
         return
 
     if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
+        )
         return
 
     def _drain_open_message() -> list[TextMessageEndEvent]:
@@ -1129,7 +1319,51 @@ async def run_workflow_stream(
         current_message_id = flow.message_id
         flow.message_id = None
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         return [TextMessageEndEvent(message_id=current_message_id)]
+
+    def _drain_open_tool_calls() -> list[ToolCallEndEvent]:
+        """Close any still-open real tool calls tracked in flow state.
+
+        AG-UI clients reject ``RUN_FINISHED`` (and a subsequent ``request_info``
+        tool call) while a prior ``TOOL_CALL_START`` remains open. Participant
+        agents that stream a ``function_call`` before pausing for approval leave
+        that real tool id open; end it here so the interrupt path matches the
+        native Agent ``_emit_approval_request`` behavior.
+
+        Marking the id in ``flow.tool_calls_ended`` also lets a later real
+        ``function_result`` in this run skip a duplicate ``TOOL_CALL_END``. On
+        resume, a fresh ``FlowState`` never STARTs that id, so
+        ``_emit_tool_result_common`` likewise suppresses an unmatched END and
+        emits ``TOOL_CALL_RESULT`` only — same as Agent approval resume.
+        """
+        events: list[ToolCallEndEvent] = []
+        for tool_call in flow.get_pending_without_end():
+            tool_call_id = tool_call.get("id")
+            if not tool_call_id:
+                continue
+            events.append(ToolCallEndEvent(tool_call_id=tool_call_id))
+            flow.tool_calls_ended.add(tool_call_id)
+        return events
+
+    def _drain_open_blocks() -> list[BaseEvent]:
+        """Close any open reasoning block, assistant text message, and tool calls.
+
+        Emitted before content that must not sit inside an open block: a terminal event
+        (RUN_FINISHED / RUN_ERROR, which must be the final events in the stream) or a
+        request_info tool call (non-reasoning message content). Otherwise the block's
+        REASONING_* / TEXT_MESSAGE_* end events would be flushed only by the post-loop
+        cleanup -- after the terminal event, or after the tool call. Open tool calls
+        must also end before those boundaries so clients do not reject the stream
+        with active tool-call errors. The inner helpers are no-ops when nothing is
+        open, so this is always safe to call (a later cleanup pass then simply does
+        nothing).
+        """
+        events: list[BaseEvent] = []
+        events.extend(_close_reasoning_block(flow))
+        events.extend(_drain_open_message())
+        events.extend(_drain_open_tool_calls())
+        return events
 
     fwd_kwargs: dict[str, Any] = {}
     if "forwarded_props" in input_data:
@@ -1160,6 +1394,8 @@ async def run_workflow_stream(
     if checkpoint_storage is not None or checkpoint_id is not None:
         checkpoint_kwargs = {"checkpoint_storage": checkpoint_storage, "checkpoint_id": checkpoint_id}
 
+    # Core workflows emit failure events before re-raising; prefer one full exception traceback.
+    failure_event: WorkflowEvent | None = None
     try:
         telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
         telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
@@ -1186,8 +1422,13 @@ async def run_workflow_stream(
                 run_started_emitted = True
 
             if event_type == "failed":
+                failure_event = event
+                # Close any open reasoning block / text message so RUN_ERROR stays the
+                # last event a client receives for this run.
+                for end_event in _drain_open_blocks():
+                    yield end_event
                 details = getattr(event, "details", None)
-                yield RunErrorEvent(message=_details_message(details), code=_details_code(details))
+                yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=_details_code(details))
                 run_error_emitted = True
                 terminal_emitted = True
                 continue
@@ -1199,13 +1440,21 @@ async def run_workflow_stream(
                 else:
                     state_value = str(getattr(state, "value", state))
                 if state_value in _TERMINAL_STATES and not terminal_emitted:
-                    # Close any open assistant text message before the terminal event so
-                    # RUN_FINISHED is always the last emitted event.
-                    for end_event in _drain_open_message():
+                    # Close any open reasoning block and assistant text message before the
+                    # terminal event so RUN_FINISHED is always the last emitted event.
+                    for end_event in _drain_open_blocks():
                         yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-                    yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+                    yield _build_run_finished_event(
+                        run_id=run_id,
+                        thread_id=thread_id,
+                        interrupts=await _interrupts_with_pause_checkpoint(
+                            interrupts=interrupts,
+                            workflow=workflow,
+                            checkpoint_storage=checkpoint_storage,
+                        ),
+                    )
                     terminal_emitted = True
                 elif state_value not in _TERMINAL_STATES:
                     yield CustomEvent(name="status", value={"state": state_value})
@@ -1242,19 +1491,28 @@ async def run_workflow_stream(
                     "status": status,
                 }
                 if event_type == "executor_failed":
-                    executor_payload["details"] = make_json_safe(getattr(event, "details", None))
+                    failure_event = event
+                    details = getattr(event, "details", None)
+                    # Only project public fields; traceback and extra can contain backend data.
+                    executor_payload["details"] = {
+                        "message": _PUBLIC_WORKFLOW_ERROR_MESSAGE,
+                        "error_type": _details_code(details),
+                    }
                 else:
                     executor_payload["data"] = make_json_safe(getattr(event, "data", None))
 
                 yield ActivitySnapshotEvent(
-                    message_id=f"executor:{executor_id}" if executor_id else generate_event_id(),
+                    message_id=f"{len(run_id)}:{run_id}:executor:{executor_id}" if executor_id else generate_event_id(),
                     activity_type="executor",
                     content=executor_payload,
                 )
                 continue
 
             if event_type == "request_info":
-                for end_event in _drain_open_message():
+                # A request_info emits a tool call (non-reasoning message content), so any
+                # open reasoning block / text message must be closed first -- otherwise the
+                # tool call would sit inside an unclosed reasoning block.
+                for end_event in _drain_open_blocks():
                     yield end_event
                 request_payload = _request_payload_from_request_event(event)
                 if request_payload is None:
@@ -1274,7 +1532,12 @@ async def run_workflow_stream(
                     yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
                 continue
 
-            if event_type in {"output", "data"}:
+            if event_type in {"output", "intermediate", "data"}:
+                # "intermediate" (and its deprecated alias "data") carry non-terminal
+                # output. Their text is surfaced as AG-UI reasoning so consumers render
+                # it as a collapsible "thinking" block instead of a final assistant
+                # message. "output" keeps the terminal-message behavior.
+                is_intermediate = event_type in {"intermediate", "data"}
                 output_payload = getattr(event, "data", None)
                 if isinstance(output_payload, BaseEvent):
                     yield output_payload
@@ -1293,15 +1556,25 @@ async def run_workflow_stream(
                             yield out_event
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
-                    output_text = _text_from_contents(contents)
-                    skip_text = bool(output_text and output_text == last_assistant_text)
-                    for content in contents:
-                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
-                            yield out_event
-                    if flow.message_id and flow.accumulated_text:
-                        last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
-                    elif output_text:
-                        last_assistant_text = output_text
+                    if is_intermediate:
+                        # Reasoning is a separate channel from the final assistant
+                        # message, so the last_assistant_text dedup does not apply.
+                        for content in contents:
+                            reasoning_content = _as_reasoning_content(content)
+                            for out_event in _emit_content(
+                                reasoning_content, flow, predictive_handler=None, skip_text=False
+                            ):
+                                yield out_event
+                    else:
+                        output_text = _text_from_contents(contents)
+                        skip_text = bool(output_text and output_text == last_assistant_text)
+                        for content in contents:
+                            for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
+                                yield out_event
+                        if flow.message_id and flow.accumulated_text:
+                            last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
+                        elif output_text:
+                            last_assistant_text = output_text
                 else:
                     yield CustomEvent(name="workflow_output", value=make_json_safe(output_payload))
                 continue
@@ -1310,19 +1583,35 @@ async def run_workflow_stream(
             yield CustomEvent(name=_event_name(event), value=_custom_event_value(event))
 
     except Exception as exc:
+        failure_event = None
         logger.exception("Workflow AG-UI stream failed: %s", exc)
         if not run_started_emitted:
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             run_started_emitted = True
+        # Close any open reasoning block / text message so RUN_ERROR stays the final event.
+        for end_event in _drain_open_blocks():
+            yield end_event
         if not run_error_emitted:
-            yield RunErrorEvent(message=str(exc), code=type(exc).__name__)
+            yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=type(exc).__name__)
             run_error_emitted = True
         terminal_emitted = True
+    finally:
+        if failure_event is not None:
+            details = getattr(failure_event, "details", None)
+            logger.error(
+                "Workflow execution failed (executor=%s): %s\n%s",
+                getattr(failure_event, "executor_id", None) or getattr(details, "executor_id", None),
+                _details_message(details),
+                getattr(details, "traceback", None) or "",
+            )
 
     for reasoning_evt in _close_reasoning_block(flow):
         yield reasoning_evt
 
     for end_event in _drain_open_message():
+        yield end_event
+
+    for end_event in _drain_open_tool_calls():
         yield end_event
 
     if not run_started_emitted:
@@ -1331,4 +1620,12 @@ async def run_workflow_stream(
     if not terminal_emitted and not run_error_emitted:
         if not interrupts:
             interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+            ),
+        )

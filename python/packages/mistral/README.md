@@ -42,6 +42,12 @@ finally:
 | `MISTRAL_CHAT_MODEL` | Chat model name (e.g., `mistral-large-latest`) |
 | `MISTRAL_SERVER_URL` | Optional server URL override |
 
+Chat connection settings belong on the client, not on individual requests. Both
+`MistralChatClient` and `RawMistralChatClient` reject `server_url`, `http_headers`,
+`retries`, and `timeout_ms` in per-call `options` or `client_kwargs`. Configure
+the endpoint with the constructor's `server_url`, or inject a configured SDK
+`client` or `http_client`. Normal model generation options remain per-call.
+
 ## Embedding Client
 
 The `MistralEmbeddingClient` provides embedding generation using Mistral AI models.

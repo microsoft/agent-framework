@@ -361,6 +361,8 @@ internal static class TestHelpers
         private readonly string _functionName;
         private readonly Dictionary<string, object?> _arguments;
 
+        public ChatOptions? LastChatOptions { get; private set; }
+
         public FunctionCallMockChatClient(string functionName = "test_function", string arguments = "{\"param\":\"value\"}")
         {
             this._functionName = functionName;
@@ -374,6 +376,8 @@ internal static class TestHelpers
             ChatOptions? options = null,
             CancellationToken cancellationToken = default)
         {
+            this.LastChatOptions = options;
+
             ChatMessage message = new(ChatRole.Assistant, [
                 new FunctionCallContent("call_123", this._functionName)
                 {
@@ -399,6 +403,8 @@ internal static class TestHelpers
             ChatOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            this.LastChatOptions = options;
+
             await Task.Delay(1, cancellationToken);
 
             yield return new ChatResponseUpdate
@@ -416,6 +422,80 @@ internal static class TestHelpers
                     })
                 ],
                 Role = ChatRole.Assistant
+            };
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) =>
+            serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>
+    /// Mock implementation of IChatClient that requests a function and then returns a final response
+    /// after receiving the function result.
+    /// </summary>
+    internal sealed class FunctionToolExecutingMockChatClient : IChatClient
+    {
+        private readonly string _functionName;
+        private bool _functionRequested;
+
+        public FunctionToolExecutingMockChatClient(string functionName)
+        {
+            this._functionName = functionName;
+        }
+
+        public ChatOptions? FirstRequestOptions { get; private set; }
+
+        public string? FunctionResult { get; private set; }
+
+        public ChatClientMetadata Metadata { get; } = new(
+            "Test",
+            new Uri("https://test.example.com"),
+            "test-model");
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(1, cancellationToken);
+
+            if (!this._functionRequested)
+            {
+                this._functionRequested = true;
+                this.FirstRequestOptions = options;
+                yield return new ChatResponseUpdate
+                {
+                    Role = ChatRole.Assistant,
+                    Contents =
+                    [
+                        new FunctionCallContent(
+                            "call_1",
+                            this._functionName,
+                            new Dictionary<string, object?> { ["location"] = "Valencia" })
+                    ]
+                };
+                yield break;
+            }
+
+            FunctionResultContent result = messages
+                .SelectMany(message => message.Contents)
+                .OfType<FunctionResultContent>()
+                .Single();
+            this.FunctionResult = result.Result?.ToString();
+            yield return new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent("The weather tool completed.")]
             };
         }
 

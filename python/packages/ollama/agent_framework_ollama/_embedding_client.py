@@ -148,7 +148,7 @@ class RawOllamaEmbeddingClient(
         kwargs: dict[str, Any] = {"model": model, "input": list(values)}
         if (truncate := opts.get("truncate")) is not None:
             kwargs["truncate"] = truncate
-        if keep_alive := opts.get("keep_alive"):
+        if (keep_alive := opts.get("keep_alive")) is not None:
             kwargs["keep_alive"] = keep_alive
         if dimensions := opts.get("dimensions"):
             kwargs["dimensions"] = dimensions

@@ -213,6 +213,30 @@ class TestNonStreamingRoundTrip:
         assert response.status_code == 400
         assert "input" in response.json()["detail"]
 
+    async def test_conflicting_continuation_mechanisms_return_400(self) -> None:
+        app = _build_app(_StubAgent())
+        response = await _post(
+            app,
+            {
+                "input": "hello",
+                "previous_response_id": "resp_1",
+                "conversation": "conv_1",
+            },
+        )
+
+        assert response.status_code == 400
+        assert "mutually exclusive" in response.json()["detail"]
+
+    async def test_missing_message_role_returns_400(self) -> None:
+        app = _build_app(_StubAgent())
+        response = await _post(
+            app,
+            {"input": [{"type": "message", "content": "hello"}]},
+        )
+
+        assert response.status_code == 400
+        assert "role" in response.json()["detail"]
+
 
 class TestStreamingRoundTrip:
     async def test_stream_emits_created_delta_and_completed_events(self) -> None:
@@ -277,13 +301,13 @@ class TestSessionContinuity:
 
         assert agent.session_turn_counts_seen == [1, 2, 2, 3, 3]
 
-    async def test_conversation_id_preserves_session_across_turns(self) -> None:
+    async def test_conversation_preserves_session_across_turns(self) -> None:
         agent = _StubAgent()
         app = _build_app(agent)
 
-        turn1 = await _post(app, {"input": "hi", "conversation_id": "conv_stable"})
+        turn1 = await _post(app, {"input": "hi", "conversation": "conv_stable"})
         assert turn1.status_code == 200
-        turn2 = await _post(app, {"input": "still there?", "conversation_id": "conv_stable"})
+        turn2 = await _post(app, {"input": "still there?", "conversation": {"id": "conv_stable"}})
         assert turn2.status_code == 200
 
         assert agent.session_ids_seen == ["conv_stable", "conv_stable"]

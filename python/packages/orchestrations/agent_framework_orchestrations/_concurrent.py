@@ -18,7 +18,7 @@ from agent_framework._workflows._workflow_context import WorkflowContext
 from typing_extensions import Never
 
 from ._feature_usage import FeatureIndex
-from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestration_request_info import AgentApprovalExecutor, validate_request_info_filter
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -30,6 +30,7 @@ from ._participant_output_config import (
 from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Concurrent"
 
 """Concurrent builder for agent-only fan-out/fan-in workflows.
 
@@ -171,6 +172,10 @@ class _CallbackAggregator(Executor):
             else:
                 ret = await asyncio.to_thread(self._callback, results)
 
+        # Async callable objects and wrappers returning a coroutine are not coroutine functions
+        if inspect.isawaitable(ret):
+            ret = await ret
+
         # If the callback returned a value, finalize the workflow with it
         if ret is not None:
             await ctx.yield_output(ret)
@@ -213,6 +218,7 @@ class ConcurrentBuilder:
     def __init__(
         self,
         *,
+        name: str | None = None,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
         output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
@@ -221,6 +227,7 @@ class ConcurrentBuilder:
         """Initialize the ConcurrentBuilder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"Concurrent"``.
             participants: Sequence of agent or executor instances to run in parallel.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
             output_from: Optional participant names or instances whose ``yield_output`` calls
@@ -230,6 +237,7 @@ class ConcurrentBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: list[SupportsAgentRun | Executor] = []
         self._aggregator: Executor | None = None
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
@@ -378,6 +386,11 @@ class ConcurrentBuilder:
             else:
                 raise TypeError(f"Participants must be SupportsAgentRun or Executor instances. Got {type(p).__name__}.")
 
+        if self._request_info_enabled:
+            validate_request_info_filter(
+                self._request_info_filter,
+                [resolve_agent_id(p) for p in participants if not isinstance(p, Executor)],
+            )
         return executors
 
     def build(self) -> Workflow:
@@ -421,6 +434,7 @@ class ConcurrentBuilder:
             extra_output_executors=[aggregator],
         )
         builder = WorkflowBuilder(
+            name=self._name,
             start_executor=dispatcher,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,

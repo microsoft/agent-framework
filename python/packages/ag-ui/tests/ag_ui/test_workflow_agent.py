@@ -4,20 +4,48 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from agent_framework import (
+    Content,
     Executor,
     InMemoryCheckpointStorage,
+    Message,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
     executor,
     handler,
+    response_handler,
 )
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
+from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+from agent_framework_ag_ui._workflow import _CHECKPOINT_REQUEST_OWNER_KEY
+
+
+class _HitlMessageRequestExecutor(Executor):
+    """Minimal HITL executor shared by snapshot resume regression tests."""
+
+    def __init__(self) -> None:
+        super().__init__(id="message_request_executor")
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        del message
+        await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
+
+    @response_handler
+    async def handle_user_input(
+        self, original_request: dict[str, Any], response: list[Message], ctx: WorkflowContext[Any, str]
+    ) -> None:
+        del original_request
+        user_text = response[0].text if response else ""
+        await ctx.yield_output(f"Captured response: {user_text}")
 
 
 async def _run(agent: AgentFrameworkWorkflow, payload: dict[str, Any]) -> list[Any]:
@@ -33,6 +61,41 @@ def _interrupts_from_finished(event: Any) -> list[dict[str, Any]]:
     interrupts = outcome.get("interrupts")
     assert isinstance(interrupts, list)
     return cast(list[dict[str, Any]], interrupts)
+
+
+class _ChoiceRecorder(Executor):
+    """Pauses on a stable request id and records every response it dispatches."""
+
+    def __init__(self, handled: list[str]) -> None:
+        super().__init__(id="choice_recorder")
+        self._handled = handled
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        del message
+        await ctx.request_info({"message": "Choose an option"}, dict, request_id="choice")
+
+    @response_handler
+    async def handle_choice(
+        self, original_request: dict[str, Any], response: dict[str, Any], ctx: WorkflowContext[Any, str]
+    ) -> None:
+        del original_request
+        self._handled.append(response["selection"])
+        await ctx.yield_output(f"Chose {response['selection']}")
+
+
+def _choice_resume(thread_id: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "messages": [],
+        "resume": {"interrupts": [{"id": "choice", "value": {"selection": "a"}}]},
+    }
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    return payload
+
+
+def _reported_thread_ids(events: list[Any]) -> list[str]:
+    return [event.thread_id for event in events if event.type == "RUN_STARTED"]
 
 
 async def test_workflow_wrapper_rejects_workflow_and_factory_at_once() -> None:
@@ -113,6 +176,205 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
         },
     )
     assert factory_calls["thread-a"] == 2
+
+
+async def test_workflow_wrapper_omitted_thread_id_binds_live_interrupt_to_reported_id() -> None:
+    """A generated thread id is reported consistently and is the only id that continues the interrupt."""
+    handled: list[str] = []
+    agent = AgentFrameworkWorkflow(workflow=WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build())
+
+    first_events = await _run(agent, {"messages": [{"role": "user", "content": "start"}]})
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"]
+    assert _interrupts_from_finished(first_finished[0])[0]["id"] == "choice"
+    reported = {event.thread_id for event in first_events if event.type in {"RUN_STARTED", "RUN_FINISHED"}}
+    assert len(reported) == 1
+    thread_id = reported.pop()
+
+    for rejected in (_choice_resume(), _choice_resume("other-thread")):
+        events = await _run(agent, rejected)
+        assert [event.code for event in events if event.type == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
+    assert handled == []
+
+    resumed = await _run(agent, _choice_resume(thread_id))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert _reported_thread_ids(resumed) == [thread_id]
+    assert handled == ["a"]
+
+
+async def test_workflow_wrapper_factory_receives_reported_thread_id_when_omitted() -> None:
+    """Echoing the reported thread id reuses the factory instance that holds the pending interrupt."""
+    handled: list[str] = []
+    factory_thread_ids: list[str] = []
+
+    def workflow_factory(thread_id: str) -> Workflow:
+        factory_thread_ids.append(thread_id)
+        return WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+
+    agent = AgentFrameworkWorkflow(workflow_factory=workflow_factory)
+
+    first_events = await _run(agent, {"messages": [{"role": "user", "content": "start"}]})
+    reported = _reported_thread_ids(first_events)
+    assert len(reported) == 1
+    assert factory_thread_ids == reported
+
+    resumed = await _run(agent, _choice_resume(reported[0]))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
+    assert factory_thread_ids == reported
+
+    await _run(agent, {"messages": [{"role": "user", "content": "start again"}]})
+    assert len(factory_thread_ids) == 2
+    assert factory_thread_ids[1] != reported[0]
+
+
+async def test_workflow_wrapper_treats_empty_thread_ids_as_omitted() -> None:
+    """Empty snake_case and camelCase thread ids resolve to one generated id like an omitted id."""
+    handled: list[str] = []
+    agent = AgentFrameworkWorkflow(workflow=WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build())
+
+    first_events = await _run(
+        agent, {"thread_id": "", "threadId": "", "messages": [{"role": "user", "content": "start"}]}
+    )
+    reported = _reported_thread_ids(first_events)
+    assert len(reported) == 1
+    assert reported[0]
+
+    resumed = await _run(agent, _choice_resume(reported[0]))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
+
+
+async def _newest_pending_checkpoint(storage: InMemoryCheckpointStorage, workflow: Workflow) -> Any:
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    return max((item for item in checkpoints if item.pending_request_info_events), key=lambda item: item.timestamp)
+
+
+@pytest.mark.parametrize(
+    "empty_ids",
+    [{"thread_id": ""}, {"threadId": ""}, {"thread_id": "", "threadId": ""}],
+    ids=["snake-case", "camel-case", "both"],
+)
+async def test_workflow_wrapper_empty_thread_ids_own_checkpoints_like_omitted(empty_ids: dict[str, str]) -> None:
+    """An empty thread id is not stamped as checkpoint owner, so id-less restores keep working."""
+    storage = InMemoryCheckpointStorage()
+    handled: list[str] = []
+    first_workflow = WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+    first = AgentFrameworkWorkflow(workflow=first_workflow, checkpoint_storage=storage)
+    await _run(first, {"messages": [{"role": "user", "content": "start"}], **empty_ids})
+
+    checkpoint = await _newest_pending_checkpoint(storage, first_workflow)
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY]["thread_id"] is None
+
+    restarted = AgentFrameworkWorkflow(
+        workflow=WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build(), checkpoint_storage=storage
+    )
+    resumed = await _run(
+        restarted, {**_choice_resume(), "forwarded_props": {"checkpoint_id": checkpoint.checkpoint_id}}
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
+
+
+_FACTORY_CONTINUATIONS: dict[str, dict[str, Any]] = {
+    "resume-entry": _choice_resume(),
+    "tool-message": {"messages": [{"role": "tool", "toolCallId": "choice", "content": '{"selection": "a"}'}]},
+    "approval-message": {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [{"id": "choice", "type": "function", "function": {"name": "choose", "arguments": "{}"}}],
+            },
+            {"role": "tool", "toolCallId": "choice", "content": '{"accepted": true}'},
+        ]
+    },
+}
+
+
+@pytest.mark.parametrize("continuation", list(_FACTORY_CONTINUATIONS.values()), ids=list(_FACTORY_CONTINUATIONS))
+async def test_workflow_wrapper_factory_rejects_continuations_without_thread_id(
+    continuation: dict[str, Any],
+) -> None:
+    """A resume entry, tool result, or approval response cannot continue a factory run without a thread id."""
+    handled: list[str] = []
+    factory_thread_ids: list[str] = []
+
+    def workflow_factory(thread_id: str) -> Workflow:
+        factory_thread_ids.append(thread_id)
+        return WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+
+    agent = AgentFrameworkWorkflow(workflow_factory=workflow_factory)
+
+    first_events = await _run(agent, {"messages": [{"role": "user", "content": "start"}]})
+    reported = _reported_thread_ids(first_events)
+    assert factory_thread_ids == reported
+
+    rejected = await _run(agent, deepcopy(continuation))
+    assert [event.code for event in rejected if event.type == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
+    assert factory_thread_ids == reported
+    assert handled == []
+
+    resumed = await _run(agent, _choice_resume(reported[0]))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
+
+
+async def test_workflow_wrapper_factory_runs_requests_without_responses_when_thread_id_is_omitted() -> None:
+    """Only continuations are rejected without a thread id; a new request still starts a run under a new id."""
+    handled: list[str] = []
+    factory_thread_ids: list[str] = []
+
+    def workflow_factory(thread_id: str) -> Workflow:
+        factory_thread_ids.append(thread_id)
+        return WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+
+    agent = AgentFrameworkWorkflow(workflow_factory=workflow_factory)
+
+    first = _reported_thread_ids(await _run(agent, {"messages": [{"role": "user", "content": "start"}]}))
+    second = _reported_thread_ids(await _run(agent, {"messages": [{"role": "user", "content": "start again"}]}))
+
+    assert factory_thread_ids == first + second
+    assert first != second
+    assert handled == []
+
+
+async def test_workflow_wrapper_checkpoint_resumes_with_reported_or_omitted_thread_id() -> None:
+    """A checkpoint of a run without threadId resumes with the reported id or, as before, with no id."""
+    storage = InMemoryCheckpointStorage()
+    handled: list[str] = []
+
+    def restart() -> AgentFrameworkWorkflow:
+        workflow = WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+        return AgentFrameworkWorkflow(workflow=workflow, checkpoint_storage=storage)
+
+    first = restart()
+    first_events = await _run(
+        first, {"messages": [{"role": "user", "content": "start"}], _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"}
+    )
+    reported = _reported_thread_ids(first_events)[0]
+    assert first.workflow is not None
+    checkpoint = await _newest_pending_checkpoint(storage, first.workflow)
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
+        "snapshot_scope": "tenant-a",
+        "thread_id": None,
+        "generated_thread_id": reported,
+    }
+    forwarded = {"forwarded_props": {"checkpoint_id": checkpoint.checkpoint_id}}
+
+    for wrong_thread_id, wrong_scope in (("other-thread", "tenant-a"), (reported, "tenant-b")):
+        rejected = await _run(
+            restart(), {**_choice_resume(wrong_thread_id), **forwarded, _SNAPSHOT_SCOPE_INPUT_KEY: wrong_scope}
+        )
+        assert [event.code for event in rejected if event.type == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
+    assert handled == []
+
+    echoed = await _run(restart(), {**_choice_resume(reported), **forwarded, _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"})
+    assert "RUN_ERROR" not in [event.type for event in echoed]
+    assert handled == ["a"]
+
+    legacy = await _run(restart(), {**_choice_resume(), **forwarded, _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"})
+    assert "RUN_ERROR" not in [event.type for event in legacy]
+    assert handled == ["a", "a"]
 
 
 async def test_workflow_wrapper_without_workflow_raises_not_implemented() -> None:
@@ -260,7 +522,7 @@ async def test_workflow_run_reads_checkpoint_id_from_camelcase_forwarded_props()
 
 
 async def test_workflow_resume_without_checkpoint_storage_raises() -> None:
-    """Requesting a checkpoint resume without configured storage should fail loudly."""
+    """Requesting a checkpoint resume without any storage should fail loudly."""
     workflow = _build_multi_superstep_workflow()
     agent = AgentFrameworkWorkflow(workflow=workflow)
 
@@ -273,6 +535,39 @@ async def test_workflow_resume_without_checkpoint_storage_raises() -> None:
                 "forwarded_props": {"checkpoint_id": "some-checkpoint"},
             },
         )
+
+
+async def test_workflow_wrapper_resumes_builder_storage_without_agui_storage() -> None:
+    """Builder-owned storage must round-trip through AgentFrameworkWorkflow.run() without wrapper storage."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow(storage)
+    # Host configures storage only on the builder; AG-UI wrapper / endpoint omit it.
+    agent = AgentFrameworkWorkflow(workflow=workflow)
+
+    first_events = await _run(
+        agent,
+        {"thread_id": "thread-builder-cp", "messages": [{"role": "user", "content": "start"}]},
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the builder-storage run to create at least one checkpoint"
+    resume_checkpoint_id = checkpoints[0].checkpoint_id
+
+    resume_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-builder-cp",
+            "messages": [],
+            "forwarded_props": {"checkpoint_id": resume_checkpoint_id},
+        },
+    )
+    resumed_types = [event.type for event in resume_events]
+    assert "RUN_FINISHED" in resumed_types
+    assert "RUN_ERROR" not in resumed_types
 
 
 async def test_workflow_run_without_checkpointing_is_unchanged() -> None:
@@ -359,3 +654,1052 @@ async def test_workflow_checkpoint_only_resume_preserves_thread_snapshot() -> No
     assert "Earlier reply" in contents
     # ...plus the newly produced output from the resumed run.
     assert any(isinstance(content, str) and "done" in content for content in contents)
+
+
+async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
+    """Reasoning that streamed during a workflow run survives thread hydration.
+
+    Regression test for workflow reasoning rendering live and then vanishing from the
+    stored AG-UI Thread Snapshot, so a hydrated thread lost the intermediate output
+    that the agent path retains.
+    """
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    @executor(id="thinker")
+    async def thinker(message: Any, ctx: WorkflowContext[str, str]) -> None:
+        await ctx.yield_output("Weighing the options...")
+        await ctx.send_message("go")
+
+    @executor(id="finalizer")
+    async def finalizer(message: str, ctx: WorkflowContext[None, str]) -> None:
+        await ctx.yield_output("Final answer.")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=thinker,
+            output_from=[finalizer],
+            intermediate_output_from=[thinker],
+        )
+        .add_edge(thinker, finalizer)
+        .build()
+    )
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+
+    events = await _run(
+        agent,
+        {
+            "thread_id": "thread-reasoning",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "Decide"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in events]
+
+    # The reasoning really did stream ...
+    reasoning_deltas = [
+        event.delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        for event in events
+        if event.type == "REASONING_MESSAGE_CONTENT"
+    ]
+    assert "Weighing the options..." in reasoning_deltas
+
+    # ... and it is still there once the thread is hydrated from the snapshot.
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-reasoning")
+    assert snapshot is not None
+    reasoning_messages = [message for message in snapshot.messages if message.get("role") == "reasoning"]
+    assert [message.get("content") for message in reasoning_messages] == ["Weighing the options..."]
+
+    # The final assistant text is still preserved alongside it.
+    assert any(message.get("content") == "Final answer." for message in snapshot.messages)
+
+
+async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> None:
+    """HITL resume with messages:[] must still record the user reply in the snapshot (#8160)."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "start"},
+                {"id": "assistant-1", "role": "assistant", "content": "Need more detail"},
+            ],
+            state=None,
+            interrupt=None,
+        ),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl",
+            "run_id": "run-2",
+            "messages": [],
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "Please ship a replacement instead."}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl")
+    assert snapshot is not None
+    contents = [message.get("content") for message in snapshot.messages]
+    assert "start" in contents
+    assert any(isinstance(content, str) and "replacement" in content for content in contents)
+    assert any(
+        message.get("role") == "user"
+        and isinstance(message.get("content"), str)
+        and "replacement" in message["content"]
+        for message in snapshot.messages
+    )
+
+
+async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> None:
+    """A second HITL 'yes' with messages:[] must not be dropped as a content duplicate."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    # Establish a live pending request_info interrupt on this workflow instance.
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-yes",
+            "run_id": "run-yes-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    # Simulate a thread that already persisted an earlier identical "yes".
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl-yes",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "start"},
+                {"id": "assistant-1", "role": "assistant", "content": "confirm?"},
+                {"id": "user-yes-1", "role": "user", "content": "yes"},
+                {"id": "assistant-2", "role": "assistant", "content": "confirm again?"},
+            ],
+            state=None,
+            interrupt=None,
+        ),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-yes",
+            "run_id": "run-yes-2",
+            "messages": [],
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "yes"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-yes")
+    assert snapshot is not None
+    yes_turns = [
+        message for message in snapshot.messages if message.get("role") == "user" and message.get("content") == "yes"
+    ]
+    assert len(yes_turns) >= 2
+
+
+@pytest.mark.parametrize("replay_ids", [True, False], ids=["with-ids", "without-ids"])
+async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes(replay_ids: bool) -> None:
+    """Client-replayed prior 'yes' in messages must not drop a new resume interrupt yes."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    prior = [
+        {"id": "user-1", "role": "user", "content": "start"},
+        {"id": "assistant-1", "role": "assistant", "content": "confirm?"},
+        {"id": "user-yes-1", "role": "user", "content": "yes"},
+        {"id": "assistant-2", "role": "assistant", "content": "confirm again?"},
+    ]
+
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-replay-yes",
+            "run_id": "run-yes-setup",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl-replay-yes",
+        snapshot=AGUIThreadSnapshot(messages=prior, state=None, interrupt=None),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-replay-yes",
+            "run_id": "run-yes-replay",
+            "messages": [
+                {key: value for key, value in message.items() if replay_ids or key != "id"} for message in prior
+            ],
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "yes"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-replay-yes")
+    assert snapshot is not None
+    yes_turns = [
+        message for message in snapshot.messages if message.get("role") == "user" and message.get("content") == "yes"
+    ]
+    assert len(yes_turns) == 2
+
+
+@pytest.mark.parametrize("workflow_mode", ["live", "factory", "cold-checkpoint"])
+@pytest.mark.parametrize("reply_kind", ["text", "text-list", "media-list", "audio", "control", "mixed-control"])
+async def test_workflow_hitl_content_reply_survives_snapshot_hydration(workflow_mode: str, reply_kind: str) -> None:
+    """Accepted Content replies survive hydration as one ordered user turn, without control parts."""
+    import msgspec
+
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    handled: list[list[Content]] = []
+
+    class ContentRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send a reply", Content, request_id="content-input")
+
+        @response_handler
+        async def respond(self, original_request: str, response: Content, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append([response])
+            await ctx.yield_output("Reply received")
+
+    class ContentListRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send a reply", list[Content], request_id="content-input")
+
+        @response_handler
+        async def respond(self, original_request: str, response: list[Content], ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            await ctx.yield_output("Reply received")
+
+    text = Content.from_text("approved", raw_representation={"private": "not-chat-history"})
+    audio = Content.from_data(b"audio", "audio/wav")
+    image = Content.from_uri("https://example.com/reply.png", media_type="image/png")
+    control = Content.from_function_call(call_id="control-call", name="refund", arguments={"amount": 5})
+    replies = {
+        "text": [text],
+        "text-list": [text, Content.from_text(" again")],
+        "media-list": [text, image, Content.from_text(" after")],
+        "audio": [audio],
+        "control": [control],
+        "mixed-control": [control, text],
+    }[reply_kind]
+    is_list = reply_kind in {"text-list", "media-list", "mixed-control"}
+    executor_type = ContentListRequestExecutor if is_list else ContentRequestExecutor
+
+    def build_workflow() -> Workflow:
+        return WorkflowBuilder(start_executor=executor_type(id="content-requester")).build()
+
+    workflow = build_workflow()
+    store = InMemoryAGUIThreadSnapshotStore()
+    storage = InMemoryCheckpointStorage()
+    agent = AgentFrameworkWorkflow(
+        workflow=workflow if workflow_mode != "factory" else None,
+        workflow_factory=(lambda _thread_id: build_workflow()) if workflow_mode == "factory" else None,
+        snapshot_store=store,
+        checkpoint_storage=storage,
+    )
+    start = {"id": "start", "role": "user", "content": "start"}
+    setup = await _run(agent, {"thread_id": "content-thread", "messages": [start], _SNAPSHOT_SCOPE_INPUT_KEY: "scope"})
+    assert not [event.model_dump() for event in setup if event.type == "RUN_ERROR"]
+    finished = next(event for event in setup if event.type == "RUN_FINISHED")
+    assert [interrupt["id"] for interrupt in _interrupts_from_finished(finished)] == ["content-input"]
+    # Exercise the wire format the public resume path coerces into Content objects.
+    wire_parts = [part.to_dict() for part in replies]
+    wire_with_raw = deepcopy(wire_parts)
+    raw_representation = {"private": "not-chat-history"}
+    wire_with_raw[0]["raw_representation"] = raw_representation
+    wire_value = msgspec.json.encode(wire_with_raw if is_list else wire_with_raw[0]).decode()
+    payload: dict[str, Any] = {
+        "thread_id": "content-thread",
+        "messages": [],
+        _SNAPSHOT_SCOPE_INPUT_KEY: "scope",
+        "resume": {"interrupts": [{"id": "content-input", "value": wire_value}]},
+    }
+    original_payload = deepcopy(payload)
+    if workflow_mode == "cold-checkpoint":
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        pending = next(
+            checkpoint for checkpoint in checkpoints if "content-input" in checkpoint.pending_request_info_events
+        )
+        payload["forwarded_props"] = {"checkpoint_id": pending.checkpoint_id}
+        original_payload = deepcopy(payload)
+        agent = AgentFrameworkWorkflow(workflow=build_workflow(), snapshot_store=store, checkpoint_storage=storage)
+    resumed = await _run(agent, payload)
+    assert not [event.model_dump() for event in resumed if event.type == "RUN_ERROR"]
+    assert [part.to_dict() for part in handled[0]] == wire_parts
+    assert handled[0][0].raw_representation == raw_representation
+    assert payload == original_payload
+
+    expected: Any = {
+        "text": "approved",
+        "text-list": "approved again",
+        "media-list": [
+            {"type": "text", "text": "approved"},
+            {"type": "binary", "mimeType": "image/png", "url": "https://example.com/reply.png"},
+            {"type": "text", "text": " after"},
+        ],
+        "audio": [{"type": "binary", "mimeType": "audio/wav", "data": "YXVkaW8="}],
+        "control": None,
+        "mixed-control": "approved",
+    }[reply_kind]
+    snapshot = await store.get(scope="scope", thread_id="content-thread")
+    assert snapshot is not None
+    user_replies = [
+        message for message in snapshot.messages if message.get("role") == "user" and message["id"] != "start"
+    ]
+    assert [message["content"] for message in user_replies] == ([] if expected is None else [expected])
+    assert all(set(message) == {"id", "role", "content"} for message in user_replies)
+    hydrated = await _run(agent, {"thread_id": "content-thread", "messages": [], _SNAPSHOT_SCOPE_INPUT_KEY: "scope"})
+    replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
+    replay_replies = [message for message in replay.messages if message.role == "user" and message.id != "start"]
+    assert [message.model_dump(by_alias=True, exclude_none=True) for message in replay_replies] == user_replies
+    assert len(handled) == 1
+
+
+@pytest.mark.parametrize(
+    "client_id",
+    [None, "client-reply", "resume-1", "resume-2"],
+    ids=["without-id", "remapped-id", "matching-first-id", "matching-last-id"],
+)
+@pytest.mark.parametrize(
+    ("parts", "expected_content"),
+    [
+        pytest.param([{"type": "input_text", "text": "yes"}], "yes", id="text-parts"),
+        pytest.param(
+            [
+                {"type": "input_text", "text": "Before"},
+                {
+                    "type": "image",
+                    "source": {"type": "url", "value": "https://example.com/image.png", "mimeType": "image/png"},
+                },
+                {"type": "text", "text": "After"},
+            ],
+            [
+                {"type": "text", "text": "Before"},
+                {"type": "binary", "url": "https://example.com/image.png", "mimeType": "image/png"},
+                {"type": "text", "text": "After"},
+            ],
+            id="mixed-image",
+        ),
+        pytest.param(
+            [{"type": "audio", "source": {"type": "base64", "value": "YWJj", "mimeType": "audio/wav"}}],
+            [{"type": "binary", "data": "YWJj", "mimeType": "audio/wav"}],
+            id="media-only-audio",
+        ),
+    ],
+)
+async def test_workflow_hitl_resume_dedupes_normalized_current_turn_content(
+    client_id: str | None, parts: list[dict[str, Any]], expected_content: Any
+) -> None:
+    """Only current-turn overlap consumes one matching reply after content normalization."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    handled: list[list[dict[str, Any]]] = []
+
+    class MessageRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send replies", list[dict[str, Any]], request_id="user-input")
+
+        @response_handler
+        async def capture(
+            self, original_request: str, response: list[dict[str, Any]], ctx: WorkflowContext[Any, str]
+        ) -> None:
+            del original_request
+            handled.append(response)
+            await ctx.yield_output("Captured replies")
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    workflow = WorkflowBuilder(start_executor=MessageRequestExecutor(id="message-request")).build()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+    start_message = {"id": "start", "role": "user", "content": "start"}
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "overlap-thread",
+            "messages": [start_message],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert not [event.model_dump() for event in first_events if event.type == "RUN_ERROR"]
+    first_finished = next(event for event in first_events if event.type == "RUN_FINISHED")
+    assert _interrupts_from_finished(first_finished)[0]["id"] == "user-input"
+
+    # A prior identical reply must not consume either of this interrupt's replies.
+    await store.save(
+        scope="tenant-a",
+        thread_id="overlap-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[start_message, {"id": "prior-reply", "role": "user", "content": expected_content}],
+            state=None,
+            interrupt=None,
+        ),
+    )
+    client_reply: dict[str, Any] = {"role": "user", "content": deepcopy(parts)}
+    if client_id is not None:
+        client_reply["id"] = client_id
+    resume_replies = [
+        {"id": "resume-1", "role": "user", "contents": deepcopy(parts)},
+        {"id": "resume-2", "role": "user", "contents": deepcopy(parts)},
+    ]
+    payload = {
+        "thread_id": "overlap-thread",
+        "messages": [
+            start_message,
+            {"id": "prior-reply", "role": "user", "content": deepcopy(parts)},
+            client_reply,
+        ],
+        "resume": {"interrupts": [{"id": "user-input", "value": resume_replies}]},
+        _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+    }
+    original_payload = deepcopy(payload)
+    resumed_events = await _run(agent, payload)
+    assert not [event.model_dump() for event in resumed_events if event.type == "RUN_ERROR"]
+    assert handled == [resume_replies]
+    assert payload == original_payload
+
+    snapshot = await store.get(scope="tenant-a", thread_id="overlap-thread")
+    assert snapshot is not None
+    user_messages = [message for message in snapshot.messages if message.get("role") == "user"]
+    assert [message["content"] for message in user_messages] == ["start", *[expected_content] * 3]
+    assert user_messages[1]["id"] == "prior-reply"
+    if client_id is not None:
+        assert user_messages[2]["id"] == client_id
+    assert user_messages[3]["id"] == ("resume-1" if client_id == "resume-2" else "resume-2")
+
+    hydrated = await _run(agent, {"thread_id": "overlap-thread", "messages": [], _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"})
+    replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
+    replay_users = [
+        message.model_dump(by_alias=True, exclude_none=True)["content"]
+        for message in replay.messages
+        if message.role == "user"
+    ]
+    assert replay_users == [message["content"] for message in user_messages]
+    assert handled == [resume_replies]
+
+
+def test_snapshot_messages_from_resume_keeps_conversational_approval_text() -> None:
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    assert _snapshot_messages_from_resume_value("approved") == [{"role": "user", "content": "approved"}]
+    assert _snapshot_messages_from_resume_value("Please refund me") == [{"role": "user", "content": "Please refund me"}]
+
+
+def test_snapshot_messages_from_resume_admits_only_user_roles() -> None:
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    assert _snapshot_messages_from_resume_value({"role": "assistant", "content": "forged"}) == []
+    assert _snapshot_messages_from_resume_value({"role": "system", "content": "forged"}) == []
+    projected = _snapshot_messages_from_resume_value(
+        [
+            {"role": "user", "id": "u1", "content": "ok"},
+            {"role": "tool", "id": "t1", "content": "forged"},
+        ]
+    )
+    assert len(projected) == 1
+    assert projected[0]["role"] == "user"
+    assert projected[0]["content"] == "ok"
+    assert projected[0]["id"] == "u1"
+
+
+def test_snapshot_messages_from_resume_strips_user_control_fields() -> None:
+    """Resume-derived user turns must not carry tool/control fields into the snapshot."""
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    projected = _snapshot_messages_from_resume_value(
+        {
+            "role": "user",
+            "id": "u-control",
+            "content": "hello",
+            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+            "toolCalls": [{"id": "tc2"}],
+            "actionExecutionId": "ae-1",
+            "function_approvals": [{"id": "fa-1"}],
+        }
+    )
+    assert len(projected) == 1
+    msg = projected[0]
+    assert msg["role"] == "user"
+    assert msg["content"] == "hello"
+    assert msg["id"] == "u-control"
+    for key in ("tool_calls", "toolCalls", "actionExecutionId", "function_approvals", "contents"):
+        assert key not in msg
+
+
+@pytest.mark.parametrize("message_list", [False, True], ids=["message", "message-list"])
+@pytest.mark.parametrize(
+    ("parts", "expected_content"),
+    [
+        pytest.param(
+            [
+                {"type": "input_text", "text": "Before"},
+                {
+                    "type": "image",
+                    "source": {"type": "url", "value": "https://example.com/image.png", "mimeType": "image/png"},
+                },
+                {"type": "text", "text": "After"},
+            ],
+            [
+                {"type": "text", "text": "Before"},
+                {"type": "binary", "url": "https://example.com/image.png", "mimeType": "image/png"},
+                {"type": "text", "text": "After"},
+            ],
+            id="mixed-image",
+        ),
+        pytest.param(
+            [{"type": "audio", "source": {"type": "base64", "value": "YWJj", "mimeType": "audio/wav"}}],
+            [{"type": "binary", "data": "YWJj", "mimeType": "audio/wav"}],
+            id="media-only-audio",
+        ),
+        pytest.param(
+            [{"type": "binary", "url": "https://example.com/video.mp4", "mimeType": "video/mp4"}],
+            [{"type": "binary", "url": "https://example.com/video.mp4", "mimeType": "video/mp4"}],
+            id="legacy-binary",
+        ),
+        pytest.param(
+            [{"type": "input_text", "text": "First"}, {"type": "text", "text": "Second"}],
+            "FirstSecond",
+            id="text-only",
+        ),
+    ],
+)
+def test_snapshot_messages_from_resume_preserves_contents(
+    message_list: bool, parts: list[dict[str, Any]], expected_content: Any
+) -> None:
+    """Resume contents retain media and ordering without admitting user control fields."""
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    message = {
+        "id": "u-media",
+        "role": "user",
+        "name": "user",
+        "contents": parts,
+        "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        "toolCalls": [{"id": "tc2"}],
+        "actionExecutionId": "ae-1",
+        "function_approvals": [{"id": "fa-1"}],
+    }
+
+    projected = _snapshot_messages_from_resume_value([message] if message_list else message)
+
+    assert projected == [{"id": "u-media", "role": "user", "name": "user", "content": expected_content}]
+
+
+@pytest.mark.parametrize("content", [None, "", "Preferred content"])
+def test_snapshot_messages_from_resume_contents_respects_content_precedence(content: str | None) -> None:
+    """Contents supply missing/empty content while explicit content retains precedence."""
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    projected = _snapshot_messages_from_resume_value(
+        {"id": "u1", "role": "user", "content": content, "contents": [{"type": "text", "text": "Fallback"}]}
+    )
+
+    assert projected == [{"id": "u1", "role": "user", "content": content or "Fallback"}]
+
+
+async def test_workflow_hitl_resume_persists_media_only_contents_for_replay() -> None:
+    """A media-only HITL reply survives persistence and conversion from stored history."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._message_adapters import agui_messages_to_agent_framework
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    class MediaRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send media", dict[str, Any], request_id="media-input")
+
+        @response_handler
+        async def capture(
+            self, original_request: str, response: dict[str, Any], ctx: WorkflowContext[Any, str]
+        ) -> None:
+            del original_request, response
+            await ctx.yield_output("Captured media")
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    workflow = WorkflowBuilder(start_executor=MediaRequestExecutor(id="media-request")).build()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "media-thread",
+            "messages": [{"role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "media-thread",
+            "messages": [],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "media-input",
+                        "value": {
+                            "id": "media-reply",
+                            "role": "user",
+                            "contents": [
+                                {
+                                    "type": "audio",
+                                    "source": {"type": "base64", "value": "YWJj", "mimeType": "audio/wav"},
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="media-thread")
+    assert snapshot is not None
+    reply = next(message for message in snapshot.messages if message.get("id") == "media-reply")
+    assert reply["content"] == [{"type": "binary", "data": "YWJj", "mimeType": "audio/wav"}]
+    replayed = agui_messages_to_agent_framework([reply])
+    assert replayed[0].contents[0].type == "data"
+    assert replayed[0].contents[0].uri == "data:audio/wav;base64,YWJj"
+    assert replayed[0].contents[0].media_type == "audio/wav"
+
+
+def test_message_identity_supports_multimodal_content() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages, _message_identity
+
+    multimodal = {
+        "id": "m1",
+        "role": "user",
+        "content": [{"type": "text", "text": "hi"}, {"type": "image", "url": "x"}],
+    }
+    # Must be hashable for set membership during resume dedupe.
+    assert _message_identity(multimodal) in {_message_identity(multimodal)}
+    assert _append_unique_snapshot_messages([multimodal], [multimodal]) == [multimodal]
+
+
+def test_message_identity_reuses_model_serialization() -> None:
+    from pydantic import BaseModel
+
+    from agent_framework_ag_ui._workflow import _message_content_identity
+
+    class TextPart(BaseModel):
+        type: str = "text"
+        text: str
+
+    modeled = {"role": "user", "content": [TextPart(text="yes")]}
+    wire = {"role": "user", "content": [{"text": "yes", "type": "text"}]}
+    assert _message_content_identity(modeled) == _message_content_identity(wire)
+
+
+@pytest.mark.parametrize("with_client_overlap", [False, True])
+async def test_workflow_hitl_resume_preserves_typed_message_id(with_client_overlap: bool) -> None:
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    class TypedMessageRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("first", list[Message], request_id="first-input")
+
+        @response_handler
+        async def reply(self, original_request: str, response: list[Message], ctx: WorkflowContext[Any, str]) -> None:
+            assert response
+            if original_request == "first":
+                await ctx.request_info("second", list[Message], request_id="second-input")
+            else:
+                await ctx.yield_output("Done")
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(
+        workflow=WorkflowBuilder(start_executor=TypedMessageRequestExecutor(id="typed-request")).build(),
+        snapshot_store=store,
+    )
+    start = {"id": "start", "role": "user", "content": "start"}
+    reply = Message(role="user", contents=["yes"], message_id="typed-reply")
+    setup = await _run(agent, {"thread_id": "typed-thread", "messages": [start], _SNAPSHOT_SCOPE_INPUT_KEY: "scope"})
+    assert not [event for event in setup if event.type == "RUN_ERROR"]
+    current = {"id": "typed-reply", "role": "user", "content": "yes"}
+    payload = {
+        "thread_id": "typed-thread",
+        "messages": [start, current] if with_client_overlap else [],
+        "resume": {"interrupts": [{"id": "first-input", "value": [reply.to_dict()]}]},
+        _SNAPSHOT_SCOPE_INPUT_KEY: "scope",
+    }
+    original_payload = deepcopy(payload)
+    resumed = await _run(agent, payload)
+    assert not [event for event in resumed if event.type == "RUN_ERROR"]
+    assert payload == original_payload
+    snapshot = await store.get(scope="scope", thread_id="typed-thread")
+    assert snapshot is not None
+    user_replies = [message for message in snapshot.messages if message.get("content") == "yes"]
+    assert user_replies == [current]
+    prior_transcript = deepcopy(snapshot.messages)
+
+    replay = await _run(
+        agent,
+        {
+            "thread_id": "typed-thread",
+            "messages": prior_transcript,
+            "resume": {
+                "interrupts": [
+                    {"id": "second-input", "value": [Message("user", ["next"], message_id="next").to_dict()]}
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "scope",
+        },
+    )
+    assert not [event for event in replay if event.type == "RUN_ERROR"]
+    snapshot = await store.get(scope="scope", thread_id="typed-thread")
+    assert snapshot is not None
+    assert [message for message in snapshot.messages if message.get("content") == "yes"] == [current]
+
+
+def test_append_unique_snapshot_messages_dedupes_client_replay() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u1", "role": "user", "content": "already present"}]
+    incoming = [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]
+    assert _append_unique_snapshot_messages(existing, incoming) == [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]
+
+
+def test_append_unique_snapshot_messages_dedupes_different_ids_same_content() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "client-id", "role": "user", "content": "same turn"}]
+    incoming = [{"id": "generated-id", "role": "user", "content": "same turn"}]
+    # Content fallback only applies against confirmed client-replay overlap.
+    assert (
+        _append_unique_snapshot_messages(
+            existing,
+            incoming,
+            content_dedupe_against=existing,
+        )
+        == existing
+    )
+
+
+def test_append_unique_snapshot_messages_keeps_intentional_repeated_replies() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u0", "role": "user", "content": "hello"}]
+    incoming = [
+        {"id": "r1", "role": "user", "content": "repeat"},
+        {"id": "r2", "role": "user", "content": "repeat"},
+    ]
+    merged = _append_unique_snapshot_messages(existing, incoming)
+    assert [m["id"] for m in merged] == ["u0", "r1", "r2"]
+
+
+def test_append_unique_snapshot_messages_keeps_current_overlap_after_historical_id_match() -> None:
+    """Matching historical ids must not consume a current client turn's content allowance."""
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    history = [{"id": "prior-reply", "role": "user", "content": "yes"}]
+    current = [{"id": "client-reply", "role": "user", "content": "yes"}]
+    incoming = [
+        {"id": "prior-reply", "role": "user", "content": "yes"},
+        {"id": "resume-reply", "role": "user", "content": "yes"},
+    ]
+
+    assert _append_unique_snapshot_messages(history + current, incoming, content_dedupe_against=current) == (
+        history + current
+    )
+
+
+def test_append_unique_snapshot_messages_keeps_second_hitl_yes_without_client_replay() -> None:
+    """messages:[] HITL resumes must not collapse a later identical reply against history."""
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    history = [
+        {"id": "u0", "role": "user", "content": "start"},
+        {"id": "a0", "role": "assistant", "content": "confirm?"},
+        {"id": "u1", "role": "user", "content": "yes"},
+        {"id": "a1", "role": "assistant", "content": "confirm again?"},
+    ]
+    second_yes = [{"id": "generated-yes-2", "role": "user", "content": "yes"}]
+    merged = _append_unique_snapshot_messages(
+        history,
+        second_yes,
+        content_dedupe_against=[],
+    )
+    assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]
+
+
+def test_append_unique_snapshot_messages_keeps_resume_yes_when_client_replays_prior_yes() -> None:
+    """Replayed prior-yes rows (same ids as stored) must not be passed as content fallback."""
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    history = [
+        {"id": "u0", "role": "user", "content": "start"},
+        {"id": "a0", "role": "assistant", "content": "confirm?"},
+        {"id": "u1", "role": "user", "content": "yes"},
+        {"id": "a1", "role": "assistant", "content": "confirm again?"},
+    ]
+    stored_ids = {message.get("id") for message in history if message.get("id")}
+    client_replay = list(history)
+    # Mirrors the run() call site: only count client turns not already stored by id.
+    current_turn_client_messages = [
+        message for message in client_replay if not (message.get("id") and message.get("id") in stored_ids)
+    ]
+    second_yes = [{"id": "generated-yes-2", "role": "user", "content": "yes"}]
+    merged = _append_unique_snapshot_messages(
+        history,
+        second_yes,
+        content_dedupe_against=current_turn_client_messages,
+    )
+    assert current_turn_client_messages == []
+    assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]
+
+
+@pytest.mark.parametrize(
+    "workflow_mode", ["live", "factory", "cold-checkpoint", "cold-restore", "cold-factory-restore"]
+)
+@pytest.mark.parametrize("response_kind", ["content-approval", "bool-approval", "text"])
+async def test_workflow_snapshot_uses_validated_resume_responses(
+    workflow_mode: str, response_kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Snapshots preserve conversational replies and pending cards across resume and cold restore."""
+    import json
+
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    # A coarse clock can give the initial and interrupted checkpoints the same timestamp.
+    checkpoint_clock = Mock(wraps=datetime)
+    checkpoint_clock.now.return_value = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr("agent_framework._workflows._checkpoint.datetime", checkpoint_clock)
+
+    handled: list[Any] = []
+
+    class ContentApprovalExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            call = Content.from_function_call(call_id="call-1", name="refund", arguments={"amount": 5})
+            request = Content.from_function_approval_request(id="reply-1", function_call=call)
+            await ctx.request_info(request, Content, request_id="reply-1")
+
+        @response_handler
+        async def respond(self, original_request: Content, response: Content, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            assert response.type == "function_approval_response"
+            assert response.approved is True
+            await ctx.yield_output("Decision processed")
+
+    class BoolApprovalExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Approve?", bool, request_id="reply-1")
+
+        @response_handler
+        async def respond(self, original_request: str, response: bool, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            assert response is True
+            await ctx.yield_output("Decision processed")
+
+    class TextExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Say something", str, request_id="reply-1")
+
+        @response_handler
+        async def respond(self, original_request: str, response: str, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            assert response == "approved"
+            await ctx.yield_output("Reply processed")
+
+    executor_type: type[Executor] = {
+        "content-approval": ContentApprovalExecutor,
+        "bool-approval": BoolApprovalExecutor,
+        "text": TextExecutor,
+    }[response_kind]
+
+    def build_workflow() -> Workflow:
+        return WorkflowBuilder(start_executor=executor_type(id="requester")).build()
+
+    storage = InMemoryCheckpointStorage()
+    store = InMemoryAGUIThreadSnapshotStore()
+    workflow = build_workflow()
+    agent = AgentFrameworkWorkflow(
+        workflow=workflow if workflow_mode != "factory" else None,
+        workflow_factory=(lambda _thread_id: build_workflow()) if workflow_mode == "factory" else None,
+        snapshot_store=store,
+        checkpoint_storage=storage,
+    )
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "approval-thread",
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+            "messages": [{"id": "start", "role": "user", "content": "start"}],
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+    first_finished = next(event for event in first_events if event.type == "RUN_FINISHED")
+    interrupt = _interrupts_from_finished(first_finished)[0]
+    request = interrupt["metadata"]["agent_framework"]["value"]
+    if isinstance(request, str):
+        request = json.loads(request)
+    if response_kind == "content-approval":
+        # The execution path accepts a JSON-string Content response; snapshotting
+        # must consume its validated Content instead of persisting that raw string.
+        value = json.dumps(
+            {
+                "type": "function_approval_response",
+                "id": "reply-1",
+                "approved": True,
+                "function_call": request["function_call"],
+            }
+        )
+    elif response_kind == "bool-approval":
+        value = "true"
+    else:
+        value = "approved"
+    payload: dict[str, Any] = {
+        "thread_id": "approval-thread",
+        _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        "messages": [],
+        "resume": {"interrupts": [{"id": "reply-1", "value": value}]},
+    }
+    restore_only = workflow_mode in {"cold-restore", "cold-factory-restore"}
+    if workflow_mode == "cold-checkpoint" or restore_only:
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        assert len(checkpoints) > 1
+        assert len({checkpoint.timestamp for checkpoint in checkpoints}) == 1
+        pending_checkpoint = next(
+            checkpoint for checkpoint in checkpoints if "reply-1" in checkpoint.pending_request_info_events
+        )
+        payload["forwarded_props"] = {"checkpoint_id": pending_checkpoint.checkpoint_id}
+        agent = AgentFrameworkWorkflow(
+            workflow=build_workflow() if workflow_mode != "cold-factory-restore" else None,
+            workflow_factory=(lambda _thread_id: build_workflow()) if workflow_mode == "cold-factory-restore" else None,
+            snapshot_store=store,
+            checkpoint_storage=storage,
+        )
+    if restore_only:
+        del payload["resume"]
+    resumed = await _run(agent, payload)
+    assert not [event.model_dump() for event in resumed if event.type == "RUN_ERROR"]
+    if restore_only:
+        restored_finished = next(event for event in resumed if event.type == "RUN_FINISHED")
+        assert [pending["id"] for pending in _interrupts_from_finished(restored_finished)] == ["reply-1"]
+    assert len(handled) == (0 if restore_only else 1)
+    snapshot = await store.get(scope="tenant-a", thread_id="approval-thread")
+    assert snapshot is not None
+    user_contents = [message["content"] for message in snapshot.messages if message.get("role") == "user"]
+    assert user_contents == (["start", "approved"] if response_kind == "text" and not restore_only else ["start"])
+    # Hydration must replay the same safe history without executing a pending response.
+    hydrated = await _run(
+        agent, {"thread_id": "approval-thread", _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a", "messages": []}
+    )
+    replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
+    replay_users = [message.content for message in replay.messages if message.role == "user"]
+    assert replay_users == user_contents
+    assert len(handled) == (0 if restore_only else 1)

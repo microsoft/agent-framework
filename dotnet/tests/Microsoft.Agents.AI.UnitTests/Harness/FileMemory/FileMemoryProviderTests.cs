@@ -975,12 +975,12 @@ public class FileMemoryProviderTests
 
     #region Helper Methods
 
-    private static FileMemoryProvider CreateProvider(InMemoryAgentFileStore? store = null, Func<AgentSession?, FileMemoryState>? stateInitializer = null)
+    private static FileMemoryProvider CreateProvider(AgentFileStore? store = null, Func<AgentSession?, FileMemoryState>? stateInitializer = null)
     {
         return new FileMemoryProvider(store ?? new InMemoryAgentFileStore(), stateInitializer);
     }
 
-    private static async Task<(IEnumerable<AITool> Tools, FileMemoryState State, AgentSession Session)> CreateToolsAsync(InMemoryAgentFileStore? store = null, Func<AgentSession?, FileMemoryState>? stateInitializer = null)
+    private static async Task<(IEnumerable<AITool> Tools, FileMemoryState State, AgentSession Session)> CreateToolsAsync(AgentFileStore? store = null, Func<AgentSession?, FileMemoryState>? stateInitializer = null)
     {
         var provider = CreateProvider(store, stateInitializer);
         var agent = new Mock<AIAgent>().Object;

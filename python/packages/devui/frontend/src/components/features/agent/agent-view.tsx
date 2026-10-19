@@ -40,21 +40,53 @@ import type {
   ExtendedResponseStreamEvent,
 } from "@/types";
 import { useDevUIStore } from "@/stores";
-import { loadStreamingState, type StreamingState } from "@/services/streaming-state";
+import {
+  applyTextDeltaToParts,
+  loadStreamingState,
+  type StreamingState,
+  type StreamingTextPart,
+} from "@/services/streaming-state";
 
 type DebugEventHandler = (event: ExtendedResponseStreamEvent | "clear") => void;
 
 const ASSISTANT_TEXT_RENDER_INTERVAL_MS = 50;
 const STREAMING_PREVIEW_PREFIX = "[Earlier streaming content omitted after refresh]\n\n";
 
-function getRestoredStreamingText(state: StreamingState): string {
-  if (!state.accumulatedText) {
-    return "";
+function getRestoredStreamingParts(state: StreamingState): StreamingTextPart[] {
+  const parts = state.accumulatedParts?.map((part) => ({ ...part })) ??
+    (state.accumulatedText
+      ? [{
+          itemId: state.lastMessageId,
+          contentIndex: 0,
+          type: state.accumulatedTextType ?? "text",
+          text: state.accumulatedText,
+        } satisfies StreamingTextPart]
+      : []);
+  if (state.accumulatedTextIsPreview) {
+    parts.unshift({
+      itemId: state.lastMessageId,
+      contentIndex: -1,
+      type: "text",
+      text: STREAMING_PREVIEW_PREFIX,
+    });
   }
+  return parts;
+}
 
-  return state.accumulatedTextIsPreview
-    ? `${STREAMING_PREVIEW_PREFIX}${state.accumulatedText}`
-    : state.accumulatedText;
+function createStreamingMessageContent(
+  text: string,
+  type: "text" | "refusal"
+): import("@/types/openai").MessageContent {
+  if (type === "refusal") {
+    return { type: "refusal", refusal: text };
+  }
+  return { type: "text", text };
+}
+
+function streamingPartsToMessageContent(
+  parts: StreamingTextPart[]
+): import("@/types/openai").MessageContent[] {
+  return parts.map((part) => createStreamingMessageContent(part.text, part.type));
 }
 
 interface AgentViewProps {
@@ -79,8 +111,8 @@ function ConversationItemBubble({ item, toolCalls = [], toolResults = [] }: Conv
   const getMessageText = () => {
     if (item.type === "message") {
       return item.content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as import("@/types/openai").MessageTextContent).text)
+        .filter((c) => c.type === "text" || c.type === "output_text" || c.type === "refusal")
+        .map((c) => ("refusal" in c ? c.refusal : c.text))
         .join("\n");
     }
     return "";
@@ -322,7 +354,52 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   } | null>(null);
   const userJustSentMessage = useRef<boolean>(false);
   const accumulatedTextRef = useRef<string>("");
+  const accumulatedPartsRef = useRef<StreamingTextPart[]>([]);
   const lastAssistantTextRenderAt = useRef(0);
+  const tracePollControllersRef = useRef(new Set<AbortController>());
+
+  const abortTracePolls = useCallback(() => {
+    for (const controller of tracePollControllersRef.current) {
+      controller.abort();
+    }
+    tracePollControllersRef.current.clear();
+  }, []);
+
+  const startTracePolling = useCallback((responseId: string) => {
+    const traceController = new AbortController();
+    tracePollControllersRef.current.add(traceController);
+    void apiClient.getTraceEvents(
+      responseId,
+      useDevUIStore.getState().serverCapabilities.trace_retrieval,
+      traceController.signal
+    )
+      .then((traceEvents) => {
+        if (traceController.signal.aborted) {
+          return;
+        }
+
+        for (const traceEvent of traceEvents) {
+          onDebugEvent(traceEvent);
+        }
+      })
+      .catch((error) => {
+        if (!isAbortError(error)) {
+          console.debug("Failed to retrieve response traces", error);
+        }
+      })
+      .finally(() => {
+        tracePollControllersRef.current.delete(traceController);
+      });
+  }, [onDebugEvent]);
+
+  const clearDebugEvents = useCallback(() => {
+    abortTracePolls();
+    onDebugEvent("clear");
+  }, [abortTracePolls, onDebugEvent]);
+
+  useEffect(() => {
+    return abortTracePolls;
+  }, [selectedAgent?.id, abortTracePolls]);
 
   const renderAssistantStreamingText = useCallback(
     (
@@ -345,35 +422,26 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           return item;
         }
 
-        const nextText = accumulatedTextRef.current;
-        const existingTextContent = item.content.find(
-          (content) => content.type === "text" || content.type === "output_text"
+        const existingNonTextContent = item.content.filter(
+          (content) =>
+            content.type !== "text" && content.type !== "output_text" && content.type !== "refusal"
         );
-        const currentText =
-          existingTextContent && "text" in existingTextContent
-            ? existingTextContent.text
-            : "";
-
-        if (currentText === nextText && item.status === status) {
+        const nextTextContent = streamingPartsToMessageContent(accumulatedPartsRef.current);
+        const currentTextContent = item.content.filter(
+          (content) =>
+            content.type === "text" || content.type === "output_text" || content.type === "refusal"
+        );
+        if (
+          JSON.stringify(currentTextContent) === JSON.stringify(nextTextContent) &&
+          item.status === status
+        ) {
           return item;
         }
 
         changed = true;
-        const existingNonTextContent = item.content.filter(
-          (content) => content.type !== "text" && content.type !== "output_text"
-        );
-
         return {
           ...item,
-          content: nextText
-            ? [
-                ...existingNonTextContent,
-                {
-                  type: "text",
-                  text: nextText,
-                } as import("@/types/openai").MessageTextContent,
-              ]
-            : existingNonTextContent,
+          content: [...existingNonTextContent, ...nextTextContent],
           status,
         };
       });
@@ -571,11 +639,16 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
           // Handle text delta events
           if (
-            openAIEvent.type === "response.output_text.delta" &&
+            (openAIEvent.type === "response.output_text.delta" ||
+              openAIEvent.type === "response.refusal.delta") &&
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
-            accumulatedTextRef.current += openAIEvent.delta;
+            accumulatedPartsRef.current = applyTextDeltaToParts(
+              accumulatedPartsRef.current,
+              openAIEvent
+            );
+            accumulatedTextRef.current = accumulatedPartsRef.current.map((part) => part.text).join("");
             renderAssistantStreamingText(assistantMessage.id);
           }
         }
@@ -678,7 +751,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               // Restore stored traces as debug events for context inspection
               if (storedTraces.length > 0) {
                 // Clear any previous debug events first
-                onDebugEvent("clear");
+                clearDebugEvents();
                 for (const trace of storedTraces) {
                   // Convert stored trace back to ResponseTraceComplete event format
                   const traceEvent: ExtendedResponseStreamEvent = {
@@ -694,14 +767,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               const state = loadStreamingState(mostRecent.id);
 
               if (state && !state.completed) {
-                const restoredText = getRestoredStreamingText(state);
-                accumulatedTextRef.current = restoredText;
+                const restoredParts = getRestoredStreamingParts(state);
+                accumulatedPartsRef.current = restoredParts;
+                accumulatedTextRef.current = restoredParts.map((part) => part.text).join("");
                 // Add assistant message with resumed text
                 const assistantMsg: import("@/types/openai").ConversationMessage = {
                   id: state.lastMessageId || `assistant-${Date.now()}`,
                   type: "message",
                   role: "assistant",
-                  content: restoredText ? [{ type: "text", text: restoredText }] : [],
+                  content: streamingPartsToMessageContent(restoredParts),
                   status: "in_progress",
                 };
                 setChatItems([...allItems as import("@/types/openai").ConversationItem[], assistantMsg]);
@@ -800,12 +874,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     setIsStreaming(false);
     setCurrentConversation(undefined);
     accumulatedTextRef.current = "";
+    accumulatedPartsRef.current = [];
     lastAssistantTextRenderAt.current = 0;
 
     loadConversations();
     // currentConversation is intentionally excluded - this effect should only run when agent changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAgent, onDebugEvent, renderAssistantStreamingText, setChatItems, setIsStreaming, setLoadingConversations, setAvailableConversations, setCurrentConversation, setPendingApprovals, updateConversationUsage]);
+  }, [selectedAgent, onDebugEvent, clearDebugEvents, renderAssistantStreamingText, setChatItems, setIsStreaming, setLoadingConversations, setAvailableConversations, setCurrentConversation, setPendingApprovals, updateConversationUsage]);
 
   // Removed old input handling functions - now handled by ChatMessageInput component
 
@@ -825,9 +899,10 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       // Reset conversation usage by setting it to initial state
       useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
       accumulatedTextRef.current = "";
+      accumulatedPartsRef.current = [];
 
       // Clear debug panel for fresh conversation
-      onDebugEvent("clear");
+      clearDebugEvents();
 
       // Update localStorage cache with new conversation
       const cachedKey = `devui_convs_${selectedAgent.id}`;
@@ -841,7 +916,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         type: "conversation_creation_error",
       });
     }
-  }, [selectedAgent, onDebugEvent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
+  }, [selectedAgent, availableConversations, clearDebugEvents, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
 
   // Handle conversation deletion
   const handleDeleteConversation = useCallback(
@@ -881,17 +956,18 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               setIsStreaming(false);
               useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
               accumulatedTextRef.current = "";
+              accumulatedPartsRef.current = [];
             }
           }
 
           // Clear debug panel
-          onDebugEvent("clear");
+          clearDebugEvents();
         }
       } catch {
         alert("Failed to delete conversation. Please try again.");
       }
     },
-    [availableConversations, currentConversation, onDebugEvent, setAvailableConversations, setCurrentConversation, setChatItems, setIsStreaming]
+    [availableConversations, currentConversation, clearDebugEvents, setAvailableConversations, setCurrentConversation, setChatItems, setIsStreaming]
   );
 
   // Handle entity reload (hot reload)
@@ -941,7 +1017,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       setCurrentConversation(conversation);
 
       // Clear debug panel when switching conversations
-      onDebugEvent("clear");
+      clearDebugEvents();
 
       try {
         // Load conversation history from backend with pagination
@@ -1000,14 +1076,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         // Check for incomplete stream and restore accumulated text
         const state = loadStreamingState(conversationId);
         if (state?.accumulatedText) {
-          const restoredText = getRestoredStreamingText(state);
-          accumulatedTextRef.current = restoredText;
+          const restoredParts = getRestoredStreamingParts(state);
+          accumulatedPartsRef.current = restoredParts;
+          accumulatedTextRef.current = restoredParts.map((part) => part.text).join("");
           // Add assistant message with resumed text - streaming will continue automatically
           const assistantMsg: import("@/types/openai").ConversationMessage = {
             id: `assistant-${Date.now()}`,
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: restoredText }],
+            content: streamingPartsToMessageContent(restoredParts),
             status: "in_progress",
           };
           setChatItems([...items, assistantMsg]);
@@ -1028,8 +1105,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       }
 
       accumulatedTextRef.current = "";
+      accumulatedPartsRef.current = [];
     },
-    [availableConversations, onDebugEvent, setCurrentConversation, setChatItems, setIsStreaming]
+    [availableConversations, onDebugEvent, clearDebugEvents, setCurrentConversation, setChatItems, setIsStreaming]
   );
 
   // Handle function approval responses
@@ -1163,6 +1241,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
       setChatItems([...useDevUIStore.getState().chatItems, assistantMessage]);
 
+      let traceResponseId: string | undefined;
+      let responseSignal: AbortSignal | undefined;
+
       try {
         // If no conversation selected, create one automatically
         let conversationToUse = currentConversation;
@@ -1199,21 +1280,31 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         // Clear text accumulator for new response
         accumulatedTextRef.current = "";
+        accumulatedPartsRef.current = [];
         lastAssistantTextRenderAt.current = 0;
 
         // Create new AbortController for this request
-        const signal = createAbortSignal();
+        responseSignal = createAbortSignal();
 
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamAgentExecutionOpenAI(
           selectedAgent.id,
           apiRequest,
-          signal
+          responseSignal
         );
-
         for await (const openAIEvent of streamGenerator) {
           // Pass all events to debug panel
           onDebugEvent(openAIEvent);
+
+          if (
+            "response" in openAIEvent &&
+            openAIEvent.response &&
+            typeof openAIEvent.response === "object" &&
+            "id" in openAIEvent.response &&
+            typeof openAIEvent.response.id === "string"
+          ) {
+            traceResponseId = openAIEvent.response.id;
+          }
 
           // Handle response.completed event (OpenAI standard)
           if (openAIEvent.type === "response.completed") {
@@ -1454,11 +1545,16 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
           // Handle text delta events for chat
           if (
-            openAIEvent.type === "response.output_text.delta" &&
+            (openAIEvent.type === "response.output_text.delta" ||
+              openAIEvent.type === "response.refusal.delta") &&
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
-            accumulatedTextRef.current += openAIEvent.delta;
+            accumulatedPartsRef.current = applyTextDeltaToParts(
+              accumulatedPartsRef.current,
+              openAIEvent
+            );
+            accumulatedTextRef.current = accumulatedPartsRef.current.map((part) => part.text).join("");
             renderAssistantStreamingText(assistantMessage.id);
           }
 
@@ -1528,9 +1624,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         }
         setIsStreaming(false);
         resetCancelling();
+      } finally {
+        if (traceResponseId && !responseSignal?.aborted) {
+          startTracePolling(traceResponseId);
+        }
       }
     },
-    [selectedAgent, currentConversation, onDebugEvent, renderAssistantStreamingText, setChatItems, setIsStreaming, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling]
+    [selectedAgent, currentConversation, onDebugEvent, renderAssistantStreamingText, setChatItems, setIsStreaming, setIsSubmitting, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling, startTracePolling]
   );
 
   // Handle non-streaming message sending
@@ -1641,6 +1741,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                       type: "text",
                       text: (content as { text: string }).text,
                     } as import("@/types/openai").MessageTextContent);
+                  } else if (content.type === "refusal") {
+                    assistantContent.push({
+                      type: "refusal",
+                      refusal: content.refusal,
+                    });
                   } else if (content.type === "output_image") {
                     assistantContent.push(content as unknown as import("@/types/openai").MessageOutputImage);
                   } else if (content.type === "output_file") {
@@ -1712,6 +1817,10 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           sequence_number: 0,
         } as ExtendedResponseStreamEvent);
 
+        if (typeof response.id === "string") {
+          startTracePolling(response.id);
+        }
+
       } catch (error) {
         // Show error message
         const errorMessage = error instanceof Error ? error.message : "Failed to get response";
@@ -1733,7 +1842,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         setIsSubmitting(false);
       }
     },
-    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setCurrentConversation, setAvailableConversations, updateConversationUsage, setIsSubmitting]
+    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setCurrentConversation, setAvailableConversations, updateConversationUsage, setIsSubmitting, startTracePolling]
   );
 
 

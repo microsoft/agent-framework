@@ -1,14 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+import logging
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from agent_framework import (
+    EXCLUDE_REASON_KEY,
+    EXCLUDED_KEY,
     GROUP_ANNOTATION_KEY,
     GROUP_TOKEN_COUNT_KEY,
+    SUMMARIZED_BY_SUMMARY_ID_KEY,
+    SUMMARY_OF_MESSAGE_IDS_KEY,
     BaseChatClient,
     ChatMiddleware,
     ChatResponse,
@@ -20,7 +25,9 @@ from agent_framework import (
     SupportsChatGetResponse,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    annotate_message_groups,
     apply_compaction,
+    included_messages,
     tool,
 )
 
@@ -41,6 +48,37 @@ class _RestoreMessagesChatMiddleware(ChatMiddleware):
         original_messages = tuple(context.messages)
         await call_next()
         context.messages = original_messages
+
+
+class _CompactAllButLatestChatMiddleware(ChatMiddleware):
+    def __init__(self, *, terminate: bool = False) -> None:
+        self.terminate = terminate
+
+    async def process(self, context: Any, call_next: Any) -> None:
+        messages = list(context.messages)
+        annotate_message_groups(messages)
+        summarized = messages[:-1]
+        summary = Message(
+            role="user",
+            contents=["<summary of earlier conversation>"],
+            message_id="summary_1",
+            additional_properties={
+                GROUP_ANNOTATION_KEY: {
+                    SUMMARY_OF_MESSAGE_IDS_KEY: [message.message_id for message in summarized if message.message_id]
+                }
+            },
+        )
+        for message in summarized:
+            annotation = message.additional_properties.setdefault(GROUP_ANNOTATION_KEY, {})
+            annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary.message_id
+            message.additional_properties[EXCLUDED_KEY] = True
+            message.additional_properties[EXCLUDE_REASON_KEY] = "test_compaction"
+        messages.insert(0, summary)
+        context.messages = list(included_messages(messages))
+        if self.terminate:
+            context.result = ChatResponse(messages=[Message(role="assistant", contents=["terminated"])])
+            return
+        await call_next()
 
 
 class _FixedSummarizer:
@@ -449,6 +487,272 @@ async def test_function_loop_persists_inserted_summaries_across_iterations_strea
     assert "Paris" in summary_text
 
 
+async def test_function_loop_returns_compaction_summaries_in_final_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    # Regression test for #8099: compaction excludes tool groups via flags on Message
+    # objects shared with the returned transcript, but inserts summary messages only into
+    # the model-input list. The final response kept only the exclusion flags, so persisted
+    # history (loaded with skip_excluded=True) silently lost the summarized tool results.
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _tool_call_response("call_1", "London"),
+        _tool_call_response("call_2", "Paris"),
+        ChatResponse(messages=Message(role="assistant", contents=["done"]), response_id="resp_done"),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["What is the weather in London?"])],
+        options={"tools": [lookup_weather]},  # type: ignore[typeddict-unknown-key]
+    )
+
+    def _is_call(message: Message, call_id: str) -> bool:
+        return any(content.type == "function_call" and content.call_id == call_id for content in message.contents)
+
+    def _is_result(message: Message, call_id: str) -> bool:
+        return any(content.type == "function_result" and content.call_id == call_id for content in message.contents)
+
+    summary_index = next(
+        (index for index, message in enumerate(response.messages) if _is_tool_result_summary(message)), None
+    )
+    first_call_1_index = next(
+        (index for index, message in enumerate(response.messages) if _is_call(message, "call_1")), None
+    )
+    call_messages = {
+        call_id: [
+            message for message in response.messages if _is_call(message, call_id) or _is_result(message, call_id)
+        ]
+        for call_id in ("call_1", "call_2")
+    }
+
+    assert summary_index is not None, [message.text for message in response.messages]
+    assert "London" in (response.messages[summary_index].text or "")
+    # The summary replaces the excluded group in transcript order: it precedes the group it summarizes.
+    assert first_call_1_index is not None
+    assert summary_index < first_call_1_index
+    assert all(message.additional_properties.get(EXCLUDED_KEY, False) for message in call_messages["call_1"]), [
+        message.additional_properties for message in call_messages["call_1"]
+    ]
+    assert call_messages["call_2"]
+    assert not any(message.additional_properties.get(EXCLUDED_KEY, False) for message in call_messages["call_2"])
+
+
+async def test_function_loop_returns_compaction_summaries_when_iteration_budget_exhausted(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    # Companion of test_function_loop_returns_compaction_summaries_in_final_response for the
+    # max-iterations terminal path: summaries inserted before the final no-tools model call
+    # must reach the returned transcript too, not only the model input.
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _tool_call_response("call_1", "London"),
+        _tool_call_response("call_2", "Paris"),
+        _tool_call_response("call_3", "Tokyo"),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["What is the weather in London?"])],
+        options={"tools": [lookup_weather]},  # type: ignore[typeddict-unknown-key]
+    )
+
+    summaries = [message for message in response.messages if _is_tool_result_summary(message)]
+    summary_text = " ".join(message.text or "" for message in summaries)
+
+    def _first_call_index(call_id: str) -> int | None:
+        return next(
+            (
+                index
+                for index, message in enumerate(response.messages)
+                if any(content.type == "function_call" and content.call_id == call_id for content in message.contents)
+            ),
+            None,
+        )
+
+    assert len(summaries) == 2, [message.text for message in response.messages]
+    assert "London" in summary_text
+    assert "Paris" in summary_text
+    # Each summary precedes the excluded group it replaces in transcript order.
+    first_call_1_index = _first_call_index("call_1")
+    first_call_2_index = _first_call_index("call_2")
+    assert first_call_1_index is not None and first_call_2_index is not None
+    london_summary_index = next(
+        index
+        for index, message in enumerate(response.messages)
+        if _is_tool_result_summary(message) and "London" in (message.text or "")
+    )
+    paris_summary_index = next(
+        index
+        for index, message in enumerate(response.messages)
+        if _is_tool_result_summary(message) and "Paris" in (message.text or "")
+    )
+    assert london_summary_index < first_call_1_index
+    assert paris_summary_index < first_call_2_index
+
+
+@pytest.mark.parametrize(
+    ("caller_role", "expected_summary"),
+    [("system", "SUMMARY"), ("user", "tool-result")],
+    ids=["transcript-owned", "includes-caller-input"],
+)
+async def test_function_loop_reconciles_nested_compaction_summaries(
+    chat_client_base: SupportsChatGetResponse,
+    caller_role: Any,
+    expected_summary: str,
+) -> None:
+    class _CompactToolResultsBeforeDownstream(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            assert isinstance(context.messages, list)
+            await apply_compaction(
+                context.messages,
+                strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
+            )
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [_CompactToolResultsBeforeDownstream()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = SummarizationStrategy(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        client=_FixedSummarizer(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+    )
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _tool_call_response("call_1", "London"),
+        _tool_call_response("call_2", "Paris"),
+        ChatResponse(messages=Message(role="assistant", contents=["done"]), response_id="resp_done"),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role=caller_role, contents=["Weather request"])],
+        options={"tools": [lookup_weather]},  # type: ignore[typeddict-unknown-key]
+    )
+
+    included_messages = [
+        message for message in response.messages if not message.additional_properties.get(EXCLUDED_KEY, False)
+    ]
+    if expected_summary == "SUMMARY":
+        assert [message.text for message in included_messages].count("SUMMARY") == 1
+        assert not any(_is_tool_result_summary(message) for message in included_messages)
+    else:
+        assert not any(message.text == "SUMMARY" for message in response.messages)
+        assert sum(_is_tool_result_summary(message) for message in included_messages) == 1
+
+
+@pytest.mark.parametrize("terminal_kind", ["approval", "user-input", "middleware-termination"])
+async def test_function_loop_returns_compacted_transcript_on_early_terminal_exit(
+    chat_client_base: SupportsChatGetResponse,
+    terminal_kind: str,
+) -> None:
+    from agent_framework._middleware import FunctionMiddleware, MiddlewareTermination
+    from agent_framework.exceptions import UserInputRequiredException
+
+    class _TerminateTerminalTool(FunctionMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            if context.function.name == "terminal_tool":
+                context.result = "terminated by middleware"
+                raise MiddlewareTermination
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 4  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    if terminal_kind == "approval":
+
+        @tool(name="terminal_tool", approval_mode="always_require")
+        def terminal_tool() -> str:
+            return "approved"
+
+    elif terminal_kind == "user-input":
+
+        @tool(name="terminal_tool", approval_mode="never_require")
+        def terminal_tool() -> str:
+            raise UserInputRequiredException(
+                contents=[Content.from_oauth_consent_request(consent_link="https://example.com/consent")]
+            )
+
+    else:
+
+        @tool(name="terminal_tool", approval_mode="never_require")
+        def terminal_tool() -> str:
+            return "should not execute"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _tool_call_response("call_1", "London"),
+        _tool_call_response("call_2", "Paris"),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_terminal", name="terminal_tool", arguments="{}")],
+            ),
+            response_id="resp_terminal",
+        ),
+    ]
+    client_kwargs = {"middleware": [_TerminateTerminalTool()]} if terminal_kind == "middleware-termination" else None
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["Run the tools"])],
+        options={"tools": [lookup_weather, terminal_tool]},  # type: ignore[typeddict-unknown-key]
+        client_kwargs=client_kwargs,
+    )
+
+    summary_index = next(index for index, message in enumerate(response.messages) if _is_tool_result_summary(message))
+    first_call_index = next(
+        index
+        for index, message in enumerate(response.messages)
+        if any(content.type == "function_call" and content.call_id == "call_1" for content in message.contents)
+    )
+    correlated_contents = [
+        content
+        for message in response.messages
+        for content in message.contents
+        if content.call_id in {"call_1", "call_2", "call_terminal"}
+    ]
+
+    assert summary_index < first_call_index
+    assert "London" in (response.messages[summary_index].text or "")
+    assert sum(content.call_id == "call_1" for content in correlated_contents) == 2
+    assert sum(content.call_id == "call_2" for content in correlated_contents) == 2
+    assert sum(content.call_id == "call_terminal" for content in correlated_contents) == (
+        1 if terminal_kind == "approval" else 2
+    )
+    if terminal_kind == "approval":
+        assert any(
+            content.type == "function_approval_request" for message in response.messages for content in message.contents
+        )
+    elif terminal_kind == "user-input":
+        assert any(content.user_input_request for message in response.messages for content in message.contents)
+    else:
+        assert any(
+            content.type == "function_result" and content.result == "terminated by middleware"
+            for message in response.messages
+            for content in message.contents
+        )
+
+
 @pytest.mark.parametrize("with_chat_middleware", [False, True])
 async def test_function_loop_compaction_conversation_id_mode_does_not_resend_history(
     chat_client_base: SupportsChatGetResponse,
@@ -529,6 +833,360 @@ async def test_chat_middleware_does_not_persist_summary_of_middleware_messages(
 
     assert [message.text for message in messages] == ["original request", "old response", "latest request"]
     assert all(not message.additional_properties.get("_excluded", False) for message in messages)
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("record_replacements", [True, False], ids=["registered", "unregistered"])
+async def test_chat_middleware_reconciles_recorded_message_replacements(
+    chat_client_base: SupportsChatGetResponse,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+    record_replacements: bool,
+) -> None:
+    class _SplitToolMessage(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            rewritten: list[Message] = []
+            for message in context.messages:
+                if message.role != "tool":
+                    rewritten.append(message)
+                    continue
+                tool_replacement = Message(role="tool", contents=["tool text"])
+                promoted_replacement = Message(role="user", contents=["promoted rich content"])
+                if record_replacements:
+                    context.record_message_replacement(tool_replacement, message)
+                    context.record_message_replacement(promoted_replacement, message)
+                rewritten.extend((tool_replacement, promoted_replacement))
+            context.messages = rewritten
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _SplitToolMessage(),
+        _CompactAllButLatestChatMiddleware(),
+    ]
+    messages = [
+        Message(role="user", contents=["q1"]),
+        Message(role="tool", contents=["tool output"]),
+        Message(role="user", contents=["q2"]),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        if stream:
+            stream_response = chat_client_base.get_response(messages, stream=True)
+            async for _ in stream_response:
+                pass
+        else:
+            await chat_client_base.get_response(messages)
+
+    rejection_records = [
+        record for record in caplog.records if record.getMessage().startswith("Rejected 1 compaction summary message")
+    ]
+    if not record_replacements:
+        assert [message.text for message in messages] == ["q1", "tool output", "q2"]
+        assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+        assert len(rejection_records) == 1
+        assert rejection_records[0].__dict__["compaction_rejected_summary_count"] == 1
+        assert all(message.text not in rejection_records[0].getMessage() for message in messages)
+        return
+
+    assert [message.text for message in messages] == [
+        "<summary of earlier conversation>",
+        "q1",
+        "tool output",
+        "q2",
+    ]
+    assert rejection_records == []
+    for source_message in messages[1:3]:
+        assert source_message.additional_properties[EXCLUDED_KEY] is True
+        assert source_message.additional_properties[EXCLUDE_REASON_KEY] == "test_compaction"
+        annotation = source_message.additional_properties[GROUP_ANNOTATION_KEY]
+        assert annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] == "summary_1"
+    assert messages[3].additional_properties.get(EXCLUDED_KEY) is not True
+
+
+async def test_chat_middleware_reconciles_transitive_message_replacements(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    class _FirstReplacement(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            rewritten: list[Message] = []
+            for message in context.messages:
+                if message.role == "tool":
+                    rewritten.append(
+                        context.record_message_replacement(
+                            Message(role="tool", contents=["first replacement"]),
+                            message,
+                        )
+                    )
+                else:
+                    rewritten.append(message)
+            context.messages = rewritten
+            await call_next()
+
+    class _SecondReplacement(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            rewritten: list[Message] = []
+            for message in context.messages:
+                if message.role == "tool":
+                    rewritten.append(
+                        context.record_message_replacement(
+                            Message(role="tool", contents=["second replacement"]),
+                            message,
+                        )
+                    )
+                else:
+                    rewritten.append(message)
+            context.messages = rewritten
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _FirstReplacement(),
+        _SecondReplacement(),
+        _CompactAllButLatestChatMiddleware(),
+    ]
+    messages = [
+        Message(role="user", contents=["q1"]),
+        Message(role="tool", contents=["tool output"]),
+        Message(role="user", contents=["q2"]),
+    ]
+
+    await chat_client_base.get_response(messages)
+
+    assert messages[0].message_id == "summary_1"
+    assert messages[2].text == "tool output"
+    assert messages[2].additional_properties[EXCLUDED_KEY] is True
+    annotation = messages[2].additional_properties[GROUP_ANNOTATION_KEY]
+    assert annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] == "summary_1"
+
+
+async def test_chat_middleware_rejects_partial_replacement_coverage(
+    chat_client_base: SupportsChatGetResponse,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _SplitToolMessage(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            rewritten: list[Message] = []
+            for message in context.messages:
+                if message.role != "tool":
+                    rewritten.append(message)
+                    continue
+                rewritten.extend((
+                    context.record_message_replacement(
+                        Message(role="tool", contents=["tool fragment"]),
+                        message,
+                    ),
+                    context.record_message_replacement(
+                        Message(role="user", contents=["promoted fragment"]),
+                        message,
+                    ),
+                ))
+            context.messages = rewritten
+            await call_next()
+
+    class _CompactOnlyFirstFragment(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            messages = list(context.messages)
+            annotate_message_groups(messages)
+            summarized = messages[0]
+            assert summarized.message_id is not None
+            summary = Message(
+                role="user",
+                contents=["<partial summary>"],
+                message_id="summary_1",
+                additional_properties={GROUP_ANNOTATION_KEY: {SUMMARY_OF_MESSAGE_IDS_KEY: [summarized.message_id]}},
+            )
+            annotation = summarized.additional_properties.setdefault(GROUP_ANNOTATION_KEY, {})
+            annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary.message_id
+            summarized.additional_properties[EXCLUDED_KEY] = True
+            context.messages = [summary, *messages[1:]]
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _SplitToolMessage(),
+        _CompactOnlyFirstFragment(),
+    ]
+    messages = [
+        Message(role="tool", contents=["tool output"]),
+        Message(role="user", contents=["q2"]),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await chat_client_base.get_response(messages)
+
+    assert [message.text for message in messages] == ["tool output", "q2"]
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+    assert any(record.getMessage().startswith("Rejected 1 compaction summary message") for record in caplog.records)
+
+
+async def test_chat_middleware_accepts_nested_complete_replacement_coverage(
+    chat_client_base: SupportsChatGetResponse,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _SplitToolMessage(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            source = context.messages[0]
+            context.messages = [
+                context.record_message_replacement(Message(role="tool", contents=["tool fragment"]), source),
+                context.record_message_replacement(Message(role="user", contents=["promoted fragment"]), source),
+                *context.messages[1:],
+            ]
+            await call_next()
+
+    class _NestedCompaction(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            messages = list(context.messages)
+            annotate_message_groups(messages)
+            first_replacement, second_replacement = messages[:2]
+            assert first_replacement.message_id is not None
+            assert second_replacement.message_id is not None
+            inner_summaries = [
+                Message(
+                    role="user",
+                    contents=[f"<inner summary {index}>"],
+                    message_id=f"summary_inner_{index}",
+                    additional_properties={
+                        GROUP_ANNOTATION_KEY: {SUMMARY_OF_MESSAGE_IDS_KEY: [replacement.message_id]}
+                    },
+                )
+                for index, replacement in enumerate((first_replacement, second_replacement), start=1)
+            ]
+            for replacement, summary in zip((first_replacement, second_replacement), inner_summaries, strict=True):
+                annotation = replacement.additional_properties.setdefault(GROUP_ANNOTATION_KEY, {})
+                annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary.message_id
+                replacement.additional_properties[EXCLUDED_KEY] = True
+
+            outer_summary = Message(
+                role="user",
+                contents=["<outer summary>"],
+                message_id="summary_outer",
+                additional_properties={
+                    GROUP_ANNOTATION_KEY: {
+                        SUMMARY_OF_MESSAGE_IDS_KEY: [summary.message_id for summary in inner_summaries]
+                    }
+                },
+            )
+            for summary in inner_summaries:
+                annotation = summary.additional_properties.setdefault(GROUP_ANNOTATION_KEY, {})
+                annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = outer_summary.message_id
+                summary.additional_properties[EXCLUDED_KEY] = True
+
+            context.messages = [outer_summary, *inner_summaries, *messages[2:]]
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _SplitToolMessage(),
+        _NestedCompaction(),
+    ]
+    messages = [
+        Message(role="tool", contents=["tool output"]),
+        Message(role="user", contents=["q2"]),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await chat_client_base.get_response(messages)
+
+    assert [message.text for message in messages] == ["<outer summary>", "tool output", "q2"]
+    assert messages[1].additional_properties[EXCLUDED_KEY] is True
+    annotation = messages[1].additional_properties[GROUP_ANNOTATION_KEY]
+    assert annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] == "summary_outer"
+    assert not any(record.getMessage().startswith("Rejected ") for record in caplog.records)
+
+
+async def test_chat_middleware_rejects_duplicate_summary_ids(
+    chat_client_base: SupportsChatGetResponse,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _DuplicateSummaryIds(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            messages = list(context.messages)
+            annotate_message_groups(messages)
+            summarized = messages[0]
+            assert summarized.message_id is not None
+            summary_properties = {GROUP_ANNOTATION_KEY: {SUMMARY_OF_MESSAGE_IDS_KEY: [summarized.message_id]}}
+            summaries = [
+                Message(
+                    role="user",
+                    contents=[f"<summary {index}>"],
+                    message_id="summary_1",
+                    additional_properties=summary_properties,
+                )
+                for index in range(2)
+            ]
+            annotation = summarized.additional_properties.setdefault(GROUP_ANNOTATION_KEY, {})
+            annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = "summary_1"
+            summarized.additional_properties[EXCLUDED_KEY] = True
+            context.messages = [*summaries, *messages[1:]]
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [_DuplicateSummaryIds()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    messages = [
+        Message(role="user", contents=["q1"]),
+        Message(role="user", contents=["q2"]),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await chat_client_base.get_response(messages)
+
+    assert [message.text for message in messages] == ["q1", "q2"]
+    assert messages[0].additional_properties.get(EXCLUDED_KEY) is not True
+    assert any(record.getMessage().startswith("Rejected 2 compaction summary message") for record in caplog.records)
+
+
+@pytest.mark.parametrize("restore_in_place", [False, True], ids=["rebind", "in-place"])
+async def test_chat_middleware_reconciles_recorded_replacement_before_termination_and_restore(
+    chat_client_base: SupportsChatGetResponse,
+    restore_in_place: bool,
+) -> None:
+    class _RestoreAfterCall(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            original_messages = tuple(context.messages)
+            await call_next()
+            if restore_in_place:
+                assert isinstance(context.messages, list)
+                context.messages[:] = original_messages
+            else:
+                context.messages = original_messages
+
+    class _ReplaceToolMessage(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            rewritten: list[Message] = []
+            for message in context.messages:
+                if message.role == "tool":
+                    rewritten.append(
+                        context.record_message_replacement(
+                            Message(role="tool", contents=["replacement"]),
+                            message,
+                        )
+                    )
+                else:
+                    rewritten.append(message)
+            context.messages = rewritten
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _RestoreAfterCall(),
+        _ReplaceToolMessage(),
+        _CompactAllButLatestChatMiddleware(terminate=True),
+    ]
+    messages = [
+        Message(role="user", contents=["q1"]),
+        Message(role="tool", contents=["tool output"]),
+        Message(role="user", contents=["q2"]),
+    ]
+
+    response = await chat_client_base.get_response(messages)
+
+    assert response.text == "terminated"
+    assert messages[0].message_id == "summary_1"
+    assert messages[2].text == "tool output"
+    assert messages[2].additional_properties[EXCLUDED_KEY] is True
+    annotation = messages[2].additional_properties[GROUP_ANNOTATION_KEY]
+    assert annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] == "summary_1"
 
 
 @pytest.mark.parametrize("continue_pipeline", [True, False], ids=["call-next", "terminate"])

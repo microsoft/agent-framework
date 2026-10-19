@@ -101,6 +101,7 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
                         actionId,
                         context,
                         AgentName,
+                        agentVersion: null,
                         conversationId,
                         autoSend,
                         cancellationToken: cancellationToken).ConfigureAwait(false);

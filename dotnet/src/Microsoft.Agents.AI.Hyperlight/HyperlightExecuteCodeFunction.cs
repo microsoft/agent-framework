@@ -65,7 +65,7 @@ public sealed class HyperlightExecuteCodeFunction : AIFunction, IDisposable
     public HyperlightExecuteCodeFunction(HyperlightCodeActProviderOptions? options = null)
     {
         var effective = options ?? new HyperlightCodeActProviderOptions();
-        this._executor = new SandboxExecutor(effective);
+        this._executor = new SandboxExecutor();
 
         var tools = (effective.Tools?.Where(t => t is not null) ?? []).ToList();
         var fileMounts = (effective.FileMounts?.Where(m => m is not null) ?? []).ToList();
@@ -75,7 +75,7 @@ public sealed class HyperlightExecuteCodeFunction : AIFunction, IDisposable
             tools,
             fileMounts,
             allowedDomains,
-            effective.HostInputDirectory,
+            effective,
             toolRegistryVersion: Guid.Empty);
 
         this._description = InstructionBuilder.BuildExecuteCodeDescription(

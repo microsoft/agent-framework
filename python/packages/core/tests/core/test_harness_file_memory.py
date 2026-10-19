@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-import re
 
 import pytest
+import regex
 
 from agent_framework import (
+    AgentFileStore,
     AgentSession,
     Content,
+    FileAccessProvider,
     FileMemoryProvider,
     FunctionTool,
     InMemoryAgentFileStore,
@@ -25,11 +28,13 @@ from agent_framework._harness._file_memory import (
 )
 from agent_framework._sessions import SessionContext
 
+from .test_filesystem import COLLIDING_IDENTIFIERS
 
-def _tool_by_name(tools: list[object], name: str) -> object:
+
+def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
     """Return the tool with the requested name from a prepared tool list."""
     for tool in tools:
-        if getattr(tool, "name", None) == name:
+        if isinstance(tool, FunctionTool) and tool.name == name:
             return tool
     raise AssertionError(f"Tool {name!r} was not found.")
 
@@ -385,7 +390,7 @@ async def test_search_propagates_invalid_regex() -> None:
     provider = FileMemoryProvider(store=InMemoryAgentFileStore())
     _, tools = await _prepare(provider)
 
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await tools["file_memory_grep"].invoke(arguments={"regex_pattern": "[unclosed"})
 
 
@@ -478,3 +483,260 @@ async def test_memory_replace_lines() -> None:
         }
     )
     assert "Duplicate" in _text(dup)
+
+
+async def test_providers_sharing_a_store_keep_concurrent_edits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two providers on one store and session must not interleave edits of one memory file.
+
+    Each provider used to hold only its own lock, so both could read the file before
+    either wrote it back, and the later write dropped the other edit while both tools
+    reported success.
+    """
+    store = InMemoryAgentFileStore()
+    original_read = store.read
+
+    async def read_then_yield(path: str) -> str | None:
+        content = await original_read(path)
+        await asyncio.sleep(0)  # Let the other edit run before this one writes back.
+        return content
+
+    monkeypatch.setattr(store, "read", read_then_yield)
+    _, first = await _prepare(FileMemoryProvider(store=store))
+    _, second = await _prepare(FileMemoryProvider(store=store))
+    await first["file_memory_write"].invoke(arguments={"file_name": "notes.md", "content": "A=0\nB=0\n"})
+
+    results = await asyncio.gather(
+        first["file_memory_replace"].invoke(
+            arguments={"file_name": "notes.md", "old_string": "A=0", "new_string": "A=1"}
+        ),
+        second["file_memory_replace_lines"].invoke(
+            arguments={"file_name": "notes.md", "edits": [{"line_number": 2, "new_line": "B=1\n"}]}
+        ),
+    )
+
+    assert [_text(result) for result in results] == [
+        "Replaced 1 occurrence(s) in 'notes.md'.",
+        "Replaced 1 line(s) in 'notes.md'.",
+    ]
+    assert await store.read("session-1/notes.md") == "A=1\nB=1\n"
+
+
+async def test_file_access_and_memory_providers_sharing_a_store_keep_concurrent_edits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file-access provider and a memory provider on one store must not interleave edits.
+
+    An unscoped file-access provider can edit a memory file through its store path. Its
+    lock has to be the memory provider's working-folder lock, or both tools can read the
+    file before either writes it back.
+    """
+    store = InMemoryAgentFileStore()
+    original_read = store.read
+
+    async def read_then_yield(path: str) -> str | None:
+        content = await original_read(path)
+        await asyncio.sleep(0)  # Let the other edit run before this one writes back.
+        return content
+
+    monkeypatch.setattr(store, "read", read_then_yield)
+    _, memory_tools = await _prepare(FileMemoryProvider(store=store))
+    access_context = SessionContext(session_id="session-1", input_messages=[])
+    await FileAccessProvider(store=store).before_run(
+        agent=None, session=AgentSession(session_id="session-1"), context=access_context, state={}
+    )
+    access_tools = {tool.name: tool for tool in access_context.tools}
+    await memory_tools["file_memory_write"].invoke(arguments={"file_name": "notes.md", "content": "A=0\nB=0\n"})
+
+    results = await asyncio.gather(
+        memory_tools["file_memory_replace"].invoke(
+            arguments={"file_name": "notes.md", "old_string": "A=0", "new_string": "A=1"}
+        ),
+        access_tools[FileAccessProvider.REPLACE_TOOL_NAME].invoke(
+            arguments={"file_name": "session-1/notes.md", "old_string": "B=0", "new_string": "B=1"}
+        ),
+    )
+
+    assert all(_text(result).startswith("Replaced 1 ") for result in results), results
+    assert await store.read("session-1/notes.md") == "A=1\nB=1\n"
+
+
+# region Session isolation (MSRC): the working folder derivation must be injective
+
+
+async def test_colliding_session_ids_resolve_to_distinct_working_folders() -> None:
+    """Session IDs that a path normalizer folds together must stay separate.
+
+    The provider previously ran the session ID through a lossy path normalizer,
+    so ``"customer-42"`` and ``"customer-42/"`` shared one working folder. An
+    application that treats the session ID as part of its authorization boundary
+    would then have that decision silently undone by the storage layer.
+    """
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    folders = {
+        session_id: provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id=session_id, input_messages=[])
+        )
+        for session_id in COLLIDING_IDENTIFIERS
+    }
+    assert len(set(folders.values())) == len(COLLIDING_IDENTIFIERS), folders
+    # Case-insensitive too: NTFS and APFS fold names that differ only in case.
+    assert len({folder.lower() for folder in folders.values()}) == len(COLLIDING_IDENTIFIERS), folders
+
+
+async def test_colliding_scopes_resolve_to_distinct_working_folders() -> None:
+    """An explicitly configured scope gets the same injectivity guarantee."""
+    folders = {
+        scope: FileMemoryProvider(store=InMemoryAgentFileStore(), scope=scope)._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id="session-1", input_messages=[])
+        )
+        for scope in COLLIDING_IDENTIFIERS
+    }
+    assert len(set(folders.values())) == len(COLLIDING_IDENTIFIERS), folders
+    assert len({folder.lower() for folder in folders.values()}) == len(COLLIDING_IDENTIFIERS), folders
+
+
+async def test_safe_session_id_keeps_its_literal_working_folder() -> None:
+    """Canonical IDs are unchanged, so existing stores need no migration."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    folder = provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+        SessionContext(session_id="customer-42", input_messages=[])
+    )
+    assert folder == "customer-42"
+
+
+async def test_working_folder_is_never_the_store_root() -> None:
+    """Without a scope or session ID the provider fails closed.
+
+    An empty working folder is the store root, from which every other scope's
+    directory is visible and writable.
+    """
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    with pytest.raises(ValueError, match="requires a memory scope"):
+        provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id=None, input_messages=[])
+        )
+    with pytest.raises(ValueError, match="requires a memory scope"):
+        provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id="", input_messages=[])
+        )
+
+
+async def test_before_run_fails_closed_without_a_scope() -> None:
+    """The failure surfaces through the public provider entry point too."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    with pytest.raises(ValueError, match="requires a memory scope"):
+        await provider.before_run(
+            agent=None,
+            session=AgentSession(session_id="ignored"),
+            context=SessionContext(session_id=None, input_messages=[]),
+            state={},
+        )
+
+
+@pytest.mark.parametrize(
+    "attacker_session_id",
+    ["customer-42/", "customer-42//", "customer-42\\", " customer-42 ", "customer-42/."],
+)
+async def test_colliding_session_cannot_read_write_or_delete_victim_memory(attacker_session_id: str) -> None:
+    """End-to-end: every public memory tool stays scoped to its own session.
+
+    Mirrors the reported attack: the victim owns ``customer-42`` and the
+    attacker is authorized only for a normalization variant of it.
+    """
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store)
+
+    _, victim = await _prepare(provider, session_id="customer-42")
+    await victim["file_memory_write"].invoke(
+        arguments={"file_name": "secret.md", "content": "VICTIM_TOKEN=demo-secret"}
+    )
+
+    _, attacker = await _prepare(provider, session_id=attacker_session_id)
+
+    # Discovery surfaces must not reveal the victim's memory.
+    assert json.loads(_text(await attacker["file_memory_ls"].invoke())) == []
+    assert json.loads(_text(await attacker["file_memory_grep"].invoke(arguments={"regex_pattern": "VICTIM"}))) == []
+
+    # Read must not return the victim's content.
+    read_result = _text(await attacker["file_memory_read"].invoke(arguments={"file_name": "secret.md"}))
+    assert "demo-secret" not in read_result
+
+    # Mutations must not reach the victim's file.
+    await attacker["file_memory_write"].invoke(
+        arguments={"file_name": "secret.md", "content": "ATTACKER_REPLACED_MEMORY"}
+    )
+    await attacker["file_memory_replace"].invoke(
+        arguments={"file_name": "secret.md", "old_string": "ATTACKER", "new_string": "OVERWRITTEN"}
+    )
+    await attacker["file_memory_replace_lines"].invoke(
+        arguments={"file_name": "secret.md", "edits": [{"line_number": 1, "new_line": "CLOBBERED\n"}]}
+    )
+    await attacker["file_memory_delete"].invoke(arguments={"file_name": "secret.md"})
+
+    # The victim's memory is intact and unchanged.
+    _, victim_after = await _prepare(provider, session_id="customer-42")
+    assert [e["name"] for e in json.loads(_text(await victim_after["file_memory_ls"].invoke()))] == ["secret.md"]
+    assert (
+        _text(await victim_after["file_memory_read"].invoke(arguments={"file_name": "secret.md"}))
+        == "VICTIM_TOKEN=demo-secret"
+    )
+
+
+async def test_multi_segment_scope_becomes_a_single_folder() -> None:
+    """A scope is an opaque key, so it never expands into a nested directory."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore(), scope="tenants/alice")
+    folder = provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+        SessionContext(session_id="session-1", input_messages=[])
+    )
+    assert "/" not in folder
+    # ...and it must not share a folder with the sibling tenant.
+    sibling = FileMemoryProvider(store=InMemoryAgentFileStore(), scope="tenants/bob")._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+        SessionContext(session_id="session-1", input_messages=[])
+    )
+    assert folder != sibling
+
+
+# endregion
+
+
+# region file-memory guards
+
+
+async def _memory_tools(store: AgentFileStore) -> list[object]:
+    """Prepare a FileMemoryProvider and return its registered tools."""
+    provider = FileMemoryProvider(store=store, scope="scope-1")
+    session = AgentSession(session_id="session-1")
+    context = SessionContext(input_messages=[])
+    await provider.before_run(agent=None, session=session, context=context, state={})
+    return list(context.tools)
+
+
+async def test_file_memory_replace_lines_honours_expected_line() -> None:
+    """The write guard must work in the memory provider too, where nothing asks for approval."""
+    store = InMemoryAgentFileStore()
+    tools = await _memory_tools(store)
+    write = _tool_by_name(tools, "file_memory_write")
+    replace = _tool_by_name(tools, "file_memory_replace_lines")
+
+    await write.invoke(arguments={"file_name": "notes.md", "content": "one\ntwo\nthree\n"})
+
+    refused = _text(
+        await replace.invoke(
+            arguments={
+                "file_name": "notes.md",
+                "edits": [{"line_number": 3, "new_line": "X\n", "expected_line": "two"}],
+            }
+        )
+    )
+    assert "does not match the expected text" in refused
+
+    await replace.invoke(
+        arguments={
+            "file_name": "notes.md",
+            "edits": [{"line_number": 2, "new_line": "TWO\n", "expected_line": "two"}],
+        }
+    )
+    assert await store.read("scope-1/notes.md") == "one\nTWO\nthree\n"
+
+
+# endregion

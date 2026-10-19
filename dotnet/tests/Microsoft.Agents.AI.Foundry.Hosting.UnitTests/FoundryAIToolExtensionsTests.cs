@@ -54,7 +54,7 @@ public class FoundryAIToolExtensionsTests
             name: "hr-tools",
             version: "2025-09-01",
             description: "HR toolbox",
-            createdAt: DateTimeOffset.UtcNow,
+            createdOn: DateTimeOffset.UtcNow,
             tools: null,
             policies: null);
 

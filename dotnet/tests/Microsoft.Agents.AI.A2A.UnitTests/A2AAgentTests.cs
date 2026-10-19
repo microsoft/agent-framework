@@ -149,6 +149,85 @@ public sealed class A2AAgentTests : IDisposable
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new A2AAgent(null!, new A2AAgentOptions()));
 
+    [Theory]
+    [InlineData(false, "empty messages")]
+    [InlineData(true, "empty messages")]
+    [InlineData(false, "empty contents")]
+    [InlineData(true, "empty contents")]
+    [InlineData(false, "multiple empty messages")]
+    [InlineData(true, "multiple empty messages")]
+    [InlineData(false, "unsupported contents")]
+    [InlineData(true, "unsupported contents")]
+    public async Task RunAsync_WithoutSupportedMessageParts_ThrowsArgumentExceptionAsync(bool streaming, string inputKind)
+    {
+        // Arrange
+        ChatMessage[] messages = inputKind switch
+        {
+            "empty messages" => [],
+            "empty contents" => [new(ChatRole.User, [])],
+            "multiple empty messages" => [new(ChatRole.System, []), new(ChatRole.User, [])],
+            "unsupported contents" => [new(ChatRole.User, [new UnsupportedAIContent()])],
+            _ => throw new ArgumentOutOfRangeException(nameof(inputKind))
+        };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => this.RunForMessageValidationAsync(messages, streaming));
+
+        // Assert
+        Assert.Equal("messages", exception.ParamName);
+        Assert.StartsWith(
+            "The provided messages contain no content that can be sent to the remote agent.",
+            exception.Message);
+        Assert.Empty(this._handler.CapturedJsonRpcRequests);
+    }
+
+    [Theory]
+    [InlineData(false, "Hello")]
+    [InlineData(true, "Hello")]
+    [InlineData(false, "")]
+    [InlineData(true, "")]
+    [InlineData(false, " \t")]
+    [InlineData(true, " \t")]
+    public async Task RunAsync_WithTextPart_SendsMessageAsync(bool streaming, string text)
+    {
+        // Arrange
+        ChatMessage[] messages = [new(ChatRole.User, [new TextContent(text)])];
+        this._handler.StreamingResponseToReturn = streaming ? new StreamResponse { Message = new Message() } : null;
+
+        // Act
+        await this.RunForMessageValidationAsync(messages, streaming);
+
+        // Assert
+        Assert.Single(this._handler.CapturedJsonRpcRequests);
+        var message = this._handler.CapturedSendMessageRequest?.Message;
+        Assert.NotNull(message);
+        Assert.Equal(text, Assert.Single(message.Parts).Text);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_WithMixedSupportedAndUnsupportedContents_SendsSupportedPartsAsync(bool streaming)
+    {
+        // Arrange
+        ChatMessage[] messages =
+        [
+            new(ChatRole.System, []),
+            new(ChatRole.User, [new UnsupportedAIContent()]),
+            new(ChatRole.User, [new UnsupportedAIContent(), new TextContent("Hello")])
+        ];
+        this._handler.StreamingResponseToReturn = streaming ? new StreamResponse { Message = new Message() } : null;
+
+        // Act
+        await this.RunForMessageValidationAsync(messages, streaming);
+
+        // Assert
+        Assert.Single(this._handler.CapturedJsonRpcRequests);
+        var message = this._handler.CapturedSendMessageRequest?.Message;
+        Assert.NotNull(message);
+        Assert.Equal("Hello", Assert.Single(message.Parts).Text);
+    }
+
     [Fact]
     public async Task RunAsync_AllowsNonUserRoleMessagesAsync()
     {
@@ -406,8 +485,12 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("existing-context-id", message.ContextId);
     }
 
-    [Fact]
-    public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
+    [Theory]
+    [InlineData(StreamResponseCase.Message)]
+    [InlineData(StreamResponseCase.Task)]
+    [InlineData(StreamResponseCase.StatusUpdate)]
+    [InlineData(StreamResponseCase.ArtifactUpdate)]
+    public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync(StreamResponseCase responseCase)
     {
         // Arrange
         var session = await this._agent.CreateSessionAsync();
@@ -419,15 +502,36 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new StreamResponse
+        this._handler.StreamingResponseToReturn = responseCase switch
         {
-            Message = new Message
+            StreamResponseCase.Message => new()
             {
-                MessageId = "stream-1",
-                Role = Role.Agent,
-                Parts = [new Part { Text = "Response" }],
-                ContextId = "different-context"
-            }
+                Message = new Message
+                {
+                    MessageId = "stream-1",
+                    Role = Role.Agent,
+                    Parts = [new Part { Text = "Response" }],
+                    ContextId = "different-context"
+                }
+            },
+            StreamResponseCase.Task => new()
+            {
+                Task = new AgentTask { Id = "task-1", ContextId = "different-context", Status = new() { State = TaskState.Working } }
+            },
+            StreamResponseCase.StatusUpdate => new()
+            {
+                StatusUpdate = new TaskStatusUpdateEvent { TaskId = "task-1", ContextId = "different-context", Status = new() { State = TaskState.Working } }
+            },
+            StreamResponseCase.ArtifactUpdate => new()
+            {
+                ArtifactUpdate = new TaskArtifactUpdateEvent
+                {
+                    TaskId = "task-1",
+                    ContextId = "different-context",
+                    Artifact = new Artifact { ArtifactId = "artifact-1", Parts = [new Part { Text = "Response" }] }
+                }
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(responseCase))
         };
 
         // Act
@@ -435,6 +539,7 @@ public sealed class A2AAgentTests : IDisposable
         {
             await foreach (var update in this._agent.RunStreamingAsync(inputMessages, session))
             {
+                Assert.Fail("A mismatched context must not yield an update.");
             }
         });
     }
@@ -526,6 +631,7 @@ public sealed class A2AAgentTests : IDisposable
         await this._agent.RunAsync([], options: options);
 
         // Assert
+        Assert.Single(this._handler.CapturedJsonRpcRequests);
         Assert.Equal("GetTask", this._handler.CapturedJsonRpcRequest?.Method);
         Assert.Equal("task-123", this._handler.CapturedGetTaskRequest?.Id);
     }
@@ -1862,6 +1968,22 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.Dispose();
         this._httpClient.Dispose();
     }
+
+    private async Task RunForMessageValidationAsync(IEnumerable<ChatMessage> messages, bool streaming)
+    {
+        if (streaming)
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync(messages))
+            {
+            }
+        }
+        else
+        {
+            await this._agent.RunAsync(messages);
+        }
+    }
+
+    private sealed class UnsupportedAIContent : AIContent;
 
     /// <summary>
     /// Custom agent session class for testing invalid session type scenario.

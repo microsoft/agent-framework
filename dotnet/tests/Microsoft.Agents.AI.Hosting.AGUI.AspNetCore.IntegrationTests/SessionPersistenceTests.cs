@@ -22,6 +22,8 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests;
 
 public sealed class SessionPersistenceTests : IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions s_aguiJsonSerializerOptions = CreateAGUIJsonSerializerOptions();
+
     private WebApplication? _app;
     private HttpClient? _client;
 
@@ -67,10 +69,11 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
                 {
                     ThreadId = threadId,
                     ParentRunId = previousRunId,
-                    Messages = new[] { secondUserMessage }.AsAGUIMessages().ToList(),
+                    Messages = new[] { secondUserMessage }.AsAGUIMessages(s_aguiJsonSerializerOptions).ToList(),
                 },
             },
         };
+
         List<AgentResponseUpdate> secondTurnUpdates = [];
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], session, continuationOptions, CancellationToken.None))
         {
@@ -151,6 +154,14 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         {
             await this._app.DisposeAsync();
         }
+    }
+
+    private static JsonSerializerOptions CreateAGUIJsonSerializerOptions()
+    {
+        JsonSerializerOptions options = new(AgentAbstractionsJsonUtilities.DefaultOptions);
+        options.TypeInfoResolverChain.Add(AGUIJsonSerializerContext.Default.Options.TypeInfoResolver!);
+        options.MakeReadOnly();
+        return options;
     }
 }
 

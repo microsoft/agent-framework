@@ -11,11 +11,13 @@ from agent_framework import (
     Agent,
     AgentModeProvider,
     AgentSession,
+    FunctionTool,
     Message,
     SupportsChatGetResponse,
     get_agent_mode,
     set_agent_mode,
 )
+from agent_framework._harness._mode import DEFAULT_MODE_INSTRUCTIONS, DEFAULT_MODE_MAP
 
 
 def _tool_by_name(tools: list[object], name: str) -> object:
@@ -47,6 +49,26 @@ def test_get_and_set_agent_mode_manage_session_state() -> None:
 
     with pytest.raises(ValueError, match="Invalid mode"):
         set_agent_mode(session, "ship")
+
+
+def test_get_agent_mode_rejects_empty_available_modes() -> None:
+    """An explicitly empty mode set must not fall back to the built-in modes."""
+    session = AgentSession(session_id="session-1")
+
+    with pytest.raises(ValueError, match="available_modes must contain at least one mode"):
+        get_agent_mode(session, available_modes=[])
+
+    assert DEFAULT_MODE_SOURCE_ID not in session.state
+
+
+def test_set_agent_mode_rejects_empty_available_modes() -> None:
+    """An explicitly empty mode set must not fall back to the built-in modes."""
+    session = AgentSession(session_id="session-1")
+
+    with pytest.raises(ValueError, match="available_modes must contain at least one mode"):
+        set_agent_mode(session, "plan", available_modes=[])
+
+    assert DEFAULT_MODE_SOURCE_ID not in session.state
 
 
 def test_agent_mode_helpers_reject_non_dict_provider_state() -> None:
@@ -210,6 +232,132 @@ async def test_agent_mode_context_provider_updates_agent_mode(
     assert set_agent_mode(session, "plan", source_id=provider.source_id) == "plan"
 
 
+@pytest.mark.parametrize("expose_mode_set", [True, False])
+@pytest.mark.parametrize("expose_mode_get", [True, False])
+async def test_agent_mode_provider_tool_exposure(
+    chat_client_base: SupportsChatGetResponse, expose_mode_set: bool, expose_mode_get: bool
+) -> None:
+    """Tool exposure must match built-in guidance without disabling the mode workflow."""
+    session = AgentSession(session_id="session-1")
+    provider = AgentModeProvider(expose_mode_set=expose_mode_set, expose_mode_get=expose_mode_get)
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Start planning"])],
+    )
+    tools: list[object] = options.get("tools") or []
+    expected_names = [
+        name for name, exposed in (("mode_set", expose_mode_set), ("mode_get", expose_mode_get)) if exposed
+    ]
+    assert [tool.name for tool in tools if isinstance(tool, FunctionTool)] == expected_names
+    instructions = options["instructions"]
+    assert isinstance(instructions, str)
+    assert ("mode_set" in instructions) == expose_mode_set
+    assert ("mode_get" in instructions) == expose_mode_get
+    assert "### Mandatory Mode based Workflow" in instructions
+    assert "get user approval before proceeding" in instructions
+    assert "You are currently operating in the plan mode." in instructions
+    assert get_agent_mode(session) == "plan"
+    if not expose_mode_set:
+        assert "only after the mode has changed" in instructions
+    for mode_tool in tools:
+        assert isinstance(mode_tool, FunctionTool)
+        assert mode_tool.approval_mode == "never_require"
+        if mode_tool.name == "mode_set":
+            result = await mode_tool.invoke(arguments={"mode": "execute"})
+            assert result[0].text is not None
+            assert json.loads(result[0].text) == {"mode": "execute", "message": "Mode changed to 'execute'."}
+        else:
+            result = await mode_tool.invoke()
+            assert result[0].text is not None
+            assert json.loads(result[0].text) == {"mode": "execute" if expose_mode_set else "plan"}
+
+
+@pytest.mark.parametrize("instructions", [None, ""])
+def test_agent_mode_provider_preserves_default_instructions(instructions: str | None) -> None:
+    """Suppression on one provider must not alter another provider's defaults."""
+    AgentModeProvider(expose_mode_set=False, expose_mode_get=False)
+    provider = AgentModeProvider(instructions=instructions)
+    mode_lines = "".join(f"#### {name}\n\n{text}\n\n" for name, text in DEFAULT_MODE_MAP.items())
+    expected = DEFAULT_MODE_INSTRUCTIONS.replace("{available_modes}", mode_lines).replace("{current_mode}", "plan")
+    assert provider._build_instructions("plan") == expected  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize("custom_instructions", [True, False])
+@pytest.mark.parametrize("custom_modes", [True, False])
+def test_agent_mode_provider_preserves_custom_instructions(custom_instructions: bool, custom_modes: bool) -> None:
+    """Only built-in guidance should be adapted; caller text still expands placeholders."""
+    mode_text = "Custom mode_get and mode_set guidance for {current_mode}."
+    mode_map = {"draft": mode_text} if custom_modes else None
+    instructions = "Use update_mode, not mode_set or mode_get. {current_mode}\n{available_modes}"
+    provider = AgentModeProvider(
+        expose_mode_set=False,
+        expose_mode_get=False,
+        instructions=instructions if custom_instructions else None,
+        mode_instructions=mode_map,
+    )
+    current_mode = "draft" if custom_modes else "plan"
+    rendered = provider._build_instructions(current_mode)  # pyright: ignore[reportPrivateUsage]
+    if custom_modes:
+        assert mode_map == {"draft": mode_text}
+        assert f"Custom mode_get and mode_set guidance for {current_mode}." in rendered
+    if custom_instructions:
+        assert rendered.startswith(f"Use update_mode, not mode_set or mode_get. {current_mode}\n")
+    assert "{available_modes}" not in rendered
+    assert "{current_mode}" not in rendered
+    if not custom_modes and not custom_instructions:
+        assert "mode_set" not in rendered
+        assert "mode_get" not in rendered
+
+
+async def test_agent_mode_provider_hidden_tools_preserve_state_and_notifications(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """State and one-shot external notifications must survive even with no mode tools."""
+    session = AgentSession(session_id="session-1")
+    provider = AgentModeProvider(
+        source_id="ui_mode", default_mode="execute", expose_mode_set=False, expose_mode_get=False
+    )
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+    _, first_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Start"])],
+    )
+    assert not first_options.get("tools")
+    assert "You are currently operating in the execute mode." in first_options["instructions"]
+    assert get_agent_mode(session, source_id=provider.source_id) == "execute"
+    set_agent_mode(session, "plan", source_id=provider.source_id)
+
+    changed_context, changed_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Continue"])],
+    )
+    assert "You are currently operating in the plan mode." in changed_options["instructions"]
+    notifications = changed_context.context_messages.get(provider.source_id, [])
+    assert len(notifications) == 1
+    assert notifications[0].role == "user"
+    assert 'from "execute" to "plan"' in notifications[0].text
+    assert "previous_mode_for_notification" not in session.state[provider.source_id]
+
+    set_agent_mode(session, "plan", source_id=provider.source_id)
+    unchanged_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Continue planning"])],
+    )
+    assert unchanged_context.context_messages.get(provider.source_id, []) == []
+
+    reconfigured_provider = AgentModeProvider(source_id=provider.source_id, default_mode="execute")
+    reconfigured_agent = Agent(client=chat_client_base, context_providers=[reconfigured_provider])
+    _, restored_options = await reconfigured_agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Status"])],
+    )
+    assert "You are currently operating in the plan mode." in restored_options["instructions"]
+    assert get_agent_mode(session, source_id=provider.source_id) == "plan"
+    assert DEFAULT_MODE_SOURCE_ID not in session.state
+
+
 def test_default_mode_falls_back_to_first_available_mode() -> None:
     """When ``default_mode`` is omitted, helpers and provider should use the first configured mode."""
     session = AgentSession(session_id="session-1")
@@ -248,6 +396,29 @@ def test_set_agent_mode_no_op_does_not_record_previous_mode() -> None:
     set_agent_mode(session, "plan")
     set_agent_mode(session, "plan")
 
+    assert "previous_mode_for_notification" not in session.state[DEFAULT_MODE_SOURCE_ID]
+
+
+def test_set_agent_mode_can_skip_external_change_notification() -> None:
+    """Agent-invoked replacement tools should be able to avoid a redundant notification."""
+    session = AgentSession(session_id="session-1")
+    set_agent_mode(session, "plan")
+    set_agent_mode(session, "execute", notify=False)
+
+    assert get_agent_mode(session) == "execute"
+    assert "previous_mode_for_notification" not in session.state[DEFAULT_MODE_SOURCE_ID]
+
+
+def test_set_agent_mode_without_notification_clears_pending_notification() -> None:
+    """An agent-observed update should replace pending external transition context."""
+    session = AgentSession(session_id="session-1")
+    set_agent_mode(session, "plan")
+    set_agent_mode(session, "execute")
+    assert session.state[DEFAULT_MODE_SOURCE_ID]["previous_mode_for_notification"] == "plan"
+
+    set_agent_mode(session, "plan", notify=False)
+
+    assert get_agent_mode(session) == "plan"
     assert "previous_mode_for_notification" not in session.state[DEFAULT_MODE_SOURCE_ID]
 
 

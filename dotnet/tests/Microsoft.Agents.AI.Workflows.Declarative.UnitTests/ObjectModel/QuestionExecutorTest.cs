@@ -125,6 +125,39 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         await this.PrepareResponseTestAsync(model, expectedPrompt: "Provide input:");
     }
 
+    [Theory]
+    [InlineData("always prompt")]
+    [InlineData("skip question mode")]
+    [InlineData("repeat count")]
+    public async Task QuestionRejectsSensitiveControlValueAsync(string location)
+    {
+        // Arrange
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        Question.Builder builder = this.CreateModel(
+            nameof(QuestionRejectsSensitiveControlValueAsync), "TestVariable").ToBuilder();
+        switch (location)
+        {
+            case "always prompt":
+                builder.AlwaysPrompt = BoolExpression.Expression("Local.Control").ToBuilder();
+                break;
+            case "skip question mode":
+                builder.SkipQuestionMode = EnumExpression<SkipQuestionModeWrapper>.Expression(
+                    """If(Local.Control, "AlwaysAsk", "AlwaysSkipIfVariableHasValue")""").ToBuilder();
+                break;
+            case "repeat count":
+                builder.RepeatCount = IntExpression.Expression("If(Local.Control, 2, 1)").ToBuilder();
+                break;
+        }
+        QuestionExecutor action = new(AssignParent<Question>(builder), new MockAgentProvider().Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains(location, exception.Message);
+    }
+
     [Fact]
     public async Task QuestionCaptureResponseWithValidEntityAsync()
     {
@@ -226,6 +259,27 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
             variableName: "TestVariable",
             responseText: "not-a-number",
             expectResponse: false);
+    }
+
+    [Fact]
+    public async Task QuestionCaptureResponseExceedingRepeatCountPreservesDefaultValueSensitivityAsync()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+        Question model = this.CreateModel(
+            displayName: nameof(QuestionCaptureResponseExceedingRepeatCountPreservesDefaultValueSensitivityAsync),
+            variableName: "TestVariable",
+            repeatCount: 0,
+            defaultValueExpressionText: "Env.SOME_SECRET");
+
+        // Act & Assert
+        await this.CaptureResponseTestAsync(
+            model,
+            variableName: "TestVariable",
+            responseText: null,
+            expectResponse: false);
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("TestVariable"));
     }
 
     [Fact]
@@ -438,7 +492,8 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         SkipQuestionMode? skipMode = null,
         int? repeatCount = null,
         EntityReference? entity = null,
-        DataValue? autoSend = null)
+        DataValue? autoSend = null,
+        string? defaultValueExpressionText = null)
     {
         BoolExpression.Builder? alwaysPromptExpression = null;
         if (alwaysPrompt is not null)
@@ -456,6 +511,10 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         if (defaultValue is not null)
         {
             defaultValueExpression = ValueExpression.Literal(defaultValue).ToBuilder();
+        }
+        else if (defaultValueExpressionText is not null)
+        {
+            defaultValueExpression = ValueExpression.Expression(defaultValueExpressionText).ToBuilder();
         }
 
         EnumExpression<SkipQuestionModeWrapper>.Builder? skipModeExpression = null;

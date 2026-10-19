@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import contextlib
 import gc
 import logging
 import tempfile
@@ -21,10 +22,12 @@ from agent_framework import (
     Content,
     Executor,
     FileCheckpointStorage,
+    InMemoryCheckpointStorage,
     InProcRunnerContext,
     Message,
     ResponseStream,
     WorkflowBuilder,
+    WorkflowCheckpoint,
     WorkflowCheckpointException,
     WorkflowContext,
     WorkflowConvergenceException,
@@ -108,6 +111,118 @@ class MockExecutorRequestApproval(Executor):
             await ctx.yield_output(data)
         else:
             await ctx.send_message(NumberMessage(data=data))
+
+
+def test_coerce_request_info_response_converts_content() -> None:
+    """Request responses should use the shared Content conversion path."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    response = _coerce_request_info_response("hello", Content, "content")
+
+    assert isinstance(response, Content)
+    assert response.text == "hello"
+
+
+def test_coerce_request_info_response_rejects_mismatched_type() -> None:
+    """Request responses that cannot be validated should report their request ID."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+        _coerce_request_info_response("not-an-int", int, "typed")
+
+
+async def test_public_stream_close_immediately_drains_live_executor_without_gc() -> None:
+    started, cancelled, closed, release = (asyncio.Event() for _ in range(4))
+    cleanup: list[str] = []
+
+    class SuspendedExecutor(Executor):
+        @handler
+        async def execute_live(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            started.set()
+            try:
+                await ctx.yield_output(message)
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            finally:
+                cleanup.append("closed")
+                closed.set()
+
+    workflow = WorkflowBuilder(start_executor=SuspendedExecutor(id="live")).build()
+    stream = workflow.run("visible", stream=True)
+    try:
+        async for event in stream:
+            if event.type == "output":
+                break
+        assert started.is_set() and not closed.is_set()
+        await asyncio.wait_for(stream.close(), timeout=1)
+        assert cancelled.is_set() and closed.is_set()
+        assert cleanup == ["closed"]
+        await stream.close()
+        assert cleanup == ["closed"]
+    finally:
+        release.set()
+        await stream.close()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_owned_workflow_iterators_preserve_completion_and_original_failure(fail: bool) -> None:
+    cleanup: list[str] = []
+    failure = RuntimeError("original executor failure")
+
+    class FinishingExecutor(Executor):
+        @handler
+        async def execute_live(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            try:
+                await ctx.yield_output(message)
+                if fail:
+                    raise failure
+            finally:
+                cleanup.append("closed")
+
+    workflow = WorkflowBuilder(start_executor=FinishingExecutor(id="finish")).build()
+    stream = workflow.run("visible", stream=True)
+    if fail:
+        with pytest.raises(RuntimeError, match="original executor failure") as raised:
+            await stream.get_final_response()
+        assert raised.value is failure
+    else:
+        result = await stream.get_final_response()
+        assert result.get_outputs() == ["visible"]
+        assert result.get_final_state() == WorkflowRunState.IDLE
+    await stream.close()
+    assert cleanup == ["closed"]
+
+
+async def test_cancelled_workflow_consumer_drains_owned_executor_before_returning() -> None:
+    started, stopped, release = (asyncio.Event() for _ in range(3))
+
+    class SuspendedExecutor(Executor):
+        @handler
+        async def execute_live(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            started.set()
+            try:
+                await release.wait()
+                await ctx.yield_output(message)
+            finally:
+                stopped.set()
+
+    workflow = WorkflowBuilder(start_executor=SuspendedExecutor(id="live")).build()
+    stream = workflow.run("never emitted", stream=True)
+    consumer = asyncio.create_task(stream.get_final_response())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        assert stopped.is_set()
+    finally:
+        release.set()
+        if not consumer.done():
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+        await stream.close()
 
 
 async def test_fresh_message_while_pending_advances_state_without_abandoning_requests(
@@ -516,6 +631,36 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
         assert len(events) > 0  # Just ensure we processed some events
 
 
+async def test_cancel_pending_requests_restores_checkpoint_before_cancellation() -> None:
+    """Cold cancellation restores persisted pending state before removing the request."""
+    storage = InMemoryCheckpointStorage()
+
+    def build_workflow() -> Any:
+        return WorkflowBuilder(
+            name="cold-core-cancellation",
+            start_executor=MockExecutorRequestApproval(id="approver"),
+            checkpoint_storage=storage,
+        ).build()
+
+    first_workflow = build_workflow()
+    paused = await first_workflow.run(NumberMessage(data=7))
+    [request] = paused.get_request_info_events()
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    fresh_workflow = build_workflow()
+    cancelled = await fresh_workflow.cancel_pending_requests(
+        [request.request_id],
+        checkpoint_id=checkpoint_id,
+        checkpoint_storage=storage,
+    )
+
+    assert cancelled.get_request_info_events() == []
+    assert cancelled.get_final_state() is WorkflowRunState.IDLE
+
+
 @dataclass
 class StateTrackingMessage:
     """A message that tracks state for testing context reset behavior."""
@@ -607,6 +752,209 @@ async def test_workflow_multiple_runs_no_state_collision_after_rebuild():
         wf2 = _build()
         result2 = await wf2.run(StateTrackingMessage(data="message2", run_id="run2"))
         assert result2.get_outputs()[0] == ["run2:message2"]
+
+
+@dataclass
+class FlakyMessage:
+    """A message that can fail on demand for testing state discard behavior."""
+
+    fail: bool
+
+
+class FlakyStateExecutor(Executor):
+    """An executor that fails on demand to test state discard on failure."""
+
+    def __init__(self, id: str, write_staged_event: asyncio.Event | None = None) -> None:
+        super().__init__(id=id)
+        self._write_staged_event = write_staged_event
+
+    @handler
+    async def handle_message(
+        self,
+        message: FlakyMessage,
+        ctx: WorkflowContext[FlakyMessage, str],
+    ) -> None:
+        if message.fail:
+            ctx.set_state("secret", "leaked-from-failed-run")
+            # Signal that the write has been staged for deterministic test synchronization
+            if self._write_staged_event:
+                self._write_staged_event.set()
+            # Small delay to ensure cancellation can happen after write is staged
+            await asyncio.sleep(0.01)
+            raise RuntimeError("simulated transient failure")
+
+        await ctx.yield_output("ok")
+
+
+async def test_workflow_discards_pending_state_after_failed_superstep():
+    """Test that pending state from a failed superstep is discarded and not committed.
+
+    This is a regression test for GitHub issue #7859: pending state writes from
+    a failed superstep must not leak into a later successful run on the same
+    Workflow instance.
+    """
+    workflow = WorkflowBuilder(start_executor=FlakyStateExecutor(id="flaky")).build()
+
+    # First run: fails after staging a state write
+    with pytest.raises(RuntimeError, match="simulated transient failure"):
+        await workflow.run(FlakyMessage(fail=True))
+
+    # Verify the failed run did not leave the staged write pending
+    assert workflow._runner.state._pending == {}
+
+    # Second run: succeeds without touching "secret"
+    result = await workflow.run(FlakyMessage(fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert result.get_outputs() == ["ok"]
+
+    # Verify the leaked state from the failed run is NOT in committed state
+    committed_state = workflow._runner.state.export_state()
+    assert "secret" not in committed_state
+
+
+@dataclass
+class FanOutTestMessage:
+    """Message for fan-out state leak test."""
+
+    should_fail: bool
+
+
+class FanOutSourceExecutor(Executor):
+    """Source executor that sends fan-out test messages."""
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext[FanOutTestMessage]) -> None:
+        # Forward the message to targets
+        await ctx.send_message(message)
+
+
+class FailingTargetExecutor(Executor):
+    """Target that fails immediately on execute."""
+
+    def __init__(self, id: str, b_started: asyncio.Event | None = None) -> None:
+        super().__init__(id=id)
+        self._b_started = b_started
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext) -> None:
+        if message.should_fail:
+            # Wait for slow target to start before failing to ensure deterministic ordering
+            if self._b_started:
+                await self._b_started.wait()
+            raise RuntimeError("target A failed")
+
+
+class SlowStateWritingTargetExecutor(Executor):
+    """Target that writes state after being unblocked (vulnerable pattern if not cancelled)."""
+
+    def __init__(self, id: str, b_started: asyncio.Event, release_b: asyncio.Event, b_task_ref: list) -> None:
+        super().__init__(id=id)
+        self._b_started = b_started
+        self._release_b = release_b
+        self._b_task_ref = b_task_ref
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext) -> None:
+        self._b_task_ref.append(asyncio.current_task())
+        self._b_started.set()
+        if message.should_fail:
+            await self._release_b.wait()
+            ctx.set_state("leak_key", "leaked_value")
+
+
+async def test_workflow_discards_pending_state_after_fanout_failure():
+    """Test that pending state from a fan-out sibling target is discarded when another target fails.
+
+    Regression test for GitHub issue #7859: when a fan-out superstep has one target fail
+    while a sibling target is still running, the sibling's state writes must not leak
+    into committed state.
+    """
+    b_started = asyncio.Event()
+    release_b = asyncio.Event()
+    b_task_ref: list[asyncio.Task] = []
+
+    source = FanOutSourceExecutor(id="source")
+    failing_target = FailingTargetExecutor(id="failing_target", b_started=b_started)
+    slow_target = SlowStateWritingTargetExecutor(
+        id="slow_target", b_started=b_started, release_b=release_b, b_task_ref=b_task_ref
+    )
+
+    workflow = WorkflowBuilder(start_executor=source).add_fan_out_edges(source, [failing_target, slow_target]).build()
+
+    # Verify topology: single FanOutEdgeGroup with two targets under one edge_runner
+    from agent_framework._workflows._edge import FanOutEdgeGroup
+
+    fan_out_groups = [eg for eg in workflow.edge_groups if isinstance(eg, FanOutEdgeGroup)]
+    assert len(fan_out_groups) == 1, f"Expected 1 FanOutEdgeGroup, got {len(fan_out_groups)}"
+    assert fan_out_groups[0].target_ids == [failing_target.id, slow_target.id], (
+        f"Expected targets [{failing_target.id}, {slow_target.id}], got {fan_out_groups[0].target_ids}"
+    )
+
+    async def _run_workflow() -> WorkflowRunResult:
+        return await workflow.run(FanOutTestMessage(should_fail=True))
+
+    run_task: asyncio.Task[WorkflowRunResult] = asyncio.create_task(_run_workflow())
+    with pytest.raises(RuntimeError, match="target A failed"):
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    release_b.set()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await asyncio.wait_for(b_task_ref[0], timeout=0.5)
+
+    b_task_ref.clear()
+
+    result = await workflow.run(FanOutTestMessage(should_fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+    committed_state = workflow._runner.state.export_state()
+    assert "leak_key" not in committed_state
+
+
+async def test_workflow_discards_pending_state_on_cancellation():
+    """Test that pending state from a cancelled superstep is discarded and not committed.
+
+    Regression test for PR #8819 review comment: asyncio.CancelledError inherits from
+    BaseException (not Exception since Python 3.8), so `except Exception:` never catches it.
+    When a superstep's task is cancelled, the discard() call must still run to prevent
+    pending writes from leaking into the next run.
+
+    This test creates a workflow that will stage a state write, then yields control
+    before completing (via a slow executor). We cancel the task while it's mid-superstep
+    to ensure the write is staged and the runner's except block is hit.
+    """
+    # Use deterministic synchronization to ensure write is staged before cancellation
+    write_staged_event = asyncio.Event()
+    workflow = WorkflowBuilder(
+        start_executor=FlakyStateExecutor(id="flaky", write_staged_event=write_staged_event)
+    ).build()
+
+    # Create a task that will stage a state write then fail
+    async def _run_failing():
+        return await workflow.run(FlakyMessage(fail=True))
+
+    run_task = asyncio.create_task(_run_failing())
+
+    # Wait for the write to be staged before cancelling (deterministic synchronization)
+    await write_staged_event.wait()
+
+    # Cancel the task while it's mid-superstep (after write is staged but before error handling completes)
+    run_task.cancel()
+
+    # Await the task, confirming CancelledError is raised (discard() must not swallow it)
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    # Verify the cancelled run did not leave the staged write pending
+    assert workflow._runner.state._pending == {}
+
+    # Second run: succeeds without touching "secret"
+    result = await workflow.run(FlakyMessage(fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert result.get_outputs() == ["ok"]
+
+    # Verify the leaked state from the cancelled run is NOT in committed state
+    committed_state = workflow._runner.state.export_state()
+    assert "secret" not in committed_state
 
 
 async def test_workflow_checkpoint_runtime_only_configuration(
@@ -764,6 +1112,37 @@ async def test_comprehensive_edge_groups_workflow():
     assert has_fan_in, "Workflow should contain FanInEdgeGroup"
 
 
+async def test_switch_case_cases_can_share_a_target():
+    """Test that two switch-case branches can route to the same executor."""
+    from agent_framework import Case, Default
+
+    class TaggingExecutor(Executor):
+        @handler
+        async def tag(self, message: NumberMessage, ctx: WorkflowContext[Any, str]) -> None:
+            await ctx.yield_output(f"{self.id}:{message.data}")
+
+    router = IncrementExecutor(id="router", limit=1000, increment=0)
+    shared = TaggingExecutor(id="shared")
+    fallback = TaggingExecutor(id="fallback")
+
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_switch_case_edge_group(
+            router,
+            [
+                Case(condition=lambda msg: msg.data == 1, target=shared),
+                Case(condition=lambda msg: msg.data == 2, target=shared),
+                Default(target=fallback),
+            ],
+        )
+        .build()
+    )
+
+    assert (await workflow.run(NumberMessage(data=1))).get_outputs() == ["shared:1"]
+    assert (await workflow.run(NumberMessage(data=2))).get_outputs() == ["shared:2"]
+    assert (await workflow.run(NumberMessage(data=3))).get_outputs() == ["fallback:3"]
+
+
 async def test_workflow_with_simple_cycle_and_exit_condition():
     """Test a simpler workflow with a cycle that has a clear exit condition."""
 
@@ -803,8 +1182,17 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
 async def test_workflow_concurrent_execution_prevention():
     """Test that concurrent workflow executions are prevented."""
-    # Create a simple workflow that takes some time to execute
-    executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class GatedExecutor(Executor):
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+            started.set()
+            await release.wait()
+            await ctx.yield_output(message.data)
+
+    executor = GatedExecutor(id="gated_executor")
     workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Create a task that will run the workflow
@@ -814,17 +1202,17 @@ async def test_workflow_concurrent_execution_prevention():
     # Start the first workflow execution
     task1 = asyncio.create_task(run_workflow())
 
-    # Give it a moment to start
-    await asyncio.sleep(0.01)
-
-    # Try to start a second concurrent execution - this should fail
-    with pytest.raises(
-        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
-    ):
-        await workflow.run(NumberMessage(data=0))
-
-    # Wait for the first task to complete
-    result = await task1
+    try:
+        await started.wait()
+        # The first run stays active regardless of how quickly the runner schedules work.
+        with pytest.raises(
+            WorkflowException,
+            match="Workflow is already running; concurrent runs are not allowed on the same instance.",
+        ):
+            await workflow.run(NumberMessage(data=0))
+    finally:
+        release.set()
+        result = await task1
     assert result.get_final_state() == WorkflowRunState.IDLE
 
     # After the first execution completes, we should be able to run again
@@ -963,6 +1351,49 @@ async def test_workflow_unconsumed_stream_releases_run_lock() -> None:
     # The runner should be back to IDLE; a fresh run must succeed.
     result = await workflow.run(NumberMessage(data=0))
     assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_workflow_abandoned_stream_finalizes_without_context_errors(
+    caplog: pytest.LogCaptureFixture, span_exporter: Any
+) -> None:
+    """Abandoning a partially consumed graph stream must clean up without context errors."""
+    executor = IncrementExecutor(id="abandoned_stream_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+    loop = asyncio.get_running_loop()
+    loop_errors: list[BaseException] = []
+    original_handler = loop.get_exception_handler()
+
+    def capture_loop_exception(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        exc = context.get("exception")
+        if isinstance(exc, BaseException):
+            loop_errors.append(exc)
+        if original_handler is not None:
+            original_handler(_loop, context)
+
+    loop.set_exception_handler(capture_loop_exception)
+    try:
+        with caplog.at_level(logging.ERROR, logger="opentelemetry"):
+            stream = workflow.run(NumberMessage(data=0), stream=True)
+            async for event in stream:
+                assert event.type == "started"
+                break
+
+            del stream
+            gc.collect()
+            for _ in range(5):
+                await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(original_handler)
+
+    assert loop_errors == [], f"Abandoned stream leaked loop exceptions: {loop_errors!r}"
+    otel_errors = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "Failed to detach context" in rec.getMessage() or "was created in a different Context" in rec.getMessage()
+    ]
+    assert otel_errors == [], f"Abandoned stream leaked OpenTelemetry errors: {otel_errors!r}"
+    assert any(span.name == "workflow.run" for span in span_exporter.get_finished_spans())
 
 
 async def test_workflow_unawaited_run_coroutine_releases_run_lock() -> None:
@@ -1668,3 +2099,109 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
 
 
 # endregion
+
+
+# ---------------------------------------------------------------------------
+# Pause checkpoint resolution (AG-UI interrupt metadata)
+# ---------------------------------------------------------------------------
+
+
+class _ApprovalExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__(id="approval_executor")
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext) -> None:
+        del message
+        function_call = Content.from_function_call(
+            call_id="refund-call",
+            name="submit_refund",
+            arguments={"order_id": "12345"},
+        )
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+    @response_handler
+    async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+        del original_request, response
+        await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_prefers_runner_over_shared_latest() -> None:
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+    async for _ in workflow.run("go", stream=True):
+        pass
+
+    pause_id = workflow.get_last_checkpoint_id()
+    assert pause_id is not None
+
+    competing = WorkflowCheckpoint(
+        workflow_name=workflow.name,
+        graph_signature_hash="competing",
+        pending_request_info_events={},
+        timestamp="9999-01-01T00:00:00+00:00",
+    )
+    await storage.save(competing)
+
+    # Workflow owns the run baseline captured at run() start.
+    resolved = await workflow.resolve_pause_checkpoint_id(
+        {"approval-1"},
+        checkpoint_storage=storage,
+    )
+    assert resolved == pause_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_requires_run_scoped_change_without_storage() -> None:
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor()).build()
+    workflow._runner._previous_checkpoint_id = "leftover"  # pyright: ignore[reportPrivateUsage]
+    workflow._run_baseline_checkpoint_id = "leftover"  # pyright: ignore[reportPrivateUsage]
+
+    assert await workflow.resolve_pause_checkpoint_id({"approval-1"}) is None
+    assert (
+        await workflow.resolve_pause_checkpoint_id(
+            {"approval-1"},
+            baseline_checkpoint_id=None,
+        )
+        == "leftover"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_excludes_restored_checkpoint() -> None:
+    """After resume, the restored id must not be re-advertised if a new pause save fails."""
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+
+    async for _ in workflow.run("go", stream=True):
+        pass
+    restored = workflow.get_last_checkpoint_id()
+    assert restored is not None
+
+    # Simulate a resume that restored `restored` but did not persist a newer pause.
+    workflow._run_baseline_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+    workflow._restored_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+    workflow._runner._previous_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+
+    assert (
+        await workflow.resolve_pause_checkpoint_id(
+            {"approval-1"},
+            checkpoint_storage=storage,
+            known_checkpoint_id=restored,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_uses_builder_storage() -> None:
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+    async for _ in workflow.run("go", stream=True):
+        pass
+
+    pause_id = workflow.get_last_checkpoint_id()
+    resolved = await workflow.resolve_pause_checkpoint_id({"approval-1"})
+    assert resolved == pause_id

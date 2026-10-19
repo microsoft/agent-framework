@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { JSX } from "react";
 
 type AgUiEvent = Record<string, unknown> & { type: string };
 

@@ -20,8 +20,8 @@
 //
 // No application-level loop or continuation tokens are required in either mode.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Mcp;
@@ -33,6 +33,7 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Extensions.Tasks;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using OpenAI;
 using OpenAI.Chat;
 
 if (args.Length > 0 && args[0] == "--server")
@@ -41,7 +42,9 @@ if (args.Length > 0 && args[0] == "--server")
     return;
 }
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+Uri endpoint = AzureOpenAIEndpoint.From(
+    Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT"))
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Launch this same assembly as a stdio MCP server in a child process.
@@ -60,9 +63,9 @@ var mcpTools = await mcpClient.ListAgentToolsWithTasksAsync();
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
      .GetChatClient(deploymentName)
      .AsAIAgent(
         instructions: "You answer data-analysis questions by invoking the available tools. Always invoke a tool when one matches the request.",

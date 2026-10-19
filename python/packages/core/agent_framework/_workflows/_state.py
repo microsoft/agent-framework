@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import copy
+from collections.abc import Callable
 from typing import Any
 
 
@@ -69,6 +70,16 @@ class State:
         if key in self._pending:
             return self._pending[key] is not _DeleteSentinel
         return key in self._committed
+
+    def _validate(self, key: str, validator: Callable[[Any], None]) -> None:
+        """Validate a stored value before copying it.
+
+        The internal validator must not mutate or retain the value. Missing and
+        pending-deleted keys are not validated, matching ``get`` visibility.
+        """
+        value = self._pending.get(key, self._committed.get(key, _DeleteSentinel))
+        if value is not _DeleteSentinel:
+            validator(value)
 
     def delete(self, key: str) -> None:
         """Mark a key for deletion.

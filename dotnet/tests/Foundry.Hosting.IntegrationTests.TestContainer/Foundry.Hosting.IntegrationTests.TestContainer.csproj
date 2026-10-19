@@ -11,13 +11,12 @@
     <IsTestProject>false</IsTestProject>
     <UseMicrosoftTestingPlatformRunner>false</UseMicrosoftTestingPlatformRunner>
     <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
-    <NoWarn>$(NoWarn);NU1605;NU1903;AAIP001;OPENAI001</NoWarn>
+    <NoWarn>$(NoWarn);NU1605;NU1903;AAIP001;AAIP002;OPENAI001</NoWarn>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Remove="xunit.v3.mtp-v2" />
-    <PackageReference Remove="xunit.runner.visualstudio" />
     <PackageReference Remove="Moq" />
     <PackageReference Remove="xRetry.v3" />
     <PackageReference Remove="Microsoft.Testing.Extensions.CodeCoverage" />

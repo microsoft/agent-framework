@@ -2,7 +2,8 @@
 
 """AgentFrameworkAgent wrapper for AG-UI protocol."""
 
-from collections.abc import AsyncGenerator
+import warnings
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any, cast
 
 from ag_ui.core import BaseEvent
@@ -27,6 +28,8 @@ class AgentConfig:
         snapshot_store: AGUIThreadSnapshotStore | None = None,
         a2ui_config: dict[str, Any] | None = None,
         service_session_id_from_thread_id: bool = False,
+        emit_messages_snapshot: bool = True,
+        legacy_session_id_from_thread_id: bool = False,
     ):
         """Initialize agent configuration.
 
@@ -45,6 +48,11 @@ class AgentConfig:
             require_confirmation: Whether predictive updates require user confirmation before applying
             a2ui_config: Optional backend A2UI config consumed by auto-injection
                 (``forwardedProps.injectA2UITool``). See ``plan_a2ui_injection``.
+            emit_messages_snapshot: Whether to emit a terminal MessagesSnapshotEvent at the end of runs.
+                Defaults to True for backward compatibility. Set to False when using HistoryProvider
+                to prevent redundant full-transcript rewrites on the client.
+            legacy_session_id_from_thread_id: Deprecated compatibility option that uses the client-owned
+                AG-UI Thread id directly as the internal Agent Session id.
         """
         self.state_schema = self._normalize_state_schema(state_schema)
         self.predict_state_config = predict_state_config or {}
@@ -53,6 +61,8 @@ class AgentConfig:
         self.require_confirmation = require_confirmation
         self.snapshot_store = snapshot_store
         self.a2ui_config = a2ui_config
+        self.emit_messages_snapshot = emit_messages_snapshot
+        self.legacy_session_id_from_thread_id = legacy_session_id_from_thread_id
 
     @staticmethod
     def _normalize_state_schema(state_schema: Any | None) -> dict[str, Any]:
@@ -101,6 +111,8 @@ class AgentFrameworkAgent:
         snapshot_store: AGUIThreadSnapshotStore | None = None,
         a2ui_config: dict[str, Any] | None = None,
         service_session_id_from_thread_id: bool = False,
+        emit_messages_snapshot: bool = True,
+        legacy_session_id_from_thread_id: bool = False,
     ):
         """Initialize the AG-UI compatible agent wrapper.
 
@@ -120,7 +132,21 @@ class AgentFrameworkAgent:
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
             a2ui_config: Optional backend A2UI config consumed by auto-injection.
+            emit_messages_snapshot: Whether to emit a terminal MessagesSnapshotEvent at the end of runs.
+                Defaults to True. Set to False when using HistoryProvider.
+            legacy_session_id_from_thread_id: Deprecated compatibility option that uses the client-owned
+                AG-UI Thread id directly as the internal Agent Session id. This disables Snapshot Scope
+                isolation for context-provider state.
         """
+        if legacy_session_id_from_thread_id:
+            warnings.warn(
+                "legacy_session_id_from_thread_id=True is deprecated because client-owned AG-UI Thread ids "
+                "do not isolate server-side state. Migrate provider state to scoped session ids and remove "
+                "this option.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self.agent = agent
         self.name = name or getattr(agent, "name", "agent")
         self.description = description or getattr(agent, "description", "")
@@ -133,6 +159,8 @@ class AgentFrameworkAgent:
             require_confirmation=require_confirmation,
             snapshot_store=snapshot_store,
             a2ui_config=a2ui_config,
+            emit_messages_snapshot=emit_messages_snapshot,
+            legacy_session_id_from_thread_id=legacy_session_id_from_thread_id,
         )
 
         # Server-side Approval State. Populated when approval requests are emitted
@@ -147,11 +175,14 @@ class AgentFrameworkAgent:
     async def run(
         self,
         input_data: dict[str, Any],
+        *,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Run the wrapped agent and yield AG-UI events.
 
         Args:
             input_data: The AG-UI run input containing messages, state, etc.
+            function_invocation_kwargs: Keyword arguments forwarded only to tool invocation.
 
         Yields:
             AG-UI events
@@ -162,5 +193,6 @@ class AgentFrameworkAgent:
             self.agent,
             self.config,
             approval_state_store=self._approval_state_store,
+            function_invocation_kwargs=function_invocation_kwargs,
         ):
             yield event

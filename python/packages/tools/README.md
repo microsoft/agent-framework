@@ -43,17 +43,25 @@ asyncio.run(main())
 ### Safety
 
 > **`LocalShellTool` is not a sandbox.** It runs commands directly on the
-> host with the agent process's privileges. The actual security boundary
-> is **approval-in-the-loop**. For untrusted input use a sandboxed
-> executor — see [`agent-framework-hyperlight`](#relationship-to-agent-framework-hyperlight).
+> host with the agent process's permissions. Human approval provides a check
+> before agent-requested commands run, but does not isolate the shell.
+> Production use needs separately enforced isolation and restricted permissions.
+> For untrusted input use a sandboxed executor, such as `DockerShellTool` for
+> shell commands — see also
+> [`agent-framework-hyperlight`](#relationship-to-agent-framework-hyperlight).
 
 Defenses (in priority order):
 
-- **Approval-in-the-loop** — every command surfaces as a
-  `user_input_request`; nothing runs without consent. Disabling this
-  requires `acknowledge_unsafe=True`.
+- **Approval-in-the-loop** — when an agent calls the tool returned by
+  `as_function()` with `approval_mode="always_require"` (the default),
+  commands require approval through a `user_input_request` before they run.
+  Disabling this requires `acknowledge_unsafe=True`. Direct calls to
+  `run()` do not request approval, regardless of the configured approval mode.
 - **Process-tree termination on timeout** via `psutil`, so child
-  processes (`make`, watchers, network tools) cannot survive the timeout.
+  processes (`make`, watchers, network tools) cannot survive the timeout. On
+  Windows, a timed-out persistent session is closed even if the interrupted
+  command emits its completion marker. The next command starts a fresh shell;
+  shell-local variables and working-directory changes from that session are lost.
 - **Output truncation** to 64 KiB (head + tail with marker).
 - **Audit hook** (`on_command=…`) for SIEM / append-only logs.
 - **Optional command-pattern filter** via `ShellPolicy(denylist=[...],
@@ -61,21 +69,31 @@ Defenses (in priority order):
   security boundary — operators are expected to supply patterns that
   match their workload (and they can be defeated by trivial obfuscation
   such as `\rm -rf /`, `${RM:=rm} -rf /`, `python -c "…"`, encoded
-  payloads, or PowerShell-native equivalents). Real isolation comes from
-  approval gating and the sandbox tier (`DockerShellTool`). See
+  payloads, or PowerShell-native equivalents). Isolation must be enforced
+  separately, for example by the sandbox tier (`DockerShellTool`);
+  neither approval nor command filters isolate the shell. See
   `tests/test_security.py` for the documented residual risk surface.
 
-Override with `ShellPolicy`:
+Command-text filtering with `ShellPolicy` and required human approval:
+
+> [!WARNING]
+> The filters below can allow embedded commands, including `$(...)` and
+> backticks, and do not enforce read-only access. Review the full command before
+> approving it. Approval does not isolate the shell: commands still run with
+> the application's permissions.
 
 ```python
 from agent_framework.tools import LocalShellTool, ShellPolicy
 
 shell = LocalShellTool(
     policy=ShellPolicy(allowlist=[r"^ls\b", r"^cat\b", r"^git status$"]),
-    approval_mode="never_require",
-    acknowledge_unsafe=True,  # required to bypass approval
+    approval_mode="always_require",
 )
 ```
+
+Expose this tool to the agent through `shell.as_function()` and handle its
+approval requests with human review. Calling `shell.run()` directly does not
+request approval.
 
 ### Cross-OS
 
@@ -154,13 +172,26 @@ To expose a host directory, pass `host_workdir="/path"` (mounted
 read-only by default; `mount_readonly=False` to allow writes). Swap the
 container runtime with `docker_binary="podman"`.
 
+Applications that must pass additional Docker options can use
+`unsafe_extra_run_args`. These trusted setup options are appended verbatim
+and must come only from developer-controlled configuration. Never use values
+from users, model output, or other untrusted sources. These options can weaken
+or completely remove isolation. Review every option carefully. In particular,
+avoid `--privileged`, `--network=host`, host-path volume mounts, and added
+capabilities unless the application explicitly requires and secures them.
+
+Arbitrary Docker configuration is trusted application setup. The
+model-facing function accepts only a shell command and cannot choose Docker
+options, but the restrictive profile is effective only when the complete
+application configuration preserves it.
+
 ## Sandbox tiers at a glance
 
 | Use case | Tool | Sandbox |
 |---|---|---|
 | Run *code* (untrusted) | `HyperlightCodeActProvider.execute_code` (`agent-framework-hyperlight`) | Hyperlight WASM microVM |
 | Run *shell* (untrusted) | `DockerShellTool` | OCI container (network-off, non-root, capabilities dropped) |
-| Run *shell* (trusted dev) | `LocalShellTool` | Approval-in-the-loop |
+| Run *shell* (trusted dev) | `LocalShellTool` | None; human approval for agent calls by default |
 
 ## Relationship to `agent-framework-hyperlight`
 

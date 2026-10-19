@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
@@ -48,11 +49,11 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         // Snapshot prior-execution state before we mutate it below so the SkipQuestionMode
         // evaluation reflects whether this is the first time the action has run.
         bool hasExecutedPreviously = await this._hasExecuted.ReadAsync(context).ConfigureAwait(false);
-        bool proceed = this.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
+        bool proceed = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.AlwaysPrompt), "always prompt");
 
         if (!proceed)
         {
-            SkipQuestionMode mode = this.Evaluator.GetValue(this.Model.SkipQuestionMode).Value;
+            SkipQuestionMode mode = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.SkipQuestionMode), "skip question mode");
             proceed =
                 mode switch
                 {
@@ -158,16 +159,16 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
     private async ValueTask PromptAsync(IWorkflowContext context, int actualCount, CancellationToken cancellationToken)
     {
-        long repeatCount = this.Evaluator.GetValue(this.Model.RepeatCount).Value;
+        long repeatCount = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.RepeatCount), "repeat count");
         if (actualCount >= repeatCount)
         {
-            DataValue defaultValue = DataValue.Blank();
+            EvaluationResult<DataValue> defaultValue = new(DataValue.Blank(), SensitivityLevel.None);
             if (this.Model.DefaultValue is not null)
             {
                 ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
-                defaultValue = this.Evaluator.GetValue(defaultValueExpression).Value;
+                defaultValue = this.Evaluator.GetValue(defaultValueExpression);
             }
-            await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
+            await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, defaultValue.Value.ToFormula(), context, defaultValue.Sensitivity).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim()), cancellationToken).ConfigureAwait(false);
             // Reset for any subsequent Question turn (e.g. via GotoAction re-entry) so the next attempt starts fresh.
@@ -187,6 +188,12 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
             return string.Empty;
         }
 
-        return this.Engine.Format(messageActivity.Text).Trim();
+        EvaluationResult<string> promptResult = this.Evaluator.Format(messageActivity.Text);
+        if (promptResult.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot send sensitive question prompt: {this.Id}.");
+        }
+
+        return promptResult.Value.Trim();
     }
 }

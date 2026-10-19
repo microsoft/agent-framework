@@ -6,11 +6,10 @@ These tests exercise the full HTTP pipeline using httpx.AsyncClient with
 ASGITransport — no real server process is started. The agent talks to a real
 Foundry project endpoint so every test requires valid credentials.
 
-The invocations protocol is intentionally simple: a request is a JSON body with
-a ``message`` field (and an optional ``stream`` flag). Non-streaming responses
-return the agent's answer as plain text; streaming responses return the answer
-as a ``text/event-stream`` of text chunks. Session continuity is keyed off the
-``agent_session_id`` query parameter.
+The default request is a JSON object with a ``message`` field and optional
+``stream`` flag. Non-streaming responses return ``{"response": "..."}``;
+streaming responses contain framed ``delta`` and ``done`` SSE events.
+Session continuity is keyed off the ``agent_session_id`` query parameter.
 
 Required environment variables:
     FOUNDRY_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
@@ -20,11 +19,12 @@ Required environment variables:
 from __future__ import annotations
 
 import os
+import uuid
 from typing import Annotated, Any
 
 import httpx
 import pytest
-from agent_framework import Agent, tool
+from agent_framework import Agent, InMemoryHistoryProvider, tool
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
@@ -54,6 +54,7 @@ def server() -> InvocationsHostServer:
     agent = Agent(
         client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Keep answers very short (one or two sentences).",
+        context_providers=[InMemoryHistoryProvider()],
         default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
     )
 
@@ -121,18 +122,21 @@ class TestBasicText:
         resp = await _post_invocation(server, message="Say hello in exactly three words.", stream=False)
 
         assert resp.status_code == 200
-        assert len(resp.text) > 0
+        assert resp.headers["content-type"] == "application/json"
+        assert resp.json()["response"]
 
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
     async def test_simple_text_streaming(self, server: InvocationsHostServer) -> None:
-        """Streaming: send a message and receive text chunks as an event stream."""
+        """Streaming: send a message and receive framed SSE events."""
         resp = await _post_invocation(server, message="Say hello in exactly three words.", stream=True)
 
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
-        assert len(resp.text) > 0
+        assert "event: delta" in resp.text
+        assert "event: done" in resp.text
+        assert "event: error" not in resp.text
 
     @pytest.mark.flaky
     @pytest.mark.integration
@@ -144,6 +148,7 @@ class TestBasicText:
             resp = await client.post("/invocations", json={"stream": False}, timeout=120)
 
         assert resp.status_code == 400
+        assert "message" in resp.json()["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +164,7 @@ class TestMultiTurn:
     @skip_if_foundry_hosting_integration_tests_disabled
     async def test_two_turn_conversation(self, server: InvocationsHostServer) -> None:
         """Turn 1 establishes context; turn 2 recalls it via the same session."""
-        session_id = "int-test-session-two-turn"
+        session_id = f"int-test-session-two-turn-{uuid.uuid4().hex}"
 
         resp1 = await _post_invocation(
             server,
@@ -176,14 +181,14 @@ class TestMultiTurn:
             session_id=session_id,
         )
         assert resp2.status_code == 200
-        assert "blue" in resp2.text.lower()
+        assert "blue" in resp2.json()["response"].lower()
 
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
     async def test_multi_turn_streaming(self, server: InvocationsHostServer) -> None:
         """Multi-turn conversation with streaming on the second turn."""
-        session_id = "int-test-session-stream"
+        session_id = f"int-test-session-stream-{uuid.uuid4().hex}"
 
         resp1 = await _post_invocation(
             server,
@@ -201,6 +206,8 @@ class TestMultiTurn:
         )
         assert resp2.status_code == 200
         assert "text/event-stream" in resp2.headers["content-type"]
+        assert "event: delta" in resp2.text
+        assert "event: done" in resp2.text
         assert "42" in resp2.text
 
 
@@ -224,7 +231,7 @@ class TestToolCalling:
         )
 
         assert resp.status_code == 200
-        assert "72" in resp.text
+        assert "72" in resp.json()["response"]
 
     @pytest.mark.flaky
     @pytest.mark.integration
@@ -239,4 +246,5 @@ class TestToolCalling:
 
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
+        assert "event: done" in resp.text
         assert "72" in resp.text

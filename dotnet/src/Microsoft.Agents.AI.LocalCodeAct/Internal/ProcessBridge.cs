@@ -106,18 +106,14 @@ internal sealed class ProcessBridge
 
     private void ConfigureEnvironment(ProcessStartInfo startInfo)
     {
-        // Null => inherit the parent environment (documented contract on
-        // LocalCodeActProviderOptions.Environment). Callers wanting a scrubbed
-        // environment pass an empty dictionary.
-        if (this._environment is null)
-        {
-            return;
-        }
-
         startInfo.Environment.Clear();
-        foreach (var kvp in this._environment)
+
+        if (this._environment is not null)
         {
-            startInfo.Environment[kvp.Key] = kvp.Value;
+            foreach (var kvp in this._environment)
+            {
+                startInfo.Environment[kvp.Key] = kvp.Value;
+            }
         }
 
         // Without these on Windows, Python may fail to load its standard library.

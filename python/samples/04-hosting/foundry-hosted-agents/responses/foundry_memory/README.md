@@ -16,7 +16,33 @@ The agent uses `FoundryChatClient` from the Agent Framework to create a Response
 2. **Searches for contextual memories** matching the current user message and injects them into the model context.
 3. **Updates the store** with new facts inferred from the conversation.
 
-Crucially, the provider is constructed with `project_client=client.project_client` — i.e. it reuses the `AIProjectClient` that `FoundryChatClient` already created, instead of allocating a second one. This keeps a single authentication context and connection pool for both chat and memory operations.
+The zero-argument `create_agent` factory builds a new agent, credential, project
+client and Memory provider **inside each request**. Chat and Memory share that
+request's project client, not a process-wide client. Its headers capture the
+current platform call ID for both Memory and model calls; raw user IDs are not
+forwarded. The request-owned client's context manager closes its own OpenAI and
+project transports and credential on completion or cancellation. It does not
+change ownership of developer-supplied clients elsewhere in the framework.
+
+The Memory namespace is a framed hash of the **trusted platform user ID**. It
+intentionally excludes the sandbox, conversation, MAF session and call IDs: the
+same user shares long-term memories across their hosted sessions, while other
+users have different namespaces. The host still validates the platform sandbox
+and requires a trusted user and call ID before constructing the integration.
+Caller model options cannot choose that namespace, and literal template strings
+such as `{{$userId}}` are **not** substituted by the framework.
+
+Sharing is user-wide **within the configured project Memory Store**, including
+different agents that use that same store and user-scope algorithm. The agent
+name is deliberately not part of the hash. Configure separate Memory Stores
+when agents must not share a user's long-term memories; do not assume sandbox
+or agent names provide that boundary.
+
+`history_source="agent_server"` supplies conversation history from the outer
+Responses service and disables inner model storage. This is separate from
+application-owned long-term Memory: outer `store=false` disables host-managed
+state, **not** the Memory provider's deliberate read/write side effects. Apply
+your application's consent and retention policy before enabling Memory.
 
 See [main.py](main.py) for the full implementation.
 
@@ -33,7 +59,12 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 ### Required RBAC
 
-Your identity (or the Managed Identity running the container in production) needs **Azure AI User** on the Foundry project scope. This single role covers both provisioning the memory store with `provision_memory_store.py` and reading/writing memories from `main.py`.
+Your provisioning identity and the deployed agent's managed identity need
+**Foundry User** (formerly **Azure AI User**) on the **Foundry project scope**
+for the Memory operations used here. Grant at that project, not merely at an
+unrelated resource or only at a model deployment. Scope hashes are application
+namespaces, not independent RBAC grants: a principal with project-wide access
+must be trusted to enforce the application's user mapping.
 
 ## Provisioning the memory store (one time)
 
@@ -43,8 +74,8 @@ From this directory, with the venv activated and `az login` done:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-export AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME="text-embedding-3-small"
+export FOUNDRY_MODEL="gpt-4.1-mini"
+export FOUNDRY_EMBEDDING_MODEL="text-embedding-3-small"
 export MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
@@ -53,11 +84,14 @@ Or in PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-$env:AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME="text-embedding-3-small"
+$env:FOUNDRY_MODEL="gpt-4.1-mini"
+$env:FOUNDRY_EMBEDDING_MODEL="text-embedding-3-small"
 $env:MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
+
+Existing configurations can continue using `AZURE_AI_MODEL_DEPLOYMENT_NAME` and
+`AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME` as compatibility fallbacks.
 
 Expected output (first run):
 
@@ -86,20 +120,30 @@ $env:MEMORY_STORE_NAME="agent_framework_memory"
 
 You can also place these in a `.env` file next to `main.py` — see [`.env.example`](.env.example).
 
+Local development also requires an explicit `LOCAL_MEMORY_USER_ID`, for example
+`local-developer`. It is a **single-user** developer namespace configured by the
+host operator, never a hosted fallback. Local `x-agent-user-id`/call-ID headers
+are rejected rather than trusted. Local model/Memory calls use
+`AzureCliCredential` (`az login`); hosted calls use managed identity. Do not
+expose the local mode as a multi-user authenticated service.
+
 ## Interacting with the agent
 
 > Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details.
 
 Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. The first request seeds a memory; subsequent requests (especially in new sessions) should be able to recall it because memories are persisted across Foundry Hosted Agents sessions.
 
-> In this sample, the memory is scoped to the user by specifying `scope="{{$userId}}"`, thus memories are isolated across different users but shared across different sessions from the same user.
+> Hosted memory uses the trusted user-wide hash produced by `memory_scope`.
+> Changing a sandbox or starting a fresh conversation does not clear that user's
+> long-term memories. Changing the user selects a different namespace.
 
 ```bash
 # 1. Tell the agent something to remember.
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
   -d '{"input": "I prefer dark roast coffee and I am allergic to nuts."}'
 
-# Wait a few seconds for the memory to be stored, then start a fresh conversation:
+# Wait for the asynchronous Memory update (the default debounce is 300 seconds),
+# then start a fresh conversation; immediate recall is not guaranteed:
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
   -d '{"input": "Can you recommend a coffee and a snack for me?"}'
 
@@ -119,4 +163,7 @@ azd env set MEMORY_STORE_NAME "agent_framework_memory"
 
 If these are not set, running `azd ai agent init -m <agent.manifest.yaml>` will prompt you to enter them interactively.
 
-The deployed agent's Managed Identity needs **Azure AI User** on the Foundry project to read and write memories at runtime. Make sure you have run `provision_memory_store.py` against the same Foundry project before deploying — otherwise the agent will fail on the first turn when it tries to read from a non-existent store.
+Provision the Memory Store in the **same project** and grant the deployed managed
+identity the project-scoped role above. Provisioning, live Memory calls and
+deployment need separately configured resources and are not exercised by the
+credential-free checks.
