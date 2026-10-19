@@ -57,19 +57,49 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
     }
 
     /// <inheritdoc/>
-    public Task<SendMessageResponse> SendMessageAsync(SendMessageRequest request, CancellationToken cancellationToken = default)
+    public async Task<SendMessageResponse> SendMessageAsync(SendMessageRequest request, CancellationToken cancellationToken = default)
     {
         Selection selection = this.GetSelection();
-        selection.BindAgent(request.Message);
-        return selection.A2AServer.SendMessageAsync(request, cancellationToken);
+        RequestBoundAgentHandler handler = selection.BindAgent(request.Message);
+        try
+        {
+            return await selection.A2AServer.SendMessageAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await handler.ReleaseAsync().ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>
     public IAsyncEnumerable<StreamResponse> SendStreamingMessageAsync(SendMessageRequest request, CancellationToken cancellationToken = default)
     {
+        // The selection is only visible in the endpoint filter's asynchronous flow, so bind it before the
+        // response stream is enumerated.
         Selection selection = this.GetSelection();
-        selection.BindAgent(request.Message);
-        return selection.A2AServer.SendStreamingMessageAsync(request, cancellationToken);
+        RequestBoundAgentHandler handler = selection.BindAgent(request.Message);
+        return StreamAsync(selection.A2AServer, handler, request, cancellationToken);
+    }
+
+    private static async IAsyncEnumerable<StreamResponse> StreamAsync(
+        A2AServer server,
+        RequestBoundAgentHandler handler,
+        SendMessageRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (StreamResponse response in server.SendStreamingMessageAsync(request, cancellationToken).ConfigureAwait(false))
+            {
+                yield return response;
+            }
+        }
+        finally
+        {
+            // A2AServer keeps a streaming run going after the stream ends early, for example when the client
+            // disconnects, but the selected agent's services belong to this request.
+            await handler.ReleaseAsync().ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>
@@ -120,10 +150,61 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
     {
         public A2AServer A2AServer => server.A2AServer;
 
-        public void BindAgent(Message message)
+        public RequestBoundAgentHandler BindAgent(Message message)
         {
             AIHostAgent hostAgent = A2AServerServiceCollectionExtensions.CreateHostAgent(requestServices, agent, agentName, sessionStorageIdentity: agentName);
-            server.Bind(message, new A2AAgentHandler(hostAgent, runMode, allowReturnImmediately: false));
+            RequestBoundAgentHandler handler = new(new A2AAgentHandler(hostAgent, runMode, allowReturnImmediately: false));
+            server.Bind(message, handler);
+            return handler;
+        }
+    }
+
+    /// <summary>
+    /// Runs the selected agent only while the request that owns its services is active.
+    /// </summary>
+    /// <remarks>
+    /// The request calls <see cref="ReleaseAsync"/> before it ends, which waits for a run in progress and rejects a run
+    /// that A2AServer starts in the background after the request has ended.
+    /// </remarks>
+    private sealed class RequestBoundAgentHandler(IAgentHandler innerHandler) : IAgentHandler
+    {
+        private readonly object _gate = new();
+        private Task? _execution;
+        private bool _released;
+
+        public async Task ExecuteAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+        {
+            TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (this._gate)
+            {
+                if (this._released)
+                {
+                    throw new OperationCanceledException("The request that selected the agent ended before the agent run started.");
+                }
+
+                this._execution = completion.Task;
+            }
+
+            try
+            {
+                await innerHandler.ExecuteAsync(context, eventQueue, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                completion.SetResult();
+            }
+        }
+
+        public Task CancelAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+            => innerHandler.CancelAsync(context, eventQueue, cancellationToken);
+
+        public Task ReleaseAsync()
+        {
+            lock (this._gate)
+            {
+                this._released = true;
+                return this._execution ?? Task.CompletedTask;
+            }
         }
     }
 

@@ -28,6 +28,8 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 /// </summary>
 public sealed class A2ARequestScopedAgentTests
 {
+    private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(10);
+
     [Fact]
     public async Task AddA2AServer_WithScopedAgent_ResolvesAgentForEachOperationAsync()
     {
@@ -290,6 +292,54 @@ public sealed class A2ARequestScopedAgentTests
     }
 
     [Fact]
+    public async Task MapA2AHttpJson_WithAgentSelector_KeepsRequestServicesUntilStreamingRunCompletesAfterDisconnectAsync()
+    {
+        // Arrange
+        DisconnectProbe probe = new();
+        await using WebApplication app = await StartAsync(
+            services =>
+            {
+                services.AddScoped<DisposableRequestDependency>();
+                services.AddKeyedScoped<AgentSessionStore>("streaming", (_, _) => new TrackingSessionStore(probe));
+            },
+            endpoints =>
+            {
+                endpoints.Use(async (context, next) =>
+                {
+                    try
+                    {
+                        await next(context);
+                    }
+                    finally
+                    {
+                        probe.RequestCompleted.TrySetResult();
+                    }
+                });
+                endpoints.MapA2AHttpJson("/a2a", context => new BlockingAgent(context.RequestServices.GetRequiredService<DisposableRequestDependency>(), probe));
+            });
+        using HttpClient httpClient = app.GetTestClient();
+        using A2AHttpJsonClient client = new(new Uri(httpClient.BaseAddress!, "/a2a"), httpClient);
+        using CancellationTokenSource disconnect = new();
+
+        // Act
+        Task streaming = ConsumeAsync(client.SendStreamingMessageAsync(CreateRequest("ctx-1"), disconnect.Token));
+        await Task.WhenAny(probe.AgentStarted.Task, streaming).WaitAsync(s_timeout);
+        Assert.False(streaming.IsCompleted);
+        disconnect.Cancel();
+        Task first = await Task.WhenAny(probe.RequestCompleted.Task, Task.Delay(TimeSpan.FromMilliseconds(500)));
+        bool requestCompletedBeforeRun = first == probe.RequestCompleted.Task;
+        probe.ReleaseAgent.SetResult();
+        await probe.SessionSaved.Task.WaitAsync(s_timeout);
+        await probe.RequestCompleted.Task.WaitAsync(s_timeout);
+
+        // Assert
+        Assert.False(requestCompletedBeforeRun);
+        Assert.False(probe.DependencyDisposedWhenRunFinished);
+        Assert.False(probe.StoreDisposedWhenSessionSaved);
+        await Assert.ThrowsAnyAsync<Exception>(() => streaming.WaitAsync(s_timeout));
+    }
+
+    [Fact]
     public void MapA2AHttpJson_WithNullAgentSelector_ThrowsArgumentNullException()
     {
         // Arrange
@@ -334,6 +384,87 @@ public sealed class A2ARequestScopedAgentTests
     {
         Message message = Assert.IsType<Message>(response.Message);
         return string.Concat(message.Parts.Select(part => part.Text));
+    }
+
+    private static async Task ConsumeAsync(IAsyncEnumerable<StreamResponse> responses)
+    {
+        await foreach (StreamResponse _ in responses)
+        {
+        }
+    }
+
+    private sealed class DisconnectProbe
+    {
+        public TaskCompletionSource AgentStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseAgent { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SessionSaved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource RequestCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool? DependencyDisposedWhenRunFinished { get; set; }
+
+        public bool? StoreDisposedWhenSessionSaved { get; set; }
+    }
+
+    [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
+    private sealed class DisposableRequestDependency : IDisposable
+    {
+        public bool IsDisposed { get; private set; }
+
+        public void Dispose() => this.IsDisposed = true;
+    }
+
+    private sealed class TrackingSessionStore(DisconnectProbe probe) : AgentSessionStore, IDisposable
+    {
+        private bool _disposed;
+
+        public override ValueTask SaveSessionAsync(AIAgent agent, AgentSessionStoreKey key, AgentSession session, CancellationToken cancellationToken = default)
+        {
+            probe.StoreDisposedWhenSessionSaved = this._disposed;
+            probe.SessionSaved.TrySetResult();
+            return default;
+        }
+
+        public override ValueTask<AgentSession?> GetSessionAsync(AIAgent agent, AgentSessionStoreKey key, CancellationToken cancellationToken = default) =>
+            new((AgentSession?)null);
+
+        public void Dispose() => this._disposed = true;
+    }
+
+    private sealed class BlockingAgent(DisposableRequestDependency dependency, DisconnectProbe probe) : AIAgent
+    {
+        public override string? Name => "streaming";
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TurnCountingSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(session.StateBag.Serialize());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new TurnCountingSession(AgentSessionStateBag.Deserialize(serializedState)));
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            probe.AgentStarted.TrySetResult();
+            await probe.ReleaseAgent.Task.ConfigureAwait(false);
+            probe.DependencyDisposedWhenRunFinished = dependency.IsDisposed;
+            yield return new AgentResponseUpdate
+            {
+                MessageId = "message-1",
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent("done")]
+            };
+        }
     }
 
     [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
