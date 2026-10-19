@@ -5,3 +5,7 @@ __pycache__
 *.pyd
 .Python
 .env
+.azure
+.git
+.pytest_cache
+tests

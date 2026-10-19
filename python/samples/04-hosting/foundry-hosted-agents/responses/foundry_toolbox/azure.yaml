@@ -1,0 +1,122 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  azd: '>=1.32.0'
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.17'
+    azure.ai.connections: '>=1.0.0-beta.8'
+    azure.ai.toolboxes: '>=1.0.0-beta.8'
+name: agent-framework-agent-with-foundry-toolbox-responses
+services:
+  ai-project:
+    host: azure.ai.project
+    deployments:
+      - name: gpt-4.1
+        model:
+          format: OpenAI
+          name: gpt-4.1
+          version: '2025-04-14'
+        sku:
+          name: GlobalStandard
+          capacity: 10
+  ghmcppat:
+    host: azure.ai.connection
+    uses:
+      - ai-project
+    category: RemoteTool
+    target: https://api.githubcopilot.com/mcp
+    authType: CustomKeys
+    credentials:
+      type: CustomKeys
+      keys:
+        Authorization: Bearer ${GITHUB_MCP_PAT}
+    env:
+      GITHUB_MCP_PAT: ${GITHUB_MCP_PAT}
+  langmcpconn:
+    host: azure.ai.connection
+    uses:
+      - ai-project
+    category: RemoteTool
+    target: ${AZURE_LANGUAGE_MCP_ENDPOINT}
+    authType: ProjectManagedIdentity
+    audience: https://cognitiveservices.azure.com/
+    env:
+      AZURE_LANGUAGE_MCP_ENDPOINT: ${AZURE_LANGUAGE_MCP_ENDPOINT}
+  foundrymcpconn:
+    host: azure.ai.connection
+    uses:
+      - ai-project
+    category: RemoteTool
+    target: https://mcp.ai.azure.com
+    authType: UserEntraToken
+    audience: https://mcp.ai.azure.com
+  agent-tools:
+    host: azure.ai.toolbox
+    uses:
+      - ai-project
+      - ghmcppat
+      - langmcpconn
+      - foundrymcpconn
+    description: Multiple MCP servers behind one endpoint
+    env:
+      AZURE_LANGUAGE_MCP_ENDPOINT: ${AZURE_LANGUAGE_MCP_ENDPOINT}
+    tools:
+      - type: web_search
+        name: web_search
+        require_approval: never
+      - type: code_interpreter
+        name: code_interpreter
+        require_approval: never
+      - type: mcp
+        server_label: noauth_mcp
+        server_url: https://gitmcp.io/Azure/azure-rest-api-specs
+        require_approval: never
+      - type: mcp
+        server_label: github
+        server_url: https://api.githubcopilot.com/mcp
+        connection: ghmcppat
+        require_approval: never
+      - type: mcp
+        server_label: language-mcp
+        server_url: ${AZURE_LANGUAGE_MCP_ENDPOINT}
+        connection: langmcpconn
+        require_approval: never
+      - type: mcp
+        server_label: foundry-mcp
+        server_url: https://mcp.ai.azure.com
+        connection: foundrymcpconn
+        require_approval: never
+  agent-framework-agent-with-foundry-toolbox-responses:
+    host: azure.ai.agent
+    project: .
+    language: python
+    codeConfiguration:
+      dependencyResolution: remote_build
+      runtime: python_3_13
+      entryPoint: main.py
+    uses:
+      - ai-project
+      - agent-tools
+    kind: hosted
+    name: agent-framework-agent-with-foundry-toolbox-responses
+    description: An Agent Framework agent with Foundry Toolbox integration.
+    metadata:
+      tags:
+        - Agent Framework
+        - AI Agent Hosting
+        - Azure AI AgentServer
+        - Responses Protocol
+        - Streaming
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${FOUNDRY_PROJECT_ENDPOINT}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      TOOLBOX_ENDPOINT: ${TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT}
+    container:
+      resources:
+        cpu: '0.25'
+        memory: 0.5Gi
+infra:
+  provider: microsoft.foundry

@@ -1,6 +1,9 @@
-agent.manifest.yaml
-agent.yaml
+azure.yaml
 .env.example
 .env
-toolbox.yaml
+.azure
+.venv
+__pycache__
+.pytest_cache
+tests
 ./scripts
