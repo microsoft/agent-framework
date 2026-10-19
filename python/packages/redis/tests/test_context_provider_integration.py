@@ -16,7 +16,12 @@ from redisvl.index import AsyncSearchIndex
 from redisvl.utils.vectorize import BaseVectorizer
 
 from agent_framework_redis import RedisContextProvider
-from agent_framework_redis._context_provider import _scope_token_field
+from agent_framework_redis._context_provider import (
+    _SCOPE_MIGRATION_BACKFILL,
+    _SCOPE_MIGRATION_COMPLETE,
+    _scope_migration_key,
+    _scope_token_field,
+)
 
 
 @pytest.fixture
@@ -35,9 +40,11 @@ async def live_redis() -> AsyncIterator[tuple[str, Redis, str, str]]:
         encoded_name = index_name.encode()
         if encoded_name in indexes or index_name in indexes:
             await client.execute_command("FT.DROPINDEX", index_name)
-        keys = [key async for key in client.scan_iter(match=f"{prefix}*")]
+        keys = [key async for key in client.scan_iter(match=f"{prefix.rstrip(':')}*")]
         if keys:
             await client.delete(*keys)
+        marker_key = _scope_migration_key(index_name, prefix)
+        await client.delete(marker_key, f"{marker_key}:lock")
         await client.aclose()
 
 
@@ -203,6 +210,11 @@ async def test_live_legacy_index_requires_explicit_rebuild_and_preserves_exact_s
             "conversation_id": "session",
         }
     ])
+    adjacent_key = f"{prefix.rstrip(':')}-other:foreign"
+    await cast(
+        Awaitable[int],
+        client.hset(adjacent_key, mapping={"content": "foreign", "user_id": "Alice"}),
+    )
 
     incompatible = _provider(url, index_name, prefix, user_id="Alice")
     with pytest.raises(ValueError, match="coordinated migration"):
@@ -212,3 +224,12 @@ async def test_live_legacy_index_requires_explicit_rebuild_and_preserves_exact_s
     assert len(await migrated._redis_search("migration marker")) == 1
     assert await _provider(url, index_name, prefix, user_id="alice")._redis_search("migration marker") == []
     assert await _provider(url, index_name, prefix, user_id="Alice,other")._redis_search("migration marker") == []
+    adjacent_record = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(adjacent_key))
+    assert _scope_token_field("user_id").encode() not in adjacent_record
+
+    marker_key = _scope_migration_key(index_name, prefix)
+    marker = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(marker_key))
+    assert marker[b"state"] == _SCOPE_MIGRATION_COMPLETE.encode()
+    await cast(Awaitable[int], client.hset(marker_key, mapping={"state": _SCOPE_MIGRATION_BACKFILL}))
+    with pytest.raises(ValueError, match="migration is incomplete"):
+        await _provider(url, index_name, prefix, user_id="Alice")._redis_search("migration marker")

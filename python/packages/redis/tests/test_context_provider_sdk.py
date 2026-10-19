@@ -67,6 +67,8 @@ def _provider(client: redis.Redis, *, borrowed: bool, **kwargs: Any) -> RedisCon
         # Borrowed indexes use RedisVL's default validate_on_load=False.
         index = AsyncSearchIndex.from_dict(provider.schema_dict, redis_client=client)
         provider = RedisContextProvider(redis_index=index, **kwargs)
+    else:
+        provider.redis_index._redis_client = client  # pyright: ignore[reportPrivateUsage]
     provider.redis_index.exists = AsyncMock(return_value=False)
     provider.redis_index.create = AsyncMock()
     return provider
@@ -134,8 +136,8 @@ async def test_after_run_encodes_messages_with_optional_fields_omitted(
     if not all_scopes:
         assert "application_id" not in record
         assert "agent_id" not in record
-    assert len(_TransportConnection.packets) == 1
-    assert b"HSET" in _TransportConnection.packets[0]
+    assert len(_TransportConnection.packets) == 2
+    assert all(b"HSET" in packet for packet in _TransportConnection.packets)
     assert message.to_dict() == before
 
 
@@ -179,7 +181,7 @@ async def test_borrowed_index_omits_null_values_without_changing_nonnull_values_
     assert record["author_name"] == ""
     assert record["mime_type"] == 0
     assert record["embedding"] == b"\x00\x00\x80?"
-    assert len(_TransportConnection.packets) == 1
+    assert len(_TransportConnection.packets) == 2
     assert document == before
 
 
@@ -196,7 +198,7 @@ async def test_borrowed_index_omits_unfilled_vector_placeholder(
     assert "embedding" not in record
     assert "conversation_id" not in record
     assert "thread_id" not in record
-    assert len(_TransportConnection.packets) == 1
+    assert len(_TransportConnection.packets) == 2
     assert document == {"role": "user", "content": "Remember tea"}
 
 
@@ -218,5 +220,5 @@ async def test_borrowed_index_retains_generated_vector_buffer(
 
     vectorizer.aembed_many.assert_awaited_once_with(["Remember tea"], batch_size=1)
     assert write.call_args.args[2]["embedding"] == array_to_buffer([1.0, 0.0], dtype="float32")
-    assert len(_TransportConnection.packets) == 1
+    assert len(_TransportConnection.packets) == 2
     assert document == before

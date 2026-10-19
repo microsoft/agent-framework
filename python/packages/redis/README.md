@@ -172,12 +172,15 @@ context_provider = RedisContextProvider(
 )
 ```
 
-The rebuild replaces the index definition first, then backfills the current
-scope tokens from the exact identifiers stored in each matching Redis hash.
-Existing memory content remains in place. After the migration completes,
-remove `overwrite_index=True`; leaving it enabled rebuilds the index whenever a
-new provider process initializes. Review or remove records whose historical
-scope metadata is not authoritative before migration.
+The migration records resumable progress outside the indexed key namespace,
+backfills the current scope tokens from the exact identifiers stored in each
+matching Redis hash, and only then replaces the index definition. Each pass is
+bounded; if a large namespace needs another pass, initialization raises an
+actionable error and the next provider with `overwrite_index=True` resumes from
+the saved cursor. Normal providers reject an incomplete migration. Existing
+memory content remains in place. After the migration completes, remove
+`overwrite_index=True`. Review or remove records whose historical scope
+metadata is not authoritative before migration.
 
 ## Store and search documents
 

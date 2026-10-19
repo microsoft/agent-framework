@@ -16,8 +16,11 @@ from redisvl.utils.vectorize import BaseVectorizer
 
 from agent_framework_redis._context_provider import (
     _SCOPE_FIELDS,
+    _SCOPE_MIGRATION_BACKFILL,
+    _SCOPE_MIGRATION_COMPLETE,
     _SCOPE_TAG_SEPARATOR,
     RedisContextProvider,
+    _scope_migration_key,
     _scope_token,
     _scope_token_field,
 )
@@ -26,6 +29,10 @@ from agent_framework_redis._context_provider import (
 @pytest.fixture
 def mock_index() -> AsyncMock:
     index = AsyncMock()
+    client = MagicMock()
+    client.hset = AsyncMock()
+    client.hmget = AsyncMock(return_value=[b"1", b"complete", b"0", b"", b""])
+    index.client = client
     index.create = AsyncMock()
     index.exists = AsyncMock(return_value=False)
     index.load = AsyncMock()
@@ -137,7 +144,7 @@ async def test_ensure_index_validates_existing_schema_before_create(
         await provider._ensure_index()
 
     validate_schema.assert_awaited_once()
-    mock_index.create.assert_awaited_once_with(overwrite=False, drop=False)
+    mock_index.create.assert_not_awaited()
     assert provider._index_initialized is True
 
 
@@ -151,7 +158,7 @@ async def test_ensure_index_rebuilds_and_migrates_when_explicitly_enabled(
     with patch.object(provider, "_migrate_scope_tokens", AsyncMock()) as migrate:
         await provider._ensure_index()
 
-    mock_index.create.assert_awaited_once_with(overwrite=True, drop=False)
+    mock_index.create.assert_not_awaited()
     migrate.assert_awaited_once()
     assert provider._index_initialized is True
 
@@ -170,6 +177,20 @@ async def test_validate_schema_compatibility_raises_for_significant_mismatch(
     patch_index.from_existing = AsyncMock(return_value=existing_index)
 
     with pytest.raises(ValueError, match="coordinated migration"):
+        await provider._validate_schema_compatibility()
+
+
+async def test_validate_schema_compatibility_rejects_incomplete_migration(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,
+) -> None:
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    existing_index = AsyncMock()
+    existing_index.schema.to_dict = MagicMock(return_value=provider.schema_dict)
+    patch_index.from_existing = AsyncMock(return_value=existing_index)
+    mock_index.client.hmget = AsyncMock(return_value=[b"1", b"backfill", b"12", b"", b""])
+
+    with pytest.raises(ValueError, match="migration is incomplete"):
         await provider._validate_schema_compatibility()
 
 
@@ -245,37 +266,36 @@ async def test_migrate_scope_tokens_backfills_preserved_hashes(
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:
     client = MagicMock()
-
-    async def scan_iter(**kwargs: Any) -> AsyncIterator[bytes]:
-        assert kwargs == {"_type": "hash"}
-        yield b"context:one"
-        yield b"other:two"
-
-    client.scan_iter = scan_iter
-    client.hgetall = AsyncMock(
-        side_effect=[
-            {
-                b"application_id": b"App",
-                b"agent_id": b"Agent",
-                b"user_id": b"Alice",
-                b"thread_id": b"Thread",
-                b"conversation_id": b"Conversation",
-            }
-        ]
-    )
-    pipeline = MagicMock()
-    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
-    pipeline.__aexit__ = AsyncMock(return_value=False)
-    pipeline.hset = MagicMock()
-    pipeline.execute = AsyncMock(return_value=[1])
-    client.pipeline.return_value = pipeline
+    client.set = AsyncMock(return_value=True)
+    client.eval = AsyncMock(return_value=1)
+    client.hmget = AsyncMock(return_value=[b"1", b"backfill", b"7", b"", b""])
+    client.hset = AsyncMock()
+    client.scan = AsyncMock(return_value=(0, [b"context:one"]))
+    read_pipeline = MagicMock()
+    read_pipeline.__aenter__ = AsyncMock(return_value=read_pipeline)
+    read_pipeline.__aexit__ = AsyncMock(return_value=False)
+    read_pipeline.hmget = MagicMock()
+    read_pipeline.execute = AsyncMock(return_value=[[b"App", b"Agent", b"Alice", b"Thread", b"Conversation"]])
+    write_pipeline = MagicMock()
+    write_pipeline.__aenter__ = AsyncMock(return_value=write_pipeline)
+    write_pipeline.__aexit__ = AsyncMock(return_value=False)
+    write_pipeline.hset = MagicMock()
+    write_pipeline.execute = AsyncMock(return_value=[1])
+    client.pipeline.side_effect = [read_pipeline, write_pipeline]
     mock_index.client = client
-    mock_index.info = AsyncMock(return_value={"num_docs": 1})
+    mock_index.key_separator = ":"
+    mock_index.info = AsyncMock(return_value={"percent_indexed": 1, "indexing": 0})
+    mock_index.query = AsyncMock(return_value=[{"content": "migrated"}])
     provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    existing_index = AsyncMock()
+    existing_index.schema.to_dict = MagicMock(return_value={"index": {}, "fields": []})
+    patch_index.from_existing = AsyncMock(return_value=existing_index)
 
     await provider._migrate_scope_tokens()
 
-    mapping = pipeline.hset.call_args.kwargs["mapping"]
+    client.scan.assert_awaited_once_with(cursor=7, match="context:*", count=100, _type="hash")
+    read_pipeline.hmget.assert_called_once_with(b"context:one", *_SCOPE_FIELDS)
+    mapping = write_pipeline.hset.call_args.kwargs["mapping"]
     for name, value in {
         "application_id": "App",
         "agent_id": "Agent",
@@ -284,7 +304,57 @@ async def test_migrate_scope_tokens_backfills_preserved_hashes(
         "conversation_id": "Conversation",
     }.items():
         assert mapping[_scope_token_field(name)] == _scope_token(name, value)
-    mock_index.info.assert_awaited_once()
+    mock_index.create.assert_awaited_once_with(overwrite=True, drop=False)
+    mock_index.query.assert_awaited_once()
+    complete_state = client.hset.await_args_list[-1].kwargs["mapping"]
+    assert complete_state["state"] == _SCOPE_MIGRATION_COMPLETE
+    client.eval.assert_awaited_once()
+
+
+async def test_migrate_scope_tokens_pauses_with_resumable_cursor(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MagicMock()
+    client.set = AsyncMock(return_value=True)
+    client.eval = AsyncMock(return_value=1)
+    client.hmget = AsyncMock(return_value=[b"1", b"backfill", b"9", b"", b""])
+    client.hset = AsyncMock()
+    client.scan = AsyncMock(return_value=(11, [b"context:one"]))
+    read_pipeline = MagicMock()
+    read_pipeline.__aenter__ = AsyncMock(return_value=read_pipeline)
+    read_pipeline.__aexit__ = AsyncMock(return_value=False)
+    read_pipeline.hmget = MagicMock()
+    read_pipeline.execute = AsyncMock(return_value=[[None, None, b"Alice", None, None]])
+    write_pipeline = MagicMock()
+    write_pipeline.__aenter__ = AsyncMock(return_value=write_pipeline)
+    write_pipeline.__aexit__ = AsyncMock(return_value=False)
+    write_pipeline.hset = MagicMock()
+    write_pipeline.execute = AsyncMock(return_value=[1])
+    client.pipeline.side_effect = [read_pipeline, write_pipeline]
+    mock_index.client = client
+    mock_index.key_separator = ":"
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    existing_index = AsyncMock()
+    existing_index.schema.to_dict = MagicMock(return_value={"index": {}, "fields": []})
+    patch_index.from_existing = AsyncMock(return_value=existing_index)
+    monkeypatch.setattr("agent_framework_redis._context_provider._SCOPE_MIGRATION_MAX_RECORDS", 1)
+
+    with pytest.raises(RuntimeError, match="resume"):
+        await provider._migrate_scope_tokens()
+
+    persisted = client.hset.await_args_list[-1].kwargs["mapping"]
+    assert persisted["state"] == _SCOPE_MIGRATION_BACKFILL
+    assert persisted["cursor"] == "11"
+    mock_index.create.assert_not_awaited()
+    client.eval.assert_awaited_once()
+
+
+def test_scope_migration_marker_is_outside_index_namespace() -> None:
+    marker = _scope_migration_key("context", "context")
+
+    assert not marker.startswith("context:")
 
 
 @pytest.mark.parametrize("dtype, expected_size", [("float16", 4), ("float32", 8), ("float64", 16), ("bfloat16", 4)])
