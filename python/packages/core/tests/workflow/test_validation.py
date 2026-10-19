@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -146,6 +146,22 @@ def test_type_compatibility_from_any_source_passes():
     string_executor = StringExecutor(id="string_executor")
 
     workflow = WorkflowBuilder(start_executor=any_executor).add_edge(any_executor, string_executor).build()
+
+    assert workflow is not None
+
+
+def test_type_compatibility_from_literal_source_passes():
+    """An executor that sends a Literal type can connect to an executor that handles the literal values' type."""
+
+    class DecisionExecutor(Executor):
+        @handler
+        async def decide(self, message: str, ctx: WorkflowContext[Literal["approve", "reject"]]) -> None:
+            await ctx.send_message("approve")
+
+    decision_executor = DecisionExecutor(id="decision_executor")
+    string_executor = StringExecutor(id="string_executor")
+
+    workflow = WorkflowBuilder(start_executor=decision_executor).add_edge(decision_executor, string_executor).build()
 
     assert workflow is not None
 

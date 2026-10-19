@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import threading
 import weakref
@@ -20,7 +19,10 @@ from typing import Any, ClassVar, Final, cast
 from .._clients import SupportsChatGetResponse
 from .._compaction import group_messages
 from .._feature_stage import ExperimentalFeature, experimental
-from .._filesystem import _storage_key_segment  # pyright: ignore[reportPrivateUsage]
+from .._filesystem import (
+    _atomic_write_text,  # pyright: ignore[reportPrivateUsage]
+    _storage_key_segment,  # pyright: ignore[reportPrivateUsage]
+)
 from .._sessions import AgentSession, FileHistoryProvider, HistoryProvider, JsonDumps, JsonLoads, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
@@ -120,22 +122,6 @@ def _unescape_markdown_line(line: str) -> str:
     if body.startswith("\\#"):
         return f"{line[:leading_whitespace_length]}{body[1:]}"
     return line
-
-
-def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    """Write text to ``path`` atomically via a sibling temp file plus :func:`os.replace`.
-
-    A crash, OOM, or disk-full mid-write leaves the previous file (if any) intact instead of
-    producing a truncated file that breaks every subsequent read.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    try:
-        temp_path.write_text(text, encoding=encoding)
-        os.replace(temp_path, path)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
 
 
 def _slugify_topic(topic: str) -> str:
@@ -661,7 +647,11 @@ class MemoryStore(ABC):
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class MemoryFileStore(MemoryStore):
-    """Store memory files under ``MEMORY.md``, ``topics/``, and ``transcripts/``."""
+    """Store memory files under ``MEMORY.md``, ``topics/``, and ``transcripts/``.
+
+    The storage directory must not be writable by untrusted users, because they could
+    replace the final memory files independently of this store's secure temporary writes.
+    """
 
     def __init__(
         self,

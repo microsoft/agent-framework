@@ -148,6 +148,40 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
             expectedValue: FormulaValue.New(42));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SetConditionalExpressionContinuesAsync(bool value)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New(value), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        SetVariable model = this.CreateModel(
+            nameof(SetConditionalExpressionContinuesAsync),
+            FormatVariablePath("Result"),
+            new ValueExpression.Builder(ValueExpression.Expression("If(Env.Setting, 1 / 0, 1)")));
+        SetVariableExecutor action = new(model, this.State);
+        bool continued = false;
+
+        // Act
+        await this.ExecuteAsync(action, "next_action", (context, message, cancellationToken) =>
+        {
+            continued = true;
+            return default;
+        });
+
+        // Assert
+        Assert.True(continued);
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("Result"));
+        if (value)
+        {
+            Assert.IsType<BlankValue>(this.State.Get("Result"));
+        }
+        else
+        {
+            this.VerifyState("Result", FormulaValue.New(1));
+        }
+    }
+
     private Task ExecuteTestAsync(
         string displayName,
         string variableName,

@@ -53,7 +53,8 @@ class SetValueExecutor(DeclarativeActionExecutor):
         """Handle the SetValue action."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        path = self._action_def.get("path")
+        # The builder accepts 'variable' in place of 'path' for SetValue
+        path = self._action_def.get("path") or _get_variable_path(self._action_def)
         value = self._action_def.get("value")
 
         if path:

@@ -89,16 +89,16 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
         => this.GetSelection().A2AServer.SubscribeToTaskAsync(request, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<TaskPushNotificationConfig> CreateTaskPushNotificationConfigAsync(CreateTaskPushNotificationConfigRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.CreateTaskPushNotificationConfigAsync(request, cancellationToken);
+    public Task<TaskPushNotificationConfig> CreateTaskPushNotificationConfigAsync(TaskPushNotificationConfig config, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.CreateTaskPushNotificationConfigAsync(config, cancellationToken);
 
     /// <inheritdoc/>
     public Task<TaskPushNotificationConfig> GetTaskPushNotificationConfigAsync(GetTaskPushNotificationConfigRequest request, CancellationToken cancellationToken = default)
         => this.GetSelection().A2AServer.GetTaskPushNotificationConfigAsync(request, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<ListTaskPushNotificationConfigResponse> ListTaskPushNotificationConfigAsync(ListTaskPushNotificationConfigRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.ListTaskPushNotificationConfigAsync(request, cancellationToken);
+    public Task<ListTaskPushNotificationConfigsResponse> ListTaskPushNotificationConfigsAsync(ListTaskPushNotificationConfigsRequest request, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.ListTaskPushNotificationConfigsAsync(request, cancellationToken);
 
     /// <inheritdoc/>
     public Task DeleteTaskPushNotificationConfigAsync(DeleteTaskPushNotificationConfigRequest request, CancellationToken cancellationToken = default)

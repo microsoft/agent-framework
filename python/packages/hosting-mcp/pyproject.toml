@@ -4,7 +4,7 @@ description = "Agent and workflow MCP tool adapters for app-owned hosting."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260918"
+version = "1.0.0a261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -25,8 +25,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "agent-framework-hosting==1.0.0a260730",
-    "mcp>=1.11.0,<2",
+    "agent-framework-hosting==1.0.0a261015",
+    "mcp>=2.2.0,<3",
     "pydantic>=2,<3",
 ]
 

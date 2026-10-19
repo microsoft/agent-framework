@@ -27,6 +27,7 @@ from agent_framework import (
     MemoryTopicRecord,
     Message,
 )
+from agent_framework import _filesystem as filesystem_module
 
 from .test_filesystem import COLLIDING_IDENTIFIERS
 
@@ -820,8 +821,6 @@ def test_memory_topic_record_round_trips_when_text_contains_section_markers() ->
 
 async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(tmp_path, monkeypatch) -> None:
     """If ``os.replace`` fails mid-write, the previous topic file must remain intact."""
-    from agent_framework._harness import _memory as memory_module
-
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
@@ -834,12 +833,12 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
     )
     store.write_topic(session, original, source_id=DEFAULT_MEMORY_SOURCE_ID)
 
-    real_replace = memory_module.os.replace
+    real_replace = filesystem_module.os.replace
 
     def _boom(*args: object, **kwargs: object) -> None:
         raise OSError("simulated disk-full")
 
-    monkeypatch.setattr(memory_module.os, "replace", _boom)
+    monkeypatch.setattr(filesystem_module.os, "replace", _boom)
     with pytest.raises(OSError, match="simulated disk-full"):
         store.write_topic(
             session,
@@ -853,12 +852,12 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
             source_id=DEFAULT_MEMORY_SOURCE_ID,
         )
 
-    monkeypatch.setattr(memory_module.os, "replace", real_replace)
+    monkeypatch.setattr(filesystem_module.os, "replace", real_replace)
     surviving = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
     assert surviving.summary == "Prefers concise answers."
     # Temp file should not be left behind.
     topics_dir = surviving_dir = tmp_path
-    leftover = [path for path in topics_dir.rglob("*.tmp.*")]
+    leftover = [path for path in topics_dir.rglob(".maf-state-*.tmp")]
     assert leftover == []
     del surviving_dir
 
