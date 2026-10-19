@@ -276,7 +276,17 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         }
 
         // For non-background responses, wait for completion
-        await state.CompletionTask!.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await state.CompletionTask!.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (executor.IsExecutionBoundToRequest(request))
+        {
+            // The canceled execution still uses services owned by this request, so let it finish unwinding first.
+            await state.CompletionTask!.ConfigureAwait(false);
+            throw;
+        }
+
         return state.Response!;
     }
 
@@ -314,9 +324,21 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         state.CompletionTask = this.ExecuteResponseAsync(responseId, state, CancellationToken.None);
 
         // Stream updates as they become available
-        await foreach (StreamingResponseEvent update in state.StreamUpdatesAsync(cancellationToken: cancellationToken).ConfigureAwait(false))
+        try
         {
-            yield return update;
+            await foreach (StreamingResponseEvent update in state.StreamUpdatesAsync(cancellationToken: cancellationToken).ConfigureAwait(false))
+            {
+                yield return update;
+            }
+        }
+        finally
+        {
+            // The execution keeps running when the stream ends early, for example because the client disconnects.
+            // When it uses services owned by this request, the request must not end before the execution completes.
+            if (executor.IsExecutionBoundToRequest(request))
+            {
+                await state.CompletionTask.ConfigureAwait(false);
+            }
         }
     }
 

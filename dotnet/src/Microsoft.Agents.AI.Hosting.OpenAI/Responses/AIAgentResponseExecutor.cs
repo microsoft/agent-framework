@@ -131,7 +131,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
     {
         // Responses that are not run in the background are owned by the request that selected the agent, so their
         // session store shares the agent's request-scoped dependencies.
-        if (this._requestServices is { } requestServices && request.Background != true)
+        if (this._requestServices is { } requestServices && this.IsExecutionBoundToRequest(request))
         {
             await foreach (StreamingResponseEvent streamingEvent in this.ExecuteAsync(
                 requestServices, context, request, conversationHistory, cancellationToken).ConfigureAwait(false))
@@ -169,6 +169,14 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         return AgentResponseExecution.ExecuteAsync(
             executionAgent, this._mapOptions, context, request, conversationHistory, cancellationToken);
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Executions for an agent selected by a request use that request's services unless they run in the background,
+    /// which outlives the request and therefore owns a separate service scope.
+    /// </remarks>
+    public bool IsExecutionBoundToRequest(CreateResponse request) =>
+        this._requestServices is not null && request.Background != true;
 
     private AIAgent ResolveExecutionAgent(IServiceProvider services)
     {

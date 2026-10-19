@@ -148,9 +148,11 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <para>
     /// The keyed <see cref="AgentSessionStore"/> is resolved from <see cref="HttpContext.RequestServices"/> for
     /// validation and for responses that are not run in the background, so it shares the request-scoped dependencies of
-    /// an agent resolved from the same services. Background responses keep running the selected agent after the HTTP
-    /// request completes and resolve the session store from a separate service scope that they own, so agents used for
-    /// background responses must not depend on request-scoped services.
+    /// an agent resolved from the same services. These responses are bound to the request: a streaming response keeps
+    /// running when the client disconnects, and the request ends only after the run completes, while a non-streaming
+    /// response is canceled with the request and the request ends after the run stops. Background responses keep
+    /// running the selected agent after the HTTP request completes and resolve the session store from a separate service
+    /// scope that they own, so agents used for background responses must not depend on request-scoped services.
     /// </para>
     /// <para>
     /// Selection is not an authorization boundary. See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/>

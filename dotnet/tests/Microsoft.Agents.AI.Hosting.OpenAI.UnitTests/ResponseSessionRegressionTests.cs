@@ -28,6 +28,8 @@ public sealed class ResponseSessionRegressionTests
     private const string AgentName = "session-regression-agent";
     private const string ToolName = "get_weather";
 
+    private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(10);
+
     [Fact]
     public async Task ApprovalContinuation_TransientAgent_UsesStableRegistrationIdentityAsync()
     {
@@ -554,6 +556,103 @@ public sealed class ResponseSessionRegressionTests
         Assert.Equal(2, observations.StoreOperationTenants.Count);
     }
 
+    [Fact]
+    public async Task AgentSelector_StreamingDisconnect_KeepsRequestServicesUntilRunCompletesAsync()
+    {
+        // Arrange
+        RequestBoundRunProbe probe = new();
+        await using WebApplication app = await StartRequestBoundAppAsync(probe);
+        using HttpClient client = app.GetTestClient();
+        using HttpRequestMessage request = new(HttpMethod.Post, new Uri("/v1/responses", UriKind.Relative))
+        {
+            Content = JsonContent("""{"input":"hello","stream":true}""")
+        };
+
+        // Act
+#pragma warning disable CA2025 // The request is awaited below, before the request message is disposed.
+        Task<HttpResponseMessage> sending = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+#pragma warning restore CA2025
+        await probe.AgentStarted.Task.WaitAsync(s_timeout);
+        HttpResponseMessage response = await sending;
+
+        // Disposing the response before reading it to the end aborts the request on the server, like a client disconnect.
+        response.Dispose();
+        bool requestCompletedBeforeRun = await CompletesWithinAsync(probe.RequestCompleted.Task, TimeSpan.FromMilliseconds(500));
+        probe.ReleaseAgent.SetResult();
+        await probe.SessionSaved.Task.WaitAsync(s_timeout);
+        await probe.RequestCompleted.Task.WaitAsync(s_timeout);
+
+        // Assert
+        Assert.False(requestCompletedBeforeRun);
+        Assert.False(probe.DependencyDisposedWhenRunFinished);
+        Assert.False(probe.StoreDisposedWhenSessionSaved);
+    }
+
+    [Fact]
+    public async Task AgentSelector_NonStreamingDisconnect_KeepsRequestServicesUntilCanceledRunCompletesAsync()
+    {
+        // Arrange
+        RequestBoundRunProbe probe = new() { CleanupDelay = TimeSpan.FromMilliseconds(300) };
+        await using WebApplication app = await StartRequestBoundAppAsync(probe);
+        using HttpClient client = app.GetTestClient();
+        using CancellationTokenSource disconnect = new();
+
+        // Act
+#pragma warning disable CA2025 // The request is awaited below, before the token source is disposed.
+        Task<HttpResponseMessage> sending = PostJsonAsync(client, "/v1/responses", """{"input":"hello"}""", disconnect.Token);
+#pragma warning restore CA2025
+        await probe.AgentStarted.Task.WaitAsync(s_timeout);
+        disconnect.Cancel();
+        bool requestCanceled = false;
+        try
+        {
+            (await sending).Dispose();
+        }
+        catch (OperationCanceledException)
+        {
+            requestCanceled = true;
+        }
+
+        await probe.RunFinished.Task.WaitAsync(s_timeout);
+        await probe.RequestCompleted.Task.WaitAsync(s_timeout);
+
+        // Assert
+        Assert.True(requestCanceled);
+        Assert.True(probe.RunCanceled);
+        Assert.False(probe.DependencyDisposedWhenRunFinished);
+    }
+
+    private static async Task<WebApplication> StartRequestBoundAppAsync(RequestBoundRunProbe probe)
+    {
+        WebApplicationBuilder builder = CreateBuilder(validateScopes: true);
+        builder.Services.AddScoped<DisposableRequestDependency>();
+        builder.Services.AddKeyedScoped<AgentSessionStore>(
+            BlockingAgent.AgentName,
+            (_, _) => new DisposalTrackingSessionStore(probe));
+        builder.AddOpenAIResponses();
+
+        WebApplication app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            try
+            {
+                await next(context);
+            }
+            finally
+            {
+                probe.RequestCompleted.TrySetResult();
+            }
+        });
+        app.MapOpenAIResponses(
+            "/v1/responses",
+            context => new BlockingAgent(context.RequestServices.GetRequiredService<DisposableRequestDependency>(), probe));
+        await app.StartAsync();
+        return app;
+    }
+
+    private static async Task<bool> CompletesWithinAsync(Task task, TimeSpan timeout) =>
+        await Task.WhenAny(task, Task.Delay(timeout)) == task;
+
     private static WebApplicationBuilder CreateBuilder(bool validateScopes = false)
     {
         var options = new WebApplicationOptions
@@ -688,10 +787,11 @@ public sealed class ResponseSessionRegressionTests
     private static async Task<HttpResponseMessage> PostJsonAsync(
         HttpClient client,
         string path,
-        string json)
+        string json,
+        CancellationToken cancellationToken = default)
     {
         using StringContent content = JsonContent(json);
-        return await client.PostAsync(new Uri(path, UriKind.Relative), content);
+        return await client.PostAsync(new Uri(path, UriKind.Relative), content, cancellationToken);
     }
 
     private static async Task WaitForResponseCompletionAsync(
@@ -936,7 +1036,7 @@ public sealed class ResponseSessionRegressionTests
         }
     }
 
-    private sealed class TenantAgent : AIAgent
+    private sealed class TenantAgent : StreamingTestAgent
     {
         public const string AgentName = "tenant-agent";
 
@@ -950,8 +1050,108 @@ public sealed class ResponseSessionRegressionTests
 
         public override string Name => AgentName;
 
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            yield return new AgentResponseUpdate(ChatRole.Assistant, $"Hello {this._tenant.Tenant}");
+        }
+    }
+
+    private sealed class RequestBoundRunProbe
+    {
+        public TimeSpan CleanupDelay { get; init; }
+
+        public TaskCompletionSource AgentStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseAgent { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource RunFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SessionSaved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource RequestCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool RunCanceled { get; set; }
+
+        public bool? DependencyDisposedWhenRunFinished { get; set; }
+
+        public bool? StoreDisposedWhenSessionSaved { get; set; }
+    }
+
+    private sealed class DisposableRequestDependency : IDisposable
+    {
+        public bool IsDisposed { get; private set; }
+
+        public void Dispose() => this.IsDisposed = true;
+    }
+
+    private sealed class DisposalTrackingSessionStore(RequestBoundRunProbe probe) : AgentSessionStore, IDisposable
+    {
+        private readonly InMemoryAgentSessionStore _inner = new();
+        private bool _disposed;
+
+        public override ValueTask<AgentSession?> GetSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            this._inner.GetSessionAsync(agent, key, cancellationToken);
+
+        public override async ValueTask SaveSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            AgentSession session,
+            CancellationToken cancellationToken = default)
+        {
+            probe.StoreDisposedWhenSessionSaved = this._disposed;
+            await this._inner.SaveSessionAsync(agent, key, session, cancellationToken);
+            probe.SessionSaved.TrySetResult();
+        }
+
+        public void Dispose() => this._disposed = true;
+    }
+
+    private sealed class BlockingAgent(DisposableRequestDependency dependency, RequestBoundRunProbe probe) : StreamingTestAgent
+    {
+        public const string AgentName = "blocking-agent";
+
+        public override string Name => AgentName;
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            probe.AgentStarted.TrySetResult();
+            try
+            {
+                await probe.ReleaseAgent.Task.WaitAsync(cancellationToken);
+            }
+            finally
+            {
+                probe.RunCanceled = cancellationToken.IsCancellationRequested;
+
+                // Keep using the request-scoped dependency while the run unwinds.
+                await Task.Delay(probe.CleanupDelay, CancellationToken.None);
+                probe.DependencyDisposedWhenRunFinished = dependency.IsDisposed;
+                probe.RunFinished.TrySetResult();
+            }
+
+            yield return new AgentResponseUpdate(ChatRole.Assistant, "done");
+        }
+    }
+
+    /// <summary>
+    /// An agent that persists its session state bag and only supports streaming runs.
+    /// </summary>
+    private abstract class StreamingTestAgent : AIAgent
+    {
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
-            new(new TenantSession());
+            new(new TestAgentSession());
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
@@ -963,7 +1163,7 @@ public sealed class ResponseSessionRegressionTests
             JsonElement serializedState,
             JsonSerializerOptions? jsonSerializerOptions = null,
             CancellationToken cancellationToken = default) =>
-            new(new TenantSession(AgentSessionStateBag.Deserialize(serializedState)));
+            new(new TestAgentSession(AgentSessionStateBag.Deserialize(serializedState)));
 
         protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
@@ -972,23 +1172,13 @@ public sealed class ResponseSessionRegressionTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("This regression test uses streaming execution.");
 
-        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
-            IEnumerable<ChatMessage> messages,
-            AgentSession? session = null,
-            AgentRunOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        private sealed class TestAgentSession : AgentSession
         {
-            await Task.Yield();
-            yield return new AgentResponseUpdate(ChatRole.Assistant, $"Hello {this._tenant.Tenant}");
-        }
-
-        private sealed class TenantSession : AgentSession
-        {
-            public TenantSession()
+            public TestAgentSession()
             {
             }
 
-            public TenantSession(AgentSessionStateBag stateBag)
+            public TestAgentSession(AgentSessionStateBag stateBag)
                 : base(stateBag)
             {
             }
