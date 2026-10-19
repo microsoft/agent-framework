@@ -811,6 +811,110 @@ public sealed class A2AAgentTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(TaskState.Failed, false)]
+    [InlineData(TaskState.Failed, true)]
+    [InlineData(TaskState.Canceled, false)]
+    [InlineData(TaskState.Canceled, true)]
+    [InlineData(TaskState.Rejected, false)]
+    [InlineData(TaskState.Rejected, true)]
+    public async Task RunAsync_WithUnsuccessfulTask_IncludesStatusMessageAsync(TaskState state, bool continuation)
+    {
+        // Arrange
+        var task = new AgentTask
+        {
+            Id = "task-123",
+            ContextId = "context-123",
+            Artifacts = [new Artifact { Parts = [Part.FromText("Partial result")] }],
+            Status = new()
+            {
+                State = state,
+                Message = new Message { Parts = [Part.FromText("The task could not finish.")] }
+            }
+        };
+        this._handler.ResponseToReturn = new SendMessageResponse { Task = task };
+        this._handler.AgentTaskToReturn = task;
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+
+        // Act
+        var response = continuation
+            ? await this._agent.RunAsync([], session, options: new() { ContinuationToken = new A2AContinuationToken(task.Id) })
+            : await this._agent.RunAsync("Start a task", session);
+
+        // Assert
+        Assert.Equal(2, response.Messages.Count);
+        Assert.Equal("Partial result", response.Messages[0].Text);
+        Assert.Equal("The task could not finish.", response.Messages[1].Text);
+        Assert.Equal(state, Assert.IsType<AgentTask>(response.RawRepresentation).Status.State);
+        Assert.Null(response.ContinuationToken);
+        Assert.Null(response.FinishReason);
+        Assert.Equal(state, session.TaskState);
+        Assert.Equal(continuation ? "GetTask" : "SendMessage", this._handler.CapturedJsonRpcRequest?.Method);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Failed, false)]
+    [InlineData(TaskState.Failed, true)]
+    [InlineData(TaskState.Canceled, false)]
+    [InlineData(TaskState.Canceled, true)]
+    [InlineData(TaskState.Rejected, false)]
+    [InlineData(TaskState.Rejected, true)]
+    public async Task RunStreamingAsync_WithUnsuccessfulTask_IncludesStatusMessageAsync(TaskState state, bool statusUpdate)
+    {
+        // Arrange
+        var status = new global::A2A.TaskStatus
+        {
+            State = state,
+            Message = new Message
+            {
+                MessageId = "status-message",
+                Parts = [Part.FromText("The task could not finish.")]
+            }
+        };
+        this._handler.StreamingResponseToReturn = statusUpdate
+            ? new StreamResponse
+            {
+                StatusUpdate = new TaskStatusUpdateEvent { TaskId = "task-123", ContextId = "context-123", Status = status }
+            }
+            : new StreamResponse
+            {
+                Task = new AgentTask
+                {
+                    Id = "task-123",
+                    ContextId = "context-123",
+                    Status = status,
+                    Artifacts = [new Artifact { Parts = [Part.FromText("Partial result")] }]
+                }
+            };
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Start a task", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        var result = Assert.Single(updates);
+        Assert.Null(result.ContinuationToken);
+        Assert.Null(result.FinishReason);
+        Assert.Equal(state, session.TaskState);
+        if (statusUpdate)
+        {
+            Assert.Equal("The task could not finish.", Assert.IsType<TextContent>(Assert.Single(result.Contents)).Text);
+            Assert.Equal(state, Assert.IsType<TaskStatusUpdateEvent>(result.RawRepresentation).Status.State);
+            Assert.Equal("status-message", result.MessageId);
+        }
+        else
+        {
+            Assert.Equal(2, result.Contents.Count);
+            Assert.Equal("Partial result", Assert.IsType<TextContent>(result.Contents[0]).Text);
+            Assert.Equal("The task could not finish.", Assert.IsType<TextContent>(result.Contents[1]).Text);
+            Assert.Equal(state, Assert.IsType<AgentTask>(result.RawRepresentation).Status.State);
+        }
+    }
+
     [Fact]
     public async Task RunStreamingAsync_WithContinuationTokenAndMessages_ThrowsInvalidOperationExceptionAsync()
     {

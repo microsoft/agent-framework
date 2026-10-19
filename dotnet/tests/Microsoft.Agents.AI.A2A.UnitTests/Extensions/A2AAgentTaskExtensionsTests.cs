@@ -168,8 +168,12 @@ public sealed class A2AAgentTaskExtensionsTests
         Assert.Equal("content3", result[2].ToString());
     }
 
-    [Fact]
-    public void ToChatMessages_WithInputRequiredStatus_IncludesStatusContents()
+    [Theory]
+    [InlineData(TaskState.InputRequired)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.Rejected)]
+    public void ToChatMessages_WithStatusMessage_IncludesStatusContents(TaskState state)
     {
         // Arrange
         var agentTask = new AgentTask
@@ -178,7 +182,7 @@ public sealed class A2AAgentTaskExtensionsTests
             Artifacts = null,
             Status = new TaskStatus
             {
-                State = TaskState.InputRequired,
+                State = state,
                 Message = new Message { Parts = [Part.FromText("What is your destination?")] },
             },
         };
@@ -190,12 +194,17 @@ public sealed class A2AAgentTaskExtensionsTests
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal(ChatRole.Assistant, result[0].Role);
+        Assert.Same(agentTask.Status, result[0].RawRepresentation);
         var textContent = Assert.Single(result[0].Contents.OfType<TextContent>());
         Assert.Equal("What is your destination?", textContent.Text);
     }
 
-    [Fact]
-    public void ToAIContents_WithInputRequiredStatus_IncludesStatusContents()
+    [Theory]
+    [InlineData(TaskState.InputRequired)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.Rejected)]
+    public void ToAIContents_WithStatusMessage_IncludesStatusContents(TaskState state)
     {
         // Arrange
         var agentTask = new AgentTask
@@ -204,7 +213,7 @@ public sealed class A2AAgentTaskExtensionsTests
             Artifacts = null,
             Status = new TaskStatus
             {
-                State = TaskState.InputRequired,
+                State = state,
                 Message = new Message { Parts = [Part.FromText("What is your destination?")] },
             },
         };
@@ -218,8 +227,12 @@ public sealed class A2AAgentTaskExtensionsTests
         Assert.Equal("What is your destination?", textContent.Text);
     }
 
-    [Fact]
-    public void ToChatMessages_WithArtifactsAndInputRequired_IncludesBoth()
+    [Theory]
+    [InlineData(TaskState.InputRequired)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.Rejected)]
+    public void ToChatMessages_WithArtifactsAndStatusMessage_IncludesBoth(TaskState state)
     {
         // Arrange
         var agentTask = new AgentTask
@@ -228,7 +241,7 @@ public sealed class A2AAgentTaskExtensionsTests
             Artifacts = [new Artifact { Parts = [Part.FromText("partial result")] }],
             Status = new TaskStatus
             {
-                State = TaskState.InputRequired,
+                State = state,
                 Message = new Message { Parts = [Part.FromText("Need more info")] },
             },
         };
@@ -240,6 +253,6 @@ public sealed class A2AAgentTaskExtensionsTests
         Assert.NotNull(result);
         Assert.Equal(2, result.Count);
         Assert.Equal("partial result", result[0].Text);
-        Assert.Single(result[1].Contents.OfType<TextContent>());
+        Assert.Equal("Need more info", Assert.Single(result[1].Contents.OfType<TextContent>()).Text);
     }
 }

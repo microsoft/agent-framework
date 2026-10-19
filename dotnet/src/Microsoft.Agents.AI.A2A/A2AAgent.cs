@@ -495,7 +495,7 @@ public sealed class A2AAgent : AIAgent
             MessageId = statusUpdateEvent.Status.Message?.MessageId,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
-            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
+            Contents = statusUpdateEvent.Status.ToAIContents(),
         };
     }
 

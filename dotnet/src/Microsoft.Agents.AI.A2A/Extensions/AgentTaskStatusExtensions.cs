@@ -11,17 +11,25 @@ namespace A2A;
 /// </summary>
 internal static class AgentTaskStatusExtensions
 {
-    internal static IList<AIContent>? GetUserInputRequests(this TaskStatus status)
+    internal static IList<AIContent>? ToAIContents(this TaskStatus status)
     {
         _ = Throw.IfNull(status);
 
         List<AIContent>? contents = null;
 
-        if (status.Message is null || status.State is not TaskState.InputRequired)
+        // Status messages are optional, even for unsuccessful tasks.
+        if (status.Message is null)
         {
             return contents;
         }
 
+        // Skip status messages for routine progress and successful completion.
+        if (status.State is TaskState.Submitted or TaskState.Working or TaskState.Completed)
+        {
+            return contents;
+        }
+
+        // Convert status messages for InputRequired, AuthRequired, Failed, Canceled, Rejected, and Unspecified.
         foreach (var part in status.Message.Parts)
         {
             var aiContent = part.ToAIContent();

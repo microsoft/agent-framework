@@ -11,47 +11,62 @@ namespace Microsoft.Agents.AI.A2A.UnitTests;
 /// </summary>
 public sealed class AgentTaskStatusExtensionsTests
 {
-    [Fact]
-    public void GetUserInputRequests_WithNullMessage_ReturnsNull()
+    [Theory]
+    [InlineData(TaskState.InputRequired)]
+    [InlineData(TaskState.AuthRequired)]
+    [InlineData(TaskState.Unspecified)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.Rejected)]
+    public void ToAIContents_WithNullMessage_ReturnsNull(TaskState state)
     {
         // Arrange
         var status = new TaskStatus
         {
-            State = TaskState.InputRequired,
+            State = state,
             Message = null,
         };
 
         // Act
-        IList<AIContent>? result = status.GetUserInputRequests();
+        IList<AIContent>? result = status.ToAIContents();
 
         // Assert
         Assert.Null(result);
     }
 
-    [Fact]
-    public void GetUserInputRequests_WithNotInputRequiredState_ReturnsNull()
+    [Theory]
+    [InlineData(TaskState.Submitted)]
+    [InlineData(TaskState.Working)]
+    [InlineData(TaskState.Completed)]
+    public void ToAIContents_WithOtherStates_ReturnsNull(TaskState state)
     {
         // Arrange
         var status = new TaskStatus
         {
-            State = TaskState.Completed,
+            State = state,
             Message = new Message { Parts = [Part.FromText("Some text")] },
         };
 
         // Act
-        IList<AIContent>? result = status.GetUserInputRequests();
+        IList<AIContent>? result = status.ToAIContents();
 
         // Assert
         Assert.Null(result);
     }
 
-    [Fact]
-    public void GetUserInputRequests_WithInputRequiredStateAndMultipleRequests_ReturnsAIContentList()
+    [Theory]
+    [InlineData(TaskState.InputRequired)]
+    [InlineData(TaskState.AuthRequired)]
+    [InlineData(TaskState.Unspecified)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.Rejected)]
+    public void ToAIContents_WithStatusMessage_ReturnsAIContentList(TaskState state)
     {
         // Arrange
         var status = new TaskStatus
         {
-            State = TaskState.InputRequired,
+            State = state,
             Message = new Message
             {
                 Parts =
@@ -64,7 +79,7 @@ public sealed class AgentTaskStatusExtensionsTests
         };
 
         // Act
-        IList<AIContent>? result = status.GetUserInputRequests();
+        IList<AIContent>? result = status.ToAIContents();
 
         // Assert
         Assert.NotNull(result);
@@ -74,8 +89,14 @@ public sealed class AgentTaskStatusExtensionsTests
         Assert.Equal("Third request", Assert.IsType<TextContent>(result[2]).Text);
     }
 
-    [Fact]
-    public void GetUserInputRequests_WithTextParts_SetsRawRepresentationAndAdditionalPropertiesCorrectly()
+    [Theory]
+    [InlineData(TaskState.InputRequired)]
+    [InlineData(TaskState.AuthRequired)]
+    [InlineData(TaskState.Unspecified)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.Rejected)]
+    public void ToAIContents_WithTextParts_SetsRawRepresentationAndAdditionalPropertiesCorrectly(TaskState state)
     {
         // Arrange
         var textPart = Part.FromText("Input request");
@@ -86,12 +107,12 @@ public sealed class AgentTaskStatusExtensionsTests
         };
         var status = new TaskStatus
         {
-            State = TaskState.InputRequired,
+            State = state,
             Message = new Message { Parts = [textPart] },
         };
 
         // Act
-        IList<AIContent>? result = status.GetUserInputRequests();
+        IList<AIContent>? result = status.ToAIContents();
 
         // Assert
         Assert.NotNull(result);
@@ -102,18 +123,24 @@ public sealed class AgentTaskStatusExtensionsTests
         Assert.True(content.AdditionalProperties.ContainsKey("key2"));
     }
 
-    [Fact]
-    public void GetUserInputRequests_WithEmptyMessageParts_ReturnsNull()
+    [Theory]
+    [InlineData(TaskState.InputRequired)]
+    [InlineData(TaskState.AuthRequired)]
+    [InlineData(TaskState.Unspecified)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.Rejected)]
+    public void ToAIContents_WithEmptyMessageParts_ReturnsNull(TaskState state)
     {
         // Arrange
         var status = new TaskStatus
         {
-            State = TaskState.InputRequired,
+            State = state,
             Message = new Message { Parts = [] },
         };
 
         // Act
-        IList<AIContent>? result = status.GetUserInputRequests();
+        IList<AIContent>? result = status.ToAIContents();
 
         // Assert
         Assert.Null(result);
