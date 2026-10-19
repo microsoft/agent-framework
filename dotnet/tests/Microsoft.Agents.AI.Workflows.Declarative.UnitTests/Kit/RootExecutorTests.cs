@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -18,6 +19,73 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Kit;
 
 public sealed class RootExecutorTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoreCheckpointAsync_ReloadsFormulaSessionOnEveryLoadAsync(bool offThread)
+    {
+        // Arrange
+        MockAgentProvider provider = new();
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["SETTING"] = "configured" })
+            .Build();
+        TestRootExecutor executor = new(new(provider.Object)
+        {
+            Configuration = configuration,
+            AllowedEnvironmentVariables = ["SETTING"],
+        })
+        {
+            AssignedValue = "root-value",
+            EnvironmentVariables = ["SETTING"],
+            SkipBaseCheckpointRestore = true,
+        };
+        WriteValueExecutor writer = new(executor.Session, skipBaseCheckpointRestore: true) { ChangeConversation = true };
+        ReadValueExecutor reader = new(executor.Session) { SkipBaseCheckpointRestore = true };
+        Workflow workflow = new WorkflowBuilder(executor).AddEdge(executor, writer).AddEdge(writer, reader).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        List<CheckpointInfo> savedCheckpoints = [];
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, "first"))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+                {
+                    savedCheckpoints.Add(checkpoint);
+                }
+            }
+        }
+        Assert.True(savedCheckpoints.Count >= 3);
+        string initialConversation = Assert.Single(provider.ExistingConversationIds);
+
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, savedCheckpoints[0]);
+        await foreach (WorkflowEvent _ in resumed.WatchStreamAsync())
+        {
+            // Let the writer replace the checkpointed value before restoring again.
+        }
+        WorkflowFormulaState state = executor.Session.State;
+        Assert.Equal("action-value", reader.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, reader.Sensitivity);
+        Assert.Equal("action-conversation", Assert.IsType<StringValue>(state.Get(SystemScope.Names.ConversationId, VariableScopeNames.System)).Value);
+        state.Set("SETTING", FormulaValue.New("changed"), VariableScopeNames.Environment, SensitivityLevel.None);
+        state.Set("LaterValue", FormulaValue.New("later"), VariableScopeNames.Global, SensitivityLevel.Sensitive);
+        state.Bind();
+
+        // Act
+        await resumed.RestoreCheckpointAsync(savedCheckpoints[0]);
+
+        // Assert
+        Assert.Equal("root-value", executor.RestoredValue);
+        Assert.Equal("root-value", reader.RestoredValue);
+        Assert.Equal("root-value", Assert.IsType<StringValue>(state.Get("TestValue", VariableScopeNames.Local)).Value);
+        Assert.Equal(SensitivityLevel.None, state.GetSensitivity("TestValue", VariableScopeNames.Local));
+        Assert.Equal("configured", Assert.IsType<StringValue>(state.Get("SETTING", VariableScopeNames.Environment)).Value);
+        Assert.Equal(SensitivityLevel.Sensitive, state.GetSensitivity("SETTING", VariableScopeNames.Environment));
+        Assert.IsType<BlankValue>(state.Get("LaterValue", VariableScopeNames.Global));
+        Assert.Equal(SensitivityLevel.None, state.GetSensitivity("LaterValue", VariableScopeNames.Global));
+        Assert.Equal(initialConversation, Assert.IsType<StringValue>(state.Get(SystemScope.Names.ConversationId, VariableScopeNames.System)).Value);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
@@ -374,6 +442,8 @@ public sealed class RootExecutorTests
 
     private sealed class WriteValueExecutor(FormulaSession session, bool skipBaseCheckpointRestore) : ActionExecutor("write_value", session)
     {
+        public bool ChangeConversation { get; init; }
+
         protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
             skipBaseCheckpointRestore ? default : base.OnCheckpointRestoredAsync(context, cancellationToken);
 
@@ -381,6 +451,10 @@ public sealed class RootExecutorTests
         {
             await context.QueueStateUpdateWithSensitivityAsync(
                 "TestValue", new EvaluationResult<string>("action-value", SensitivityLevel.Sensitive), VariableScopeNames.Local, cancellationToken);
+            if (this.ChangeConversation)
+            {
+                await context.QueueConversationUpdateAsync("action-conversation", isExternal: true, cancellationToken);
+            }
             return null;
         }
     }
@@ -410,7 +484,9 @@ public sealed class RootExecutorTests
             {
                 await base.OnCheckpointRestoredAsync(context, cancellationToken);
             }
-            this.RestoredValue = this._session.State.Get("TestValue", VariableScopeNames.Local).ToObject() as string;
+            EvaluationResult<string?> result = await new DeclarativeWorkflowContext(context, this._session.State)
+                .EvaluateValueWithSensitivityAsync<string>("Local.TestValue", cancellationToken);
+            this.RestoredValue = result.Value;
         }
 
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)

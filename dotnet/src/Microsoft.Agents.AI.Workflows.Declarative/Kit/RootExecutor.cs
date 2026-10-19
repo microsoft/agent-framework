@@ -53,7 +53,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._state.InitializeSystem();
         this._state.CaptureInitialState();
         this.Session = new RootFormulaSession(this._state);
-        this.RegisterCheckpointRestoringCallback(this._state.RestoreAsync);
+        this.RegisterCheckpointRestoringCallback(this._state, this._state.RestoreCheckpointAsync);
     }
 
     /// <inheritdoc/>

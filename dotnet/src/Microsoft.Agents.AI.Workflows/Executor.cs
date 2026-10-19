@@ -199,7 +199,10 @@ public abstract class Executor : IIdentified
 
     internal bool IsCrossRunShareable { get; }
 
-    private List<Func<IWorkflowContext, CancellationToken, ValueTask>>? _checkpointRestoringCallbacks;
+    private List<(object? SharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> Callback)>? _checkpointRestoringCallbacks;
+
+    internal IReadOnlyList<(object? SharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> Callback)> CheckpointRestoringCallbacks =>
+        this._checkpointRestoringCallbacks ?? [];
 
     /// <summary>
     /// Gets the configuration options for the executor.
@@ -360,18 +363,25 @@ public abstract class Executor : IIdentified
     protected void RegisterCheckpointRestoringCallback(Func<IWorkflowContext, CancellationToken, ValueTask> callback)
     {
         _ = Throw.IfNull(callback);
-        (this._checkpointRestoringCallbacks ??= []).Add(callback);
+        (this._checkpointRestoringCallbacks ??= []).Add((null, callback));
     }
 
-    internal async ValueTask RestoreCheckpointStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    /// <summary>
+    /// Registers shared state restoration that runs once per checkpoint load before post-load hooks.
+    /// </summary>
+    /// <remarks>
+    /// Registrations with the same key instance are invoked once across the workflow for each checkpoint load,
+    /// using the context of one registering executor. Shared state must use explicitly named scopes.
+    /// All restoration callbacks complete before any <see cref="OnCheckpointRestoredAsync"/> hook is invoked.
+    /// Register callbacks during construction.
+    /// </remarks>
+    /// <param name="sharedStateKey">An identity shared by executors that restore the same state.</param>
+    /// <param name="callback">The shared state restoration callback.</param>
+    protected void RegisterCheckpointRestoringCallback(object sharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> callback)
     {
-        if (this._checkpointRestoringCallbacks is { } callbacks)
-        {
-            foreach (Func<IWorkflowContext, CancellationToken, ValueTask> callback in callbacks)
-            {
-                await callback(context, cancellationToken).ConfigureAwait(false);
-            }
-        }
+        _ = Throw.IfNull(sharedStateKey);
+        _ = Throw.IfNull(callback);
+        (this._checkpointRestoringCallbacks ??= []).Add((sharedStateKey, callback));
     }
 
     /// <summary>

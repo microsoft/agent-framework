@@ -114,13 +114,18 @@ internal sealed class WorkflowFormulaState
         this.Bind();
     }
 
-    public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (!this.SetInitialized())
         {
-            return;
+            return default;
         }
 
+        return this.RestoreCheckpointAsync(context, cancellationToken);
+    }
+
+    public async ValueTask RestoreCheckpointAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
         this.RestoreInitialState();
 
         Stopwatch timer = Stopwatch.StartNew();

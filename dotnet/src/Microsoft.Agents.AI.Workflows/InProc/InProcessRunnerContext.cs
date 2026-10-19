@@ -407,13 +407,35 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.CheckEnded();
 
         Executor[] executors = await Task.WhenAll(this._executors.Values).ConfigureAwait(false);
+        List<object> sharedStateKeys = [];
+        List<Task> restorationTasks = [];
+        foreach (Executor executor in executors)
+        {
+            List<Func<IWorkflowContext, CancellationToken, ValueTask>> callbacks = [];
+            foreach (var registration in executor.CheckpointRestoringCallbacks)
+            {
+                if (registration.SharedStateKey is { } sharedStateKey)
+                {
+                    if (sharedStateKeys.Any(key => ReferenceEquals(key, sharedStateKey)))
+                    {
+                        continue;
+                    }
+                    sharedStateKeys.Add(sharedStateKey);
+                }
+                callbacks.Add(registration.Callback);
+            }
+            restorationTasks.Add(RestoreStateAsync(executor, callbacks));
+        }
         // Shared state must finish restoring before any subclass post-load hook runs.
-        await Task.WhenAll(executors.Select(RestoreStateAsync)).ConfigureAwait(false);
+        await Task.WhenAll(restorationTasks).ConfigureAwait(false);
         await Task.WhenAll(executors.Select(InvokeCheckpointRestoredAsync)).ConfigureAwait(false);
 
-        async Task RestoreStateAsync(Executor executor)
+        async Task RestoreStateAsync(Executor executor, List<Func<IWorkflowContext, CancellationToken, ValueTask>> callbacks)
         {
-            await executor.RestoreCheckpointStateAsync(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
+            foreach (Func<IWorkflowContext, CancellationToken, ValueTask> restore in callbacks)
+            {
+                await restore(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
+            }
         }
 
         async Task InvokeCheckpointRestoredAsync(Executor executor)

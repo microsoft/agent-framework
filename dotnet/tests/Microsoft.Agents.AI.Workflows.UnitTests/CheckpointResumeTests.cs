@@ -21,6 +21,58 @@ public class CheckpointResumeTests
     [Theory]
     [InlineData(ExecutionEnvironment.InProcess_OffThread)]
     [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    internal async Task Checkpoint_Restore_InvokesSharedCallbackOncePerLoadAsync(ExecutionEnvironment environment)
+    {
+        // Arrange
+        object sharedStateKey = new();
+        int sharedRestores = 0;
+        int executorRestores = 0;
+        ValueTask RestoreSharedAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref sharedRestores);
+            return default;
+        }
+        ValueTask RestoreExecutorAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref executorRestores);
+            return default;
+        }
+        RestoreProbeExecutor source = new("source", RestoreSharedAsync, () => true, sharedStateKey, RestoreExecutorAsync);
+        RestoreProbeExecutor sink = new("sink", RestoreSharedAsync, () => true, sharedStateKey, RestoreExecutorAsync);
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, sink).Build();
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment().WithCheckpointing(checkpointManager);
+        CheckpointInfo? checkpoint = null;
+        await using (StreamingRun run = await env.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint = saved;
+                }
+            }
+        }
+        Assert.NotNull(checkpoint);
+
+        // Act
+        await using StreamingRun resumed = await env.ResumeStreamingAsync(workflow, checkpoint);
+        for (int load = 1; load <= 3; load++)
+        {
+            // Assert
+            Assert.Equal(load, sharedRestores);
+            Assert.Equal(load * 2, executorRestores);
+
+            if (load < 3)
+            {
+                await resumed.RestoreCheckpointAsync(checkpoint);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
     internal async Task Checkpoint_Resume_RestoresAllStateBeforeSubclassHooksAsync(ExecutionEnvironment environment)
     {
         // Arrange
@@ -28,12 +80,17 @@ public class CheckpointResumeTests
         TaskCompletionSource<bool> otherRestoreStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource<bool> releaseRestore = new(TaskCreationOptions.RunContinuationsAsynchronously);
         int restoredCount = 0;
+        int sourceExecutorRestored = 0;
         RestoreProbeExecutor source = new("source", async (_, _) =>
         {
             restoreStarted.SetResult(true);
             await releaseRestore.Task;
             Interlocked.Increment(ref restoredCount);
-        }, () => Volatile.Read(ref restoredCount) == 2);
+        }, () => Volatile.Read(ref restoredCount) == 2, restoreExecutor: (_, _) =>
+        {
+            Interlocked.Increment(ref sourceExecutorRestored);
+            return default;
+        });
         RestoreProbeExecutor sink = new("sink", (_, _) =>
         {
             Interlocked.Increment(ref restoredCount);
@@ -67,6 +124,7 @@ public class CheckpointResumeTests
             // Assert
             Assert.Null(source.RestorationCompleteInHook);
             Assert.Null(sink.RestorationCompleteInHook);
+            Assert.Equal(0, Volatile.Read(ref sourceExecutorRestored));
         }
         finally
         {
@@ -75,16 +133,33 @@ public class CheckpointResumeTests
         }
         Assert.True(source.RestorationCompleteInHook);
         Assert.True(sink.RestorationCompleteInHook);
+        Assert.Equal(1, sourceExecutorRestored);
     }
 
     private sealed class RestoreProbeExecutor : Executor<int>, IResettableExecutor
     {
         private readonly Func<bool> _isRestored;
 
-        public RestoreProbeExecutor(string id, Func<IWorkflowContext, CancellationToken, ValueTask> restore, Func<bool> isRestored) : base(id)
+        public RestoreProbeExecutor(
+            string id,
+            Func<IWorkflowContext, CancellationToken, ValueTask> restore,
+            Func<bool> isRestored,
+            object? sharedStateKey = null,
+            Func<IWorkflowContext, CancellationToken, ValueTask>? restoreExecutor = null) : base(id)
         {
             this._isRestored = isRestored;
-            this.RegisterCheckpointRestoringCallback(restore);
+            if (sharedStateKey is null)
+            {
+                this.RegisterCheckpointRestoringCallback(restore);
+            }
+            else
+            {
+                this.RegisterCheckpointRestoringCallback(sharedStateKey, restore);
+            }
+            if (restoreExecutor is not null)
+            {
+                this.RegisterCheckpointRestoringCallback(restoreExecutor);
+            }
         }
 
         public bool? RestorationCompleteInHook { get; private set; }
