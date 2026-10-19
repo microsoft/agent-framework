@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -31,4 +32,15 @@ internal sealed class CheckpointManagerImpl<TStoreObject> : ICheckpointManager
 
     public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
         => this._store.RetrieveIndexAsync(sessionId, withParent);
+
+    public async ValueTask<bool> NotifyCheckpointRestoredAsync(string sessionId, CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
+    {
+        if (this._store is not ICheckpointRestorationObserver observer)
+        {
+            return false;
+        }
+
+        await observer.OnRestorationCompletedAsync(sessionId, checkpointInfo, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
 }
