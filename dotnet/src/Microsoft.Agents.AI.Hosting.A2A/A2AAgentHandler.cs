@@ -36,8 +36,10 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <param name="hostAgent">The hosted agent that provides the execution logic.</param>
     /// <param name="runMode">Controls which A2A artifact the agent response is returned as.</param>
     /// <param name="allowReturnImmediately">
-    /// <see langword="false"/> to reject non-streaming requests with <c>ReturnImmediately = true</c> when
+    /// <see langword="false"/> to reject new non-streaming messages with <c>ReturnImmediately = true</c> when
     /// <paramref name="runMode"/> returns a task, because the run would continue after the request completes.
+    /// Task continuations always return a task, so callers must reject them before the server starts their execution;
+    /// rejecting them here would fail the task being continued.
     /// </param>
     public A2AAgentHandler(
         AIHostAgent hostAgent,
@@ -89,6 +91,16 @@ internal sealed class A2AAgentHandler : IAgentHandler
         var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, context.ContextId);
         await taskUpdater.CancelAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Creates the error returned for non-streaming requests with <c>ReturnImmediately = true</c> that would return a
+    /// task while the agent is selected for each request.
+    /// </summary>
+    /// <returns>An <see cref="A2AException"/> with <see cref="A2AErrorCode.UnsupportedOperation"/>.</returns>
+    internal static A2AException CreateReturnImmediatelyNotSupportedException() =>
+        new(
+            "ReturnImmediately is not supported when the agent is selected for each request, because the selected agent and its services are bound to the HTTP request. Send the message with ReturnImmediately disabled.",
+            A2AErrorCode.UnsupportedOperation);
 
     /// <summary>
     /// Runs the agent for a new message and emits the response events, shared by the streaming and non-streaming endpoints.
@@ -159,9 +171,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         if (returnTask && !aggregateTaskUpdates && !context.StreamingResponse && !this._allowReturnImmediately)
         {
-            throw new A2AException(
-                "ReturnImmediately is not supported when the agent is selected for each request, because the selected agent and its services are bound to the HTTP request. Send the message with ReturnImmediately disabled.",
-                A2AErrorCode.UnsupportedOperation);
+            throw CreateReturnImmediatelyNotSupportedException();
         }
 
         var options = CreateRunOptions(context);

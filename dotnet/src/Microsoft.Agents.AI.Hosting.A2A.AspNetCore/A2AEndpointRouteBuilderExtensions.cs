@@ -123,12 +123,12 @@ public static class A2AEndpointRouteBuilderExtensions
     /// identifies the A2A task state shared by the requests that select it through this endpoint, so conversations
     /// and tasks continue across requests even when the selector returns a new agent instance each time. The selected
     /// agent must therefore have a non-empty name. The session store is resolved from
-    /// <see cref="HttpContext.RequestServices"/>, so the run cannot outlive the request: when the configured
-    /// <see cref="AgentRunMode"/> returns a task, non-streaming requests with <c>ReturnImmediately</c> enabled are
-    /// rejected with <see cref="A2AErrorCode.UnsupportedOperation"/>, and a streaming request that ends early, for
-    /// example because the client disconnects, completes only after the agent run finishes. The run is not canceled, so
-    /// its task state is still persisted. When the application stops, operations that are still running for selected
-    /// agents are canceled and awaited.
+    /// <see cref="HttpContext.RequestServices"/>, so the run cannot outlive the request: non-streaming requests with
+    /// <c>ReturnImmediately</c> enabled are rejected with <see cref="A2AErrorCode.UnsupportedOperation"/> when they
+    /// continue an existing task or when the configured <see cref="AgentRunMode"/> returns a task, and a streaming
+    /// request that ends early, for example because the client disconnects, completes only after the agent run
+    /// finishes. The run is not canceled, so its task state is still persisted. When the application stops, operations
+    /// that are still running for selected agents are canceled and awaited.
     /// </para>
     /// <para>
     /// Selection is not an authorization boundary. See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/>

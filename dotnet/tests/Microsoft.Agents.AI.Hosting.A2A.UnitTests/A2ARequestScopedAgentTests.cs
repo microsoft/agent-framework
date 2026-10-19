@@ -238,6 +238,35 @@ public sealed class A2ARequestScopedAgentTests
     }
 
     [Fact]
+    public async Task MapA2AHttpJson_WithAgentSelectorContinuingTask_RejectsReturnImmediatelyWithoutChangingTaskAsync()
+    {
+        // Arrange
+        InMemoryTaskStore taskStore = new();
+        await taskStore.SaveTaskAsync("task-1", new AgentTask
+        {
+            Id = "task-1",
+            ContextId = "ctx-1",
+            Status = new global::A2A.TaskStatus { State = TaskState.InputRequired, Timestamp = DateTimeOffset.UtcNow }
+        });
+        await using WebApplication app = await StartAsync(
+            services => services.AddKeyedSingleton<ITaskStore>("tasks", taskStore),
+            endpoints => endpoints.MapA2AHttpJson("/a2a", _ => new TurnCountingAgent("tasks")));
+        using HttpClient httpClient = app.GetTestClient();
+        using A2AHttpJsonClient client = new(new Uri(httpClient.BaseAddress!, "/a2a"), httpClient);
+        SendMessageRequest request = CreateRequest("ctx-1", returnImmediately: true);
+        request.Message.TaskId = "task-1";
+
+        // Act
+        A2AException exception = await Assert.ThrowsAsync<A2AException>(() => client.SendMessageAsync(request));
+        AgentTask task = await client.GetTaskAsync(new GetTaskRequest { Id = "task-1" });
+
+        // Assert
+        Assert.Equal(A2AErrorCode.UnsupportedOperation, exception.ErrorCode);
+        Assert.Equal(TaskState.InputRequired, task.Status.State);
+        Assert.Empty(task.History ?? []);
+    }
+
+    [Fact]
     public async Task MapA2AHttpJson_WithAgentSelectorReturningMessage_IgnoresReturnImmediatelyAsync()
     {
         // Arrange

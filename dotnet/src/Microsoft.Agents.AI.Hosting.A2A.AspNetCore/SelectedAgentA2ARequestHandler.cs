@@ -100,6 +100,14 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
     /// <inheritdoc/>
     public async Task<SendMessageResponse> SendMessageAsync(SendMessageRequest request, CancellationToken cancellationToken = default)
     {
+        // A continuation always returns a task, so with ReturnImmediately its run would outlive the request. Reject it
+        // before A2AServer starts the execution, which would otherwise append the message to the task history and fail
+        // the task when the agent handler rejects the run.
+        if (request.Configuration?.ReturnImmediately is true && !string.IsNullOrEmpty(request.Message.TaskId))
+        {
+            throw A2AAgentHandler.CreateReturnImmediatelyNotSupportedException();
+        }
+
         Selection selection = this.GetSelection();
         RequestBoundAgentHandler handler = selection.BindAgent(request.Message);
         try
