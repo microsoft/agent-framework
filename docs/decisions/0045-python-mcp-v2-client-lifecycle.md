@@ -82,6 +82,15 @@ For **caller-supplied** connections, the caller owns:
 - constructing and closing a **supplied** low-level `ClientSession`;
 - the transport, authentication, callbacks, and other configuration already captured by either supplied object.
 
+For `MCPStreamableHTTPTool`, the constructor makes that ownership boundary explicit:
+
+- `url` without `mcp_client` means Agent Framework constructs and owns the high-level Client and HTTP transport;
+- `mcp_client` without `url` means the caller owns endpoint and transport configuration plus the entered Client;
+- `url` and `mcp_client` are mutually exclusive;
+- HTTP construction options (`request_timeout`, `terminate_on_close`, `http_client`, `static_headers`, and
+  `header_provider`) are rejected with a caller-supplied Client rather than silently ignored;
+- the deprecated caller-owned `ClientSession` path retains its historical `url + session` compatibility.
+
 The SDK `Client` owns:
 
 - modern negotiation and legacy initialization fallback;
@@ -245,4 +254,4 @@ Committed contract tests cover:
 - [MCP caching specification](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching)
 - [ADR 0043: MCP runtime context](0043-python-mcp-runtime-context.md)
 
-This ADR remains `proposed` until accepted through the repository ADR review process.
+This ADR was accepted through the repository ADR review process.
