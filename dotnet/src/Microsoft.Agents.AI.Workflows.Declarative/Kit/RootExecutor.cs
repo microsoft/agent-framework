@@ -27,6 +27,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     private readonly FrozenSet<string> _allowedEnvironmentVariables;
 
     private readonly string? _conversationId;
+    private string? _generatedConversationId;
 
     /// <summary>
     /// Get the shared formula session to provide to workflow <see cref="ActionExecutor"/> instances.
@@ -58,6 +59,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     public ValueTask ResetAsync()
     {
         this._state.Reset();
+        this._generatedConversationId = null;
         return default;
     }
 
@@ -80,7 +82,11 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         }
         if (string.IsNullOrWhiteSpace(conversationId))
         {
-            conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(this._generatedConversationId))
+            {
+                this._generatedConversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            }
+            conversationId = this._generatedConversationId;
         }
         await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 

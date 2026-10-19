@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,6 +17,36 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Kit;
 
 public sealed class RootExecutorTests
 {
+    [Fact]
+    public async Task HandleAsync_RetryAfterStateWriteFailureReusesCreatedConversationAsync()
+    {
+        // Arrange
+        MockAgentProvider provider = new();
+        TestRootExecutor executor = new(new(provider.Object));
+        Mock<IWorkflowContext> context = new();
+        context.SetupSequence(c => c.QueueStateUpdateAsync(
+                SystemScope.Names.Conversation, It.IsAny<object>(), VariableScopeNames.System, It.IsAny<CancellationToken>()))
+            .Throws(new InvalidOperationException("State write failed."))
+            .Returns(default(ValueTask));
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await executor.HandleAsync("first", context.Object, CancellationToken.None));
+        await executor.HandleAsync("first", context.Object, CancellationToken.None);
+
+        // Assert
+        string conversationId = Assert.Single(provider.ExistingConversationIds);
+        provider.Verify(p => p.CreateMessageAsync(conversationId, It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Act
+        await executor.ResetAsync();
+        await executor.HandleAsync("second", new Mock<IWorkflowContext>().Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, provider.ExistingConversationIds.Count);
+        Assert.NotEqual(conversationId, provider.ExistingConversationIds[1]);
+    }
+
     [Fact]
     public async Task ResumeAsync_RestoresFormulaValuesAfterDisposalAsync()
     {
