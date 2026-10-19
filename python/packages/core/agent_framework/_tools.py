@@ -4043,12 +4043,24 @@ def _stateless_mixed_pause_batch_status(
                 matched_host_result_ids.add(response_id)
                 host_result_content_indices[response_id] = response_content_indices[response_id]
 
+    # The collected mapping keeps one response per approval id, so an earlier response would hide a
+    # later one sharing its id. Every unsettled response object must count as pending instead.
+    settled_approval_response_ids: set[int] = set()
+    _collect_approval_responses(
+        messages,
+        non_approval_result_ids=matched_host_result_ids,
+        settled_response_ids=settled_approval_response_ids,
+    )
     pending_approval_response_ids = {
-        id(response)
-        for response in _collect_approval_responses(
-            messages,
-            non_approval_result_ids=matched_host_result_ids,
-        ).values()
+        id(content)
+        for message in messages
+        for content in message.contents
+        if content.type == "function_approval_response"
+        and not _is_hosted_tool_approval(content)
+        and content.id is not None
+        and content.function_call is not None
+        and content.function_call.call_id is not None
+        and id(content) not in settled_approval_response_ids
     }
     pending_approval_batch_indices = {
         batch_index
@@ -5219,22 +5231,28 @@ async def _resolve_approval_responses(
             # rather than raising. Settled occurrences are identified by the same correlation used
             # to execute approvals, so replaying a completed conversation is unaffected and only
             # responses that could still authorize an execution are removed.
-            settled_response_ids: set[int] = set()
-            _collect_approval_responses(
-                prepared_messages,
-                non_approval_result_ids=host_result_ids,
-                settled_response_ids=settled_response_ids,
-            )
-            if _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
+            # Dropping responses changes which calls in the batch are still awaiting an answer, so the batch
+            # is reclassified. Reclassification reorders the transcript and can change which responses are
+            # settled, so repeat until nothing more is dropped; each pass removes at least one response.
+            dropped_any = False
+            while True:
+                settled_response_ids: set[int] = set()
+                _collect_approval_responses(
+                    prepared_messages,
+                    non_approval_result_ids=host_result_ids,
+                    settled_response_ids=settled_response_ids,
+                )
+                if not _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
+                    break
+                dropped_any = True
+                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+            if dropped_any:
                 logger.warning(
                     "Ignored one or more local tool-approval responses because this run has no authoritative "
                     "AgentSession holding the matching approval request. Pass the same AgentSession back on the "
                     "run that resumes an approval, or set the 'disable_approval_response_binding' function "
                     "invocation configuration option to restore the previous unbound behavior."
                 )
-                # Dropping responses changes which calls in the batch are still awaiting an answer,
-                # so the batch must be reclassified before deciding whether it is incomplete.
-                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
         if partial_mixed_batch:
             raise RuntimeError(
                 "A mixed function-call batch requires responses for every approval and Host-owned request."
