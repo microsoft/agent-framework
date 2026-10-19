@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Globalization;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Shared.Diagnostics;
@@ -35,13 +34,6 @@ public record SubworkflowBinding(Workflow WorkflowInstance, string Id, ExecutorO
             return new WorkflowHostExecutor(id, workflow, workflowProtocol, sessionId, ownershipToken, options);
         }
     }
-
-    internal static string CreateSubworkflowSessionId(string parentSessionId, string subworkflowId) =>
-        string.Concat(
-            parentSessionId.Length.ToString(CultureInfo.InvariantCulture),
-            ":",
-            parentSessionId,
-            subworkflowId);
 
     /// <inheritdoc/>
     public override bool IsSharedInstance => false;

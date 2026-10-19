@@ -154,8 +154,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         // No state to restore if we're starting from the beginning.
         state.SetInitialized();
 
-        DeclarativeWorkflowContext declarativeContext =
-            await DeclarativeWorkflowContext.CreateAsync(context, state, cancellationToken).ConfigureAwait(false);
+        DeclarativeWorkflowContext declarativeContext = new(context, state);
 
         // Conversation id resolution prefers state already persisted by a prior turn,
         // so multi-turn invocations reuse the same backend conversation rather than

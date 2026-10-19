@@ -1,3 +1,1 @@
 ﻿#nullable enable
-Microsoft.Agents.AI.Workflows.IWorkflowSessionContext
-Microsoft.Agents.AI.Workflows.IWorkflowSessionContext.SessionId.get -> string!

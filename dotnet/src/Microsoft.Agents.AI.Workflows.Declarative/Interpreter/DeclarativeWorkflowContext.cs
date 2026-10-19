@@ -15,10 +15,8 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
-internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSessionContext
+internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 {
-    internal const string WorkflowSessionIdStateKey = "__declarative_mcp_workflow_session_id";
-
     public static readonly FrozenSet<string> ManagedScopes =
         [
             VariableScopeNames.Local,
@@ -26,35 +24,15 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
             VariableScopeNames.Global,
         ];
 
-    private DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state, string sessionId)
+    public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state)
     {
         this.Source = source;
         this.State = state;
-        this.SessionId = sessionId;
-    }
-
-    public static async ValueTask<DeclarativeWorkflowContext> CreateAsync(
-        IWorkflowContext source,
-        WorkflowFormulaState state,
-        CancellationToken cancellationToken = default)
-    {
-        string generatedSessionId = Guid.NewGuid().ToString("N");
-        string sessionId = source is IWorkflowSessionContext sessionContext
-            ? sessionContext.SessionId
-            : await source.ReadOrInitStateAsync(
-                WorkflowSessionIdStateKey,
-                () => generatedSessionId,
-                VariableScopeNames.System,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        return new(source, state, sessionId);
     }
 
     private IWorkflowContext Source { get; }
     public WorkflowFormulaState State { get; }
     public IReadOnlyDictionary<string, string>? TraceContext => this.Source.TraceContext;
-
-    public string SessionId { get; }
 
     /// <inheritdoc/>
     public bool ConcurrentRunsEnabled => this.Source.ConcurrentRunsEnabled;
