@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
@@ -19,16 +18,19 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 /// <remarks>
 /// The A2A endpoints invoke this handler without request context, so the endpoint filter records the selected agent
 /// for the asynchronous flow of the request before the endpoint runs. Each selected agent name owns an
-/// <see cref="A2AServer"/> whose task state is shared by all requests that select that name.
+/// <see cref="A2AServer"/> whose task state is shared by all requests that select that name. The handler owns these
+/// servers, so disposing it cancels and joins the operations they still run.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
-internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
+internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyncDisposable
 {
     private readonly AsyncLocal<Selection?> _selection = new();
-    private readonly ConcurrentDictionary<string, SelectedAgentServer> _servers = new(StringComparer.Ordinal);
+    private readonly object _serversGate = new();
+    private readonly Dictionary<string, SelectedAgentServer> _servers = new(StringComparer.Ordinal);
     private readonly IServiceProvider _applicationServices;
     private readonly A2ARequestIsolationKeyProvider _isolationKeyProvider;
     private readonly A2AServerRegistrationOptions? _options;
+    private Task? _disposal;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SelectedAgentA2ARequestHandler"/> class.
@@ -47,13 +49,20 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
     /// </summary>
     /// <param name="agent">The agent selected for the request.</param>
     /// <param name="requestServices">The request services that own the agent's session services.</param>
+    /// <exception cref="ObjectDisposedException">The handler has been disposed.</exception>
     public void Select(AIAgent agent, IServiceProvider requestServices)
     {
         string agentName = HostedAgentResolution.GetSelectedAgentName(agent);
-        SelectedAgentServer server = this._servers.GetOrAdd(
-            agentName,
-            static (name, owner) => new SelectedAgentServer(owner, name),
-            this);
+        SelectedAgentServer? server;
+        lock (this._serversGate)
+        {
+            ObjectDisposedException.ThrowIf(this._disposal is not null, this);
+            if (!this._servers.TryGetValue(agentName, out server))
+            {
+                server = new SelectedAgentServer(this, agentName);
+                this._servers.Add(agentName, server);
+            }
+        }
 
         this._selection.Value = new Selection(
             agent,
@@ -62,6 +71,30 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
             this._isolationKeyProvider,
             server,
             this._options?.AgentRunMode ?? AgentRunMode.ReturnMessage);
+    }
+
+    /// <summary>
+    /// Disposes the servers of all selected agents, canceling and joining the operations they still run.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous dispose operation.</returns>
+    public ValueTask DisposeAsync()
+    {
+        lock (this._serversGate)
+        {
+            this._disposal ??= DisposeServersAsync([.. this._servers.Values]);
+            return new(this._disposal);
+        }
+
+        static async Task DisposeServersAsync(SelectedAgentServer[] servers)
+        {
+            List<Task> disposals = new(servers.Length);
+            foreach (SelectedAgentServer server in servers)
+            {
+                disposals.Add(server.A2AServer.DisposeAsync().AsTask());
+            }
+
+            await Task.WhenAll(disposals).ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>

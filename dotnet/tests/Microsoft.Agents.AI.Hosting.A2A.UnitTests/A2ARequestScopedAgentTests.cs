@@ -417,6 +417,30 @@ public sealed class A2ARequestScopedAgentTests
     }
 
     [Fact]
+    public async Task MapA2AHttpJson_WithAgentSelector_CancelsAndJoinsRunsWhenApplicationStopsAsync()
+    {
+        // Arrange
+        ShutdownProbe probe = new();
+        await using WebApplication app = await StartAsync(
+            _ => { },
+            endpoints => endpoints.MapA2AHttpJson("/a2a", _ => new WaitForCancellationAgent(probe)));
+        using HttpClient httpClient = app.GetTestClient();
+        using A2AHttpJsonClient client = new(new Uri(httpClient.BaseAddress!, "/a2a"), httpClient);
+        Task streaming = ConsumeAsync(client.SendStreamingMessageAsync(CreateRequest("ctx-1")));
+        await Task.WhenAny(probe.AgentStarted.Task, streaming).WaitAsync(s_timeout);
+        Assert.False(streaming.IsCompleted);
+
+        // Act
+        await app.StopAsync().WaitAsync(s_timeout);
+        bool runFinishedWhenStopped = probe.RunFinished.Task.IsCompleted;
+
+        // Assert
+        Assert.True(runFinishedWhenStopped);
+        Assert.True(probe.RunCanceled);
+        Assert.Same(streaming, await Task.WhenAny(streaming, Task.Delay(s_timeout)));
+    }
+
+    [Fact]
     public void MapA2AHttpJson_WithNullAgentSelector_ThrowsArgumentNullException()
     {
         // Arrange
@@ -536,21 +560,9 @@ public sealed class A2ARequestScopedAgentTests
         public void Dispose() => this._disposed = true;
     }
 
-    private sealed class BlockingAgent(DisposableRequestDependency dependency, DisconnectProbe probe) : AIAgent
+    private sealed class BlockingAgent(DisposableRequestDependency dependency, DisconnectProbe probe) : StreamingTestAgent
     {
         public override string? Name => "streaming";
-
-        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
-            new(new TurnCountingSession());
-
-        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(session.StateBag.Serialize());
-
-        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(new TurnCountingSession(AgentSessionStateBag.Deserialize(serializedState)));
-
-        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
@@ -570,13 +582,45 @@ public sealed class A2ARequestScopedAgentTests
         }
     }
 
-    [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
-    private sealed class RequestDependency;
-
-    private sealed class TurnCountingAgent(string? name) : AIAgent
+    private sealed class ShutdownProbe
     {
-        public override string? Name => name;
+        public TaskCompletionSource AgentStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource RunFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool RunCanceled { get; set; }
+    }
+
+    private sealed class WaitForCancellationAgent(ShutdownProbe probe) : StreamingTestAgent
+    {
+        public override string? Name => "shutdown";
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            probe.AgentStarted.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                probe.RunCanceled = cancellationToken.IsCancellationRequested;
+                probe.RunFinished.TrySetResult();
+            }
+
+            yield break;
+        }
+    }
+
+    /// <summary>
+    /// An agent that persists its session state bag and only supports streaming runs.
+    /// </summary>
+    private abstract class StreamingTestAgent : AIAgent
+    {
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
             new(new TurnCountingSession());
 
@@ -588,6 +632,14 @@ public sealed class A2ARequestScopedAgentTests
 
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+    }
+
+    [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
+    private sealed class RequestDependency;
+
+    private sealed class TurnCountingAgent(string? name) : StreamingTestAgent
+    {
+        public override string? Name => name;
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,

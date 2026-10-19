@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Hosting.A2A;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.AspNetCore.Builder;
@@ -126,7 +127,8 @@ public static class A2AEndpointRouteBuilderExtensions
     /// <see cref="AgentRunMode"/> returns a task, non-streaming requests with <c>ReturnImmediately</c> enabled are
     /// rejected with <see cref="A2AErrorCode.UnsupportedOperation"/>, and a streaming request that ends early, for
     /// example because the client disconnects, completes only after the agent run finishes. The run is not canceled, so
-    /// its task state is still persisted.
+    /// its task state is still persisted. When the application stops, operations that are still running for selected
+    /// agents are canceled and awaited.
     /// </para>
     /// <para>
     /// Selection is not an authorization boundary. See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/>
@@ -268,7 +270,21 @@ public static class A2AEndpointRouteBuilderExtensions
             configureOptions(options);
         }
 
-        return new SelectedAgentA2ARequestHandler(endpoints.ServiceProvider, options);
+        var requestHandler = new SelectedAgentA2ARequestHandler(endpoints.ServiceProvider, options);
+
+        // The handler is created after the service provider is built, so the host cannot own it. Dispose it once the
+        // server has stopped processing requests and before the service provider is disposed, so the operations its
+        // A2A servers still run are canceled and joined while their dependencies are alive.
+        if (endpoints.ServiceProvider.GetService<IHostApplicationLifetime>() is { } lifetime)
+        {
+#pragma warning disable VSTHRD002 // Lifetime callbacks are synchronous, and the host must wait for the servers to stop.
+            _ = lifetime.ApplicationStopped.Register(
+                static state => ((SelectedAgentA2ARequestHandler)state!).DisposeAsync().AsTask().GetAwaiter().GetResult(),
+                requestHandler);
+#pragma warning restore VSTHRD002
+        }
+
+        return requestHandler;
     }
 
     private static void AddAgentSelection(
