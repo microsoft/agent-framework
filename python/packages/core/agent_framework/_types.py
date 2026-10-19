@@ -3297,13 +3297,16 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse, ChatResponseUpdate, ChatClient
+                from agent_framework import ChatResponse, ChatResponseUpdate, Content
 
-                client = ChatClient()  # should be a concrete implementation
-                response = await ChatResponse.from_update_generator(
-                    client.get_streaming_response("Hello, how are you?")
-                )
-                print(response.text)
+
+                async def updates():
+                    yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
+                    yield ChatResponseUpdate(contents=[Content.from_text(text=" How can I help you?")])
+
+
+                response = await ChatResponse.from_update_generator(updates())
+                print(response.text)  # "Hello How can I help you?"
 
         Args:
             updates: An async iterable of ChatResponseUpdate objects to combine.
