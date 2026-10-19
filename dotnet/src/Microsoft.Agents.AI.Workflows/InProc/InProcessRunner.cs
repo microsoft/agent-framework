@@ -31,7 +31,14 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                                    knownValidInputTypes: knownValidInputTypes);
     }
 
-    public static InProcessRunner CreateSubworkflowRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    public static InProcessRunner CreateSubworkflowRunner(
+        Workflow workflow,
+        ICheckpointManager? checkpointManager,
+        string? sessionId = null,
+        object? existingOwnerSignoff = null,
+        bool enableConcurrentRuns = false,
+        IEnumerable<Type>? knownValidInputTypes = null,
+        string? workflowSessionId = null)
     {
         return new InProcessRunner(workflow,
                                    checkpointManager,
@@ -39,10 +46,19 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                                    existingOwnerSignoff: existingOwnerSignoff,
                                    enableConcurrentRuns: enableConcurrentRuns,
                                    knownValidInputTypes: knownValidInputTypes,
-                                   subworkflow: true);
+                                   subworkflow: true,
+                                   workflowSessionId: workflowSessionId);
     }
 
-    private InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool subworkflow = false, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    private InProcessRunner(
+        Workflow workflow,
+        ICheckpointManager? checkpointManager,
+        string? sessionId = null,
+        object? existingOwnerSignoff = null,
+        bool subworkflow = false,
+        bool enableConcurrentRuns = false,
+        IEnumerable<Type>? knownValidInputTypes = null,
+        string? workflowSessionId = null)
     {
         if (enableConcurrentRuns && !workflow.AllowConcurrent)
         {
@@ -54,7 +70,16 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.SessionId, checkpointingEnabled: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
+        this.RunContext = new InProcessRunnerContext(
+            workflow,
+            this.SessionId,
+            checkpointingEnabled: checkpointManager != null,
+            this.OutgoingEvents,
+            this.StepTracer,
+            existingOwnerSignoff,
+            subworkflow,
+            enableConcurrentRuns,
+            workflowSessionId: workflowSessionId);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null
@@ -64,6 +89,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
     /// <inheritdoc cref="ISuperStepRunner.SessionId"/>
     public string SessionId { get; }
+
+    internal string WorkflowSessionId => this.RunContext.WorkflowSessionId;
 
     /// <inheritdoc cref="ISuperStepRunner.StartExecutorId"/>
     public string StartExecutorId { get; }
