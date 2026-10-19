@@ -75,12 +75,10 @@ public sealed class SteerableLongRunningHostedAgentTests(
         string conversationId,
         string input)
     {
-        CreateResponseOptions options = new()
-        {
-            AgentConversationId = conversationId,
-            BackgroundModeEnabled = true,
-            StoredOutputEnabled = true,
-        };
+        CreateResponseOptions options = ProjectResponsesTestOptions.Create();
+        options.AgentConversationId = conversationId;
+        options.BackgroundModeEnabled = true;
+        options.StoredOutputEnabled = true;
         options.InputItems.Add(ResponseItem.CreateUserMessageItem(input));
         return options;
     }

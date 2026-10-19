@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Sample;
 
@@ -299,6 +301,65 @@ public class CheckpointResumeTests
         Assert.Equal(RunStatus.Idle, finalStatus);
     }
 
+#if NETFRAMEWORK
+    /// <summary>
+    /// Verifies restored runs continue superstep numbering from the checkpoint's saved step.
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, false)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, true)]
+    internal async Task Checkpoint_Restore_ContinuesStepNumberFromCheckpointAsync(
+        ExecutionEnvironment environment,
+        bool rehydrateToRestore)
+    {
+        // Arrange
+        Workflow workflow = CreateSimpleRequestWorkflow();
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager)
+                                                .RunStreamingAsync(workflow, "Hello");
+
+        (ExternalRequest pendingRequest, CheckpointInfo checkpoint) = await CapturePendingRequestAndCheckpointAsync(run);
+
+        // Advance the original run so live restore must rewind the tracer.
+        await run.SendResponseAsync(pendingRequest.CreateResponse("World"));
+        List<WorkflowEvent> firstCompletionEvents = await ReadToHaltAsync(run);
+        Assert.Empty(firstCompletionEvents.OfType<WorkflowErrorEvent>() ?? []);
+
+        if (rehydrateToRestore)
+        {
+            await run.DisposeAsync();
+
+            await using StreamingRun resumedRun = await env.WithCheckpointing(checkpointManager)
+                                                           .ResumeStreamingAsync(workflow, checkpoint);
+
+            await AssertRestoredRunContinuesFromCheckpointAsync(resumedRun);
+        }
+        else
+        {
+            await run.RestoreCheckpointAsync(checkpoint);
+
+            await AssertRestoredRunContinuesFromCheckpointAsync(run);
+        }
+
+        static async ValueTask AssertRestoredRunContinuesFromCheckpointAsync(StreamingRun restoredRun)
+        {
+            List<WorkflowEvent> restoredEvents = await ReadToHaltAsync(restoredRun);
+            ExternalRequest replayedRequest = Assert.Single(restoredEvents.OfType<RequestInfoEvent>()
+                                                                       .Select(evt => evt.Request));
+
+            await restoredRun.SendResponseAsync(replayedRequest.CreateResponse("Again"));
+            List<WorkflowEvent> restoredCompletionEvents = await ReadToHaltAsync(restoredRun);
+
+            Assert.Empty(restoredCompletionEvents.OfType<WorkflowErrorEvent>() ?? []);
+            SuperStepCompletedEvent? resumedCompletion = restoredCompletionEvents.OfType<SuperStepCompletedEvent>().FirstOrDefault();
+            Assert.NotNull(resumedCompletion);
+            Assert.Equal(1, resumedCompletion.StepNumber);
+        }
+    }
+#endif
+
     /// <summary>
     /// Verifies that fan-in edge state buffered before a checkpoint is still present after resume.
     /// </summary>
@@ -560,6 +621,50 @@ public class CheckpointResumeTests
         Assert.Equal(0, requestEventCount);
     }
 
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    internal async Task Checkpoint_Resume_RejectsDifferentEdgeMultiplicityBeforeImportingQueuedMessagesAsync(
+        ExecutionEnvironment environment)
+    {
+        // Arrange
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+        CheckpointInfo? checkpoint = null;
+
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(
+                                                          CreateConditionalRoutingWorkflow(duplicateFirstTarget: false),
+                                                          "queued"))
+        {
+            await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
+            {
+                if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
+                {
+                    checkpoint = cp;
+                    break;
+                }
+            }
+        }
+
+        Assert.NotNull(checkpoint);
+        CheckpointInfo nonNullCheckpoint = checkpoint;
+        Checkpoint storedCheckpoint = await ((ICheckpointManager)checkpointManager)
+            .LookupCheckpointAsync(nonNullCheckpoint.SessionId, nonNullCheckpoint);
+        Assert.Equal(2, storedCheckpoint.RunnerData.QueuedMessages.Values.Sum(messages => messages.Count));
+
+        // Act
+        ValueTask<StreamingRun> resumeTask = env.WithCheckpointing(checkpointManager)
+                                                .ResumeStreamingAsync(
+                                                    CreateConditionalRoutingWorkflow(duplicateFirstTarget: true),
+                                                    nonNullCheckpoint);
+
+        // Assert
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await resumeTask);
+        Assert.Contains("not compatible", exception.Message, StringComparison.Ordinal);
+    }
+
     private static Workflow CreateSimpleRequestWorkflow(
         string requestPortId = "TestPort",
         string processorId = "Processor")
@@ -570,6 +675,20 @@ public class CheckpointResumeTests
         return new WorkflowBuilder(requestPort)
             .AddEdge(requestPort, processor)
             .Build();
+    }
+
+    private static Workflow CreateConditionalRoutingWorkflow(bool duplicateFirstTarget)
+    {
+        ForwardMessageExecutor<string> source = new("Source");
+        ForwardMessageExecutor<string> first = new("First");
+        ForwardMessageExecutor<string> second = new("Second");
+
+        return new WorkflowBuilder(source)
+            .BindExecutor(first)
+            .BindExecutor(second)
+            .AddEdge<string>(source, first, static _ => true)
+            .AddEdge<string>(source, duplicateFirstTarget ? first : second, static _ => true)
+            .Build(validateOrphans: false);
     }
 
     private static Workflow CreateCheckpointedSubworkflowRequestWorkflow()

@@ -43,18 +43,18 @@ jobs:
           echo "DEPENDENCY_RELEASE_CUTOFF=${cutoff}" >> "$GITHUB_ENV"
           echo "Using dependency release cutoff: ${cutoff}"
 
-      - name: Repin dev dependency declarations
+      - name: Repin development and tool dependency declarations
         run: uv run poe upgrade-dev-dependency-pins
         working-directory: ./python
 
-      - name: Refresh lockfile after dev pin updates
+      - name: Refresh lockfile after dependency pin updates
         run: uv lock
         working-directory: ./python
 
-      - name: Save dev dependency changes
+      - name: Save development and tool dependency changes
         run: |
           DEV_PATCH="${RUNNER_TEMP}/python-dev-dependency-updates.patch"
-          git diff -- python/pyproject.toml "python/packages/*/pyproject.toml" python/uv.lock > "${DEV_PATCH}"
+          git diff -- python/pyproject.toml "python/packages/*/pyproject.toml" "python/tooling/requirements-*.txt" python/uv.lock > "${DEV_PATCH}"
           if [ -s "${DEV_PATCH}" ]; then
             echo "has_dev_changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload dependency validation reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dependency-maintenance-results
           path: |
@@ -88,7 +88,7 @@ jobs:
 
       - name: Create issue for failed dependency bounds test
         if: steps.validate_bounds_test.outcome != 'success'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -117,7 +117,7 @@ jobs:
             const bodyLines = [
               "Automated dependency bounds test mode failed before dependency upper-bound validation could run.",
               "",
-              "The weekly dependency maintenance workflow kept only dev dependency updates for the generated PR, if any, and skipped dependency range updates for this run.",
+              "The weekly dependency maintenance workflow kept only development and tool dependency updates for the generated PR, if any, and skipped dependency range updates for this run.",
               "",
             ]
 
@@ -158,7 +158,7 @@ jobs:
 
       - name: Create issues for failed dependency candidates
         if: always()
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -271,13 +271,13 @@ jobs:
               core.info(`Created issue: ${title}`)
             }
 
-      - name: Keep only dev updates when range validation fails
+      - name: Keep only development and tool updates when range validation fails
         if: steps.validate_bounds_test.outcome != 'success' || steps.validate_ranges.outcome != 'success'
         env:
           DEV_PATCH: ${{ steps.dev_changes.outputs.patch }}
           HAS_DEV_CHANGES: ${{ steps.dev_changes.outputs.has_dev_changes }}
         run: |
-          git restore python/pyproject.toml python/packages/*/pyproject.toml python/uv.lock
+          git restore python/pyproject.toml python/packages/*/pyproject.toml python/tooling/requirements-*.txt python/uv.lock
           if [ "${HAS_DEV_CHANGES}" = "true" ]; then
             git apply "${DEV_PATCH}"
           fi
@@ -308,7 +308,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "${BRANCH}"
 
-          git add python/pyproject.toml python/packages/*/pyproject.toml python/uv.lock
+          git add python/pyproject.toml python/packages/*/pyproject.toml python/tooling/requirements-*.txt python/uv.lock
           if git diff --cached --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "No dependency updates to commit."
@@ -321,7 +321,7 @@ jobs:
 
       - name: Create or update dependency maintenance tracking issue
         if: steps.commit_updates.outputs.has_changes == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -343,7 +343,7 @@ jobs:
             const prBody = [
               "### Motivation & Context",
               "",
-              "This automated update keeps Python dependency metadata coherent across the uv workspace. Python dependencies can be declared in multiple `pyproject.toml` files, but the workspace has one shared `python/uv.lock`, so dependency maintenance should update and validate them together instead of through per-manifest Dependabot PRs.",
+              "This automated update keeps dependency metadata coherent across the released Python uv workspace. Its packages share `python/uv.lock`, so dependency maintenance updates and validates them together instead of through per-manifest Dependabot PRs. The standalone Lab project maintains its dependencies separately.",
               "",
               "### Description & Review Guide",
               "",
@@ -357,14 +357,21 @@ jobs:
               "",
               "### Related Issue",
               "",
-              "No linked issue; this PR is generated by scheduled Python dependency maintenance.",
+              "N/A - repository automation generated by `.github/workflows/python-dependency-maintenance.yml`.",
+              "",
+              "### AI Assistance",
+              "",
+              "- [x] No material AI assistance was used.",
+              "- [ ] This is an AI-assisted contribution. I reviewed, understood, and verified all submitted content and accept responsibility for it.",
+              "",
+              "AI assistance details: N/A",
               "",
               "### Contribution Checklist",
               "",
               "- [x] The code builds clean without any errors or warnings",
               "- [x] All unit tests pass, and I have added new tests where possible",
               "- [x] The PR follows the [Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)",
-              "- [ ] This PR is linked to an issue and there is no other open PR for this issue (see Related Issue above).",
+              "- [x] This PR links to an agreed issue with no competing open PR, or the Related Issue section documents a trivial-change or repository-automation exception.",
               '- [x] **This is not a breaking change.** If it _is_ a breaking change, add the `breaking change` label (or add "[BREAKING]" to the title prefix, before or after any language prefix) — a workflow keeps the label and title prefix in sync automatically.',
             ].join("\n")
 

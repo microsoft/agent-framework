@@ -235,6 +235,31 @@ def test_safe_claim_release_restarts_pending_retention_window() -> None:
     assert lifecycle.pending_occurrence(thread_id="thread-1", interrupt_id="approval-1") is occurrence
 
 
+def test_claim_release_can_preserve_original_pending_retention_window() -> None:
+    """A blocked executor does not extend the caller's original approval authority."""
+    now = 100.0
+    lifecycle = ApprovalLifecycle(max_entries=1, pending_retention_seconds=20, clock=lambda: now)
+    occurrence = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-1",
+        interrupt_id="approval-1",
+        call_id="call-1",
+        name="write_record",
+        arguments="{}",
+    )
+    intent = lifecycle.claim(
+        thread_id="thread-1",
+        decision=ResumeDecision(interrupt_id="approval-1", accepted=True, arguments="{}"),
+    )
+
+    now = 119.0
+    lifecycle.release_claim(intent, policy=ClaimRecoveryPolicy.PRESERVE_PENDING_RETENTION)
+    now = 121.0
+
+    assert lifecycle.pending_occurrence(thread_id="thread-1", interrupt_id="approval-1") is None
+    assert occurrence.status is ApprovalStatus.EXPIRED
+
+
 def test_capacity_is_enforced_per_trusted_scope() -> None:
     """One trusted application scope cannot exhaust another scope's approval quota."""
     lifecycle = ApprovalLifecycle(max_entries=1)
@@ -1157,7 +1182,8 @@ async def test_settled_raw_call_id_can_be_reused_for_a_new_occurrence() -> None:
     assert lifecycle.get(second.identity).status is ApprovalStatus.PENDING
 
 
-async def test_identical_accepted_retry_returns_retained_outcome_without_execution() -> None:
+@pytest.mark.parametrize("result", ["wrote first", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+async def test_identical_accepted_retry_returns_retained_outcome_without_execution(result: str) -> None:
     """A settled accepted decision reprojects its result instead of granting authority again."""
     lifecycle = ApprovalLifecycle()
     occurrence = lifecycle.register(
@@ -1179,7 +1205,7 @@ async def test_identical_accepted_retry_returns_retained_outcome_without_executi
     async def execute_once() -> list[Content]:
         nonlocal invocation_count
         invocation_count += 1
-        return [Content.from_function_result(call_id="call-1", result="wrote first")]
+        return [Content.from_function_result(call_id="call-1", result=result)]
 
     first_outcome = await LocalPendingToolTransitionOwner(execute_once).execute(intent, lifecycle=lifecycle)
     retry = lifecycle.claim_batch(thread_id="thread-1", decisions=[decision])

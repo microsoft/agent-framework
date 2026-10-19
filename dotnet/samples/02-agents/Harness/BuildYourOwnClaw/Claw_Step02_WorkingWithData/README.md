@@ -17,7 +17,8 @@ It builds on Post 1's personal finance assistant and teaches it to work with *yo
 
   > ⚠️ **Security — avoid tool-name collisions:** auto-approval rules such as
   > `FileAccessProvider.ReadOnlyToolsAutoApprovalRule` match tool calls **solely by tool name**. Any
-  > other registered tool that shares one of the approved names (`file_access_read`, `file_access_ls`,
+  > other registered tool that shares one of the approved names (`file_access_read`,
+  > `file_access_read_lines`, `file_access_ls`,
   > `file_access_grep`) would be silently auto-approved, bypassing the human
   > approval boundary. Ensure no other tool's name collides with the reserved names a rule approves.
 - **Durable memory, two ways:**

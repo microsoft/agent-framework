@@ -2,6 +2,7 @@
 
 """Tests for _agent_run.py helper functions and FlowState."""
 
+import asyncio
 from typing import Any, cast
 
 import pytest
@@ -20,21 +21,34 @@ from ag_ui.core import (
     ToolCallArgsEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
-from agent_framework.exceptions import AgentInvalidResponseException
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    Annotation,
+    ChatResponse,
+    Content,
+    Message,
+    ResponseStream,
+    ToolApprovalRule,
+    ToolApprovalState,
+)
+from agent_framework.exceptions import AgentInvalidResponseException, ResponseInvalidatedException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
+    _TOOL_APPROVAL_STATE_FIELDS,
     _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
+    _carries_tool_approval_authority,
     _create_state_context_message,
     _filter_local_approval_responses_for_provider,
     _inject_state_context,
     _normalize_response_stream,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
+    _tool_approval_state_keys,
     run_agent_stream,
 )
 from agent_framework_ag_ui._approval_lifecycle import (
@@ -43,7 +57,8 @@ from agent_framework_ag_ui._approval_lifecycle import (
     ApprovalStatus,
     ResumeDecision,
 )
-from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
+from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
+from agent_framework_ag_ui._event_converters import AGUIEventConverter
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
@@ -61,13 +76,25 @@ from agent_framework_ag_ui._run_common import (
 )
 
 
+def _open_tool_call(flow: FlowState, call_id: str, name: str = "tool") -> None:
+    """Register a tool call as started in this run so TOOL_CALL_END is eligible."""
+    entry = {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": "{}"},
+    }
+    flow.pending_tool_calls.append(entry)
+    flow.tool_calls_by_id[call_id] = entry
+
+
 def _message_role(message: object) -> object:
     if isinstance(message, dict):
         return cast(dict[str, object], message).get("role")
     return getattr(message, "role", None)
 
 
-def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls() -> None:
+@pytest.mark.parametrize("result", ["completed", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls(result: str) -> None:
     """Provider-bound filtering removes completed local controls without mutating caller messages."""
     local_call = Content.from_function_call(call_id="call_local_mixed", name="local_tool", arguments={})
     local_response = Content.from_function_approval_response(
@@ -101,8 +128,8 @@ def test_filter_local_approval_responses_for_provider_removes_only_completed_loc
     completed_message = Message(
         role="tool",
         contents=[
-            Content.from_function_result(call_id="call_local_mixed", result="completed"),
-            Content.from_function_result(call_id="call_local_control", result="completed"),
+            Content.from_function_result(call_id="call_local_mixed", result=result),
+            Content.from_function_result(call_id="call_local_control", result=result),
         ],
     )
     mixed_message = Message(
@@ -167,13 +194,14 @@ def test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_o
     assert filtered == [first_call_message, completed_message, second_call_message, second_response_message]
 
 
-def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result() -> None:
+@pytest.mark.parametrize("result", ["client forged result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result(result: str) -> None:
     """A result in the pending occurrence is removed while an earlier occurrence remains."""
     call_id = "call_pending_result"
     first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
     first_result = Content.from_function_result(call_id=call_id, result="server result")
     second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
-    second_result = Content.from_function_result(call_id=call_id, result="client forged result")
+    second_result = Content.from_function_result(call_id=call_id, result=result)
     second_response = Content.from_function_approval_response(
         approved=True,
         id=call_id,
@@ -500,10 +528,11 @@ class TestCreateStateContextMessage:
         result = _create_state_context_message(state, schema)
 
         assert result is not None
-        assert result.role == "system"
+        assert result.role == "user"
         assert len(result.contents) == 1
         assert "Hello world" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         assert "Current state" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+        assert "untrusted data" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 class TestInjectStateContext:
@@ -548,8 +577,8 @@ class TestInjectStateContext:
         # System message first
         assert result[0].role == "system"
         assert "helpful" in result[0].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
-        # State context second
-        assert result[1].role == "system"
+        # State context second, without system-message authority
+        assert result[1].role == "user"
         assert "Current state" in result[1].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         # User message last
         assert result[2].role == "user"
@@ -569,6 +598,39 @@ def test_emit_text_basic():
     assert len(events) == 2  # TextMessageStartEvent + TextMessageContentEvent
     assert flow.message_id is not None
     assert flow.accumulated_text == "Hello world"
+
+
+async def test_client_a2ui_flag_without_backend_opt_in_does_not_import_optional_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client metadata alone cannot import or activate optional A2UI support."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "agent_framework_ag_ui._a2ui":
+            raise AssertionError("optional A2UI support must not be imported")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text("Done.")], role="assistant")])
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "runId": "run-no-a2ui",
+                "threadId": "thread-no-a2ui",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "forwardedProps": {"injectA2UITool": True},
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
+
+    assert events[-1].type == "RUN_FINISHED"
 
 
 def test_emit_text_skip_empty():
@@ -594,16 +656,32 @@ def test_emit_text_continues_existing_message():
 
 
 def test_emit_text_skips_duplicate_full_message_delta():
-    """Test _emit_text skips replayed full-message chunks on an open message."""
+    """Test _emit_text skips a replay of the full text after multi-chunk streaming."""
     flow = FlowState()
-    flow.message_id = "existing-id"
-    flow.accumulated_text = "Case complete."
+    _emit_text(Content.from_text("Case"), flow)
+    _emit_text(Content.from_text(" complete."), flow)
     content = Content.from_text("Case complete.")
 
     events = _emit_text(content, flow)
 
     assert events == []
     assert flow.accumulated_text == "Case complete."
+
+
+def test_emit_text_keeps_repeated_single_chunk_delta():
+    """A repeated token equal to the whole short text streams as a real delta (#9336)."""
+    flow = FlowState()
+    first = _emit_text(Content.from_text("2"), flow)
+    second = _emit_text(Content.from_text("2"), flow)
+    assert len(first) == 2  # message start + first delta
+    assert len(second) == 1
+    assert flow.accumulated_text == "22"
+
+    fresh_flow = FlowState()
+    _emit_text(Content.from_text("ha"), fresh_flow)
+    repeated = _emit_text(Content.from_text("ha"), fresh_flow)
+    assert len(repeated) == 1
+    assert fresh_flow.accumulated_text == "haha"
 
 
 def test_emit_text_skips_when_waiting_for_approval():
@@ -615,6 +693,209 @@ def test_emit_text_skips_when_waiting_for_approval():
     events = _emit_text(content, flow)
 
     assert len(events) == 0
+
+
+def test_emit_text_annotations_are_json_safe_and_message_linked() -> None:
+    """Portable citations reach AG-UI without serializing provider raw objects."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        title="Document",
+        url="https://example.sharepoint.com/document.pdf",
+        annotated_regions=[{"type": "text_span", "start_index": 0, "end_index": 6}],
+        raw_representation=object(),
+    )
+    content = Content.from_text("Answer", annotations=[annotation])
+
+    events = _emit_content(content, flow)
+
+    assert len(events) == 3
+    start, text, citations = events
+    assert isinstance(start, TextMessageStartEvent)
+    assert isinstance(text, TextMessageContentEvent)
+    assert isinstance(citations, CustomEvent)
+    assert citations.name == "annotations"
+    assert citations.value == {
+        "messageId": start.message_id,
+        "annotations": [{key: value for key, value in annotation.items() if key != "raw_representation"}],
+    }
+    assert text.message_id == start.message_id
+    assert "raw_representation" not in citations.model_dump_json(by_alias=True)
+    assert content.annotations is not None
+    assert annotation["raw_representation"] is content.annotations[0]["raw_representation"]
+
+
+def test_emit_text_rebases_delta_annotation_spans_and_deduplicates_full_replay() -> None:
+    """Chunk-relative spans become message-relative and match completed replay spans."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/target",
+        annotated_regions=[{"type": "text_span", "start_index": 0, "end_index": 6}],
+    )
+    _emit_text(Content.from_text("Prefix "), flow)
+
+    events = _emit_text(Content.from_text("target", annotations=[annotation]), flow)
+    replay_events = _emit_text(
+        Content.from_text(
+            "Prefix target",
+            annotations=[
+                Annotation(
+                    type="citation",
+                    url="https://example.com/target",
+                    annotated_regions=[{"type": "text_span", "start_index": 7, "end_index": 13}],
+                )
+            ],
+        ),
+        flow,
+    )
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0]["annotated_regions"] == [
+        {"type": "text_span", "start_index": 7, "end_index": 13}
+    ]
+    assert annotation["annotated_regions"] == [{"type": "text_span", "start_index": 0, "end_index": 6}]
+    assert replay_events == []
+
+
+def test_emit_text_preserves_annotation_only_spans() -> None:
+    """Annotation-only updates already use complete-message span indices."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/target",
+        annotated_regions=[{"type": "text_span", "start_index": 7, "end_index": 13}],
+    )
+    _emit_text(Content.from_text("Prefix target"), flow)
+
+    events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0]["annotated_regions"] == annotation["annotated_regions"]
+
+
+def test_emit_text_annotation_only_update_starts_a_message_without_an_empty_delta() -> None:
+    """Citations received before text still reference an announced message."""
+    flow = FlowState()
+    annotation = Annotation(type="citation", url="https://example.com/document")
+
+    events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+    text_events = _emit_text(Content.from_text("Answer"), flow)
+
+    assert len(events) == 2
+    assert isinstance(events[0], TextMessageStartEvent)
+    assert isinstance(events[1], CustomEvent)
+    assert events[1].value == {"messageId": events[0].message_id, "annotations": [annotation]}
+    assert len(text_events) == 1
+    assert isinstance(text_events[0], TextMessageContentEvent)
+    assert text_events[0].message_id == events[0].message_id
+    assert text_events[0].delta == "Answer"
+
+
+def test_emit_text_replay_emits_only_new_annotations() -> None:
+    """A one-chunk duplicate keeps its text and emits only new citation occurrences.
+
+    After a single streamed chunk a duplicate equal to the whole text is treated as a
+    genuine delta, matching the unannotated policy from issue #9336. The annotation
+    emission still reconciles occurrences, so a re-sent citation is not duplicated.
+    """
+    flow = FlowState()
+    first = Annotation(type="citation", url="https://example.com/first")
+    second = Annotation(type="citation", url="https://example.com/second")
+    _emit_text(Content.from_text("Answer", annotations=[first]), flow)
+
+    events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
+    replay_events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
+
+    text_events = [event for event in events if isinstance(event, TextMessageContentEvent)]
+    citation_events = [event for event in events if isinstance(event, CustomEvent)]
+    assert [event.delta for event in text_events] == ["Answer"]
+    assert [event.value["annotations"] for event in citation_events] == [[first, second]]
+    replay_text_events = [event for event in replay_events if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in replay_text_events] == ["Answer"]
+    replay_citation_events = [event for event in replay_events if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in replay_citation_events] == [[first, second]]
+    assert flow.accumulated_text == "AnswerAnswerAnswer"
+
+
+def test_emit_text_preserves_identical_annotation_occurrences() -> None:
+    """Separate annotation-only updates can cite the same source at distinct occurrences."""
+    flow = FlowState()
+    annotation = Annotation(type="citation", file_id="file-123")
+    _emit_text(Content.from_text("Answer"), flow)
+
+    first_events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+    second_events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+    replay_events = _emit_text(Content.from_text("Answer", annotations=[annotation, annotation]), flow)
+
+    assert len(first_events) == len(second_events) == 1
+    assert all(isinstance(event, CustomEvent) for event in [*first_events, *second_events])
+    # One prior text chunk: the duplicate streams as genuine text with its annotations.
+    replay_text_events = [event for event in replay_events if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in replay_text_events] == ["Answer"]
+    replay_citation_events = [event for event in replay_events if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in replay_citation_events] == [[annotation, annotation]]
+
+
+@pytest.mark.parametrize("suppression", ["skip_text", "waiting_for_approval"])
+def test_emit_text_annotations_respect_suppression(suppression: str) -> None:
+    """Explicitly suppressed text must not leak an annotation message either."""
+    flow = FlowState(waiting_for_approval=suppression == "waiting_for_approval")
+    content = Content.from_text("Answer", annotations=[Annotation(type="citation", url="https://example.com")])
+
+    events = _emit_text(content, flow, skip_text=suppression == "skip_text")
+
+    assert events == []
+    assert flow.message_id is None
+
+
+async def test_run_agent_stream_delivers_annotations_before_run_finished() -> None:
+    """A grounded response roundtrips through live AG-UI events with its citations intact."""
+    annotation = Annotation(
+        type="citation",
+        title="Document",
+        url="https://example.sharepoint.com/document.pdf",
+        annotated_regions=[{"type": "text_span", "start_index": 0, "end_index": 6}],
+        raw_representation=object(),
+    )
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(role="assistant", contents=[Content.from_text("Answer")]),
+            AgentResponseUpdate(role="assistant", contents=[Content.from_text("", annotations=[annotation])]),
+        ]
+    )
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "run_id": "run-citations",
+                "thread_id": "thread-citations",
+                "messages": [{"role": "user", "content": "Find the document."}],
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
+
+    citation_events = [event for event in events if isinstance(event, CustomEvent) and event.name == "annotations"]
+    assert len(citation_events) == 1
+    text_event = next(event for event in events if isinstance(event, TextMessageContentEvent))
+    assert citation_events[0].value["messageId"] == text_event.message_id
+    assert events.index(citation_events[0]) < next(
+        index for index, event in enumerate(events) if event.type == "RUN_FINISHED"
+    )
+    converter = AGUIEventConverter()
+    updates = []
+    for event in events:
+        if update := converter.convert_event(event.model_dump(mode="json", by_alias=True, exclude_none=True)):
+            updates.append(update)
+    response = ChatResponse.from_updates(updates)
+    assert response.text == "Answer"
+    text_content = next(content for message in response.messages for content in message.contents if content.text)
+    assert text_content.annotations == [
+        {key: value for key, value in annotation.items() if key != "raw_representation"}
+    ]
 
 
 def _snapshot_kinds(event):
@@ -903,6 +1184,7 @@ def test_emit_tool_result_closes_open_message():
     # Simulate an open text message (e.g., from Feature #4 tool-only detection)
     flow.message_id = "open-msg-123"
     flow.tool_call_id = "call_456"
+    _open_tool_call(flow, "call_456")
 
     content = Content.from_function_result(call_id="call_456", result="tool result")
 
@@ -988,6 +1270,71 @@ def test_emit_approval_request_populates_interrupt_metadata():
         "name": "write_doc",
         "arguments": {"content": "x"},
     }
+
+
+def test_emit_local_approval_request_prefers_function_call_occurrence_id() -> None:
+    """Local approval interrupts use occurrence identity without rewriting tool correlation."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="call_123",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+    )
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        approval_content = Content.from_function_approval_request(id="call_123", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["toolCallId"] == "call_123"
+
+
+def test_emit_approval_request_normalizes_empty_server_label_for_identity() -> None:
+    """Client events and lifecycle registration treat an empty server label as local."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": ""},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if getattr(event, "name", None) == "function_approval_request")
+    assert custom_event.value["id"] == "af-call-occurrence"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+
+
+def test_emit_hosted_approval_request_preserves_provider_request_id() -> None:
+    """Hosted approval interrupts retain the provider protocol request identity."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted_search",
+        arguments={"query": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["toolCallId"] == "provider-call"
 
 
 def test_emit_approval_request_reuses_confirmation_message_id_in_snapshot():
@@ -1316,8 +1663,9 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
         function_call=function_call,
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-server-rejection")
     store.set_tool_approval_state(
-        "thread-server-rejection",
+        approval_thread_id,
         {"collected_approval_responses": [response.to_dict()]},
     )
     agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")])
@@ -1338,12 +1686,12 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
 
     assert not [event for event in events if event.type == "RUN_ERROR"]
     occurrence = store.lifecycle.occurrence_for_alias(
-        thread_id="thread-server-rejection",
+        thread_id=approval_thread_id,
         interrupt_id="approval_rejected",
     )
     assert occurrence is not None
     assert occurrence.status is ApprovalStatus.REJECTED
-    assert store.lifecycle.pending_interrupt_ids(thread_id="thread-server-rejection") == set()
+    assert store.lifecycle.pending_interrupt_ids(thread_id=approval_thread_id) == set()
 
 
 def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
@@ -1671,8 +2019,8 @@ class TestTextMessageEventBalancing:
             all_events.append(event)
 
         # Step 4: End of stream - emit final TextMessageEndEvent
-        if flow.message_id:
-            all_events.append(TextMessageEndEvent(message_id=flow.message_id))
+        assert flow.message_id is not None
+        all_events.append(TextMessageEndEvent(message_id=flow.message_id))
 
         # Verify event counts
         start_events = [e for e in all_events if isinstance(e, TextMessageStartEvent)]
@@ -1823,6 +2171,44 @@ async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
     assert interrupt_tool_names == {"generate_tasks", "generate_notes"}
 
 
+async def test_run_agent_stream_suppresses_messages_snapshot_if_configured():
+    """When emit_messages_snapshot=False, no terminal MessagesSnapshotEvent is yielded."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    updates = [
+        AgentResponseUpdate(contents=[Content.from_text("Hello")], role="assistant"),
+    ]
+
+    stub = StubAgent(updates=updates)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        emit_messages_snapshot=False,
+    )
+
+    payload = {
+        "thread_id": "thread-1",
+        "run_id": "run-1",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    # We should have TextMessageStart/Delta/End, but no MessagesSnapshot
+    snapshot_events = [e for e in events if getattr(e, "type", None) == "MESSAGES_SNAPSHOT"]
+    assert len(snapshot_events) == 0, "MessagesSnapshotEvent should be suppressed"
+
+    # Still finishes normally
+    finished_events = [
+        e
+        for e in events
+        if getattr(e, "type", None) == "RUN_FINISHED"
+        or getattr(getattr(e, "type", None), "value", None) == "RUN_FINISHED"
+    ]
+    assert len(finished_events) == 1
+
+
 def test_emit_oauth_consent_request():
     """Test that oauth_consent_request content emits a CustomEvent."""
     content = Content.from_oauth_consent_request(
@@ -1953,6 +2339,7 @@ class TestEmitMcpToolResult:
     def test_produces_end_and_result_events(self):
         """MCP tool result emits ToolCallEnd + ToolCallResult events."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_1", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_1",
             output={"results": [{"title": "Weather", "url": "https://example.com"}]},
@@ -1994,6 +2381,7 @@ class TestEmitMcpToolResult:
     def test_serializes_non_string_output(self):
         """Non-string output is serialized to JSON."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_6", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_6",
             output={"key": "value", "count": 42},
@@ -2008,6 +2396,7 @@ class TestEmitMcpToolResult:
     def test_output_none_falls_back_to_empty_string(self):
         """When output is None (default), the result content is an empty string."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_none", name="mcp_tool")
         content = Content(type="mcp_server_tool_result", call_id="mcp_call_none")
 
         events = _emit_mcp_tool_result(content, flow)
@@ -2178,6 +2567,7 @@ class TestEmitContentMcpRouting:
     def test_routes_mcp_server_tool_result(self):
         """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
         flow = FlowState()
+        _open_tool_call(flow, "route_test_2", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="route_test_2",
             output="result data",
@@ -2587,6 +2977,98 @@ async def test_session_id_matches_thread_id_with_service_session():
     assert stub.last_session.service_session_id == "service-thread-789"
 
 
+async def test_scoped_session_id_preserves_service_session_id_thread_compatibility():
+    """Trusted scope changes internal identity without changing the provider continuation compatibility id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id != "service-thread-789"
+    assert stub.last_session.service_session_id == "service-thread-789"
+    assert events[0].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert events[-1].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_scoped_session_id_supports_deprecated_legacy_mapping():
+    """The explicit migration escape hatch warns and preserves the raw internal session id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    with pytest.warns(DeprecationWarning, match="legacy_session_id_from_thread_id=True is deprecated"):
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+            legacy_session_id_from_thread_id=True,
+        )
+
+    payload = {
+        "thread_id": "legacy-thread",
+        "run_id": "run-legacy-session",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "legacy-thread"
+
+
+async def test_scoped_session_id_is_used_to_create_service_conversation():
+    """Provider-owned conversation creation uses the scope-isolated internal session id."""
+    from agent_framework import AgentSession
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    created_session_ids: list[str] = []
+
+    def create_conversation(*, session_id: str) -> AgentSession:
+        created_session_ids.append(session_id)
+        return AgentSession(session_id=session_id, service_session_id="provider-conversation")
+
+    setattr(stub, "create_conversation", create_conversation)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-create-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert len(created_session_ids) == 1
+    assert created_session_ids[0] != "service-thread-789"
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == created_session_ids[0]
+    assert stub.last_session.service_session_id == "provider-conversation"
+
+
 async def test_session_id_generated_when_no_thread_id():
     """Session gets a generated UUID as session_id when no thread_id is provided."""
     import uuid
@@ -2686,6 +3168,546 @@ async def test_service_session_rejects_disabled_provider_storage():
         ]
 
 
+@pytest.mark.parametrize("failure_mode", ["stream", "result_hook"])
+async def test_finish_reason_and_trailing_usage_do_not_persist_invalidated_model_output(
+    failure_mode: str,
+) -> None:
+    """A yielded finish reason is not durable until the run reaches a successful safe point."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, AGUIThreadSnapshot, InMemoryAGUIThreadSnapshotStore
+
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+    function_call = Content.from_function_call(call_id="c1", name="lookup", arguments={})
+    stub = StubAgent()
+    original_run = stub.run
+
+    def invalidating_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[function_call],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_usage(
+                        {
+                            "input_token_count": 1,
+                            "output_token_count": 1,
+                            "total_token_count": 2,
+                        }
+                    )
+                ],
+                role="assistant",
+            )
+            if failure_mode == "stream":
+                raise invalidated
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        if failure_mode == "result_hook":
+
+            def invalidate_result(response: AgentResponse[Any]) -> None:
+                del response
+                raise invalidated
+
+            stream.with_result_hook(invalidate_result)
+        return stream
+
+    stub.run = invalidating_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="tenant-a",
+        thread_id="invalidated-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "baseline", "role": "user", "content": "Persisted baseline"}],
+        ),
+    )
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+
+    with pytest.raises(ResponseInvalidatedException, match="provider invalidated"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "invalidated-thread",
+                    "run_id": f"invalidated-{failure_mode}",
+                    "__ag_ui_snapshot_scope": "tenant-a",
+                    "messages": [{"role": "user", "content": "Start"}],
+                }
+            )
+        ]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="invalidated-thread")
+    assert snapshot is not None
+    assert snapshot.messages == [{"id": "baseline", "role": "user", "content": "Persisted baseline"}]
+    assert "c1" not in str(snapshot.messages)
+
+
+async def test_tool_result_safe_point_excludes_unfinalized_sibling_output() -> None:
+    """Intermediate result snapshots retain completed groups but omit sibling model output."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    invalidated = ResponseInvalidatedException("provider invalidated result update")
+    function_call = Content.from_function_call(call_id="safe-call", name="lookup", arguments={})
+    stub = StubAgent()
+    original_run = stub.run
+
+    def invalidating_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[function_call],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_text(text="unfinalized sibling text"),
+                    Content.from_text_reasoning(id="unsafe-reasoning", text="unfinalized reasoning"),
+                    Content.from_function_result(call_id="safe-call", result="completed tool output"),
+                ],
+                role="tool",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        def invalidate_result(response: AgentResponse[Any]) -> None:
+            del response
+            raise invalidated
+
+        return stream.with_result_hook(invalidate_result)
+
+    stub.run = invalidating_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+
+    with pytest.raises(ResponseInvalidatedException, match="provider invalidated"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "safe-projection-thread",
+                    "run_id": "safe-projection-run",
+                    "__ag_ui_snapshot_scope": "tenant-a",
+                    "messages": [{"role": "user", "content": "Start"}],
+                }
+            )
+        ]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="safe-projection-thread")
+    assert snapshot is not None
+    serialized = str(snapshot.messages)
+    assert "safe-call" in serialized
+    assert "completed tool output" in serialized
+    assert "unfinalized sibling text" not in serialized
+    assert "unfinalized reasoning" not in serialized
+
+
+async def test_snapshot_is_saved_after_tool_result_without_finish_reason():
+    """A completed tool-result batch is durable even when its update has no finish reason."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    release = asyncio.Event()
+    tool_result_saved = asyncio.Event()
+
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(self, **kwargs: Any) -> None:
+            await super().save(**kwargs)
+            snapshot = kwargs["snapshot"]
+            if "tool-output" in str(snapshot.messages):
+                tool_result_saved.set()
+
+    stub = StubAgent()
+    original_run = stub.run
+
+    def blocking_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments={})],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_result(call_id="call-1", result="tool-output")],
+                role="tool",
+            )
+            await release.wait()
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="done")],
+                role="assistant",
+                finish_reason="stop",
+            )
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    stub.run = blocking_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = RecordingStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+    payload = {
+        "thread_id": "tool-safe-point-thread",
+        "run_id": "tool-safe-point-run",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Start"}],
+    }
+
+    async def collect_events() -> list[Any]:
+        return [event async for event in agent.run(payload)]
+
+    run_task = asyncio.create_task(collect_events())
+    await asyncio.wait_for(tool_result_saved.wait(), timeout=5)
+
+    safe_snapshot = await store.get(scope="tenant-a", thread_id="tool-safe-point-thread")
+    assert safe_snapshot is not None
+    assert "tool-output" in str(safe_snapshot.messages)
+    assert "done" not in str(safe_snapshot.messages)
+
+    release.set()
+    await asyncio.wait_for(run_task, timeout=5)
+
+    final_snapshot = await store.get(scope="tenant-a", thread_id="tool-safe-point-thread")
+    assert final_snapshot is not None
+    assert "tool-output" in str(final_snapshot.messages)
+    assert "done" in str(final_snapshot.messages)
+
+
+async def test_snapshot_is_saved_after_mcp_tool_result_without_finish_reason():
+    """An MCP tool-result batch is durable even when its update has no finish reason."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    release = asyncio.Event()
+    tool_result_saved = asyncio.Event()
+
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(self, **kwargs: Any) -> None:
+            await super().save(**kwargs)
+            snapshot = kwargs["snapshot"]
+            if "mcp-output" in str(snapshot.messages):
+                tool_result_saved.set()
+
+    stub = StubAgent()
+    original_run = stub.run
+
+    def blocking_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_call(
+                        call_id="mcp-1",
+                        tool_name="lookup",
+                        server_name="server",
+                        arguments={},
+                    )
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_mcp_server_tool_result(call_id="mcp-1", output="mcp-output")],
+                role="tool",
+            )
+            await release.wait()
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="done")],
+                role="assistant",
+                finish_reason="stop",
+            )
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    stub.run = blocking_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = RecordingStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+    payload = {
+        "thread_id": "mcp-safe-point-thread",
+        "run_id": "mcp-safe-point-run",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Start"}],
+    }
+
+    async def collect_events() -> list[Any]:
+        return [event async for event in agent.run(payload)]
+
+    run_task = asyncio.create_task(collect_events())
+    await asyncio.wait_for(tool_result_saved.wait(), timeout=5)
+
+    safe_snapshot = await store.get(scope="tenant-a", thread_id="mcp-safe-point-thread")
+    assert safe_snapshot is not None
+    assert "mcp-output" in str(safe_snapshot.messages)
+    assert "done" not in str(safe_snapshot.messages)
+
+    release.set()
+    await asyncio.wait_for(run_task, timeout=5)
+
+
+async def test_service_session_snapshot_waits_for_terminal_continuation_state():
+    """Service-session messages are not advanced before their provider continuation is final."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    continuation_set = asyncio.Event()
+    emit_next_update = asyncio.Event()
+    second_update_processed = asyncio.Event()
+    finish_run = asyncio.Event()
+
+    stub = StubAgent()
+    original_run = stub.run
+
+    def blocking_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+        session = kwargs["session"]
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="round-one")],
+                role="assistant",
+                finish_reason="stop",
+            )
+            session.service_session_id = "provider-continuation"
+            continuation_set.set()
+            await emit_next_update.wait()
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="-round-two")],
+                role="assistant",
+                finish_reason="stop",
+            )
+            second_update_processed.set()
+            await finish_run.wait()
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    stub.run = blocking_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        snapshot_store=store,
+    )
+    payload = {
+        "thread_id": "service-safe-point-thread",
+        "run_id": "service-safe-point-run",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Start"}],
+    }
+
+    async def collect_events() -> list[Any]:
+        return [event async for event in agent.run(payload)]
+
+    run_task = asyncio.create_task(collect_events())
+    await asyncio.wait_for(continuation_set.wait(), timeout=5)
+
+    assert await store.get(scope="tenant-a", thread_id="service-safe-point-thread") is None
+
+    emit_next_update.set()
+    await asyncio.wait_for(second_update_processed.wait(), timeout=5)
+
+    assert await store.get(scope="tenant-a", thread_id="service-safe-point-thread") is None
+
+    finish_run.set()
+    await asyncio.wait_for(run_task, timeout=5)
+
+    final_snapshot = await store.get(scope="tenant-a", thread_id="service-safe-point-thread")
+    assert final_snapshot is not None
+    assert "round-one-round-two" in str(final_snapshot.messages)
+    assert final_snapshot.session_state == {
+        "__ag_ui_provider_service_session_id": "provider-continuation",
+    }
+
+
+async def test_interrupt_snapshot_is_saved_after_approval_lifecycle_registration():
+    """An incremental interrupt snapshot never gets ahead of its server-side approval authority."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+
+    approval_saved = asyncio.Event()
+    saved_snapshots: list[Any] = []
+    state_store = InMemoryAGUIApprovalStateStore()
+    scoped_thread_id = approval_state_thread_id(scope="tenant-a", thread_id="approval-thread")
+
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(self, **kwargs: Any) -> None:
+            snapshot = kwargs["snapshot"]
+            saved_snapshots.append(snapshot)
+            for interrupt in snapshot.interrupt or []:
+                occurrence = state_store.lifecycle.occurrence_for_alias(
+                    thread_id=scoped_thread_id,
+                    interrupt_id=str(interrupt["id"]),
+                )
+                assert occurrence is not None
+                approval_saved.set()
+            await super().save(**kwargs)
+
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="write_doc",
+        arguments={"content": "draft"},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=function_call,
+    )
+    stub = StubAgent(
+        updates=[
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_text(text="unfinalized approval sibling"),
+                    Content.from_text_reasoning(id="approval-reasoning", text="unfinalized approval reasoning"),
+                    approval_request,
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    store = RecordingStore()
+    config = AgentConfig(snapshot_store=store)
+    payload = {
+        "thread_id": "approval-thread",
+        "run_id": "approval-run",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "__ag_ui_approval_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Write"}],
+    }
+
+    _ = [
+        event
+        async for event in run_agent_stream(
+            payload,
+            stub,
+            config,
+            approval_state_store=state_store,
+        )
+    ]
+
+    assert approval_saved.is_set()
+    snapshot = await store.get(scope="tenant-a", thread_id="approval-thread")
+    assert snapshot is not None
+    assert snapshot.interrupt is not None
+    assert snapshot.interrupt[0]["id"] == "approval-occurrence"
+    assert len(saved_snapshots) >= 2
+    intermediate_snapshot = saved_snapshots[0]
+    assert "unfinalized approval sibling" not in str(intermediate_snapshot.messages)
+    assert "unfinalized approval reasoning" not in str(intermediate_snapshot.messages)
+    assert "unfinalized approval sibling" in str(snapshot.messages)
+    assert "unfinalized approval reasoning" in str(snapshot.messages)
+
+
+async def test_plain_async_iterable_persists_waiting_approval_snapshot():
+    """A non-ResponseStream runner still persists its approval interrupt before finishing."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+
+    approval_saved = asyncio.Event()
+
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(self, **kwargs: Any) -> None:
+            await super().save(**kwargs)
+            if kwargs["snapshot"].interrupt:
+                approval_saved.set()
+
+    function_call = Content.from_function_call(
+        call_id="plain-call",
+        name="write_doc",
+        arguments={"content": "draft"},
+        id="plain-approval",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="plain-approval",
+        function_call=function_call,
+    )
+    stub = StubAgent()
+    original_run = stub.run
+
+    def plain_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[approval_request],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+
+        return updates()
+
+    stub.run = plain_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = RecordingStore()
+    config = AgentConfig(snapshot_store=store)
+    payload = {
+        "thread_id": "plain-approval-thread",
+        "run_id": "plain-approval-run",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Write"}],
+    }
+
+    _ = [event async for event in run_agent_stream(payload, stub, config)]
+
+    assert approval_saved.is_set()
+
+
+async def test_service_session_approval_snapshot_is_terminal_only():
+    """Approval interruption does not add an intermediate service-session snapshot write."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    class CountingStore(InMemoryAGUIThreadSnapshotStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.save_count = 0
+
+        async def save(self, **kwargs: Any) -> None:
+            self.save_count += 1
+            await super().save(**kwargs)
+
+    function_call = Content.from_function_call(
+        call_id="service-call",
+        name="write_doc",
+        arguments={"content": "draft"},
+        id="service-approval",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="service-approval",
+        function_call=function_call,
+    )
+    store = CountingStore()
+    agent = AgentFrameworkAgent(
+        agent=StubAgent(
+            updates=[
+                AgentResponseUpdate(
+                    contents=[approval_request],
+                    role="assistant",
+                    finish_reason="tool_calls",
+                )
+            ]
+        ),
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=store,
+    )
+
+    _ = [
+        event
+        async for event in agent.run(
+            {
+                "thread_id": "service-approval-thread",
+                "run_id": "service-approval-run",
+                "__ag_ui_snapshot_scope": "tenant-a",
+                "messages": [{"role": "user", "content": "Write"}],
+            }
+        )
+    ]
+
+    assert store.save_count == 1
+
+
 async def test_stateless_snapshot_excludes_only_provider_service_session_state():
     """Stateless runs restore unrelated private state but not provider-owned continuation."""
     from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
@@ -2727,3 +3749,319 @@ async def test_stateless_snapshot_excludes_only_provider_service_session_state()
         {"client_value": "available"},
         {"private": "preserved", "client_value": "available"},
     ]
+
+
+async def test_reserved_service_session_keys_protected_without_agent_declaration():
+    """Reserved provider keys stay server-owned even if the agent declares nothing.
+
+    ``service_session_state_keys`` is resolved from the agent object AG-UI is handed, so an agent that does not
+    declare it, such as a wrapper that forgets to forward the attribute or an older provider package, would
+    otherwise silently fall back to accepting a client-supplied value. Reserving the key in
+    ``_RESERVED_SERVICE_SESSION_STATE_KEYS`` is the backstop that keeps those combinations safe.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    assert not hasattr(stub, "service_session_state_keys")
+
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        observed_state.append(dict(kwargs["session"].state))
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    agent = AgentFrameworkAgent(agent=stub)
+    _ = [
+        event
+        async for event in agent.run(
+            {
+                "thread_id": "frontend-thread",
+                "run_id": "attacker-run",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "state": {
+                    "foundry_hosted_agent_session_id": "victim-sandbox",
+                    "client_value": "available",
+                },
+            }
+        )
+    ]
+
+    assert observed_state == [{"client_value": "available"}]
+
+
+def test_tool_approval_authority_is_recognized_by_shape_not_encoding() -> None:
+    """Any non-empty approval list is authority whatever its item encoding; inert shapes are not."""
+    authority_states: list[Any] = [
+        {"rules": [{"tool_name": "gated_tool"}]},
+        {"rules": [[["tool_name", "gated_tool"]]]},
+        {"rules": ["not-a-rule"]},
+        {"rules": [], "queued_approval_requests": [{}]},
+        {"queued_approval_requests": [{}]},
+        {"collected_approval_responses": [{}]},
+    ]
+    inert_states: list[Any] = [
+        None,
+        "text",
+        1,
+        [],
+        {},
+        {"rules": []},
+        {"rules": None},
+        {"rules": {"tool_name": "gated_tool"}},
+        {"rules": "gated_tool"},
+        {"unrelated": [1]},
+    ]
+
+    for authority in authority_states:
+        assert _carries_tool_approval_authority(authority), authority
+    for inert in inert_states:
+        assert not _carries_tool_approval_authority(inert), inert
+
+
+def test_tool_approval_state_keys_find_server_state_whatever_the_source_id() -> None:
+    """Server-held approval state, as a mapping or a ``ToolApprovalState`` object, is found under any ``source_id``."""
+    session_state = {
+        "custom_approvals": {"rules": []},
+        "queued_only": {"queued_approval_requests": []},
+        "state_object": ToolApprovalState(rules=[ToolApprovalRule(tool_name="gated_tool")]),
+        "empty_state_object": ToolApprovalState(),
+        "document": {"title": "synthetic"},
+        "text": "value",
+        "empty": {},
+    }
+
+    assert _tool_approval_state_keys(session_state) == {
+        "custom_approvals",
+        "queued_only",
+        "state_object",
+        "empty_state_object",
+    }
+
+
+def test_tool_approval_state_fields_match_tool_approval_state() -> None:
+    """The literal field names guarding client state track ``ToolApprovalState``, so a new field cannot slip by."""
+    assert set(_TOOL_APPROVAL_STATE_FIELDS) == set(ToolApprovalState().to_dict(exclude={"type"}))
+
+
+def test_standalone_fides_default_state_key_matches_core():
+    """AG-UI spells the default FIDES key literally, so it must stay identical to the key core's middleware uses."""
+    from agent_framework.security import (
+        _STANDALONE_SESSION_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY
+
+    assert _FIDES_SESSION_STATE_KEY == _STANDALONE_SESSION_STATE_KEY
+
+
+@pytest.mark.parametrize("location", ["agent", "bundle", "client", "client-tuple", "forwarding-wrapper"])
+def test_request_state_protected_keys_include_configured_standalone_fides_keys(location: str):
+    """Configured FIDES state keys stay server-owned wherever their middleware is visible before the run."""
+    from types import SimpleNamespace
+
+    from agent_framework import FunctionMiddleware, MiddlewareBundle
+    from agent_framework.security import LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class ForwardingMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    middleware = [
+        LabelTrackingFunctionMiddleware(session_state_key="label_state"),
+        PolicyEnforcementFunctionMiddleware(session_state_key="policy_state"),
+    ]
+    stub = StubAgent()
+    if location == "agent":
+        setattr(stub, "middleware", middleware)
+    elif location == "bundle":
+        setattr(stub, "middleware", [MiddlewareBundle(middleware)])
+    elif location == "client":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=middleware)
+    elif location == "client-tuple":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=tuple(middleware))
+    else:
+        setattr(stub, "middleware", [ForwardingMiddleware(item) for item in middleware])
+
+    assert {_FIDES_SESSION_STATE_KEY, "label_state", "policy_state"} <= _request_state_protected_keys(stub)
+
+
+def test_request_state_protected_keys_reserve_default_standalone_fides_key_without_discoverable_middleware():
+    """The default FIDES key stays server-owned for agents that expose no middleware or hide it behind a wrapper."""
+    from agent_framework import FunctionMiddleware
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class OpaqueMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+    wrapped = StubAgent()
+    setattr(wrapped, "middleware", [OpaqueMiddleware(LabelTrackingFunctionMiddleware())])
+
+    for agent in (StubAgent(), wrapped):
+        assert _FIDES_SESSION_STATE_KEY in _request_state_protected_keys(agent)
+
+
+def test_standalone_fides_state_is_not_a_provider_service_session_key():
+    """FIDES state is protected from request state but must keep persisting in private continuation.
+
+    Reserving it like a provider-owned key would also drop it from stateless Session Continuation State, silently
+    discarding the server's own context label.
+    """
+    from agent_framework import AgentSession
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import (
+        _FIDES_SESSION_STATE_KEY,
+        _provider_service_session_state_keys,
+        _serialize_session_continuation_state,
+    )
+
+    stub = StubAgent()
+    setattr(stub, "middleware", [LabelTrackingFunctionMiddleware(session_state_key="custom_state")])
+    expected = {_FIDES_SESSION_STATE_KEY: {"context_label": "default"}, "custom_state": {"context_label": "custom"}}
+    session = AgentSession()
+    session.state.update(expected)
+
+    assert not set(expected) & _provider_service_session_state_keys(stub)
+    assert (
+        _serialize_session_continuation_state(
+            session,
+            stub,
+            shared_state_keys=set(),
+            include_service_session_id=False,
+        )
+        == expected
+    )
+
+
+async def test_request_state_cannot_assign_service_session_id():
+    """Chat history held by the provider is addressed by ``service_session_id``, never by client state.
+
+    ``AgentSession`` keeps ``service_session_id`` as its own attribute rather than a ``state`` entry, and only
+    trusted snapshot storage or a provider response may set it. This test locks in that boundary so a future
+    refactor cannot start sourcing conversation continuation from request Shared State.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    for use_service_session in (False, True):
+        stub = StubAgent()
+        observed: list[Any] = []
+        original_run = stub.run
+
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            observed.append(kwargs["session"].service_session_id)
+            return original_run(*args, **kwargs)
+
+        stub.run = capture  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            use_service_session=use_service_session,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        )
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "attacker-run",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "state": {"__ag_ui_provider_service_session_id": "victim-conversation"},
+                }
+            )
+        ]
+
+        assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"
+
+
+def test_emit_text_keeps_repeated_annotated_single_chunk_delta() -> None:
+    """A genuine repeated token with NEW annotations is kept (#9336 review round).
+
+    An equal delta after one chunk is only a replay when its annotations re-send the
+    recorded ones. A second identical token carrying a fresh citation streams normally.
+    """
+    flow = FlowState()
+    first = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/a")]), flow
+    )
+    second = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/b")]), flow
+    )
+
+    assert flow.accumulated_text == "haha"
+    text_events = [event for event in [*first, *second] if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["ha", "ha"]
+    citation_events = [event for event in [*first, *second] if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 2
+
+
+def test_emit_text_suppresses_cumulative_annotated_replay_after_one_chunk() -> None:
+    """A one-chunk cumulative duplicate keeps its text and emits only the new citation.
+
+    Suppression of an equal duplicate needs more than one prior chunk; with one chunk
+    the policy matches the unannotated path and the text streams as a genuine delta.
+    """
+    flow = FlowState()
+    first_citation = Annotation(type="citation", url="https://example.com/first")
+    _emit_text(Content.from_text("Answer", annotations=[first_citation]), flow)
+
+    replay = _emit_text(
+        Content.from_text(
+            "Answer",
+            annotations=[
+                first_citation,
+                Annotation(type="citation", url="https://example.com/second"),
+            ],
+        ),
+        flow,
+    )
+
+    assert flow.accumulated_text == "AnswerAnswer"
+    text_events = [event for event in replay if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["Answer"]
+    citation_events = [event for event in replay if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 1
+    assert [a["url"] for a in citation_events[0].value["annotations"]] == [
+        "https://example.com/first",
+        "https://example.com/second",
+    ]
+
+    # A later multi-chunk message still suppresses full-text replays.
+    multi_flow = FlowState()
+    _emit_text(Content.from_text("Pre "), multi_flow)
+    _emit_text(Content.from_text("fix"), multi_flow)
+    replay_events = _emit_text(Content.from_text("Pre fix"), multi_flow)
+    assert replay_events == []
+    assert multi_flow.accumulated_text == "Pre fix"
+
+    # The exact case from the review: two genuine identical annotated tokens.
+    same_flow = FlowState()
+    same = Annotation(type="citation", url="https://example.com/same")
+    _emit_text(Content.from_text("ha", annotations=[same]), same_flow)
+    repeat = _emit_text(Content.from_text("ha", annotations=[same]), same_flow)
+    assert same_flow.accumulated_text == "haha"
+    text_events = [event for event in repeat if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["ha"]
+    repeat_citations = [event for event in repeat if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in repeat_citations] == [[same]]

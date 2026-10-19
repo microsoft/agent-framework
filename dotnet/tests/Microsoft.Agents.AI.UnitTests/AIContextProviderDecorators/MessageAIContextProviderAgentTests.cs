@@ -282,6 +282,40 @@ public class MessageAIContextProviderAgentTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_WhenConsumerStopsEarly_DisposesInnerEnumeratorAsync()
+    {
+        // Arrange
+        bool disposed = false;
+
+        async IAsyncEnumerable<AgentResponseUpdate> StreamAsync()
+        {
+            try
+            {
+                yield return new AgentResponseUpdate(ChatRole.Assistant, "Part1");
+                yield return new AgentResponseUpdate(ChatRole.Assistant, "Part2");
+            }
+            finally
+            {
+                disposed = true;
+            }
+        }
+
+        var provider = new TestProvider();
+        var innerAgent = CreateTestAgent(
+            runStreamingFunc: (_, _, _, _) => StreamAsync());
+        var agent = new MessageAIContextProviderAgent(innerAgent, [provider]);
+
+        // Act
+        await foreach (var _ in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")], s_mockSession))
+        {
+            break;
+        }
+
+        // Assert
+        Assert.True(disposed);
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_OnFailure_InvokedAsyncCalledWithExceptionAsync()
     {
         // Arrange

@@ -263,7 +263,11 @@ public static class FoundryHostingExtensions
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
-    /// <param name="configureOptions">Callback to further configure <see cref="FoundryToolboxOptions"/> (e.g. set <see cref="FoundryToolboxOptions.StrictMode"/>).</param>
+    /// <param name="configureOptions">
+    /// Callback to configure <see cref="FoundryToolboxOptions"/>, such as
+    /// <see cref="FoundryToolboxOptions.StrictMode"/> or
+    /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// </param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(
@@ -685,7 +689,7 @@ public static class FoundryHostingExtensions
     /// <summary>
     /// Registers the hosted-agent <c>User-Agent</c> supplement policy
     /// (<see cref="HostedAgentUserAgentPolicy"/>) on the agent's underlying chat client via the
-    /// MEAI 10.5.1 <see cref="OpenAIRequestPolicies"/> hook so every outgoing OpenAI Responses
+    /// MEAI 10.9.0 <see cref="OpenAIRequestPolicies"/> hook so every outgoing OpenAI Responses
     /// request carries the segment <c>foundry-hosting/agent-framework-dotnet/{version}</c>.
     /// </summary>
     /// <remarks>

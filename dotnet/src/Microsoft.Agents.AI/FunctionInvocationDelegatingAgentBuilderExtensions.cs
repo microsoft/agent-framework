@@ -30,8 +30,34 @@ public static class FunctionInvocationDelegatingAgentBuilderExtensions
     /// unless it intends to completely replace the function's behavior.
     /// </para>
     /// <para>
+    /// A callback can redirect the invocation by assigning a different <see cref="AIFunction"/> to
+    /// <see cref="FunctionInvocationContext.Function"/> before calling the continuation. The continuation then invokes
+    /// that function instead of the one that was requested, and restores the previous value before it returns, so a
+    /// callback that calls its continuation more than once goes through the same callbacks each time. The replacement
+    /// is invoked directly, so callbacks registered after the one performing the replacement do not observe that
+    /// invocation; use <see cref="FunctionInvocationContextExtensions.WrapWithPendingMiddleware"/> before calling the
+    /// continuation to have them run for the replacement as well. A replacement does not change how the function call
+    /// was resolved before the callbacks ran, so tool approval and telemetry still reflect the originally requested
+    /// function.
+    /// </para>
+    /// <para>
+    /// The callbacks also apply to functions added to or replaced in the current <see cref="ChatOptions.Tools"/>
+    /// collection during execution. Replacing the collection within a function or callback preserves the
+    /// callbacks for subsequent invocations, including when the function-calling client clones the options
+    /// between iterations. A per-request chat-client factory can replace the client without removing the callbacks.
+    /// </para>
+    /// <para>
     /// The inner agent or the pipeline wrapping it must include a <see cref="FunctionInvokingChatClient"/>. If one does not exist,
     /// the <see cref="AIAgent"/> added to the pipline by this method will throw an exception when it is invoked.
+    /// </para>
+    /// <para>
+    /// <b>Important:</b> these callbacks apply to tools registered on the agent, including tools passed to a
+    /// <see cref="ChatClientAgent"/> constructor or <c>AsAIAgent</c>, tools configured through
+    /// <see cref="ChatClientAgentOptions.ChatOptions"/>, and tools supplied for an individual run. These tools are
+    /// provided to the function-calling client through <see cref="ChatOptions.Tools"/>. Functions placed directly on
+    /// <see cref="FunctionInvokingChatClient.AdditionalTools"/> are invoked without going through this callback
+    /// pipeline. Do not rely on these callbacks to enforce checks, such as authorization or any other checks, for
+    /// functions that are registered via <see cref="FunctionInvokingChatClient.AdditionalTools"/>.
     /// </para>
     /// </remarks>
     public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> callback)

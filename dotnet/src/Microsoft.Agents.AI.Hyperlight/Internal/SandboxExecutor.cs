@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
-using System.Text;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,18 +21,12 @@ namespace Microsoft.Agents.AI.Hyperlight.Internal;
 /// </summary>
 internal sealed class SandboxExecutor : IDisposable
 {
-    private readonly HyperlightCodeActProviderOptions _options;
     private readonly SemaphoreSlim _executionLock = new(1, 1);
 
     private Sandbox? _sandbox;
     private SandboxSnapshot? _warmSnapshot;
     private string? _lastConfigFingerprint;
     private bool _disposed;
-
-    public SandboxExecutor(HyperlightCodeActProviderOptions options)
-    {
-        this._options = options;
-    }
 
     /// <summary>
     /// Immutable snapshot of provider state at the start of a run.
@@ -45,20 +39,30 @@ internal sealed class SandboxExecutor : IDisposable
             IReadOnlyList<AIFunction> tools,
             IReadOnlyList<FileMount> fileMounts,
             IReadOnlyList<AllowedDomain> allowedDomains,
-            string? hostInputDirectory,
+            HyperlightCodeActProviderOptions options,
             Guid toolRegistryVersion = default)
         {
-            this.Tools = tools;
-            this.FileMounts = fileMounts;
-            this.AllowedDomains = allowedDomains;
-            this.HostInputDirectory = hostInputDirectory;
+            this.Tools = tools.ToList();
+            this.FileMounts = fileMounts.ToList();
+            this.AllowedDomains = allowedDomains
+                .Select(domain => new AllowedDomain(domain.Target, domain.Methods?.ToArray()))
+                .ToList();
+            this.Backend = options.Backend;
+            this.ModulePath = options.ModulePath;
+            this.HeapSize = options.HeapSize;
+            this.StackSize = options.StackSize;
+            this.HostInputDirectory = options.HostInputDirectory;
             this.ToolRegistryVersion = toolRegistryVersion;
             this.ConfigFingerprint = ComputeFingerprint(
-                tools,
-                fileMounts,
-                allowedDomains,
-                hostInputDirectory,
-                toolRegistryVersion);
+                this.Tools,
+                this.FileMounts,
+                this.AllowedDomains,
+                this.HostInputDirectory,
+                toolRegistryVersion,
+                this.Backend,
+                this.ModulePath,
+                this.HeapSize,
+                this.StackSize);
         }
 
         public IReadOnlyList<AIFunction> Tools { get; }
@@ -66,6 +70,14 @@ internal sealed class SandboxExecutor : IDisposable
         public IReadOnlyList<FileMount> FileMounts { get; }
 
         public IReadOnlyList<AllowedDomain> AllowedDomains { get; }
+
+        public SandboxBackend Backend { get; }
+
+        public string? ModulePath { get; }
+
+        public string? HeapSize { get; }
+
+        public string? StackSize { get; }
 
         public string? HostInputDirectory { get; }
 
@@ -75,7 +87,7 @@ internal sealed class SandboxExecutor : IDisposable
         /// Stable fingerprint of the configuration that materially affects how
         /// the sandbox must be built. Used by <see cref="SandboxExecutor"/> to
         /// decide whether a previously-built sandbox can be reused or must be
-        /// rebuilt because tools / mounts / allow-list entries have changed.
+        /// rebuilt because its capabilities or runtime options have changed.
         /// </summary>
         public string ConfigFingerprint { get; }
 
@@ -84,35 +96,114 @@ internal sealed class SandboxExecutor : IDisposable
             IReadOnlyList<FileMount> fileMounts,
             IReadOnlyList<AllowedDomain> allowedDomains,
             string? hostInputDirectory,
-            Guid toolRegistryVersion = default)
+            Guid toolRegistryVersion = default,
+            SandboxBackend backend = SandboxBackend.JavaScript,
+            string? modulePath = null,
+            string? heapSize = null,
+            string? stackSize = null)
         {
-            var sb = new StringBuilder();
-            sb.Append("tools=");
-            foreach (var name in tools.Select(t => t.Name).OrderBy(n => n, StringComparer.Ordinal))
+            var buffer = new ArrayBufferWriter<byte>();
+            using (var writer = new Utf8JsonWriter(buffer))
             {
-                sb.Append(name).Append('|');
+                writer.WriteStartObject();
+                writer.WriteNumber("backend", (int)backend);
+                writer.WriteString("modulePath", modulePath);
+                writer.WriteString("heapSize", heapSize);
+                writer.WriteString("stackSize", stackSize);
+                writer.WriteString("hostInputDirectory", hostInputDirectory);
+                writer.WriteString("toolRegistryVersion", toolRegistryVersion);
+
+                writer.WritePropertyName("tools");
+                writer.WriteStartArray();
+                foreach (var name in tools.Select(tool => tool.Name).OrderBy(name => name, StringComparer.Ordinal))
+                {
+                    writer.WriteStringValue(name);
+                }
+
+                writer.WriteEndArray();
+
+                writer.WritePropertyName("fileMounts");
+                writer.WriteStartArray();
+                foreach (var mount in fileMounts
+                    .OrderBy(mount => mount.MountPath, StringComparer.Ordinal)
+                    .ThenBy(mount => mount.HostPath, StringComparer.Ordinal))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("mountPath", mount.MountPath);
+                    writer.WriteString("hostPath", mount.HostPath);
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
+
+                var domains = allowedDomains
+                    .Select(domain => (
+                        domain.Target,
+                        Methods: domain.Methods?.OrderBy(method => method, StringComparer.Ordinal).ToArray()))
+                    .ToList();
+                domains.Sort(static (left, right) =>
+                {
+                    var targetComparison = StringComparer.Ordinal.Compare(left.Target, right.Target);
+                    return targetComparison != 0
+                        ? targetComparison
+                        : CompareStringArrays(left.Methods, right.Methods);
+                });
+
+                writer.WritePropertyName("allowedDomains");
+                writer.WriteStartArray();
+                foreach (var domain in domains)
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("target", domain.Target);
+                    writer.WritePropertyName("methods");
+                    if (domain.Methods is null)
+                    {
+                        writer.WriteNullValue();
+                    }
+                    else
+                    {
+                        writer.WriteStartArray();
+                        foreach (var method in domain.Methods)
+                        {
+                            writer.WriteStringValue(method);
+                        }
+
+                        writer.WriteEndArray();
+                    }
+
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
+                writer.WriteEndObject();
             }
 
-            sb.Append(";toolVersion=").Append(toolRegistryVersion.ToString("D", CultureInfo.InvariantCulture));
+            return Convert.ToHexString(SHA256.HashData(buffer.WrittenSpan));
+        }
 
-            sb.Append(";mounts=");
-            foreach (var m in fileMounts
-                .Select(m => m.MountPath + "->" + m.HostPath)
-                .OrderBy(s => s, StringComparer.Ordinal))
+        private static int CompareStringArrays(string[]? left, string[]? right)
+        {
+            if (left is null)
             {
-                sb.Append(m).Append('|');
+                return right is null ? 0 : -1;
             }
 
-            sb.Append(";allow=");
-            foreach (var d in allowedDomains
-                .Select(d => d.Target + "/" + (d.Methods is null ? "*" : string.Join(",", d.Methods)))
-                .OrderBy(s => s, StringComparer.Ordinal))
+            if (right is null)
             {
-                sb.Append(d).Append('|');
+                return 1;
             }
 
-            sb.Append(";input=").Append(hostInputDirectory ?? string.Empty);
-            return sb.ToString();
+            var sharedLength = Math.Min(left.Length, right.Length);
+            for (var index = 0; index < sharedLength; index++)
+            {
+                var comparison = StringComparer.Ordinal.Compare(left[index], right[index]);
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+            }
+
+            return left.Length.CompareTo(right.Length);
         }
     }
 
@@ -162,7 +253,7 @@ internal sealed class SandboxExecutor : IDisposable
         }
 
         // Configuration changed (or first run) — dispose the previous sandbox
-        // so the new one picks up the new tool/mount/allow-list set.
+        // so the new one picks up the current capabilities and runtime options.
         this._warmSnapshot?.Dispose();
         this._sandbox?.Dispose();
         this._warmSnapshot = null;
@@ -174,21 +265,21 @@ internal sealed class SandboxExecutor : IDisposable
     private void BuildAndWarmUp(RunSnapshot snapshot)
     {
         var builder = new SandboxBuilder()
-            .WithBackend(this._options.Backend);
+            .WithBackend(snapshot.Backend);
 
-        if (!string.IsNullOrEmpty(this._options.ModulePath))
+        if (!string.IsNullOrEmpty(snapshot.ModulePath))
         {
-            builder = builder.WithModulePath(this._options.ModulePath!);
+            builder = builder.WithModulePath(snapshot.ModulePath!);
         }
 
-        if (!string.IsNullOrEmpty(this._options.HeapSize))
+        if (!string.IsNullOrEmpty(snapshot.HeapSize))
         {
-            builder = builder.WithHeapSize(this._options.HeapSize!);
+            builder = builder.WithHeapSize(snapshot.HeapSize!);
         }
 
-        if (!string.IsNullOrEmpty(this._options.StackSize))
+        if (!string.IsNullOrEmpty(snapshot.StackSize))
         {
-            builder = builder.WithStackSize(this._options.StackSize!);
+            builder = builder.WithStackSize(snapshot.StackSize!);
         }
 
         var hostInput = snapshot.HostInputDirectory;
@@ -221,7 +312,7 @@ internal sealed class SandboxExecutor : IDisposable
         // Backend-specific no-op used to trigger lazy guest runtime initialization
         // before the warm snapshot is captured. Matches the values used by the
         // upstream HyperlightSandbox.Extensions.AI CodeExecutionTool reference.
-        _ = sandbox.Run(this._options.Backend == SandboxBackend.JavaScript ? "void 0;" : "None");
+        _ = sandbox.Run(snapshot.Backend == SandboxBackend.JavaScript ? "void 0;" : "None");
         this._warmSnapshot = sandbox.Snapshot();
         this._sandbox = sandbox;
         this._lastConfigFingerprint = snapshot.ConfigFingerprint;

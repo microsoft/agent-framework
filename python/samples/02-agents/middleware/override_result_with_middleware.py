@@ -2,7 +2,7 @@
 
 import asyncio
 import re
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from random import randint
 from typing import Annotated
 
@@ -16,7 +16,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
-    ResponseStream,
     tool,
 )
 from agent_framework.openai import OpenAIChatClient
@@ -36,11 +35,11 @@ after execution, supporting both regular and streaming agent responses. The exam
 - Replacing function outputs with custom messages or transformed data
 - Using middleware for result filtering, formatting, or enhancement
 - Detecting streaming vs non-streaming execution using context.stream
-- Overriding streaming results with custom async generators
+- Overriding streaming results with result transforms and buffered re-derivation
 
 The weather override middleware lets the original weather function execute normally,
 then replaces its result with a custom "perfect weather" message. For streaming responses,
-it creates a custom async generator that yields the override message in chunks.
+it buffers the existing ResponseStream and derives released updates from the replacement result.
 """
 
 
@@ -56,73 +55,65 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
+def _chat_response_to_updates(response: ChatResponse) -> Sequence[ChatResponseUpdate]:
+    """Convert a replacement chat response into buffered release updates."""
+    return [ChatResponseUpdate(contents=list(message.contents), role="assistant") for message in response.messages]
+
+
 async def weather_override_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
     """Chat middleware that overrides weather results for both streaming and non-streaming cases."""
+    chunks = [
+        "due to special atmospheric conditions, ",
+        "all locations are experiencing perfect weather today! ",
+        "Temperature is a comfortable 22°C with gentle breezes. ",
+        "Perfect day for outdoor activities!",
+    ]
 
-    # Let the original agent execution complete first
+    if context.stream:
+        replacement = ChatResponse(
+            messages=[
+                Message(role="assistant", contents=[f"Weather Advisory: [{i}] {chunk_text}"])
+                for i, chunk_text in enumerate(chunks)
+            ]
+        )
+        context.stream_result_transforms.append(lambda _: replacement)
+        context.stream_buffer_updates = True
+        context.stream_result_to_updates = _chat_response_to_updates
+        await call_next()
+        return
+
+    # Non-streaming middleware updates the concrete result after it exists.
     await call_next()
-
-    # Check if there's a result to override (agent called weather function)
     if context.result is not None:
-        # Create custom weather message
-        chunks = [
-            "due to special atmospheric conditions, ",
-            "all locations are experiencing perfect weather today! ",
-            "Temperature is a comfortable 22°C with gentle breezes. ",
-            "Perfect day for outdoor activities!",
-        ]
-
-        if context.stream and isinstance(context.result, ResponseStream):
-
-            async def _override_stream() -> AsyncIterable[ChatResponseUpdate]:
-                for i, chunk_text in enumerate(chunks):
-                    yield ChatResponseUpdate(
-                        contents=[Content.from_text(text=f"Weather Advisory: [{i}] {chunk_text}")],
-                        role="assistant",
-                    )
-
-            context.result = ResponseStream(_override_stream(), finalizer=ChatResponse.from_updates)
-        else:
-            # For non-streaming: just replace with a new message
-            current_text = context.result.text if isinstance(context.result, ChatResponse) else ""
-            custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
-            context.result = ChatResponse(messages=[Message(role="assistant", contents=[custom_message])])
+        current_text = context.result.text if isinstance(context.result, ChatResponse) else ""
+        custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
+        context.result = ChatResponse(messages=[Message(role="assistant", contents=[custom_message])])
 
 
 async def validate_weather_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
     """Chat middleware that simulates result validation for both streaming and non-streaming cases."""
-    await call_next()
-
     validation_note = "Validation: weather data verified."
 
-    if context.result is None:
+    if context.stream:
+
+        def _append_validation(response: ChatResponse) -> ChatResponse:
+            response.messages.append(Message(role="assistant", contents=[validation_note]))
+            return response
+
+        context.stream_result_transforms.append(_append_validation)
+        context.stream_buffer_updates = True
+        context.stream_result_to_updates = _chat_response_to_updates
+        await call_next()
         return
 
-    if context.stream and isinstance(context.result, ResponseStream):
-        result_stream = context.result
-
-        async def _validated_stream() -> AsyncIterable[ChatResponseUpdate]:
-            async for update in result_stream:
-                yield update
-            yield ChatResponseUpdate(
-                contents=[Content.from_text(text=validation_note)],
-                role="assistant",
-            )
-
-        context.result = ResponseStream(_validated_stream(), finalizer=ChatResponse.from_updates)
-    elif isinstance(context.result, ChatResponse):
+    await call_next()
+    if isinstance(context.result, ChatResponse):
         context.result.messages.append(Message(role="assistant", contents=[validation_note]))
 
 
 async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
     """Agent middleware that validates chat middleware effects and cleans the result."""
-    await call_next()
-
-    if context.result is None:
-        return
-
     validation_note = "Validation: weather data verified."
-
     state = {"found_prefix": False, "found_validation": False}
 
     def _sanitize(response: AgentResponse) -> AgentResponse:
@@ -170,34 +161,37 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[]
         response.messages = cleaned_messages
         return response
 
-    if context.stream and isinstance(context.result, ResponseStream):
+    def _clean_update(update: AgentResponseUpdate) -> AgentResponseUpdate:
+        cleaned_contents: list[Content] = []
 
-        def _clean_update(update: AgentResponseUpdate) -> AgentResponseUpdate:
-            cleaned_contents: list[Content] = []
-
-            for content in update.contents or []:
-                if not content.text:
-                    cleaned_contents.append(content)
-                    continue
-                text = content.text
-                if "Weather Advisory:" in text:
-                    state["found_prefix"] = True
-                    text = text.replace("Weather Advisory:", "")
-                if validation_note in text:
-                    state["found_validation"] = True
-                    text = text.replace(validation_note, "").strip()
-                    if not text:
-                        continue
-                text = re.sub(r"\[\d+\]\s*", "", text)
-                content.text = text
+        for content in update.contents or []:
+            if not content.text:
                 cleaned_contents.append(content)
+                continue
+            text = content.text
+            if "Weather Advisory:" in text:
+                state["found_prefix"] = True
+                text = text.replace("Weather Advisory:", "")
+            if validation_note in text:
+                state["found_validation"] = True
+                text = text.replace(validation_note, "").strip()
+                if not text:
+                    continue
+            text = re.sub(r"\[\d+\]\s*", "", text)
+            content.text = text
+            cleaned_contents.append(content)
 
-            update.contents = cleaned_contents
-            return update
+        update.contents = cleaned_contents
+        return update
 
-        context.result.with_transform_hook(_clean_update)
-        context.result.with_result_hook(_sanitize)
-    elif isinstance(context.result, AgentResponse):
+    if context.stream:
+        context.stream_update_transforms.append(_clean_update)
+        context.stream_result_transforms.append(_sanitize)
+        await call_next()
+        return
+
+    await call_next()
+    if isinstance(context.result, AgentResponse):
         context.result = _sanitize(context.result)
 
 

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import logging
 import threading
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, cast
@@ -26,10 +27,12 @@ from agent_framework import (
     MiddlewareFailure,
     MiddlewareTermination,
     MiddlewareType,
+    ResponseStream,
     SupportsChatGetResponse,
     agent_middleware,
     chat_middleware,
     function_middleware,
+    tool,
 )
 from agent_framework._sessions import InMemoryHistoryProvider
 
@@ -383,6 +386,115 @@ class TestChatAgentStreamingMiddleware:
 
         # Verify flags: [non-streaming, streaming]
         assert streaming_flags == [False, True]
+
+    async def test_result_gate_without_buffer_logs_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on an unbuffered streamed run logs a fail-open warning."""
+
+        class ResultGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                if context.stream:
+                    context.stream_result_gates_after.append(lambda result: None)
+                await call_next()
+
+        agent = Agent(client=client, middleware=[ResultGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in agent.run([Message(role="user", contents=["test message"])], stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
+    async def test_result_gate_with_buffer_logs_no_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on a buffered streamed run blocks as documented, so no warning."""
+
+        class BufferedResultGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                if context.stream:
+                    context.stream_buffer_updates = True
+                    context.stream_result_gates_after.append(lambda result: None)
+                await call_next()
+
+        agent = Agent(client=client, middleware=[BufferedResultGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            updates = [
+                update async for update in agent.run([Message(role="user", contents=["test message"])], stream=True)
+            ]
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
+        assert updates
+
+    async def test_result_gate_attached_directly_to_stream_logs_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A gate a middleware attaches straight to the final stream is detected too."""
+
+        class DirectGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                if isinstance(context.result, ResponseStream):
+                    context.result.with_result_gate(lambda result: None)
+
+        agent = Agent(client=client, middleware=[DirectGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in agent.run([Message(role="user", contents=["test message"])], stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
+    async def test_direct_stream_gate_with_direct_buffer_logs_no_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Buffering enabled directly on the stream satisfies the gates, so no warning."""
+
+        class DirectBufferedGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                if isinstance(context.result, ResponseStream):
+                    context.result.with_result_gate(lambda result: None)
+                    context.result.buffer_updates()
+
+        agent = Agent(client=client, middleware=[DirectBufferedGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            updates = [
+                update async for update in agent.run([Message(role="user", contents=["test message"])], stream=True)
+            ]
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
+        assert updates
+
+    async def test_no_result_gate_logs_no_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A plain streamed run without gates stays quiet."""
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in agent.run([Message(role="user", contents=["test message"])], stream=True):
+                pass
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
 
 
 class TestChatAgentMultipleMiddlewareOrdering:
@@ -1771,14 +1883,15 @@ class TestChatAgentSessionBehavior:
         second_after = thread_states[3]
         assert second_after["before_next"] is False
         assert second_after["messages_count"] == 1  # Input messages unchanged
-        assert second_after["thread_count"] == 3  # Previous history (2) + current input (1)
+        assert second_after["thread_count"] == 4  # Both runs persist their input and response.
         assert second_after["messages_text"] == ["second message"]
-        # Thread should contain: first input + first response + second input
-        assert "first message" in second_after["thread_messages_text"]
-        assert "second message" in second_after["thread_messages_text"]
-        # "test response" should only appear once since the duplicate was correctly filtered
-        response_count = sum(1 for text in second_after["thread_messages_text"] if "test response" in text)
-        assert response_count == 1
+        # Repeated response text remains attached to each run, in conversation order.
+        assert second_after["thread_messages_text"] == [
+            "first message",
+            "test response",
+            "second message",
+            "test response",
+        ]
 
 
 class TestChatAgentChatMiddleware:
@@ -3026,6 +3139,139 @@ class TestMiddlewareFailure:
         settlement = requests[-1]
         assert settlement["tool_choice"] == "none"
         assert [result.call_id for result in settlement["results"]] == ["call_1"]
+
+
+# endregion
+
+# region Run-level tools as observed by middleware
+
+
+async def test_agent_middleware_observes_and_controls_original_tool_objects() -> None:
+    """Agent middleware sees the caller's original tool objects, identity intact.
+
+    A guard that enforces policy by identity — for example rejecting one specific
+    privileged callable — must see exactly what the caller supplied. A one-shot
+    iterable container is materialized into a list before the pipeline (so observing
+    the tools does not consume the run's source), but its elements are never
+    converted, and an identity-based removal by the middleware governs what the run
+    executes.
+    """
+    invoked: list[str] = []
+
+    def delete_all_data(target: str) -> str:
+        """Privileged tool."""
+        invoked.append(target)
+        return f"deleted {target}"
+
+    observed: dict[str, Any] = {}
+
+    class IdentityGuard(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            observed["bare_identity"] = context.tools is delete_all_data
+            if isinstance(context.tools, list):
+                tools_list = cast("list[Any]", context.tools)
+                observed["element_identity"] = any(item is delete_all_data for item in tools_list)
+                # Identity-based enforcement: strip the privileged callable from the run.
+                context.tools = [item for item in tools_list if item is not delete_all_data]
+            await call_next()
+
+    # A bare callable passes through to the pipeline untouched.
+    agent = Agent(client=MockBaseChatClient(), middleware=[IdentityGuard()])
+    await agent.run("hi", tools=delete_all_data)
+    assert observed["bare_identity"] is True
+
+    # A one-shot iterable is materialized (outer container only): the middleware sees
+    # the original callable, removes it by identity, and even though the model then
+    # requests it, the privileged tool is never invoked.
+    client = MockBaseChatClient()
+    client.run_responses = [
+        ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_del", name="delete_all_data", arguments='{"target": "prod"}'
+                        )
+                    ],
+                )
+            ]
+        ),
+        ChatResponse(messages=[Message(role="assistant", contents=["done"])]),
+    ]
+    agent2 = Agent(client=client, middleware=[IdentityGuard()])
+    await agent2.run("hi", tools=(item for item in [delete_all_data]))
+    assert observed["element_identity"] is True
+    assert invoked == []
+
+
+async def test_named_tools_parameter_wins_over_options_tools_entry() -> None:
+    """When both run-level routes are supplied, the named parameter wins end to end.
+
+    Previously the losing ``options["tools"]`` entry survived in the remaining options
+    and rode ``**opts`` into the request, silently overriding the resolved tool list —
+    the run executed one set while the run-start view reported another.
+    """
+
+    @tool(approval_mode="never_require")
+    def kw_tool(x: str) -> str:
+        """Named-parameter tool."""
+        return x
+
+    @tool(approval_mode="never_require")
+    def opt_tool(x: str) -> str:
+        """Options-entry tool."""
+        return x
+
+    captured: dict[str, Any] = {}
+
+    class CaptureChatMiddleware(ChatMiddleware):
+        async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            captured["tools"] = list((context.options or {}).get("tools") or [])
+            await call_next()
+
+    agent = Agent(client=MockBaseChatClient(), middleware=[CaptureChatMiddleware()])
+    await agent.run("hi", tools=[kw_tool], options={"tools": [opt_tool]})
+
+    assert [getattr(item, "name", None) for item in captured["tools"]] == ["kw_tool"]
+
+
+async def test_losing_run_tool_route_is_never_iterated() -> None:
+    """Only the winning run-level route is materialized; the loser stays untouched.
+
+    A losing one-shot ``options["tools"]`` source must not be consumed (or allowed to
+    raise / trigger side effects) when the named parameter wins: the framework drops
+    the losing entry without iterating it, and its owner can still consume it after
+    the run.
+    """
+
+    @tool(approval_mode="never_require")
+    def winning_tool(x: str) -> str:
+        """Named-parameter tool."""
+        return x
+
+    @tool(approval_mode="never_require")
+    def losing_tool(x: str) -> str:
+        """Options-entry tool."""
+        return x
+
+    iterations: list[str] = []
+
+    def losing_source() -> Any:
+        iterations.append("iterated")
+        yield losing_tool
+
+    class Passthrough(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+    losing = losing_source()
+    agent = Agent(client=MockBaseChatClient(), middleware=[Passthrough()])
+    await agent.run("hi", tools=[winning_tool], options={"tools": losing})
+
+    assert iterations == []
+    # The source still belongs to its owner, un-drained.
+    assert list(losing) == [losing_tool]
 
 
 # endregion

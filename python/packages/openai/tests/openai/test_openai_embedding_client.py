@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import agent_framework._telemetry as telemetry
 import pytest
-from agent_framework import SupportsGetEmbeddings
+from agent_framework import SecretString, SupportsGetEmbeddings
 from agent_framework._telemetry import get_feature_token
 from agent_framework.exceptions import SettingNotFoundError
 from openai.types import CreateEmbeddingResponse
@@ -50,6 +50,17 @@ def test_openai_construction_with_explicit_params() -> None:
     )
     assert client.model == "text-embedding-3-small"
     assert isinstance(client, SupportsGetEmbeddings)
+
+
+def test_public_openai_embedding_client_accepts_secret_string() -> None:
+    client = OpenAIEmbeddingClient(
+        model="text-embedding-3-small",
+        api_key=SecretString("test-key"),
+    )
+
+    assert client.client is not None
+    assert type(client.client.api_key) is str
+    assert client.client.api_key == "test-key"
 
 
 def test_raw_openai_embedding_client_init_uses_explicit_parameters() -> None:

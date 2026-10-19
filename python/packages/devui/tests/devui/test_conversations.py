@@ -2,12 +2,13 @@
 
 """Tests for conversation store implementation."""
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
+from agent_framework import WorkflowCheckpoint
 from openai.types.conversations import InputTextContent
 from openai.types.conversations.message import Message as OpenAIMessage
-from openai.types.responses import ResponseInputFile, ResponseInputImage
+from openai.types.responses import ResponseInputFile, ResponseInputImage, ResponseOutputRefusal
 
 from agent_framework_devui._conversations import InMemoryConversationStore
 
@@ -158,6 +159,54 @@ async def test_add_items():
 
 
 @pytest.mark.asyncio
+async def test_add_and_list_items_preserves_marked_refusal_text():
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+
+    added = await store.add_items(
+        conversation.id,
+        items=[{"role": "assistant", "content": [{"type": "refusal", "refusal": "I cannot help."}]}],
+    )
+    retrieved, _ = await store.list_items(conversation.id)
+
+    added_message = cast(OpenAIMessage, added[0])
+    assert added_message.content is not None
+    added_refusal = cast(ResponseOutputRefusal, added_message.content[0])
+    retrieved_message = cast(OpenAIMessage, retrieved[0])
+    assert retrieved_message.content is not None
+    retrieved_refusal = cast(ResponseOutputRefusal, retrieved_message.content[0])
+    assert added_refusal.refusal == "I cannot help."
+    assert retrieved_refusal.refusal == "I cannot help."
+
+
+@pytest.mark.asyncio
+async def test_add_and_list_items_preserves_mixed_text_and_refusal_order():
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+
+    added = await store.add_items(
+        conversation.id,
+        items=[
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Partial answer.", "annotations": []},
+                    {"type": "refusal", "refusal": "I cannot continue."},
+                ],
+            }
+        ],
+    )
+    retrieved, _ = await store.list_items(conversation.id)
+
+    for item in [added[0], retrieved[0]]:
+        message = cast(OpenAIMessage, item)
+        assert message.content is not None
+        assert [content.type for content in message.content] == ["text", "refusal"]
+        assert cast(InputTextContent, message.content[0]).text == "Partial answer."
+        assert cast(ResponseOutputRefusal, message.content[1]).refusal == "I cannot continue."
+
+
+@pytest.mark.asyncio
 async def test_add_items_accepts_assistant_output_text():
     """Assistant Responses history is accepted by the conversation parser."""
     store = InMemoryConversationStore()
@@ -250,9 +299,20 @@ async def test_add_and_list_items_preserves_all_supported_message_parts():
 
     stored_messages = store._conversations[conversation.id]["messages"]
     assert stored_messages[1].contents[0].media_type == "image/jpeg"
+    assert stored_messages[1].contents[0].additional_properties["openai"] == {
+        "content_type": "input_image",
+        "image_detail": "high",
+    }
+    assert stored_messages[1].contents[1].additional_properties["openai"] == {
+        "content_type": "input_image",
+        "image_detail": "low",
+    }
     assert stored_messages[1].contents[2].media_type == "application/pdf"
+    assert stored_messages[1].contents[2].additional_properties["openai"]["content_type"] == "input_file"
     assert stored_messages[1].contents[3].media_type == "audio/mpeg"
+    assert stored_messages[1].contents[3].additional_properties["openai"]["content_type"] == "input_file"
     assert stored_messages[1].contents[4].media_type == "image/jpeg"
+    assert stored_messages[1].contents[4].additional_properties["openai"]["content_type"] == "input_file"
 
     assert has_more is False
     listed_system, listed_user = listed_items
@@ -319,6 +379,40 @@ async def test_list_items_pagination():
 
     assert len(retrieved_items) == 3
     assert has_more is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", ["asc", "desc"])
+async def test_list_items_pagination_with_checkpoint_items(order: str):
+    """Paging with `after` must not fail when checkpoint items (plain dicts) are listed."""
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation()
+    await store.add_items(
+        conversation.id,
+        items=[{"role": "user", "content": "first"}, {"role": "assistant", "content": "second"}],
+    )
+    storage = store._conversations[conversation.id]["checkpoint_storage"]
+    for _ in range(2):
+        await storage.save(WorkflowCheckpoint(workflow_name="workflow", graph_signature_hash="hash"))
+
+    def item_id(item: object) -> str:
+        # Checkpoint items are plain dicts at runtime; the rest are models.
+        if isinstance(item, dict):
+            return cast(str, item["id"])
+        return cast(Any, item).id
+
+    all_items, _ = await store.list_items(conversation.id, order=order)
+    all_ids = [item_id(item) for item in all_items]
+
+    paged_ids: list[str] = []
+    after: str | None = None
+    has_more = True
+    while has_more:
+        page, has_more = await store.list_items(conversation.id, limit=1, after=after, order=order)
+        after = item_id(page[-1])
+        paged_ids.append(after)
+
+    assert paged_ids == all_ids
 
 
 @pytest.mark.asyncio

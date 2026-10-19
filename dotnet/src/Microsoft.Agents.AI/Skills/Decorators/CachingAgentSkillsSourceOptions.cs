@@ -19,6 +19,12 @@ public sealed class CachingAgentSkillsSourceOptions
     /// the skills are cached under that key.
     /// </para>
     /// <para>
+    /// The shared cache bucket is used across all invocations of the provider. If the inner source
+    /// returns skills that vary by session, user, tenant, or another security boundary, configure a
+    /// key that provides the required isolation or disable caching through
+    /// <see cref="AgentSkillsProviderBuilder.DisableCaching"/>.
+    /// </para>
+    /// <para>
     /// The isolation key should be low-cardinality and stable.
     /// High-cardinality keys (for example, per-session IDs) can cause the cache to grow without bound.
     /// </para>

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Net.Mail;
 using System.Text.RegularExpressions;
 using Microsoft.Agents.ObjectModel;
@@ -35,6 +36,7 @@ internal static partial class EntityExtractor
             DateTimePrebuiltEntity => TryParseDateTime(value),
             DurationPrebuiltEntity => TryParseDuration(value),
             EmailPrebuiltEntity => TryParseEmail(value),
+            EmbeddedEntity embeddedEntity => TryParseEmbedded(embeddedEntity, value),
             EventPrebuiltEntity => TryParseString(value),
             LanguagePrebuiltEntity => TryParseString(value),
             MoneyPrebuiltEntity => TryParseNumberUnit(value, "money"),
@@ -115,6 +117,33 @@ internal static partial class EntityExtractor
         {
             return new EntityExtractionResult($"Invalid email value: {value}");
         }
+    }
+
+    private static EntityExtractionResult TryParseEmbedded(EmbeddedEntity entity, string value) =>
+        entity.Definition switch
+        {
+            ClosedListEntity closedListEntity => TryParseClosedList(closedListEntity, value),
+            _ => new EntityExtractionResult($"Unsupported embedded entity: {entity.Definition?.GetType().Name ?? "undefined"}"),
+        };
+
+    private static EntityExtractionResult TryParseClosedList(ClosedListEntity entity, string value)
+    {
+        // Match on display name or synonym before item id; the selected item is captured by its id,
+        // the same as an option set value (see DataValueExtensions).
+        string input = value.Trim();
+        ClosedListItem? selectedItem =
+            entity.Items.FirstOrDefault(item => IsMatch(item.DisplayName, input) || item.Synonyms.Any(synonym => IsMatch(synonym, input))) ??
+            entity.Items.FirstOrDefault(item => IsMatch(item.Id.Value, input));
+
+        if (selectedItem is not null)
+        {
+            return new EntityExtractionResult(FormulaValue.New(selectedItem.Id.Value));
+        }
+
+        return new EntityExtractionResult($"Invalid choice value: {value}");
+
+        static bool IsMatch(string? candidate, string input) =>
+            input.Length > 0 && string.Equals(candidate?.Trim(), input, StringComparison.OrdinalIgnoreCase);
     }
 
     private static EntityExtractionResult TryParseNumberUnit(string value, string type)

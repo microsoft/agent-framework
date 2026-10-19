@@ -4,7 +4,7 @@ description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260821"
+version = "1.0.0b261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -20,13 +20,14 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
  dependencies = [
-     "agent-framework-core>=1.15.0,<2",
+     "agent-framework-core>=1.22.0,<2",
      "openai>=2.45.0,<4",
      "opentelemetry-sdk>=1.39.0,<2",
-     "fastapi>=0.115.0,<0.138.1",
+     "fastapi>=0.115.0,<0.142.0",
      "uvicorn[standard]>=0.30.0,<1"
  ]
 
@@ -34,7 +35,7 @@ classifiers = [
 dev = [
     "pytest==9.1.1",
     "watchdog==6.0.0",
-    "agent-framework-orchestrations==1.0.0rc1",
+    "agent-framework-orchestrations>=1.0,<2.0",
 ]
 all = [
     "pytest==9.1.1",
@@ -45,7 +46,7 @@ all = [
 devui = "agent_framework_devui:main"
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -109,5 +110,5 @@ help = "Run the default unit test suite for this package."
 cmd = 'pytest -m "not integration" --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests'
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

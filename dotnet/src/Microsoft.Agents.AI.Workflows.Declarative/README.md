@@ -13,6 +13,74 @@ we've provided a console application that is able to execute any declarative wor
 
 ## Actions
 
+### Control-flow input validation
+
+Control-flow expressions must evaluate to non-sensitive values. This applies to
+conditions, loop items, question prompting and retry settings, approval settings,
+automatic response sending, external-loop conditions, HTTP timeouts,
+conversation-message limits and sort order, and variable-scope selection.
+Invalid inputs raise a `DeclarativeActionException`; literal defaults and
+non-sensitive expressions retain their existing behavior.
+
+Custom executors should use `EvaluateValueAsync<TValue>` for control-flow
+expressions. `EvaluateValueWithSensitivityAsync<TValue>` is intended for
+operations that preserve the returned sensitivity metadata when storing values,
+not for discarding metadata and making decisions using only `Value`.
+
+Tool actions validate automatic-send settings before dispatch and retain the
+evaluated setting for the matching response, including approval and checkpoint
+resumption. Changes to workflow state while a request is pending do not change
+that invocation's automatic-send behavior.
+Replacement MCP approvals after restoration retain the same setting while
+refreshing headers and revalidating connection names.
+For JSON checkpoints, pass `DeclarativeWorkflowJsonOptions.Default` to
+`CheckpointManager.CreateJson`; its source-generated context includes the
+per-invocation automatic-send settings.
+Function approval denials complete without evaluating automatic-send settings.
+Older approved checkpoints without a captured setting still validate the current
+setting before invoking the function.
+
+### Expression result handling
+
+Blank expression results retain their input sensitivity metadata. Evaluation
+errors in sensitive expressions, including record fields and table rows, produce
+a blank result with the same metadata so data assignments can continue.
+Diagnostic warnings identify the referenced variable names, not their values.
+Non-sensitive expression errors retain their existing exception behavior.
+
+### Function tool approval
+
+`InvokeFunctionTool` requests approval when `requireApproval` evaluates to `true`
+or the matching function in `ResponseAgentProvider.Functions` exposes
+`ApprovalRequiredAIFunction`. Omitting `requireApproval` or setting it to `false`
+does not override the registered function's approval requirement. The workflow
+resumes the registered invocation only after a matching approval response.
+
+### MCP session lifetime
+
+`DefaultMcpToolHandler` caches MCP sessions by server URL, label, connection name,
+and explicit request headers when no custom HTTP client provider is configured.
+Dispose the handler when its owning scope ends.
+
+When `httpClientProvider` is configured, each invocation (including `tools/list`)
+calls the provider, opens a separate MCP session, and disposes that session before
+completing. This also applies when the provider returns the same `HttpClient` or
+returns `null` for the default transport. Caller-supplied HTTP clients remain
+caller-owned; handler-created fallback clients are disposed with the invocation.
+Handler disposal waits for active provider-backed invocations to finish cleanup.
+Disposal from within an active invocation (including a provider callback or its
+child tasks) throws `InvalidOperationException` without starting shutdown, rather
+than waiting on itself. Dispose the handler from its owning scope.
+Non-cancellation session and transport cleanup failures are reported through
+`System.Diagnostics.Trace` warnings and do not replace a tool result or its
+original error.
+
+Provider-backed calls therefore incur session setup per invocation and do not
+preserve server-side session state between calls. Applications requiring session
+continuity should implement `IMcpToolHandler` with an explicit authentication
+ownership and session lifetime contract, rather than sharing sessions based only
+on the server address.
+
 ### ⚙️ Foundry Actions
 
 |Action|Description|
@@ -32,6 +100,10 @@ we've provided a console application that is able to execute any declarative wor
 |**Question**|Presents a query or prompt requiring human input. Integrates human decision-making into automated processes.
 
 ### 🧩 State Management
+
+Variable names are case-sensitive, matching Power Fx record fields. Differently
+cased names retain independent values and metadata, including after checkpoint
+restoration.
 
 |Action|Description|
 |-|-|
@@ -56,5 +128,3 @@ we've provided a console application that is able to execute any declarative wor
 |**EndWorkflow**|Ends the current workflow or sub-workflow within a broader conversation flow. This helps modularize complex interactions.
 |**Foreach**|Iterates through a collection of items, executing a set of actions for each. Ideal for processing lists or batch operations.
 |**GotoAction**|Jumps directly to a specified action within the workflow. Enables non-linear navigation in the logic flow.
-
-

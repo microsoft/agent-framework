@@ -50,6 +50,8 @@ class ContentFilterCodes(Enum):
     """Content filter codes."""
 
     RESPONSIBLE_AI_POLICY_VIOLATION = "ResponsibleAIPolicyViolation"
+    CONTENT_FILTERED = "ContentFiltered"
+    UNKNOWN = "Unknown"
 
 
 @dataclass
@@ -81,9 +83,13 @@ class OpenAIContentFilterException(ChatClientContentFilterException):
         self.param = inner_exception.param
         if inner_exception.body is not None and isinstance(inner_exception.body, dict):
             inner_error = inner_exception.body.get("innererror", {})  # type: ignore
-            self.content_filter_code = ContentFilterCodes(
-                inner_error.get("code", ContentFilterCodes.RESPONSIBLE_AI_POLICY_VIOLATION.value)  # type: ignore
-            )
+            try:
+                self.content_filter_code = ContentFilterCodes(
+                    inner_error.get("code", ContentFilterCodes.RESPONSIBLE_AI_POLICY_VIOLATION.value)  # type: ignore
+                )
+            except ValueError:
+                # New provider codes must not mask the original content-filter error.
+                self.content_filter_code = ContentFilterCodes.UNKNOWN
             self.content_filter_result = {
                 key: ContentFilterResult.from_inner_error_result(values)  # type: ignore
                 for key, values in inner_error.get("content_filter_result", {}).items()  # type: ignore

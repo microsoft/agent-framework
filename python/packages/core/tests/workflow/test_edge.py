@@ -25,7 +25,7 @@ from agent_framework._workflows._edge import (
 )
 from agent_framework._workflows._edge_runner import create_edge_runner
 from agent_framework._workflows._state import State
-from agent_framework.observability import EdgeGroupDeliveryStatus
+from agent_framework.observability import EdgeGroupDeliveryStatus, OtelAttr
 
 
 @dataclass
@@ -388,6 +388,45 @@ async def test_single_edge_group_tracing_condition_failure(span_exporter: InMemo
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_single_edge_group_tracing_exception_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
+    """Edge processing spans should keep error metadata without exporting private exception details."""
+    private_error_detail = "founder-secret-token"
+    source = MockExecutor(id="source_executor")
+    target = MockExecutor(id="target_executor")
+
+    def failing_condition(_: MockMessage) -> bool:
+        raise RuntimeError(f"Condition failed: {private_error_detail}")
+
+    executors: dict[str, Executor] = {source.id: source, target.id: target}
+    edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id, condition=failing_condition)
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+    message = WorkflowMessage(data=MockMessage(data="fail"), source_id=source.id)
+
+    span_exporter.clear()
+    with pytest.raises(RuntimeError, match="Condition failed"):
+        await edge_runner.send_message(message, state, ctx)
+
+    spans = span_exporter.get_finished_spans()
+    edge_group_spans = [span for span in spans if span.name == "edge_group.process SingleEdgeGroup"]
+    assert len(edge_group_spans) == 1
+    span = edge_group_spans[0]
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert span.status.status_code.name == "ERROR"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
+
+
 async def test_single_edge_group_tracing_type_mismatch(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper spans for type mismatches."""
     source = MockExecutor(id="source_executor")
@@ -671,6 +710,61 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_s
 
     with pytest.raises(RuntimeError):
         await edge_runner.send_message(message, state, ctx)
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_duplicate_selection() -> None:
+    """Test that a target selected more than once receives the message once."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    # e.g. a message tagged both "billing" and "refund" when both tags route to target1
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=lambda data, target_ids: [target1.id, target1.id, target2.id],
+    )
+
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = WorkflowMessage(data=data, source_id=source.id)
+
+    success = await edge_runner.send_message(message, state, ctx)
+
+    assert success is True
+    assert target1.call_count == 1
+    assert target2.call_count == 1
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_duplicate_selection_keeps_order() -> None:
+    """Test that deduplicated targets are delivered in the order the selection function first names them."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=lambda data, target_ids: [target2.id, target1.id, target2.id],
+    )
+
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = WorkflowMessage(data=data, source_id=source.id)
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        success = await edge_runner.send_message(message, state, ctx)
+
+        assert success is True
+        assert [call.args[0] for call in mock_send.call_args_list] == [target2.id, target1.id]
 
 
 async def test_source_edge_group_with_selection_func_send_message_with_target() -> None:
@@ -1309,6 +1403,33 @@ def test_switch_case_edge_group() -> None:
     assert edge_group._selection_func(MockMessage(data=1), [target1.id, target2.id]) == [target2.id]  # type: ignore
 
 
+def test_switch_case_edge_group_cases_share_a_target() -> None:
+    """Test that cases routing to the same target create one edge per target."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 0, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 1, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target1.id),
+        ],
+    )
+
+    assert len(edge_group.cases) == 4
+    assert [edge.target_id for edge in edge_group.edges] == [target2.id, target1.id]
+    assert edge_group.target_executor_ids == [target2.id, target1.id]
+
+    targets = [target2.id, target1.id]
+    assert edge_group._selection_func(MockMessage(data=-1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=0), targets) == [target1.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=2), targets) == [target1.id]  # type: ignore
+
+
 def test_switch_case_edge_group_invalid_number_of_cases():
     """Test creating a switch case edge group with an invalid number of cases."""
     source = MockExecutor(id="source_executor")
@@ -1387,6 +1508,113 @@ async def test_switch_case_edge_group_send_message() -> None:
 
         assert success is True
         assert mock_send.call_count == 1
+
+
+def test_switch_case_edge_group_condition_error_propagates() -> None:
+    """A failing case condition surfaces instead of falling through to the default."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    def broken_condition(message: MockMessage) -> bool:
+        raise ValueError("condition is broken")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=broken_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+
+    assert edge_group._selection_func is not None  # type: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match="condition is broken"):
+        edge_group._selection_func(MockMessage(data=1), [target1.id, target2.id])  # type: ignore[reportPrivateUsage]
+
+
+async def test_switch_case_edge_group_send_message_condition_error_propagates() -> None:
+    """A failing case condition surfaces from send_message and delivers nothing."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    def broken_condition(message: MockMessage) -> bool:
+        raise ValueError("condition is broken")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=broken_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id)
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        with pytest.raises(ValueError, match="condition is broken"):
+            await edge_runner.send_message(message, State(), InProcRunnerContext())
+
+        assert mock_send.call_count == 0
+
+
+async def test_fan_out_edge_group_send_message_with_target_outside_group() -> None:
+    """A message addressed to an executor outside the group never reaches the selection function."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    def broken_condition(message: MockMessage) -> bool:
+        raise ValueError("condition is broken")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=broken_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    # RunnerImpl fans every message out to all of the source's edge runners, so a message
+    # addressed to an executor reached through a different edge still arrives here. It must be
+    # dropped as a target mismatch, not evaluated -- raising would cancel its real delivery.
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id, target_id="unrelated_executor")
+
+    success = await edge_runner.send_message(message, State(), InProcRunnerContext())
+
+    assert success is False
+
+
+async def test_fan_out_edge_group_send_message_with_unhandleable_data() -> None:
+    """A message no target can handle is dropped before the selection function runs."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    calls: list[Any] = []
+
+    def selection_func(message: Any, targets: list[str]) -> list[str]:
+        calls.append(message)
+        return targets
+
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=selection_func,
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    message = WorkflowMessage(data="invalid_data", source_id=source.id)
+
+    success = await edge_runner.send_message(message, State(), InProcRunnerContext())
+
+    assert success is False
+    assert calls == []
 
 
 async def test_switch_case_edge_group_send_message_with_invalid_target() -> None:

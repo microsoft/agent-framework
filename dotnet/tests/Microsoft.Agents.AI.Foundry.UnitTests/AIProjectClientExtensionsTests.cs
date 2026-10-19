@@ -684,15 +684,15 @@ public sealed class AIProjectClientExtensionsTests
 
         // Add tools to the definition
         definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolOptions([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionParameters("id"))));
-        definition.Tools.Add(ProjectsAgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchConfiguration("connection-id")])));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateMicrosoftFabricTool(fabricToolOptions));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateSharepointTool(sharepointOptions));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateStructuredOutputsTool(structuredOutputs));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateAzureAISearchTool(new AzureAISearchToolOptions([new AzureAISearchToolIndex() { IndexName = "name" }])));
+        definition.Tools.Add(new BingCustomSearchPreviewTool(new BingCustomSearchToolOptions([new BingCustomSearchOptions("connection-id", "instance-name")])));
+        definition.Tools.Add(new BrowserAutomationPreviewTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionOptions("id"))));
+        definition.Tools.Add(new A2APreviewTool { BaseUri = new Uri("https://test-uri.microsoft.com") });
+        definition.Tools.Add(new BingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchOptions("connection-id")])));
+        definition.Tools.Add(new MicrosoftFabricPreviewTool(fabricToolOptions));
+        definition.Tools.Add(new OpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenApiAnonymousAuthenticationDetails())));
+        definition.Tools.Add(new SharePointPreviewTool(sharepointOptions));
+        definition.Tools.Add(new CaptureStructuredOutputsTool(structuredOutputs));
+        definition.Tools.Add(new AzureAISearchTool(new AzureAISearchToolOptions([new AzureAISearchToolIndex() { IndexName = "name" }])));
 
         // Generate agent definition response with the tools
         var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());

@@ -147,6 +147,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         Assert.NotNull(result);
         serviceProviderMock.As<IKeyedServiceProvider>()
             .Verify(sp => sp.GetKeyedService(typeof(AgentSessionStore), "test-agent"), Times.Once);
+        sessionStoreMock.Verify(s => s.GetService(typeof(IsolationKeyScopedAgentSessionStore), null), Times.Once);
     }
 
     [Fact]

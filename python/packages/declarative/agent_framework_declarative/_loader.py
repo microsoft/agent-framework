@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -289,7 +290,7 @@ class AgentFactory:
         load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     def create_agent_from_yaml_path(self, yaml_path: str | Path) -> Agent:
-        """Create a Agent from a YAML file path.
+        """Create an Agent from a YAML file path.
 
         This method does the following things:
 
@@ -297,7 +298,7 @@ class AgentFactory:
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
-        5. Creates and returns a Agent instance with the configured properties.
+        5. Creates and returns an Agent instance with the configured properties.
 
         Args:
             yaml_path: Path to the YAML file representation of a PromptAgent.
@@ -338,12 +339,12 @@ class AgentFactory:
             yaml_path = Path(yaml_path)
         if not yaml_path.exists():
             raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}")
-        with open(yaml_path) as f:
+        with open(yaml_path, encoding="utf-8") as f:
             yaml_str = f.read()
         return self.create_agent_from_yaml(yaml_str)
 
     def create_agent_from_yaml(self, yaml_str: str) -> Agent:
-        """Create a Agent from a YAML string.
+        """Create an Agent from a YAML string.
 
         This method does the following things:
 
@@ -351,7 +352,7 @@ class AgentFactory:
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
-        5. Creates and returns a Agent instance with the configured properties.
+        5. Creates and returns an Agent instance with the configured properties.
 
         Args:
             yaml_str: YAML string representation of a PromptAgent.
@@ -416,7 +417,7 @@ class AgentFactory:
         return self.create_agent_from_dict(yaml.safe_load(yaml_str))
 
     def create_agent_from_dict(self, agent_def: dict[str, Any]) -> Agent:
-        """Create a Agent from a dictionary definition.
+        """Create an Agent from a dictionary definition.
 
         This method does the following things:
 
@@ -424,7 +425,7 @@ class AgentFactory:
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
-        5. Creates and returns a Agent instance with the configured properties.
+        5. Creates and returns an Agent instance with the configured properties.
 
         Args:
             agent_def: Dictionary representation of a PromptAgent.
@@ -484,7 +485,7 @@ class AgentFactory:
         return agent
 
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
-        """Async version: Create a Agent from a YAML file path.
+        """Async version: Create an Agent from a YAML file path.
 
         This is the async counterpart to ``create_agent_from_dict`` and is useful when
         the rest of your setup is already async.
@@ -508,13 +509,14 @@ class AgentFactory:
         """
         if not isinstance(yaml_path, Path):
             yaml_path = Path(yaml_path)
-        if not yaml_path.exists():
-            raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}")
-        yaml_str = yaml_path.read_text()
+        try:
+            yaml_str = await asyncio.to_thread(yaml_path.read_text, encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}") from exc
         return await self.create_agent_from_yaml_async(yaml_str)
 
     async def create_agent_from_yaml_async(self, yaml_str: str) -> Agent:
-        """Async version: Create a Agent from a YAML string.
+        """Async version: Create an Agent from a YAML string.
 
         Use this method when the surrounding call site is already async and you
         want to build an agent directly from YAML text.
@@ -545,7 +547,7 @@ class AgentFactory:
         return await self.create_agent_from_dict_async(yaml.safe_load(yaml_str))
 
     async def create_agent_from_dict_async(self, agent_def: dict[str, Any]) -> Agent:
-        """Async version: Create a Agent from a dictionary definition.
+        """Async version: Create an Agent from a dictionary definition.
 
         This is the async counterpart to ``create_agent_from_dict`` and is useful when
         the rest of your setup is already async.
@@ -738,10 +740,11 @@ class AgentFactory:
             chat_options["stop"] = options.stopSequences
         if options.allowMultipleToolCalls is not None:
             chat_options["allow_multiple_tool_calls"] = options.allowMultipleToolCalls
-        if (chat_tool_mode := options.additionalProperties.pop("chatToolMode", None)) is not None:
+        additional_properties = options.additionalProperties.copy()
+        if (chat_tool_mode := additional_properties.pop("chatToolMode", None)) is not None:
             chat_options["tool_choice"] = chat_tool_mode
-        if options.additionalProperties:
-            chat_options["additional_chat_options"] = options.additionalProperties
+        if additional_properties:
+            chat_options["additional_chat_options"] = additional_properties
         return chat_options
 
     def _parse_tools(self, tools: list[Tool] | None) -> list[AFFunctionTool | dict[str, Any]] | None:

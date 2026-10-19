@@ -46,41 +46,66 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import gzip
+import hashlib
 import inspect
 import io
 import json
 import logging
 import os
 import re
-import tarfile
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
+from functools import lru_cache, partial
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
+from types import UnionType
+from typing import (
+    IO,
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    Protocol,
+    TypeAlias,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+    runtime_checkable,
+)
+from urllib.parse import unquote
+
+import yaml
+from typing_extensions import Sentinel
+from yaml.nodes import MappingNode, Node, ScalarNode
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._filesystem import is_link_or_reparse_point
+from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
+from ._mcp import _as_mcp_connection, _MCPConnection  # pyright: ignore[reportPrivateUsage]
+from ._middleware import FunctionInvocationContext
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
 
 if TYPE_CHECKING:
-    from mcp.client.session import ClientSession
+    from mcp import Client, ClientSession
     from mcp.types import ReadResourceResult
-    from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
     from ._sessions import AgentSession, SessionContext
     from ._types import Content
 
 logger = logging.getLogger(__name__)
+
+# Distinguish an omitted keyword from an explicit application ``context=None``.
+_UNSET_CONTEXT: Any = Sentinel("_UNSET_CONTEXT")
 
 # region Models
 
@@ -230,6 +255,45 @@ class InlineSkillResource(SkillResource):
         return result
 
 
+@dataclass(frozen=True)
+class _SkillPathScope:
+    """The path trust boundary of a discovered file-backed skill.
+
+    Pairs the host-configured discovery root with the skill directory found at or
+    beneath it. The root is retained so that a file can be revalidated immediately
+    before use against every directory from the root down to the file, rather than
+    only the segments below the skill directory. Without the root, a skill directory
+    (or a directory between it and the root) that was swapped for a link after
+    discovery would never be inspected.
+
+    The configured root itself is never inspected: the host chose it explicitly, so it
+    defines the trust boundary rather than sitting inside it, and it is allowed to be a link.
+
+    Containment is enforced here rather than at use time so that a mismatched pair fails
+    at construction, and so that every later check can rely on the invariant.
+
+    Attributes:
+        trusted_root: Absolute path of the host-configured discovery root.
+        skill_dir: Absolute path of the skill directory, at or beneath ``trusted_root``.
+
+    Raises:
+        ValueError: If ``skill_dir`` does not reside at or beneath ``trusted_root``.
+    """
+
+    trusted_root: str
+    skill_dir: str
+
+    def __post_init__(self) -> None:
+        within_root = FileSkillsSource._is_path_within_directory(  # pyright: ignore[reportPrivateUsage]
+            os.path.normpath(self.skill_dir),
+            os.path.normpath(self.trusted_root),
+        )
+        if not within_root:
+            raise ValueError(
+                f"skill_dir '{self.skill_dir}' must reside at or beneath trusted_root '{self.trusted_root}'."
+            )
+
+
 class _FileSkillResource(SkillResource):
     """A file-path-backed skill resource that reads content from disk.
 
@@ -248,6 +312,7 @@ class _FileSkillResource(SkillResource):
         name: str,
         full_path: str,
         description: str | None = None,
+        scope: _SkillPathScope | None = None,
     ) -> None:
         """Initialize a _FileSkillResource.
 
@@ -255,6 +320,7 @@ class _FileSkillResource(SkillResource):
             name: Relative path of the resource within the skill directory.
             full_path: Absolute path to the resource file.
             description: Optional human-readable summary.
+            scope: Trusted path scope used to revalidate discovered resources before reading.
 
         Raises:
             ValueError: If ``full_path`` is empty.
@@ -265,6 +331,7 @@ class _FileSkillResource(SkillResource):
             raise ValueError("full_path cannot be empty.")
 
         self.full_path = full_path
+        self._scope = scope
 
     async def read(self, **kwargs: Any) -> Any:
         """Read the resource content from disk.
@@ -278,11 +345,22 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
-        if not await asyncio.to_thread(Path(self.full_path).is_file):
+        return await asyncio.to_thread(self._read_validated_resource)
+
+    def _read_validated_resource(self) -> str:
+        validated_path = self.full_path
+        if self._scope is not None:
+            validated_path = FileSkillsSource._validate_file_path_for_use(  # pyright: ignore[reportPrivateUsage]
+                self._scope,
+                self.full_path,
+                self.name,
+                "Resource",
+            )
+        elif not Path(self.full_path).is_file():
             raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
 
         logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
-        return await asyncio.to_thread(Path(self.full_path).read_text, encoding="utf-8")
+        return Path(validated_path).read_text(encoding="utf-8")
 
 
 class SkillScript(ABC):
@@ -324,6 +402,13 @@ class SkillScript(ABC):
     async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run this script.
 
+        Implementations can receive the enclosing ``run_skill_script`` invocation
+        by declaring a keyword-bindable ``FunctionInvocationContext`` parameter
+        after ``skill`` and ``args``. Without that annotation, host runtime
+        values are passed as individual keyword arguments. The invocation's
+        ``kwargs`` contain host values; its ``arguments`` contain the outer
+        tool-call arguments, not just the script arguments.
+
         Args:
             skill: The skill that owns this script.
             args: Optional arguments for the script, provided by the
@@ -338,11 +423,84 @@ class SkillScript(ABC):
         """
 
 
+def _find_context_parameter(
+    function: Callable[..., Any], signature: inspect.Signature, *, script_name: str
+) -> str | None:
+    """Return the name of the callable's ``FunctionInvocationContext`` parameter, if any.
+
+    Raises:
+        ValueError: If multiple context parameters are declared, or the context
+            parameter cannot be passed by keyword.
+    """
+    try:
+        type_hints = get_type_hints(function, include_extras=True)
+    except (AttributeError, NameError, TypeError):
+        logger.debug("Could not resolve annotations for script '%s'; using signature annotations.", script_name)
+        type_hints = {}
+
+    context_params: list[inspect.Parameter] = []
+    for param in signature.parameters.values():
+        annotation = type_hints.get(param.name, param.annotation)
+
+        # Only unwrap unions such as ``FunctionInvocationContext | None``, not containers like ``list[...]``.
+        candidates = get_args(annotation) if get_origin(annotation) in (Union, UnionType) else (annotation,)
+
+        # Recognize context types and simple forward references.
+        if any(
+            candidate is FunctionInvocationContext or candidate == "FunctionInvocationContext"
+            for candidate in candidates
+        ):
+            context_params.append(param)
+
+    # Callbacks without a context parameter keep their existing behavior.
+    if not context_params:
+        return None
+
+    # Only one parameter can receive the invocation context.
+    if len(context_params) > 1:
+        raise ValueError(f"Script '{script_name}' defines multiple FunctionInvocationContext parameters.")
+
+    param = context_params[0]
+
+    # Context injection binds by keyword, not by position.
+    if param.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+        raise ValueError(f"Context parameter '{param.name}' on script '{script_name}' must accept a keyword.")
+
+    return param.name
+
+
+def _find_run_context_parameter(script_type: type[SkillScript]) -> str | None:
+    """Find an opted-in context parameter on a script's ``run`` method."""
+    try:
+        signature = inspect.signature(script_type.run)
+    except (TypeError, ValueError):
+        logger.debug("Could not inspect run for script '%s'; calling without context.", script_type.__name__)
+        return None
+
+    context_name = _find_context_parameter(script_type.run, signature, script_name=script_type.__name__)
+    if context_name is not None:
+        # Reject context parameters that replace skill or args.
+        try:
+            signature.bind(None, None, None, **{context_name: None})
+        except TypeError as exc:
+            raise ValueError(
+                f"Context parameter '{context_name}' on script '{script_type.__name__}' "
+                f"must support run(skill, args, {context_name}=...) without replacing skill or args."
+            ) from exc
+    return context_name
+
+
 class InlineSkillScript(SkillScript):
     """A code-defined skill script backed by a callable.
 
     The callable is invoked directly in-process when the script is run.
     Parameters schema is lazily generated from the callable's signature.
+
+    Declare a ``FunctionInvocationContext`` parameter on the callable to receive
+    the enclosing tool invocation from :class:`SkillsProvider`. That parameter is
+    hidden from the schema, and runtime values are available only through
+    ``ctx.kwargs``; ordinary parameters and ``**kwargs`` receive only model
+    arguments.
 
     Attributes:
         name: Script identifier.
@@ -350,9 +508,19 @@ class InlineSkillScript(SkillScript):
         function: Callable that implements the script.
 
     Examples:
+        Receiving runtime context separately from model arguments:
+
         .. code-block:: python
 
-            InlineSkillScript(name="analyze", function=analyze_data, description="Run analysis")
+            from agent_framework import FunctionInvocationContext
+
+
+            def analyze(query: str, *, ctx: FunctionInvocationContext) -> str:
+                tenant_id = ctx.kwargs["tenant_id"]
+                return f"Analyzing {query} for {tenant_id}"
+
+
+            InlineSkillScript(name="analyze", function=analyze)
     """
 
     def __init__(
@@ -369,6 +537,8 @@ class InlineSkillScript(SkillScript):
             name: Identifier for this script (e.g. ``"analyze"``).
             description: Optional human-readable summary.
             function: Callable (sync or async) that implements the script.
+                Declare one keyword-bindable ``FunctionInvocationContext``
+                parameter to receive runtime context.
             argument_parser: Optional callable that converts the raw
                 ``args`` value into the named arguments passed to
                 ``function`` before the script runs.  When ``None`` (the
@@ -376,6 +546,10 @@ class InlineSkillScript(SkillScript):
                 ``dict`` (or ``None``).  Supply a parser to support
                 backends that send arguments in a non-conforming shape (for
                 example, vLLM-style JSON strings).
+
+        Raises:
+            ValueError: If multiple context parameters are declared, or a
+                context parameter cannot be passed by keyword.
         """
         super().__init__(name=name, description=description)
 
@@ -384,10 +558,10 @@ class InlineSkillScript(SkillScript):
         self._parameters_schema: dict[str, Any] | None = None
         self._parameters_schema_resolved: bool = False
 
-        # Precompute whether the function accepts **kwargs to avoid
-        # repeated inspect.signature() calls on every invocation.
+        # Precompute signature facts to avoid inspecting the function on every invocation.
         sig = inspect.signature(function)
         self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        self._context_parameter_name = _find_context_parameter(function, sig, script_name=name)
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -403,7 +577,14 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | str | None = None, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        skill: Skill,
+        args: dict[str, Any] | list[str] | str | None = None,
+        *,
+        context: FunctionInvocationContext | None = _UNSET_CONTEXT,
+        **kwargs: Any,
+    ) -> Any:
         """Run the script by invoking the callable in-process.
 
         When an ``argument_parser`` is configured, it is applied to
@@ -419,6 +600,8 @@ class InlineSkillScript(SkillScript):
                 be a ``dict`` or ``None``; a ``list`` raises
                 :class:`TypeError` because inline scripts bind arguments by
                 keyword name.
+            context: The enclosing invocation when supplied by the provider.
+                Other values are forwarded to the callback unchanged.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -430,7 +613,48 @@ class InlineSkillScript(SkillScript):
                 ``list``.  A leftover ``str`` means no ``argument_parser``
                 converted it; a ``list`` is array-style and only supported
                 for file-based scripts.
+            ValueError: If model arguments supply the injected context parameter.
         """
+        call_args = self._parse_arguments(args) or {}
+
+        # Unannotated overrides may forward application "context" values, even invocation objects.
+        invocation = (
+            context
+            if isinstance(context, FunctionInvocationContext) and _find_run_context_parameter(type(self)) is not None
+            else None
+        )
+
+        runtime_kwargs: Mapping[str, Any] = {}
+        if invocation is None:
+            # Preserve explicit application "context" values as data.
+            if context is not _UNSET_CONTEXT:
+                kwargs = {"context": context, **kwargs}
+        elif self._context_parameter_name is None:
+            # Callback without context: pass host values as separate keywords.
+            runtime_kwargs = invocation.kwargs
+        elif self._context_parameter_name in call_args:
+            # Reject model arguments that impersonate runtime context.
+            raise ValueError(
+                f"Argument '{self._context_parameter_name}' for inline script '{self.name}' "
+                "is reserved for runtime context injection."
+            )
+        else:
+            # Opted-in callback: inject without changing model arguments.
+            call_args = {**call_args, self._context_parameter_name: invocation}
+
+        # Keep separate keyword expansions so duplicate model and host names still fail.
+        if self._accepts_kwargs:
+            result = self.function(**call_args, **runtime_kwargs, **kwargs)
+        else:
+            result = self.function(**call_args)
+
+        # Support both synchronous and asynchronous callbacks.
+        if inspect.isawaitable(result):
+            return await result
+
+        return result
+
+    def _parse_arguments(self, args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
         if self.argument_parser is not None:
             args = self.argument_parser(args)
         if isinstance(args, str):
@@ -445,13 +669,7 @@ class InlineSkillScript(SkillScript):
                 f"but received a list. Array-style arguments are only supported "
                 f"for file-based scripts."
             )
-        if self._accepts_kwargs:  # ruff:ignore[if-else-block-instead-of-if-exp]
-            result = self.function(**(args or {}), **kwargs)
-        else:
-            result = self.function(**(args or {}))
-        if inspect.isawaitable(result):
-            return await result
-        return result
+        return args
 
 
 class FileSkillScript(SkillScript):
@@ -459,6 +677,11 @@ class FileSkillScript(SkillScript):
 
     Represents a script file on disk that is delegated to a configured
     :class:`SkillScriptRunner` for execution.
+
+    Runners can declare a defaulted ``FunctionInvocationContext`` parameter
+    in addition to ``skill``, ``script``, and ``args``. :class:`SkillsProvider`
+    injects the enclosing invocation into that parameter without changing
+    script arguments or forwarding host values to subprocesses.
 
     Attributes:
         name: Script identifier.
@@ -478,6 +701,8 @@ class FileSkillScript(SkillScript):
         description: str | None = None,
         full_path: str,
         runner: SkillScriptRunner | None = None,
+        skill_dir: str | None = None,
+        trusted_root: str | None = None,
     ) -> None:
         """Initialize a FileSkillScript.
 
@@ -487,9 +712,18 @@ class FileSkillScript(SkillScript):
             full_path: Absolute path to the script file.
             runner: Strategy for running file-based scripts.  Required for
                 execution; an error is raised from :meth:`run` if not provided.
+                See :class:`SkillScriptRunner` for optional context injection.
+            skill_dir: Trusted skill directory used to revalidate the script before execution.
+            trusted_root: Configured discovery root used to include the skill directory and
+                intermediate directories in revalidation. Requires ``skill_dir``. When omitted,
+                revalidation starts at ``skill_dir`` for backward compatibility.
 
         Raises:
-            ValueError: If ``full_path`` is empty or not an absolute path.
+            ValueError: If ``full_path`` is empty or not an absolute path, if
+                ``trusted_root`` is provided without ``skill_dir``, or if ``skill_dir``
+                does not reside at or beneath ``trusted_root``, or if the runner's
+                context parameter is not optional and keyword-bindable or replaces
+                one of its three existing arguments.
         """
         super().__init__(name=name, description=description)
 
@@ -497,9 +731,22 @@ class FileSkillScript(SkillScript):
             raise ValueError("full_path cannot be empty.")
         if not os.path.isabs(full_path):
             raise ValueError(f"full_path must be an absolute path, got: '{full_path}'")
+        if trusted_root is not None and skill_dir is None:
+            raise ValueError("trusted_root requires skill_dir.")
 
         self.full_path = full_path
         self._runner = runner
+        self._scope = (
+            _SkillPathScope(
+                trusted_root=trusted_root if trusted_root is not None else skill_dir,
+                skill_dir=skill_dir,
+            )
+            if skill_dir is not None
+            else None
+        )
+        self._context_parameter_name = (
+            self._find_runner_context_parameter(runner, script_name=name) if runner is not None else None
+        )
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -511,13 +758,21 @@ class FileSkillScript(SkillScript):
         """
         return {"type": "array", "items": {"type": "string"}}
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        skill: Skill,
+        args: dict[str, Any] | list[str] | None = None,
+        *,
+        context: FunctionInvocationContext | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Run the script by delegating to the configured runner.
 
         Args:
             skill: The skill that owns this script.  Must be a
                 :class:`FileSkill`.
             args: Optional arguments for the script.
+            context: Optional enclosing tool invocation, passed to context-aware runners.
             **kwargs: Additional runtime keyword arguments (unused).
 
         Returns:
@@ -525,18 +780,93 @@ class FileSkillScript(SkillScript):
 
         Raises:
             TypeError: If ``skill`` is not a :class:`FileSkill`.
-            ValueError: If no runner was provided.
+            ValueError: If no runner was provided or the discovered file is no longer valid.
         """
+        # Require a file-backed skill for runner execution.
         if not isinstance(skill, FileSkill):
             raise TypeError(
                 f"File-based script '{self.name}' requires a FileSkill but received '{type(skill).__name__}'."
             )
+
+        # File scripts need a runner to execute them, e.g. a subprocess runner.
         if self._runner is None:
             raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
-        result = self._runner(skill, self, args)
+
+        # Recheck discovered paths: e.g. scripts/run.py may have been replaced by a symlink.
+        if self._scope is not None:
+            await asyncio.to_thread(
+                FileSkillsSource._validate_file_path_for_use,  # pyright: ignore[reportPrivateUsage]
+                self._scope,
+                self.full_path,
+                self.name,
+                "Script",
+            )
+
+        # The protocol declares only three arguments; the runner's context slot was validated at construction.
+        runner = cast(Callable[..., Any], self._runner)
+
+        # Unannotated overrides may forward application "context" values, even invocation objects.
+        runner_kwargs: dict[str, FunctionInvocationContext] = {}
+        if (
+            self._context_parameter_name is not None
+            and isinstance(context, FunctionInvocationContext)
+            and _find_run_context_parameter(type(self)) is not None
+        ):
+            runner_kwargs[self._context_parameter_name] = context
+
+        # E.g. runner(skill, self, ["input.txt"], ctx=context); host values stay in context.kwargs.
+        result = runner(skill, self, args, **runner_kwargs)
+
+        # Support both synchronous and asynchronous runners.
         if inspect.isawaitable(result):
             return await result
+
         return result
+
+    @staticmethod
+    def _find_runner_context_parameter(runner: SkillScriptRunner, *, script_name: str) -> str | None:
+        """Find a context parameter without changing the runner's three-argument contract."""
+        try:
+            signature = inspect.signature(runner)
+        except (TypeError, ValueError):
+            logger.debug("Could not inspect runner for script '%s'; calling without context.", script_name)
+            return None
+
+        function: Callable[..., Any] = runner
+        while isinstance(function, partial):
+            function = function.func
+
+        # Callable objects declare parameter annotations on __call__.
+        if not inspect.isroutine(function):
+            function = function.__call__
+
+        context_name = _find_context_parameter(function, signature, script_name=script_name)
+
+        # Keep context injection opt-in for existing runners.
+        if context_name is None:
+            return None
+
+        parameter = signature.parameters[context_name]
+        positional_names = [
+            name
+            for name, param in signature.parameters.items()
+            if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+
+        # Preserve the runner's positional skill, script, and args parameters.
+        if context_name in positional_names[:3]:
+            raise ValueError(
+                f"Runner context parameter '{context_name}' for script '{script_name}' "
+                "must not replace the skill, script, or args parameters."
+            )
+
+        # Runners must remain callable without an injected context.
+        if parameter.default is inspect.Parameter.empty:
+            raise ValueError(
+                f"Runner context parameter '{context_name}' for script '{script_name}' must have a default value."
+            )
+
+        return context_name
 
 
 class Skill(ABC):
@@ -622,7 +952,9 @@ class SkillFrontmatter:
         compatibility: Optional compatibility information (≤500 characters).
         allowed_tools: Optional space-delimited pre-approved tool names.
         metadata: Optional arbitrary key-value pairs (shallow-copied on
-            construction to avoid caller-owned dict aliasing).
+            construction to avoid caller-owned dict aliasing). Keys are case-sensitive.
+            When parsed from a SKILL.md file, invalid entries are skipped with warnings,
+            and exact duplicate keys retain the first valid value with warnings.
     """
 
     def __init__(
@@ -1307,8 +1639,11 @@ class ClassSkill(Skill, ABC):
 
         When applied to a method on a :class:`ClassSkill` subclass, the method is
         automatically discovered and registered as an :class:`InlineSkillScript`.
-        The method's parameters (excluding ``self``) are used to generate a JSON
+        The method's parameters (excluding ``self`` and any injected
+        ``FunctionInvocationContext`` parameter) are used to generate a JSON
         schema, and the method is invoked in-process when the script is run.
+        Declare a ``FunctionInvocationContext`` parameter as described by
+        :class:`InlineSkillScript` to receive host context separately.
 
         Supports bare usage (``@ClassSkill.script``) and parameterized usage
         (``@ClassSkill.script(name="custom", description="...")``).
@@ -1616,7 +1951,17 @@ class SkillScriptRunner(Protocol):
     are always executed **in-process** and do not use a script runner.
 
     Any callable (sync or async) matching the ``__call__`` signature
-    satisfies this protocol.
+    satisfies this protocol. To opt into context injection, add one keyword-bindable
+    parameter annotated with ``FunctionInvocationContext`` (or ``FunctionInvocationContext | None``).
+    It must have a default value and must not replace ``skill``, ``script``, or
+    ``args``. For example:
+
+    .. code-block:: python
+
+        from agent_framework import FunctionInvocationContext
+
+
+        def runner(skill, script, args=None, *, ctx: FunctionInvocationContext | None = None): ...
     """
 
     def __call__(
@@ -1670,125 +2015,29 @@ DEFAULT_SEARCH_DEPTH: Final[int] = 2
 # Matches YAML frontmatter delimited by "---" lines.
 # The \uFEFF? prefix allows an optional UTF-8 BOM.
 FRONTMATTER_RE = re.compile(
-    r"\A\uFEFF?---\s*$(.+?)^---\s*$",
+    r"\A\uFEFF?---[ \t]*\r?\n(.*?)^---[ \t]*\r?$",
     re.MULTILINE | re.DOTALL,
 )
 
-# Matches top-level YAML "key: value" lines (unindented). Group 1 = key,
-# Group 2 = quoted value, Group 3 = unquoted value. Only matches keys at
-# column 0 so that indented children (e.g. under "metadata:") are not
-# mistakenly captured as top-level fields.
-YAML_KV_RE = re.compile(
-    r"^([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
+FRONTMATTER_FIELD_NAMES = {
+    "name": "name",
+    "description": "description",
+    "license": "license",
+    "compatibility": "compatibility",
+    "metadata": "metadata",
+    "allowed-tools": "allowed-tools",
+}
 
-# Matches a YAML "metadata:" block followed by indented key-value pairs.
-YAML_METADATA_BLOCK_RE = re.compile(
-    r"^metadata\s*:\s*$\n((?:[ \t]+\S.*\n?)+)",
-    re.MULTILINE,
-)
-
-# Matches indented "key: value" lines within a metadata block.
-YAML_INDENTED_KV_RE = re.compile(
-    r"^\s+([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
+_YAML_TEXT_SCALAR_TAGS = frozenset(f"tag:yaml.org,2002:{kind}" for kind in ("str", "bool", "int", "float", "timestamp"))
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
 # must not start or end with a hyphen, and must not contain consecutive hyphens.
 VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
 
-# Block scalar indicator characters recognised by the lightweight YAML parser.
-_BLOCK_SCALAR_INDICATORS = ("|", ">")
 
-
-def _parse_yaml_scalar_value(yaml_content: str, kv_match: re.Match[str]) -> str:
-    """Resolve the scalar value for an unquoted YAML key-value match.
-
-    If the captured value starts with a YAML block scalar indicator (``|`` or
-    ``>``), the function reads subsequent indented continuation lines, strips
-    the common leading indentation, and joins them according to the scalar
-    style (literal preserves newlines, folded replaces them with spaces).
-
-    Chomping indicators are respected per YAML 1.2 §8.1.1.2:
-
-    * ``-`` (strip) — final line break and trailing empty lines excluded
-    * ``+`` (keep) — final line break and any trailing empty lines preserved
-    * default (clip) — final line break preserved, trailing empty lines excluded
-
-    For plain (non-block-scalar) values the captured text is returned as-is.
-    Note: explicit indentation indicators (e.g. ``|2``) are not supported;
-    indentation is auto-detected from the common leading whitespace.
-    """
-    value: str = kv_match.group(3)
-
-    if not value or value[0] not in _BLOCK_SCALAR_INDICATORS:
-        return value
-
-    scalar_style = value[0]
-    keep_trailing_newline = len(value) > 1 and value[1] == "+"
-    strip_trailing_newline = len(value) > 1 and value[1] == "-"
-
-    # Find the start of the next line after this key-value match.
-    next_line_start = yaml_content.find("\n", kv_match.end())
-    if next_line_start < 0:
-        return value
-    next_line_start += 1  # skip the newline character itself
-
-    # Collect indented continuation lines (or blank lines within the block).
-    block_lines: list[str] = []
-    pos = next_line_start
-    while pos < len(yaml_content):
-        line_end = yaml_content.find("\n", pos)
-        if line_end < 0:
-            line = yaml_content[pos:]
-            line_end = len(yaml_content)
-        else:
-            line = yaml_content[pos:line_end]
-
-        if not line or line.isspace():
-            # Blank / whitespace-only lines are part of the block.
-            block_lines.append("")
-            pos = line_end + 1 if line_end < len(yaml_content) else line_end
-            continue
-
-        if line[0] not in (" ", "\t"):
-            # Non-indented, non-blank line — end of the block.
-            break
-
-        block_lines.append(line)
-        pos = line_end + 1 if line_end < len(yaml_content) else line_end
-
-    # Strip trailing blank lines collected from the block.
-    while block_lines and block_lines[-1] == "":
-        block_lines.pop()
-
-    if not block_lines:
-        return ""
-
-    # Determine the common leading indentation across non-empty lines.
-    # Only space/tab characters count as indentation (matches YAML semantics).
-    def _indent_width(s: str) -> int:
-        i = 0
-        while i < len(s) and s[i] in (" ", "\t"):
-            i += 1
-        return i
-
-    common_indent = min(_indent_width(line) for line in block_lines if line)
-    normalized = [line[common_indent:] if line else "" for line in block_lines]
-
-    # Literal preserves newlines; folded joins non-empty lines with spaces.
-    parsed = "\n".join(normalized) if scalar_style == "|" else " ".join(line for line in normalized if line)
-
-    if keep_trailing_newline:
-        return parsed + "\n"
-    if strip_trailing_newline:
-        return parsed
-    # Clip (default): literal gets a trailing newline, folded does not.
-    if scalar_style == "|":
-        return parsed + "\n"
-    return parsed
+def _contains_surrogate_code_points(value: str) -> bool:
+    """Detect surrogate escapes that PyYAML accepts but UTF-8 cannot encode."""
+    return any("\ud800" <= char <= "\udfff" for char in value)
 
 
 # Default system prompt template for advertising available skills to the model.
@@ -1951,15 +2200,14 @@ class SkillsProvider(ContextProvider):
     def _is_local_tool_call(function_call: Content) -> bool:
         """Return whether a function call targets this provider's local tools.
 
-        Hosted-tool calls carry a ``server_label`` in their
-        ``additional_properties`` and are a separate server-scoped approval
+        Hosted-tool calls set ``hosted=True`` and are a separate server-scoped approval
         boundary that must be passed through untouched (see
         :func:`agent_framework._tools._is_hosted_tool_approval`). These rules
         only ever auto-approve the provider's own local tools, so any call that
-        carries a ``server_label`` is rejected even if its name collides with a
+        is hosted is rejected even if its name collides with a
         skill tool name.
         """
-        return not function_call.additional_properties.get("server_label")
+        return not function_call.hosted
 
     @staticmethod
     def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
@@ -1974,7 +2222,7 @@ class SkillsProvider(ContextProvider):
         skill content (``load_skill`` and ``read_skill_resource``), while still
         prompting for script execution (``run_skill_script``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
 
@@ -2011,7 +2259,7 @@ class SkillsProvider(ContextProvider):
         ``auto_approval_rules``) to automatically approve every skill tool,
         including the script execution tool (``run_skill_script``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
 
@@ -2472,13 +2720,53 @@ class SkillsProvider(ContextProvider):
         async def _load(skill_name: str) -> str:
             return await self._load_skill(skills, skill_name)
 
-        async def _read_resource(skill_name: str, resource_name: str, **kwargs: Any) -> Any:
-            return await self._read_skill_resource(skills, skill_name, resource_name, **kwargs)
+        # The runtime kwargs these handlers forward come from the host's
+        # ``agent.run(function_invocation_kwargs=...)``, never from the model. Two
+        # things keep the channels apart at this seam, and both are required.
+        #
+        # First, declaring ``ctx`` opts the handler into FunctionInvocationContext
+        # injection; without it the function-invocation layer has nowhere to put the
+        # host values and silently drops them. Second, the handlers take no ``**kwargs``
+        # and the outer schemas below set ``additionalProperties: False``, so an
+        # undeclared top-level argument returned by the model is rejected during
+        # validation instead of binding into the runtime namespace.
+        #
+        # ``ctx`` is injected by name and is absent from the advertised schema, so it is
+        # never something the model can supply or override.
+        #
+        # This guarantee covers ``ctx.kwargs``, not everything a skill callback ends up
+        # seeing. ``args`` stays deliberately free-form because scripts declare their own
+        # parameters, and :meth:`InlineSkillScript.run` expands it alongside these runtime
+        # kwargs, so a script's ``**kwargs`` can also hold model-supplied entries that are
+        # not declared parameters. Resources take no model arguments, so a resource's
+        # ``**kwargs`` is runtime-only. Do not treat a name appearing in a script's
+        # ``**kwargs`` as proof the host supplied it. Inline scripts that declare a
+        # FunctionInvocationContext parameter receive host values only through it.
+        async def _read_resource(
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            resource_name: str,
+        ) -> Any:
+            return await self._read_skill_resource(
+                skills,
+                skill_name,
+                resource_name,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         async def _run_script(
-            skill_name: str, script_name: str, args: dict[str, Any] | list[str] | None = None, **kwargs: Any
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            script_name: str,
+            args: dict[str, Any] | list[str] | None = None,
         ) -> Any:
-            return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
+            return await self._run_skill_script(
+                skills,
+                skill_name,
+                script_name,
+                args,
+                context=ctx,
+            )
 
         return [
             FunctionTool(
@@ -2492,6 +2780,7 @@ class SkillsProvider(ContextProvider):
                         "skill_name": {"type": "string", "description": "The name of the skill to load."},
                     },
                     "required": ["skill_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2509,6 +2798,7 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "resource_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2560,6 +2850,9 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "script_name"],
+                    # Scripts declare their own parameters, so the nested ``args`` object
+                    # above stays free-form; only the outer envelope is closed.
+                    "additionalProperties": False,
                 },
             ),
         ]
@@ -2601,12 +2894,14 @@ class SkillsProvider(ContextProvider):
         skill_name: str,
         script_name: str,
         args: dict[str, Any] | list[str] | None = None,
-        **kwargs: Any,
+        *,
+        context: FunctionInvocationContext,
     ) -> Any:
         """Run a named script from a skill.
 
         Resolves the skill and script by name, then delegates execution
-        to :meth:`SkillScript.run`.
+        to :meth:`SkillScript.run`. Implementations can opt into receiving the
+        invocation with an annotated ``FunctionInvocationContext`` parameter.
 
         Args:
             skills: The skills to look up the skill from.
@@ -2614,9 +2909,8 @@ class SkillsProvider(ContextProvider):
             script_name: The script name to look up (case-insensitive).
             args: Optional arguments for the script, provided by the
                 agent/LLM.
-            **kwargs: Runtime keyword arguments forwarded only to script
-                functions that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            context: The enclosing tool invocation, passed to an annotated
+                parameter or unpacked as host runtime keyword arguments.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2642,13 +2936,24 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            return await script.run(skill, args, **kwargs)
+            context_name = _find_run_context_parameter(type(script))
+            if context_name is not None:
+                # Opted-in run: pass the whole invocation.
+                return await script.run(skill, args, **{context_name: context})
+
+            # Unannotated run: pass host values individually.
+            return await script.run(skill, args, **context.kwargs)
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
 
     async def _read_skill_resource(
-        self, skills: Sequence[Skill], skill_name: str, resource_name: str, **kwargs: Any
+        self,
+        skills: Sequence[Skill],
+        skill_name: str,
+        resource_name: str,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -2660,9 +2965,12 @@ class SkillsProvider(ContextProvider):
             skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
-            **kwargs: Runtime keyword arguments forwarded to resource functions
-                that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            runtime_kwargs: Runtime keyword arguments forwarded to resource functions
+                that accept ``**kwargs``. These carry host request context
+                supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; they are
+                never sourced from model-supplied tool arguments.
 
         Returns:
             The resource content (any type). Returns a user-facing error
@@ -2691,7 +2999,7 @@ class SkillsProvider(ContextProvider):
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            return await resource.read(**kwargs)
+            return await resource.read(**(runtime_kwargs or {}))
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise
@@ -2915,7 +3223,8 @@ class FileSkillsSource(SkillsSource):
         discovered = FileSkillsSource._discover_skill_directories(self._skill_paths)
         logger.info("Discovered %d potential skills", len(discovered))
 
-        for skill_path in discovered:
+        for scope in discovered:
+            skill_path = scope.skill_dir
             parsed = FileSkillsSource._read_and_parse_skill_file(skill_path)
             if parsed is None:
                 continue
@@ -2933,14 +3242,22 @@ class FileSkillsSource(SkillsSource):
             # Discover file-based resources
             resources: list[SkillResource] = []
             for rn in self._discover_resource_files(skill_path, frontmatter.name):
-                resource_full_path = FileSkillsSource._get_validated_resource_path(skill_path, rn)
-                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
+                resource_full_path = FileSkillsSource._get_validated_resource_path(scope, rn)
+                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path, scope=scope))
 
             # Discover file-based scripts
             scripts: list[SkillScript] = []
             for sn in self._discover_script_files(skill_path, frontmatter.name):
                 script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # ruff:ignore[blocking-path-method-in-async-function]
-                scripts.append(FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner))
+                scripts.append(
+                    FileSkillScript(
+                        name=sn,
+                        full_path=script_full_path,
+                        runner=self._script_runner,
+                        skill_dir=scope.skill_dir,
+                        trusted_root=scope.trusted_root,
+                    )
+                )
 
             file_skill = FileSkill(
                 frontmatter=frontmatter,
@@ -3022,7 +3339,7 @@ class FileSkillsSource(SkillsSource):
         for part in relative.parts:
             current = current / part
             try:
-                is_link = is_link_or_reparse_point(current)
+                is_link = _is_link_or_reparse_point(current)
             except OSError:
                 return True
             if is_link:
@@ -3337,46 +3654,68 @@ class FileSkillsSource(SkillsSource):
                 )
 
     @staticmethod
-    def _get_validated_resource_path(skill_dir: str, resource_name: str) -> str:
+    def _get_validated_resource_path(scope: _SkillPathScope, resource_name: str) -> str:
         """Resolve and validate a resource file path within a skill directory.
 
-        Normalizes *resource_name*, resolves it against *skill_dir*, and
-        validates that the result stays within the skill directory and does
+        Normalizes *resource_name*, resolves it against the scope's skill directory,
+        and validates that the result stays within the skill directory and does
         not traverse any symlinks.
 
         Args:
-            skill_dir: Absolute path to the owning skill directory.
+            scope: Trusted path scope of the owning skill.
             resource_name: Relative path of the resource within the skill directory.
 
         Returns:
             The validated absolute path to the resource file.
 
         Raises:
-            ValueError: If *skill_dir* is not an absolute path, the resolved path
+            ValueError: If the scope's paths are not absolute, the resolved path
                 escapes the skill directory, the file does not exist, or a symlink
                 is detected in the path.
         """
-        if not os.path.isabs(skill_dir):
-            raise ValueError(f"skill_dir must be an absolute path, got: '{skill_dir}'")
-
         resource_name = FileSkillsSource._normalize_resource_path(resource_name)
+        resource_full_path = os.path.normpath(Path(scope.skill_dir) / resource_name)
+        return FileSkillsSource._validate_file_path_for_use(
+            scope,
+            resource_full_path,
+            resource_name,
+            "Resource",
+        )
 
-        resource_full_path = os.path.normpath(Path(skill_dir) / resource_name)
-        root_directory_path = os.path.normpath(skill_dir)
+    @staticmethod
+    def _validate_file_path_for_use(scope: _SkillPathScope, full_path: str, file_name: str, file_kind: str) -> str:
+        """Validate a discovered file immediately before it is read or executed."""
+        # Require anchored trust boundaries, e.g. "/skills/weather", not "skills/weather".
+        if not os.path.isabs(scope.skill_dir):
+            raise ValueError(f"skill_dir must be an absolute path, got: '{scope.skill_dir}'")
+        if not os.path.isabs(scope.trusted_root):
+            raise ValueError(f"trusted_root must be an absolute path, got: '{scope.trusted_root}'")
 
-        if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
-            raise ValueError(f"Resource file '{resource_name}' references a path outside the skill directory.")
+        # Collapse lexical segments, e.g. "/skills/weather/refs/../guide.md" -> "/skills/weather/guide.md".
+        normalized_full_path = os.path.normpath(full_path)
+        skill_directory_path = os.path.normpath(scope.skill_dir)
+        trusted_root_path = os.path.normpath(scope.trusted_root)
 
-        if not Path(resource_full_path).is_file():
-            raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
+        # Reject lexical escapes, e.g. "/skills/weather/../secret.md" resolves outside the skill root.
+        if not FileSkillsSource._is_path_within_directory(normalized_full_path, skill_directory_path):
+            raise ValueError(f"{file_kind} file '{file_name}' references a path outside the skill directory.")
 
-        if FileSkillsSource._has_link_or_reparse_point_in_path(resource_full_path, root_directory_path):
+        # The skill directory sitting at or beneath the configured root is a scope invariant,
+        # so the file is transitively within the root and the scan below is well-anchored.
+
+        # Reject files deleted or replaced with non-files after discovery.
+        if not Path(normalized_full_path).is_file():
+            raise ValueError(f"{file_kind} file '{file_name}' not found in skill directory '{scope.skill_dir}'.")
+
+        # Reject links in any segment below the configured root, e.g. the skill directory
+        # "weather" or the child segment "refs" in "/skills/weather/refs/guide.md".
+        if FileSkillsSource._has_link_or_reparse_point_in_path(normalized_full_path, trusted_root_path):
             raise ValueError(
-                f"Resource file '{resource_name}' has a symbolic link or reparse point in its path; "
+                f"{file_kind} file '{file_name}' has a symbolic link or reparse point in its path; "
                 "links and reparse points are not allowed."
             )
 
-        return resource_full_path
+        return normalized_full_path
 
     @staticmethod
     def _validate_skill_metadata(
@@ -3428,6 +3767,58 @@ class FileSkillsSource(SkillsSource):
         return None
 
     @staticmethod
+    def _extract_frontmatter_metadata(node: Node | None, skill_file_path: str) -> dict[str, str] | None:
+        """Read optional metadata without rejecting a skill for invalid entries."""
+        # Missing metadata, an empty declaration, or an explicit YAML null leaves metadata unset.
+        if node is None or (isinstance(node, ScalarNode) and node.tag == "tag:yaml.org,2002:null"):
+            return None
+
+        # Metadata must be a standard YAML mapping; otherwise warn and ignore it without rejecting the skill.
+        if not isinstance(node, MappingNode) or node.tag != "tag:yaml.org,2002:map":
+            logger.warning("SKILL.md at '%s' has invalid metadata; expected a mapping", skill_file_path)
+            return None
+
+        metadata: dict[str, str] = {}
+
+        for key_node, value_node in node.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.warning("SKILL.md at '%s' has an invalid metadata key; skipping entry", skill_file_path)
+                continue
+
+            key = key_node.value
+            # Keep the first valid value for each exact, case-sensitive key; warn about later duplicates.
+            if key in metadata:
+                logger.warning(
+                    "SKILL.md at '%s' contains duplicate metadata key '%s'; keeping the first value",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            # The Agent Skills spec requires string-to-string metadata, not arrays or nested mappings.
+            # Keep supported scalars as text; warn and skip invalid values rather than rejecting the skill.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.warning(
+                    "SKILL.md at '%s' has an invalid metadata value for '%s'; expected a text scalar; skipping entry",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            metadata[key] = value_node.value
+
+        return metadata
+
+    @staticmethod
     def _extract_frontmatter(
         content: str,
         skill_file_path: str,
@@ -3437,7 +3828,13 @@ class FileSkillsSource(SkillsSource):
         Parses the ``---``-delimited frontmatter block for all
         `agentskills.io specification <https://agentskills.io/specification>`_
         fields: ``name``, ``description``, ``license``, ``compatibility``,
-        ``allowed-tools``, and ``metadata``.
+        ``allowed-tools``, and ``metadata``. Recognized top-level fields must
+        use lowercase names and must not be repeated, including equivalent quoted
+        or escaped spellings. YAML scalars are retained as text; null root values
+        remain unset. Within the optional metadata mapping, keys are case-sensitive;
+        exact duplicates retain the first valid value and produce warnings.
+        Invalid metadata entries are skipped with warnings. Invalid YAML syntax
+        or invalid recognized root fields reject the skill.
 
         Args:
             content: Raw text content of the SKILL.md file.
@@ -3452,41 +3849,81 @@ class FileSkillsSource(SkillsSource):
             logger.error("SKILL.md at '%s' does not contain valid YAML frontmatter delimited by '---'", skill_file_path)
             return None
 
-        yaml_content = match.group(1).strip()
-        name: str | None = None
-        description: str | None = None
-        license_value: str | None = None
-        compatibility: str | None = None
-        allowed_tools: str | None = None
+        try:
+            # compose() keeps duplicate keys, unlike safe_load(), which silently keeps only the last value.
+            # The Pyright ignores are needed because PyYAML's type definitions do not fully describe compose().
+            root = yaml.compose(match.group(1), Loader=yaml.SafeLoader)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        except (yaml.YAMLError, RecursionError, ValueError, OverflowError) as exc:
+            # PyYAML raises ValueError or OverflowError for Unicode escapes outside the valid code-point range.
+            logger.error("SKILL.md at '%s' contains invalid YAML frontmatter: %s", skill_file_path, exc)
+            return None
 
-        for kv_match in YAML_KV_RE.finditer(yaml_content):
-            key = kv_match.group(1)
-            value = (
-                kv_match.group(2) if kv_match.group(2) is not None else _parse_yaml_scalar_value(yaml_content, kv_match)
-            )
+        if not isinstance(root, MappingNode) or root.tag != "tag:yaml.org,2002:map":
+            logger.error("SKILL.md at '%s' must contain a YAML frontmatter mapping", skill_file_path)
+            return None
 
-            key_lower = key.lower()
-            if key_lower == "name":
-                name = value
-            elif key_lower == "description":
-                description = value
-            elif key_lower == "license":
-                license_value = value
-            elif key_lower == "compatibility":
-                compatibility = value
-            elif key_lower == "allowed-tools":
-                allowed_tools = value
+        fields: dict[str, str] = {}
+        metadata_node: Node | None = None
+        seen_fields: set[str] = set()
 
-        # Parse metadata block (indented key-value pairs under "metadata:").
-        metadata: dict[str, str] | None = None
-        metadata_match = YAML_METADATA_BLOCK_RE.search(yaml_content)
-        if metadata_match:
-            metadata = {}
-            for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
-                mk = kv_match.group(1)
-                mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
-                metadata[mk] = mv
+        for key_node, value_node in root.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.error("SKILL.md at '%s' has an invalid frontmatter property name", skill_file_path)
+                return None
 
+            key = key_node.value
+            canonical_key = FRONTMATTER_FIELD_NAMES.get(key.lower())
+
+            # Unknown fields are intentionally excluded from this validation for forward compatibility.
+            if canonical_key is None:
+                continue
+
+            if key != canonical_key:
+                logger.error(
+                    "SKILL.md at '%s' uses incorrectly cased frontmatter field '%s'; expected '%s'",
+                    skill_file_path,
+                    key,
+                    canonical_key,
+                )
+                return None
+
+            if key in seen_fields:
+                logger.error("SKILL.md at '%s' contains duplicate frontmatter field '%s'", skill_file_path, key)
+                return None
+
+            seen_fields.add(key)
+
+            if key == "metadata":
+                metadata_node = value_node
+                continue
+
+            # Leave empty declarations and explicit YAML nulls unset; required fields are validated below.
+            if isinstance(value_node, ScalarNode) and value_node.tag == "tag:yaml.org,2002:null":
+                continue
+
+            # Reject lists, mappings, and unsupported YAML types because these fields are stored as text.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.error(
+                    "SKILL.md at '%s' has an invalid '%s' value; expected a text scalar",
+                    skill_file_path,
+                    key,
+                )
+                return None
+
+            fields[key] = value_node.value
+
+        name = fields.get("name")
+        description = fields.get("description")
+        compatibility = fields.get("compatibility")
         error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path, compatibility)
         if error:
             logger.error(error)
@@ -3497,10 +3934,10 @@ class FileSkillsSource(SkillsSource):
         return SkillFrontmatter(
             name=cast(str, name),
             description=cast(str, description),
-            license=license_value,
+            license=fields.get("license"),
             compatibility=compatibility,
-            allowed_tools=allowed_tools,
-            metadata=metadata,
+            allowed_tools=fields.get("allowed-tools"),
+            metadata=FileSkillsSource._extract_frontmatter_metadata(metadata_node, skill_file_path),
         )
 
     @staticmethod
@@ -3542,8 +3979,8 @@ class FileSkillsSource(SkillsSource):
         return frontmatter, content
 
     @staticmethod
-    def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
-        """Return absolute paths of all directories that contain a ``SKILL.md`` file.
+    def _discover_skill_directories(skill_paths: Sequence[str]) -> list[_SkillPathScope]:
+        """Return the path scopes of all directories that contain a ``SKILL.md`` file.
 
         Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`. Once a
         ``SKILL.md`` is found in a directory, that directory is the skill root and the
@@ -3563,17 +4000,18 @@ class FileSkillsSource(SkillsSource):
             skill_paths: Root directory paths to search.
 
         Returns:
-            Absolute paths to directories containing ``SKILL.md``.
+            One :class:`_SkillPathScope` per directory containing ``SKILL.md``, each pairing
+            the configured root it was found under with the skill directory itself.
         """
-        discovered: list[str] = []
+        discovered: list[_SkillPathScope] = []
 
         def _is_unsafe_link(path: Path) -> bool:
             try:
-                return is_link_or_reparse_point(path)
+                return _is_link_or_reparse_point(path)
             except OSError:
                 return True
 
-        def _search(directory: str, current_depth: int) -> None:
+        def _search(directory: str, trusted_root: str, current_depth: int) -> None:
             dir_path = Path(directory)
             skill_file = dir_path / SKILL_FILE_NAME
             if skill_file.is_file():
@@ -3587,7 +4025,7 @@ class FileSkillsSource(SkillsSource):
                         SKILL_FILE_NAME,
                     )
                     return
-                discovered.append(str(dir_path.absolute()))
+                discovered.append(_SkillPathScope(trusted_root=trusted_root, skill_dir=str(dir_path.absolute())))
                 return
 
             if current_depth >= MAX_SEARCH_DEPTH:
@@ -3607,12 +4045,12 @@ class FileSkillsSource(SkillsSource):
                     )
                     continue
                 if entry.is_dir():
-                    _search(str(entry), current_depth + 1)
+                    _search(str(entry), trusted_root, current_depth + 1)
 
         for root_dir in skill_paths:
             if not root_dir or not root_dir.strip() or not Path(root_dir).is_dir():
                 continue
-            _search(root_dir, current_depth=0)
+            _search(root_dir, str(Path(root_dir).absolute()), current_depth=0)
 
         return discovered
 
@@ -4001,15 +4439,8 @@ class AggregatingSkillsSource(SkillsSource):
 # region MCP Skills
 
 
-def _mcp_any_url(uri: str) -> AnyUrl:
-    """Convert a string URI to a :class:`pydantic.AnyUrl` for MCP client calls."""
-    from pydantic import AnyUrl as _AnyUrl
-
-    return _AnyUrl(uri)
-
-
 def _is_mcp_resource_not_found(ex: Exception) -> bool:
-    """Return ``True`` when *ex* is an :class:`McpError` indicating a missing resource.
+    """Return ``True`` when *ex* is an :class:`MCPError` indicating a missing resource.
 
     Two codes are treated as "not found":
 
@@ -4019,6 +4450,7 @@ def _is_mcp_resource_not_found(ex: Exception) -> bool:
     * ``METHOD_NOT_FOUND`` (``-32601``) — the server does not implement
       ``resources/read`` at all, which for the skills source is functionally
       equivalent to "no skills available."
+    * ``INVALID_PARAMS`` from an :class:`MCPError` indicating that the ``uri`` parameter is invalid.
 
     All other codes — ``INVALID_PARAMS``, ``INTERNAL_ERROR``, ``PARSE_ERROR``,
     ``CONNECTION_CLOSED``, auth rejections, and generic handler errors
@@ -4026,13 +4458,20 @@ def _is_mcp_resource_not_found(ex: Exception) -> bool:
     token or crashing server is not silently mistaken for "the server has no
     skills."
     """
-    from mcp.shared.exceptions import McpError as _McpError
-
-    if not isinstance(ex, _McpError):
-        return False
+    from mcp.shared.exceptions import MCPError as _MCPError
+    from mcp.types import INVALID_PARAMS as _INVALID_PARAMS
     from mcp.types import METHOD_NOT_FOUND as _METHOD_NOT_FOUND
 
-    return ex.error.code in {-32002, _METHOD_NOT_FOUND}
+    if not isinstance(ex, _MCPError):
+        return False
+
+    data = ex.error.data
+    return ex.error.code in {-32002, _METHOD_NOT_FOUND} or (
+        ex.error.code == _INVALID_PARAMS
+        and isinstance(data, dict)
+        and cast(dict[str, object], data).keys() == {"uri"}
+        and isinstance(data["uri"], str)
+    )
 
 
 def _mcp_join_text(result: ReadResourceResult) -> str:
@@ -4067,7 +4506,7 @@ def _mcp_first_blob(result: ReadResourceResult) -> tuple[bytes, str | None] | No
                 # binascii.Error (invalid base64) subclasses ValueError.
                 logger.warning("Failed to base64-decode blob resource content from the MCP server.", exc_info=True)
                 return None
-            return data, content.mimeType
+            return data, content.mime_type
     return None
 
 
@@ -4150,37 +4589,39 @@ def _parse_mcp_skill_index(text: str) -> _McpSkillIndex:
     return _McpSkillIndex(schema=raw.get("$schema"), skills=entries)
 
 
-def _resolve_mcp_session_provider(
-    client: ClientSession | None,
-    session_provider: Callable[[], ClientSession] | None,
-) -> Callable[[], ClientSession]:
-    """Normalize the two MCP session inputs into a single session resolver.
+def _resolve_mcp_connection_provider(
+    client: Client | ClientSession | None,
+    session_provider: Callable[[], Client | ClientSession] | None,
+) -> Callable[[], _MCPConnection]:
+    """Normalize the two MCP connection inputs into one connection provider.
 
     Callers supply **exactly one** of a fixed ``client`` or a
     ``session_provider`` callable. A fixed client is wrapped in a provider that
-    always returns it; a provider is used as-is so the session is resolved on
-    every call (reconnect-safe for sources whose underlying session is replaced
-    over time, e.g. a reconnecting :class:`~agent_framework.MCPTool`).
+    always returns it; a provider is resolved on every call so a reconnecting
+    owner can supply its current high-level Client or low-level ClientSession.
+    The ``session_provider`` name is retained for compatibility.
 
     Args:
-        client: A fixed MCP client session, or ``None``.
-        session_provider: A callable returning the current MCP client session,
-            or ``None``.
+        client: A fixed MCP client or session, or ``None``.
+        session_provider: A callable returning the current high-level Client or
+            low-level ClientSession, or ``None``.
 
     Returns:
-        A callable that returns the MCP client session to use.
+        A callable returning the normalized MCP connection used for resource reads.
 
     Raises:
         ValueError: If both or neither of *client* and *session_provider* are
             provided.
     """
-    if client is not None and session_provider is not None:
-        raise ValueError("Provide exactly one of 'client' or 'session_provider', not both.")
     if session_provider is not None:
-        return session_provider
+        if client is not None:
+            raise ValueError("Provide exactly one of 'client' or 'session_provider'.")
+        return lambda: _as_mcp_connection(session_provider())
+
     if client is None:
         raise ValueError("Provide exactly one of 'client' or 'session_provider'.")
-    fixed: ClientSession = client
+
+    fixed = _as_mcp_connection(client)
     return lambda: fixed
 
 
@@ -4226,6 +4667,33 @@ class MCPSkillResource(SkillResource):
         return text if text else None
 
 
+_RESOURCE_CONTROL_CHARS: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_MAX_RESOURCE_NAME_DECODING_DEPTH: Final[int] = 32
+
+
+@lru_cache(maxsize=128)
+def _fully_unquote(value: str, *, remaining_depth: int = _MAX_RESOURCE_NAME_DECODING_DEPTH) -> str | None:
+    """Percent-decode *value* until stable, normalizing backslashes to forward slashes.
+
+    Decoding never removes a literal ``.``, ``/``, ``:``, or control character, so
+    checking the final form also covers every nested encoding layer (e.g. ``%252e``).
+    Each layer is cached, keyed by the remaining depth so reuse cannot bypass the limit.
+
+    Args:
+        value: The value to decode.
+
+    Keyword Args:
+        remaining_depth: The number of further decoding layers allowed.
+
+    Returns:
+        The decoded value, or ``None`` if the decoding depth exceeds the limit.
+    """
+    decoded = unquote(value).replace("\\", "/")
+    if decoded == value:
+        return value
+    return _fully_unquote(decoded, remaining_depth=remaining_depth - 1) if remaining_depth > 0 else None
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkill(Skill):
     """A :class:`Skill` discovered from an MCP server exposing the Agent Skills convention.
@@ -4246,9 +4714,9 @@ class MCPSkill(Skill):
         self,
         frontmatter: SkillFrontmatter,
         skill_md_uri: str,
-        client: ClientSession | None = None,
+        client: Client | ClientSession | None = None,
         *,
-        session_provider: Callable[[], ClientSession] | None = None,
+        session_provider: Callable[[], Client | ClientSession] | None = None,
     ) -> None:
         """Initialize an MCPSkill.
 
@@ -4259,17 +4727,15 @@ class MCPSkill(Skill):
             skill_md_uri: The full MCP resource URI of the ``SKILL.md`` resource
                 (e.g. ``skill://unit-converter/SKILL.md``). The skill's root URI
                 is derived by stripping the trailing ``SKILL.md`` segment.
-            client: A fixed MCP client session used to fetch resources on demand.
-                Use this when the session outlives the skill (e.g. a caller-owned
-                long-lived session).
+            client: A fixed, already-entered high-level MCP Client or a deprecated
+                caller-owned ClientSession used to fetch resources on demand.
+                MCPSkill borrows the connection and never enters or closes it.
 
         Keyword Args:
-            session_provider: A callable returning the current MCP client session,
-                resolved on every fetch. Prefer this over *client* when the
-                underlying session may be replaced over the skill's lifetime (for
-                example, a reconnecting :class:`~agent_framework.MCPTool` whose
-                ``session`` is swapped on reconnect), so a cached skill keeps
-                using the live session instead of a closed one.
+            session_provider: Compatibility-named callable returning the current
+                high-level Client or low-level ClientSession, resolved on every
+                fetch. Use it when the owner may replace the underlying connection;
+                MCPSkill borrows each returned connection and never enters or closes it.
 
         Raises:
             ValueError: If both or neither of *client* and *session_provider* are
@@ -4278,7 +4744,7 @@ class MCPSkill(Skill):
         self._frontmatter = frontmatter
         self._skill_md_uri = skill_md_uri
         self._skill_root_uri = self._compute_skill_root_uri(skill_md_uri)
-        self._session_provider = _resolve_mcp_session_provider(client, session_provider)
+        self._connection_provider = _resolve_mcp_connection_provider(client, session_provider)
         self._content: str | None = None
 
     @property
@@ -4302,7 +4768,7 @@ class MCPSkill(Skill):
         if self._content is not None:
             return self._content
 
-        result = await self._session_provider().read_resource(_mcp_any_url(self._skill_md_uri))
+        result = await self._connection_provider().read_resource(self._skill_md_uri)
         text = _mcp_join_text(result)
         if not text:
             raise ValueError(f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'.")
@@ -4321,7 +4787,7 @@ class MCPSkill(Skill):
 
         Returns:
             An :class:`MCPSkillResource`, or ``None`` when the name is empty
-            or the resource does not exist on the server.
+            or unsafe, or the resource does not exist on the server.
         """
         if not name or not name.strip():
             return None
@@ -4332,7 +4798,7 @@ class MCPSkill(Skill):
 
         uri = self._skill_root_uri + normalized
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(uri))
+            result = await self._connection_provider().read_resource(uri)
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("MCP resource '%s' not available: %s", uri, ex)
@@ -4346,7 +4812,9 @@ class MCPSkill(Skill):
         """Validate a resource name and return the normalized form.
 
         Defense in depth: refuses names that could escape the skill root
-        (absolute paths, embedded URI schemes, parent-traversal segments).
+        (absolute paths, embedded URI schemes, parent-traversal segments,
+        or control characters), including percent-encoded forms.
+        Names requiring more than 32 percent-decoding passes are also refused.
         The MCP server is the authority on URI resolution, but rejecting
         obviously unsafe shapes client-side avoids leaking escape attempts
         upstream.
@@ -4358,8 +4826,26 @@ class MCPSkill(Skill):
             The normalized name with backslashes replaced by forward slashes,
             or ``None`` if the name is unsafe.
         """
+        # Treat backslashes as separators, e.g. "..\x" is checked as "../x".
         normalized = name.replace("\\", "/")
-        if normalized.startswith("/") or "://" in normalized or any(seg == ".." for seg in normalized.split("/")):
+        # Split at the first literal "?"/"#" before decoding, so "a%3f/%2e%2e/x" stays one path while
+        # "a/b.md?q=/../x" leaves "/../x" in the query; then decode each part once.
+        raw_path, *raw_suffix = re.split(r"[?#]", normalized, maxsplit=1)
+        path, suffix = _fully_unquote(raw_path), _fully_unquote("".join(raw_suffix))
+        if (
+            # Excessive encoding depth, e.g. a name requiring more than 32 decoding passes.
+            path is None
+            or suffix is None
+            # Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
+            or path.startswith("/")
+            # Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
+            or "://" in path
+            # Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. "
+            # (URI parsers can trim trailing spaces).
+            or any(segment.rstrip(" ") == ".." for segment in re.split(r"[/?#]", path))
+            # Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
+            or _RESOURCE_CONTROL_CHARS.search(path + suffix)
+        ):
             logger.debug("Rejecting resource name with unsafe path components: %r", name)
             return None
         return normalized
@@ -4391,12 +4877,10 @@ _ARCHIVE_READ_BUFFER_SIZE: Final[int] = 81920
 
 
 class _ArchiveFormat(Enum):
-    """The archive container formats supported by :func:`_extract_archive`."""
+    """The archive container formats supported during archive skill discovery."""
 
     UNKNOWN = "unknown"
     ZIP = "zip"
-    TAR = "tar"
-    TAR_GZ = "tar_gz"
 
 
 def _detect_archive_format(data: bytes, media_type: str | None, url: str | None) -> _ArchiveFormat:
@@ -4413,8 +4897,9 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
     Returns:
         The detected :class:`_ArchiveFormat`, or :attr:`_ArchiveFormat.UNKNOWN`.
     """
+    # Reject gzip by signature before considering potentially incorrect MIME type or URL hints.
     if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
-        return _ArchiveFormat.TAR_GZ
+        return _ArchiveFormat.UNKNOWN
 
     if len(data) >= 4 and data[0] == 0x50 and data[1] == 0x4B and data[2] in (0x03, 0x05, 0x07):
         return _ArchiveFormat.ZIP
@@ -4422,18 +4907,10 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
     media = (media_type or "").strip().lower()
     if media in ("application/zip", "application/x-zip-compressed"):
         return _ArchiveFormat.ZIP
-    if media in ("application/gzip", "application/x-gzip", "application/x-compressed-tar"):
-        return _ArchiveFormat.TAR_GZ
-    if media in ("application/x-tar", "application/tar"):
-        return _ArchiveFormat.TAR
 
     lowered = (url or "").lower()
     if lowered.endswith(".zip"):
         return _ArchiveFormat.ZIP
-    if lowered.endswith(".tar.gz") or lowered.endswith(".tgz"):
-        return _ArchiveFormat.TAR_GZ
-    if lowered.endswith(".tar"):
-        return _ArchiveFormat.TAR
 
     return _ArchiveFormat.UNKNOWN
 
@@ -4512,13 +4989,12 @@ def _extract_archive_to_memory(
 ) -> dict[str, bytes]:
     """Extract an archive's regular files into an in-memory ``{relative-path: bytes}`` mapping.
 
-    Supports ZIP, TAR, and gzip-compressed TAR payloads. Non-regular TAR entries
-    (symbolic links, hard links, device nodes, etc.) are skipped so an archive cannot
-    smuggle in a link, and absolute member names are neutralized to relative. A member
-    that attempts to escape the skill namespace via a ``..`` parent-traversal ("zip-slip")
-    aborts extraction of the whole archive by raising. Extraction is bounded by a maximum
-    file count and total uncompressed size to mitigate decompression-bomb attacks. No
-    filesystem is touched.
+    Supports ZIP payloads. A member that attempts to escape the skill namespace via a
+    ``..`` parent-traversal ("zip-slip") aborts extraction of the whole archive by
+    raising. Extraction is bounded by a maximum file count and total uncompressed size
+    to mitigate decompression-bomb attacks. No filesystem is touched.
+    Later members whose normalized paths match case-insensitively are skipped
+    with a warning; the first member's spelling and content are retained.
 
     Args:
         data: The raw archive bytes.
@@ -4533,20 +5009,12 @@ def _extract_archive_to_memory(
         ValueError: If the format is unknown, a limit is exceeded, or a member attempts
             a path-traversal ("zip-slip") escape.
         OSError: If the payload cannot be read.
-        tarfile.TarError: If a TAR payload is malformed.
         zipfile.BadZipFile: If a ZIP payload is malformed.
-        gzip.BadGzipFile: If a gzip payload is malformed.
     """
     if archive_format is _ArchiveFormat.ZIP:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             return _extract_zip_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    if archive_format is _ArchiveFormat.TAR:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
-            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    if archive_format is _ArchiveFormat.TAR_GZ:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    raise ValueError(f"Unsupported skill archive format '{archive_format}'.")
+    raise ValueError(f"Unsupported skill archive format '{archive_format}'. Use ZIP instead.")
 
 
 def _extract_zip_to_memory(
@@ -4557,6 +5025,7 @@ def _extract_zip_to_memory(
     """Read regular files from a ZIP archive into memory. See :func:`_extract_archive_to_memory`."""
     remaining_bytes = max_uncompressed_size_bytes
     files: dict[str, bytes] = {}
+    seen_names: set[str] = set()
     file_count = 0
 
     for info in archive.infolist():
@@ -4571,44 +5040,21 @@ def _extract_zip_to_memory(
         if name is None:
             continue
 
+        # Match FileSkill's case-insensitive lookup; retain the first member's spelling.
+        lookup_name = name.lower()
+        if lookup_name in seen_names:
+            logger.warning(
+                "Skipping duplicate archive member %r: normalized path %r matches an earlier member; "
+                "keeping the first file",
+                info.filename,
+                name,
+            )
+            continue
+
         with archive.open(info) as source:
             content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
         files[name] = content
-
-    return files
-
-
-def _extract_tar_to_memory(
-    archive: tarfile.TarFile,
-    max_file_count: int,
-    max_uncompressed_size_bytes: int,
-) -> dict[str, bytes]:
-    """Read regular files from a TAR archive into memory. See :func:`_extract_archive_to_memory`."""
-    remaining_bytes = max_uncompressed_size_bytes
-    files: dict[str, bytes] = {}
-    file_count = 0
-
-    for member in archive:
-        # Only regular files are materialized. Skipping links/devices avoids both
-        # unsupported entry types and link-based escapes outside the skill namespace.
-        if not member.isreg():
-            continue
-
-        file_count += 1
-        if file_count > max_file_count:
-            raise ValueError(f"Skill archive exceeds the maximum allowed file count ({max_file_count}).")
-
-        name = _normalize_archive_member_name(member.name)
-        if name is None:
-            continue
-
-        source = archive.extractfile(member)
-        if source is None:
-            continue
-
-        with source:
-            content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
-        files[name] = content
+        seen_names.add(lookup_name)
 
     return files
 
@@ -4616,8 +5062,7 @@ def _extract_tar_to_memory(
 class _ArchiveEntryLoader:
     """Loads ``archive``-type ``skill://index.json`` entries entirely in memory.
 
-    Each entry's ``url`` points to a single archive resource (ZIP, TAR, or
-    gzip-compressed TAR). The archive is downloaded and unpacked **in memory** into a
+    Each entry's ``url`` points to a ZIP archive resource, which is unpacked **in memory** into a
     :class:`FileSkill` whose ``SKILL.md`` body drives the skill and whose sibling files
     (matching the configured resource extensions, within the configured depth) become
     in-memory :class:`InlineSkillResource` resources. Nothing is written to disk, so
@@ -4627,14 +5072,17 @@ class _ArchiveEntryLoader:
     resource extensions become readable resources; a script file is at most a readable
     resource, never a :class:`SkillScript`.
 
-    Extraction is hardened against path-traversal ("zip-slip") member names, non-regular
-    TAR members (links/devices), oversized downloads, excessive file counts, and
-    decompression bombs.
+    Extraction is hardened against path-traversal ("zip-slip") member names,
+    oversized downloads, excessive file counts, and decompression bombs.
+    Member paths are compared case-insensitively; collisions are skipped with a
+    warning, keeping the first file's spelling and content.
+    Supplied SHA-256 digests are verified before extraction; archives without
+    a digest remain supported.
     """
 
     def __init__(
         self,
-        session_provider: Callable[[], ClientSession],
+        connection_provider: Callable[[], _MCPConnection],
         *,
         resource_extensions: tuple[str, ...] | None,
         resource_search_depth: int,
@@ -4642,7 +5090,7 @@ class _ArchiveEntryLoader:
         max_size_bytes: int,
         max_uncompressed_size_bytes: int,
     ) -> None:
-        self._session_provider = session_provider
+        self._connection_provider = connection_provider
         self._resource_extensions: tuple[str, ...] = (
             resource_extensions if resource_extensions is not None else DEFAULT_RESOURCE_EXTENSIONS
         )
@@ -4706,14 +5154,15 @@ class _ArchiveEntryLoader:
 
         Returns:
             A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
-            contains no binary content, is empty, or exceeds the configured size limit.
+            contains no binary content, is empty, exceeds the configured size limit,
+            or has an invalid or mismatched digest.
 
         Raises:
             Exception: Any error other than a "resource not found" MCP error raised
                 while reading the archive resource is re-raised.
         """
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(cast(str, entry.url)))
+            result = await self._connection_provider().read_resource(cast(str, entry.url))
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("Archive resource '%s' for skill '%s' not available: %s", entry.url, entry.name, ex)
@@ -4739,7 +5188,27 @@ class _ArchiveEntryLoader:
             )
             return None
 
+        if entry.digest is not None and not self._verify_digest(entry, data):
+            return None
+
         return data, mime_type
+
+    @staticmethod
+    def _verify_digest(entry: _McpSkillIndexEntry, data: bytes) -> bool:
+        """Verify a supplied digest against decoded archive bytes, before extraction."""
+        digest = entry.digest
+        if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            logger.warning(
+                "Skipping skill '%s': archive digest must be 'sha256:' followed by 64 lowercase hexadecimal characters",
+                entry.name,
+            )
+            return False
+
+        if hashlib.sha256(data).hexdigest() != digest[7:]:
+            logger.warning("Skipping skill '%s': archive digest does not match downloaded content", entry.name)
+            return False
+
+        return True
 
     def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
         """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
@@ -4760,7 +5229,7 @@ class _ArchiveEntryLoader:
             files = _extract_archive_to_memory(
                 data, archive_format, self._max_file_count, self._max_uncompressed_size_bytes
             )
-        except (OSError, ValueError, EOFError, tarfile.TarError, zipfile.BadZipFile, gzip.BadGzipFile):
+        except (OSError, ValueError, EOFError, zipfile.BadZipFile):
             logger.warning("Failed to extract archive for skill '%s'.", entry.name, exc_info=True)
             return None
 
@@ -4873,13 +5342,17 @@ class MCPSkillsSource(SkillsSource):
       ``name``, ``description``, and ``url`` fields. The referenced ``SKILL.md``
       resource is **not** read during discovery; the host fetches its body on
       demand via ``resources/read`` when the skill content is needed.
-    * ``archive`` — the entry's ``url`` points to a single archive resource
-      (ZIP, TAR, or gzip-compressed TAR) whose content unpacks into the skill's
+    * ``archive`` — the entry's ``url`` points to a ZIP archive resource
+      whose content unpacks into the skill's
       namespace. The archive is downloaded and unpacked **in memory** into a
       skill whose ``SKILL.md`` body drives it and whose sibling files become
       in-memory resources; nothing is written to disk. Scripts bundled inside an
       archive are surfaced as read-only resources only; MCP-delivered scripts
       are never discovered as runnable.
+
+    Archive member paths are compared case-insensitively, matching resource lookup.
+    The first file's spelling and content are retained; later colliding members
+    are skipped with a warning.
 
     Entries whose type has no registered handler (e.g. ``mcp-resource-template``)
     are skipped.
@@ -4892,7 +5365,28 @@ class MCPSkillsSource(SkillsSource):
     already provides refresh/caching for any source, this source does not offer
     a separate refresh interval; wrap it in :class:`CachingSkillsSource` to cache.
 
+    When backed by a high-level MCP ``Client``, individual resource reads honor
+    modern server ``ttlMs`` / ``cacheScope`` hints through the SDK response cache.
+    A caller-supplied ``ClientSession`` remains uncached. This wire-response cache
+    is separate from :class:`CachingSkillsSource`, which caches the parsed skill list.
+
+    Archive digests:
+        An archive entry's non-null ``digest`` must be ``sha256:`` followed by
+        64 lowercase hexadecimal characters. It is verified against the decoded
+        archive bytes before extraction. Invalid, unsupported, or mismatched
+        digests cause a warning and the archive is skipped; other entries remain
+        available. A cache refresh therefore replaces its list without rejected
+        archives. Omitted or null digests remain allowed. This verification
+        applies only to ``archive`` entries, not lazily fetched ``skill-md``
+        entries or their supporting resources.
+
     Security considerations:
+        Supporting resource names are checked for absolute paths, parent
+        traversal (including percent-encoded forms), and control characters
+        before an MCP request is sent. Index URLs retain their MCP resource
+        schemes: they are sent to the connected server, not opened locally.
+        This client-side guard does not replace server-side authorization.
+
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
         skills, the scripts the agent may run) reaches the agent. This source
@@ -4904,18 +5398,21 @@ class MCPSkillsSource(SkillsSource):
         script-capable skills, executed. Only connect this source to MCP
         servers you have vetted and trust, and treat their responses as
         untrusted input. Archive extraction is hardened against path-traversal
-        ("zip-slip"), link-based escapes, and decompression bombs, but the
-        skill *content* is still untrusted.
+        ("zip-slip") and decompression bombs, but the skill *content* is still
+        untrusted. A matching digest proves consistency with the index, not
+        trustworthiness: a server controlling both the index and archive can
+        replace both, or omit the digest.
 
     Examples:
         .. code-block:: python
 
-            from mcp.client.session import ClientSession
+            from mcp import Client
 
-            source = MCPSkillsSource(client=session)
-            # `context` is normally supplied by SkillsProvider at runtime.
-            context = SkillsSourceContext(agent=agent)
-            skills = await source.get_skills(context)
+            async with Client("https://example.com/mcp") as client:
+                source = MCPSkillsSource(client=client)
+                # `context` is normally supplied by SkillsProvider at runtime.
+                context = SkillsSourceContext(agent=agent)
+                skills = await source.get_skills(context)
     """
 
     _INDEX_URI: Final[str] = "skill://index.json"
@@ -4924,9 +5421,9 @@ class MCPSkillsSource(SkillsSource):
 
     def __init__(
         self,
-        client: ClientSession | None = None,
+        client: Client | ClientSession | None = None,
         *,
-        session_provider: Callable[[], ClientSession] | None = None,
+        session_provider: Callable[[], Client | ClientSession] | None = None,
         archive_resource_extensions: tuple[str, ...] | None = None,
         archive_resource_search_depth: int = DEFAULT_SEARCH_DEPTH,
         archive_max_file_count: int = _DEFAULT_ARCHIVE_MAX_FILE_COUNT,
@@ -4938,19 +5435,18 @@ class MCPSkillsSource(SkillsSource):
         Provide **exactly one** of *client* or *session_provider*.
 
         Args:
-            client: A fixed MCP client session connected to a server that exposes
-                Agent Skills resources. Use this when the session outlives the
-                source (e.g. a caller-owned long-lived session).
+            client: A fixed, already-entered high-level MCP Client or a deprecated
+                caller-owned ClientSession connected to a server that exposes
+                Agent Skills resources. MCPSkillsSource borrows the connection;
+                it never enters or closes it.
 
         Keyword Args:
-            session_provider: A callable returning the current MCP client session,
-                resolved on every discovery and on each skill's on-demand fetch.
-                Prefer this over *client* when the underlying session may be
-                replaced over time (for example, a reconnecting
-                :class:`~agent_framework.MCPTool` whose ``session`` is swapped on
-                reconnect), so cached skills keep using the live session. The
-                provider is forwarded to every :class:`MCPSkill` this source
-                creates.
+            session_provider: Compatibility-named callable returning the current
+                high-level Client or low-level ClientSession. It is resolved on
+                every discovery and on-demand fetch, so cached skills can follow
+                a replacement connection without reading ``MCPTool.session``.
+                MCPSkillsSource borrows every returned connection and never enters
+                or closes it.
             archive_resource_extensions: Allowed file extensions for resources discovered
                 in ``archive``-type skills. When ``None`` (the default), the file-source
                 default set (``.md``, ``.json``, ``.yaml``, ``.yml``, ``.csv``, ``.xml``,
@@ -4972,9 +5468,9 @@ class MCPSkillsSource(SkillsSource):
             ValueError: If both or neither of *client* and *session_provider* are
                 provided.
         """
-        self._session_provider = _resolve_mcp_session_provider(client, session_provider)
+        self._connection_provider = _resolve_mcp_connection_provider(client, session_provider)
         self._archive_loader = _ArchiveEntryLoader(
-            self._session_provider,
+            self._connection_provider,
             resource_extensions=archive_resource_extensions,
             resource_search_depth=archive_resource_search_depth,
             max_file_count=archive_max_file_count,
@@ -5044,7 +5540,7 @@ class MCPSkillsSource(SkillsSource):
             absent, empty, or malformed.
         """
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(self._INDEX_URI))
+            result = await self._connection_provider().read_resource(self._INDEX_URI)
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("No skill://index.json resource available on MCP server: %s", ex)
@@ -5062,6 +5558,14 @@ class MCPSkillsSource(SkillsSource):
         except (json.JSONDecodeError, ValueError):
             logger.warning("Failed to parse skill://index.json JSON document.", exc_info=True)
             return None
+
+    def _current_connection_source(self) -> Client | ClientSession:
+        connection = self._connection_provider()
+        if connection.client is not None:
+            return connection.client
+        if connection.session is not None:
+            return connection.session
+        raise RuntimeError("MCP connection has neither a Client nor a ClientSession.")
 
     def _try_create_skill(self, entry: _McpSkillIndexEntry) -> MCPSkill | None:
         """Attempt to create an :class:`MCPSkill` from a ``skill-md`` index entry.
@@ -5094,7 +5598,7 @@ class MCPSkillsSource(SkillsSource):
             logger.debug("Skipping entry '%s': invalid metadata: %s", entry.name, ex)
             return None
 
-        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, session_provider=self._session_provider)
+        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, session_provider=self._current_connection_source)
 
 
 # endregion

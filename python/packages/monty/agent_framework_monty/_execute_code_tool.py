@@ -13,22 +13,44 @@ scoped host directories, and the tool will capture any files written under
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
+import os
+import stat
 from collections.abc import Callable, Iterator, Sequence
-from copy import copy
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from agent_framework import Content, FunctionTool
-from agent_framework._tools import ApprovalMode, normalize_tools
+from agent_framework._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
+from agent_framework._tools import (
+    ApprovalMode,
+    _normalize_tool_description_format,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    _ToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    normalize_tools,
+)
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
 from ._types import FileMount, FileMountInput
 
+logger = logging.getLogger("agent_framework")
+
 EXECUTE_CODE_TOOL_NAME = "execute_code"
 EXECUTE_CODE_TOOL_DESCRIPTION = "Execute Python in a Monty interpreter."
+
+_FIDES_TOOL_PROPERTY_KEYS = frozenset({
+    "source_integrity",
+    "confidentiality",
+    "max_allowed_confidentiality",
+    "accepts_untrusted",
+    "standing_guidance",
+    "agent_framework.security.principals",
+    "_agent_framework_internal_security_tool",
+    "_mcp_trust_server_ifc",
+})
 
 #: Virtual path that the optional ``workspace_root`` directory is mounted at,
 #: matching the Hyperlight default. Use ``file_mounts`` for any other path.
@@ -161,7 +183,7 @@ def _make_tool_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     receives real Python objects. ``FunctionTool.invoke`` accepts direct keyword
     arguments and handles both sync and async underlying functions internally.
     """
-    return partial(copy(tool_obj).invoke, skip_parsing=True)
+    return partial(tool_obj.invoke, skip_parsing=True)
 
 
 class MontyExecuteCodeTool(FunctionTool):
@@ -187,6 +209,12 @@ class MontyExecuteCodeTool(FunctionTool):
     ``resource_limits`` is forwarded to Monty's ``ResourceLimits`` to cap CPU
     time, memory, output size, recursion depth, and GC frequency.
 
+    ``tool_description_format`` controls parameter documentation in both the
+    description and instructions: ``"compact"`` (default) or ``"json"`` globally,
+    or a mapping of exact, case-sensitive tool names to either format. Missing
+    names use compact; rich schemas fall back to full JSON Schema. Mappings
+    are copied and retain entries for tools registered later.
+
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
     the same task/thread that owns the tool. Monty itself runs on the event
     loop, so no internal locking is needed.
@@ -200,6 +228,7 @@ class MontyExecuteCodeTool(FunctionTool):
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
+        tool_description_format: _ToolDescriptionFormat = "compact",
     ) -> None:
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
@@ -209,6 +238,9 @@ class MontyExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
+            tool_description_format
+        )
         self._managed_tools: list[FunctionTool] = []
         self._workspace_root: Path | None = (
             _resolve_existing_directory(workspace_root) if workspace_root is not None else None
@@ -231,6 +263,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return build_execute_code_description(
             tools=self._managed_tools,
             mounts=self._effective_mounts(),
+            tool_description_format=self._tool_description_format,
         )
 
     @description.setter
@@ -242,7 +275,18 @@ class MontyExecuteCodeTool(FunctionTool):
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]],
     ) -> None:
         """Add Monty-side tools to this execute_code surface."""
-        self._managed_tools = _collect_tools(self._managed_tools, tools)
+        new_tools = _collect_tools(tools)
+        self._managed_tools = _collect_tools(self._managed_tools, new_tools)
+        for tool_obj in new_tools:
+            if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
+                tool_obj.additional_properties
+            ):
+                logger.warning(
+                    "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                    "through function middleware for calls made inside generated code. "
+                    "Keep FIDES-dependent tools as direct agent tools.",
+                    tool_obj.name,
+                )
         self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -308,6 +352,7 @@ class MontyExecuteCodeTool(FunctionTool):
             tools=list(self._managed_tools),
             tools_visible_to_model=tools_visible_to_model,
             mounts=self._effective_mounts(),
+            tool_description_format=self._tool_description_format,
         )
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
@@ -318,6 +363,7 @@ class MontyExecuteCodeTool(FunctionTool):
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
             resource_limits=self._resource_limits,
+            tool_description_format=self._tool_description_format,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -331,6 +377,11 @@ class MontyExecuteCodeTool(FunctionTool):
             "runtime": "monty",
             "approval_mode": approval_mode,
             "tool_names": [tool_obj.name for tool_obj in self._managed_tools],
+            "tool_description_format": (
+                dict(self._tool_description_format)
+                if isinstance(self._tool_description_format, dict)
+                else self._tool_description_format
+            ),
             "workspace_root": str(self._workspace_root) if self._workspace_root is not None else None,
             "file_mounts": [
                 {
@@ -450,42 +501,95 @@ def _build_execution_contents(*, result: dict[str, Any]) -> list[Content]:
 
 
 def _iter_real_files(root: Path) -> Iterator[Path]:
-    """Walk ``root`` recursively, yielding only real (non-symlink) files.
+    """Walk ``root`` recursively, yielding only real regular files.
 
     ``Path.rglob`` follows directory symlinks by default, which combined with
     ``Path.is_file()`` / ``Path.read_bytes()`` (both follow symlinks) would let
     an attacker who controls the workspace pre-place a symlink to a host file
-    or directory and have our post-execution capture surface it. Skipping every
-    symlink at both the directory and file level closes that escape.
+    or directory and have our post-execution capture surface it. Skip symlinks,
+    Windows junctions, and other reparse points at every directory level.
     """
     stack: list[Path] = [root]
     while stack:
         current = stack.pop()
         try:
+            if _is_link_or_reparse_point(current):
+                continue
             entries = list(current.iterdir())
         except OSError:
             continue
         for entry in entries:
             try:
-                if entry.is_symlink():
+                if _is_link_or_reparse_point(entry):
                     continue
-                if entry.is_dir():
+                entry_stat = entry.lstat()
+                if stat.S_ISDIR(entry_stat.st_mode):
                     stack.append(entry)
-                elif entry.is_file():
+                elif stat.S_ISREG(entry_stat.st_mode):
                     yield entry
             except OSError:
                 continue
 
 
+def _safe_capture_file_stat(*, root: Path, entry: Path) -> os.stat_result | None:
+    """Return the verified stat for a real regular file beneath ``root``."""
+    try:
+        relative = entry.relative_to(root)
+    except ValueError:
+        return None
+
+    current = root
+    try:
+        if _is_link_or_reparse_point(current):
+            return None
+        for part in relative.parts:
+            current /= part
+            if _is_link_or_reparse_point(current):
+                return None
+        entry_stat = current.lstat()
+    except OSError:
+        return None
+    return entry_stat if stat.S_ISREG(entry_stat.st_mode) else None
+
+
+def _read_validated_file(*, root: Path, entry: Path, expected: os.stat_result) -> bytes | None:
+    """Read ``entry`` through one descriptor that is checked against the validated file.
+
+    ``Path.read_bytes()`` reopens the path, so a component swapped for a link or junction after
+    validation would be followed. Opening first, comparing the descriptor with the validated ``lstat``
+    identity, and revalidating the path afterwards rejects such a swap. Windows has no no-follow open,
+    so the check is not atomic there, but an undetected swap would have to be applied, reverted, and
+    applied again around the checks. Returns ``None`` when the file changed or cannot be read safely.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(entry, flags)
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(fd)
+        identity = (opened.st_dev, opened.st_ino)
+        if not stat.S_ISREG(opened.st_mode) or identity != (expected.st_dev, expected.st_ino):
+            return None
+        rechecked = _safe_capture_file_stat(root=root, entry=entry)
+        if rechecked is None or (rechecked.st_dev, rechecked.st_ino) != identity:
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            return handle.read()
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str, tuple[int, int]]]:
-    """Capture (size, mtime_ns) for every real (non-symlink) host file under read-write mounts.
+    """Capture (size, mtime_ns) for every real host file under read-write mounts.
 
     Returns ``{mount_path: {relative_posix_path: (size, mtime_ns)}}``. Used by
     :func:`_capture_written_files` to detect new or modified files after the run.
     Read-only and overlay mounts are skipped because their writes do not
-    propagate to the host. Symlinks (file or directory) are deliberately skipped
-    so an attacker cannot escape the mount by pre-placing a symlink to a host
-    path outside the workspace.
+    propagate to the host. Links and reparse points are deliberately skipped so
+    an attacker cannot escape the mount through a host path outside the workspace.
     """
     snapshot: dict[str, dict[str, tuple[int, int]]] = {}
     for mount in mounts:
@@ -495,11 +599,11 @@ def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str
         per_mount: dict[str, tuple[int, int]] = {}
         for entry in _iter_real_files(host_root):
             try:
-                stat = entry.lstat()  # lstat: never follow symlinks (defensive)
+                entry_stat = entry.lstat()  # lstat: never follow symlinks (defensive)
             except OSError:
                 continue
             relative = entry.relative_to(host_root).as_posix()
-            per_mount[relative] = (int(stat.st_size), int(stat.st_mtime_ns))
+            per_mount[relative] = (int(entry_stat.st_size), int(entry_stat.st_mtime_ns))
         snapshot[mount.mount_path] = per_mount
     return snapshot
 
@@ -511,11 +615,12 @@ def _capture_written_files(
     """Return :class:`Content` items for files the sandbox wrote during the run.
 
     Mirrors Hyperlight's ``/output`` capture flow: any new or modified real
-    (non-symlink) file under a read-write mount is read back as binary and
+    regular file under a read-write mount is read back as binary and
     surfaced as ``Content.from_data`` with a ``path`` annotation in
-    ``additional_properties``. Symlinks are skipped at both directory and file
-    level so a malicious workspace cannot trick us into capturing host files
-    outside the configured mount root.
+    ``additional_properties``. Links and reparse points are skipped at every
+    directory level, and each file is read through a descriptor verified
+    against the validated path, so a malicious workspace cannot trick us into
+    capturing host files outside the configured mount root.
     """
     captured: list[Content] = []
     for mount in mounts:
@@ -524,28 +629,24 @@ def _capture_written_files(
         host_root = Path(mount.host_path)
         before = pre_state.get(mount.mount_path, {})
         for entry in sorted(_iter_real_files(host_root)):
-            try:
-                stat = entry.lstat()
-            except OSError:
+            entry_stat = _safe_capture_file_stat(root=host_root, entry=entry)
+            if entry_stat is None:
                 continue
             relative = entry.relative_to(host_root).as_posix()
-            current = (int(stat.st_size), int(stat.st_mtime_ns))
+            current = (int(entry_stat.st_size), int(entry_stat.st_mtime_ns))
             if before.get(relative) == current:
                 continue  # Unchanged.
             sandbox_path = f"{mount.mount_path.rstrip('/')}/{relative}"
-            if stat.st_size > MAX_CAPTURED_FILE_BYTES:
+            if entry_stat.st_size > MAX_CAPTURED_FILE_BYTES:
                 captured.append(
                     Content.from_text(
-                        f"[file {sandbox_path} omitted: {stat.st_size} bytes "
+                        f"[file {sandbox_path} omitted: {entry_stat.st_size} bytes "
                         f"exceeds MAX_CAPTURED_FILE_BYTES={MAX_CAPTURED_FILE_BYTES}]"
                     )
                 )
                 continue
-            try:
-                # _iter_real_files already excluded symlinks at every level of
-                # the walk; reading the file here is safe.
-                data = entry.read_bytes()
-            except OSError:
+            data = _read_validated_file(root=host_root, entry=entry, expected=entry_stat)
+            if data is None:
                 continue
             media_type = mimetypes.guess_type(entry.name)[0] or "application/octet-stream"
             captured.append(

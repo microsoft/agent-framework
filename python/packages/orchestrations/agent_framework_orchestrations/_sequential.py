@@ -32,7 +32,7 @@ from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
 
 from ._feature_usage import FeatureIndex
-from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestration_request_info import AgentApprovalExecutor, validate_request_info_filter
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -44,6 +44,7 @@ from ._participant_output_config import (
 from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Sequential"
 
 
 class _InputToConversation(Executor):
@@ -98,15 +99,18 @@ class SequentialBuilder:
     def __init__(
         self,
         *,
+        name: str | None = None,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
         chain_only_agent_responses: bool = False,
         output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
         intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
+        ensure_trailing_user_turn: bool = False,
     ) -> None:
         """Initialize the SequentialBuilder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"Sequential"``.
             participants: Sequence of agent or executor instances to run sequentially.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
             chain_only_agent_responses: If True, only agent responses are chained between agents.
@@ -117,7 +121,13 @@ class SequentialBuilder:
             intermediate_output_from: Optional participant names or instances whose ``yield_output`` calls
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
+            ensure_trailing_user_turn: If True, whenever a participant would be run with a
+                conversation ending on an assistant message (e.g. chaining into the next agent),
+                a synthetic user continuation message is appended first. Some chat-completions
+                providers return empty text when the prompt ends on ``assistant``. Defaults to
+                False to preserve existing behavior.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: list[SupportsAgentRun | Executor] = []
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._chain_only_agent_responses: bool = chain_only_agent_responses
@@ -125,6 +135,7 @@ class SequentialBuilder:
         self._request_info_filter: set[str] | None = None
         self._output_from = _coalesce_output_from(output_from=output_from)
         self._intermediate_output_from = _coerce_intermediate_output_from(intermediate_output_from)
+        self._ensure_trailing_user_turn: bool = ensure_trailing_user_turn
 
         self._set_participants(participants)
 
@@ -219,13 +230,25 @@ class SequentialBuilder:
                             p,
                             context_mode=context_mode,
                             allow_direct_output=(idx == last_idx),
+                            ensure_trailing_user_turn=self._ensure_trailing_user_turn,
                         )
                     )
                 else:
-                    executors.append(AgentExecutor(p, context_mode=context_mode))
+                    executors.append(
+                        AgentExecutor(
+                            p,
+                            context_mode=context_mode,
+                            ensure_trailing_user_turn=self._ensure_trailing_user_turn,
+                        )
+                    )
             else:
                 raise TypeError(f"Participants must be SupportsAgentRun or Executor instances. Got {type(p).__name__}.")
 
+        if self._request_info_enabled:
+            validate_request_info_filter(
+                self._request_info_filter,
+                [resolve_agent_id(p) for p in participants if not isinstance(p, Executor)],
+            )
         return executors
 
     def build(self) -> Workflow:
@@ -258,6 +281,7 @@ class SequentialBuilder:
             default_output_from=[participants[-1]],
         )
         builder = WorkflowBuilder(
+            name=self._name,
             start_executor=input_conv,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,

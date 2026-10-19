@@ -30,7 +30,7 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
         object? parsedResult = expressionResult.Value.ToObject().ConvertType(targetType);
         parsedValue = parsedResult.ToFormula();
 
-        await this.AssignAsync(this.Model.Variable.Path, parsedValue, context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Variable.Path, parsedValue, context, expressionResult.Sensitivity).ConfigureAwait(false);
 
         return default;
     }

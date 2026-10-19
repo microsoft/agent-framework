@@ -5,7 +5,6 @@ using System.ClientModel.Primitives;
 using System.Runtime.CompilerServices;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Responses;
 
 namespace AgentWebChat.Web;
@@ -21,7 +20,7 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
         string? sessionId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        OpenAIClientOptions options = new()
+        ResponsesClientOptions options = new()
         {
             Endpoint = new Uri(httpClient.BaseAddress!, $"/{Uri.EscapeDataString(agentName)}/v1/"),
             Transport = new HttpClientPipelineTransport(httpClient)

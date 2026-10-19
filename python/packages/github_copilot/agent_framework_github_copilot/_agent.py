@@ -9,7 +9,18 @@ import json
 import logging
 import sys
 import warnings
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+import weakref
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
+from pathlib import Path
 from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 from urllib.parse import urlparse
 
@@ -22,6 +33,7 @@ from agent_framework import (
     BaseAgent,
     Content,
     ContextProvider,
+    FunctionInvocationContext,
     HistoryProvider,
     Message,
     ResponseStream,
@@ -30,6 +42,7 @@ from agent_framework import (
     add_usage_details,
     normalize_messages,
 )
+from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionTool, ToolTypes
@@ -77,6 +90,7 @@ try:
         Attachment,
         BlobAttachment,
         MCPServerConfig,
+        PermissionInvocation,
         PermissionRequestResult,
         PreToolUseHandler,
         PreToolUseHookOutput,
@@ -110,13 +124,23 @@ except ImportError as _copilot_import_error:
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
 
+_PermissionHandlerContext = Any
+"""Compatibility context accepted by permission handlers across SDK versions."""
+
 PermissionHandlerType = Callable[
-    [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
+    [PermissionRequest, _PermissionHandlerContext],
+    "PermissionRequestResult | Awaitable[PermissionRequestResult]",
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
 
-AsyncPermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], "Awaitable[PermissionRequestResult]"]
+AsyncPermissionHandlerType = Callable[
+    [PermissionRequest, _PermissionHandlerContext], "Awaitable[PermissionRequestResult]"
+]
 """Type for permission request handlers that are always asynchronous."""
+
+_SdkAsyncPermissionHandlerType = Callable[
+    [PermissionRequest, PermissionInvocation], "Awaitable[PermissionRequestResult]"
+]
 
 
 FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
@@ -169,9 +193,40 @@ async def _resolve_function_approval(
 logger = logging.getLogger("agent_framework.github_copilot")
 
 
+def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by the Copilot agent or client."""
+    keys: set[str] = set()
+    for owner in (agent, client):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast(Collection[Any], declared) if isinstance(key, str))
+    return frozenset(keys)
+
+
+# One lock per (CopilotClient, service session ID), shared across agents that share a client.
+# Entries disappear once no run holds or awaits the lock.
+_SESSION_RUN_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = weakref.WeakValueDictionary()
+
+_MCP_TOOL_MESSAGE = (
+    "MCP server '{name}' cannot be passed to GitHubCopilotAgent as a tool: the Copilot SDK "
+    "connects to MCP servers itself, so a framework-managed MCPTool would keep none of its "
+    "framework behavior. Configure the server natively instead, for example "
+    "default_options={{'mcp_servers': {{'{name}': {{'type': 'stdio', 'command': 'python', "
+    "'args': ['server.py'], 'tools': ['*']}}}}}}, or use a ChatAgent, where the framework owns "
+    "the connection."
+)
+
+
+def _reject_mcp_tools(tools: Sequence[Any]) -> None:
+    """Refuse MCP servers handed in as tools, from whichever option carried them."""
+    for tool in tools:
+        if isinstance(tool, MCPTool):
+            raise TypeError(_MCP_TOOL_MESSAGE.format(name=tool.name))
+
+
 def _deny_all_permissions(
     _request: PermissionRequest,
-    _invocation: dict[str, str],
+    _invocation: _PermissionHandlerContext,
 ) -> PermissionRequestResult:
     """Default permission handler that denies all requests."""
     return PermissionDecisionUserNotAvailable()
@@ -322,7 +377,7 @@ def _normalize_permission_decision(
     return PermissionDecisionApproveForSession(approval=approval)
 
 
-def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> AsyncPermissionHandlerType:
+def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> _SdkAsyncPermissionHandlerType:
     """Wrap a permission handler so its decisions are normalized before reaching the SDK.
 
     Exceptions raised by ``handler`` deliberately propagate: the SDK already catches them
@@ -335,8 +390,10 @@ def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> Asy
         An async handler delegating to ``handler`` and normalizing its result.
     """
 
-    async def normalized_handler(request: PermissionRequest, invocation: dict[str, str]) -> PermissionRequestResult:
-        result = handler(request, invocation)
+    async def normalized_handler(
+        request: PermissionRequest, invocation: PermissionInvocation
+    ) -> PermissionRequestResult:
+        result = handler(request, cast(PermissionInvocation, dict(invocation)))
         if inspect.isawaitable(result):
             result = await result
         return _normalize_permission_decision(result, request)
@@ -362,6 +419,45 @@ def _parse_telemetry_config(raw: str) -> TelemetryConfig | None:
         )
         return None
     return cast(TelemetryConfig, parsed)
+
+
+def _client_working_directory(client: CopilotClient | None) -> str | None:
+    """Best-effort read of the working directory an injected client configured.
+
+    A client created with ``CopilotClient(working_directory=...)`` spawns the CLI process
+    in that directory, so the CLI resolves ``.github/hooks/`` relative to it rather than to
+    this process. The SDK keeps the value on a private options object, so this is read
+    defensively: if the attribute ever moves, hook detection falls back to the process
+    working directory instead of failing.
+    """
+    options = getattr(client, "_options", None)
+    working_directory = getattr(options, "working_directory", None)
+    return working_directory if isinstance(working_directory, str) else None
+
+
+def _resolve_effective_working_directory(session_working_directory: str | None, client: CopilotClient | None) -> Path:
+    """Resolve the directory the CLI will treat as the workspace, mirroring the SDK.
+
+    The SDK resolves in this order: the session's ``working_directory`` when supplied,
+    otherwise the CLI process's own directory, which is the injected client's configured
+    ``working_directory`` when it set one and this process's directory otherwise.
+    """
+    if session_working_directory:
+        return Path(session_working_directory)
+    client_working_directory = _client_working_directory(client)
+    if client_working_directory:
+        return Path(client_working_directory)
+    return Path.cwd()
+
+
+def _has_file_hooks(working_directory: Path) -> bool:
+    """Return whether ``.github/hooks/`` holds hook definitions the CLI would otherwise load."""
+    try:
+        return any((working_directory / ".github" / "hooks").iterdir())
+    except OSError:
+        # Missing directory, unreadable path, or a file where the directory would be:
+        # there is nothing the caller needs to know about.
+        return False
 
 
 class GitHubCopilotSettings(TypedDict, total=False):
@@ -467,6 +563,14 @@ class GitHubCopilotOptions(TypedDict, total=False):
 
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
+
+    enable_file_hooks: bool
+    """Whether the CLI loads file hooks from the working directory's ``.github/hooks/``.
+
+    Defaults to ``False``: hook definitions checked into the working directory are ignored
+    unless you opt in, so a session behaves the same way regardless of which checkout it
+    runs in. Unrelated to the SDK callback hooks configured through ``on_pre_tool_use``.
+    """
 
     telemetry: TelemetryConfig
     """OpenTelemetry configuration for the Copilot CLI process."""
@@ -641,6 +745,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
 
         self._tools = normalize_tools(tools)
+        _reject_mcp_tools(self._tools)
         self._permission_handler = on_permission_request
         self._on_pre_tool_use: PreToolUseHandler | None = on_pre_tool_use
         self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
@@ -649,6 +754,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # are forwarded verbatim to the Copilot SDK by _build_session_kwargs.
         self._default_options = opts
         self._started = False
+        self._file_hooks_warning_emitted = False
 
     async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
@@ -733,6 +839,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         session: AgentSession | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
@@ -745,6 +852,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         session: AgentSession | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
@@ -756,6 +864,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         session: AgentSession | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
@@ -774,6 +883,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 compatibility; pass middleware via :class:`GitHubCopilotAgent` which
                 forwards it through :class:`AgentTelemetryLayer`.
             options: Runtime options (model, timeout, etc.).
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
+                Tools receive them through ``FunctionInvocationContext.kwargs`` when they
+                declare a ``FunctionInvocationContext`` parameter.
             kwargs: Additional keyword arguments for compatibility with the shared agent
                 interface (e.g. compaction_strategy, tokenizer). Not used by this agent.
 
@@ -807,11 +919,22 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 return AgentResponse.from_updates(updates)
 
             return ResponseStream(
-                self._stream_updates(messages=messages, session=session, options=options, _ctx_holder=ctx_holder),
+                self._stream_updates(
+                    messages=messages,
+                    session=session,
+                    options=options,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    _ctx_holder=ctx_holder,
+                ),
                 finalizer=_finalize,
                 result_hooks=[_after_run_hook],
             )
-        return self._run_impl(messages=messages, session=session, options=options)
+        return self._run_impl(
+            messages=messages,
+            session=session,
+            options=options,
+            function_invocation_kwargs=function_invocation_kwargs,
+        )
 
     @staticmethod
     def _parse_usage_details_from_copilot(data: AssistantUsageData) -> UsageDetails | None:
@@ -840,6 +963,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
         if not self._started:
@@ -872,7 +996,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             existing = list(opts.get("tools") or [])
             opts["tools"] = existing + list(session_context.tools)
 
-        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         usage_details: UsageDetails | None = None
         finish_reason: str | None = None
         model: str | None = None
@@ -906,14 +1029,20 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
         attachments = self._prepare_attachments_for_copilot(context_messages)
 
-        unsubscribe = copilot_session.on(usage_event_handler)
-        try:
-            mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-            response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
-        except Exception as ex:
-            raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
-        finally:
-            unsubscribe()
+        async with self._session_run_scope(
+            session,
+            streaming=False,
+            runtime_options=opts,
+            function_invocation_kwargs=function_invocation_kwargs,
+        ) as copilot_session:
+            unsubscribe = copilot_session.on(usage_event_handler)
+            try:
+                mark_feature_used(FeatureIndex.GITHUB_COPILOT)
+                response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
+            except Exception as ex:
+                raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
+            finally:
+                unsubscribe()
 
         response_messages: list[Message] = []
         response_id: str | None = None
@@ -952,6 +1081,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
         _ctx_holder: dict[str, Any] | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal method to stream updates from GitHub Copilot.
@@ -962,6 +1092,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
             _ctx_holder: Internal dict populated with session_context and session
                 so that the caller (via a ResponseStream result_hook) can run
                 after_run providers without duplicating the updates buffer.
@@ -1001,12 +1132,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             existing = list(opts.get("tools") or [])
             opts["tools"] = existing + list(session_context.tools)
 
-        copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
-
-        if _ctx_holder is not None:
-            _ctx_holder["session_context"] = session_context
-            _ctx_holder["session"] = session
-
         # Build the prompt from the full session context so provider-injected messages are included.
         context_messages = session_context.get_messages(include_input=True)
         prompt = "\n".join([message.text for message in context_messages])
@@ -1022,7 +1147,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 if data.delta_content:
                     update = AgentResponseUpdate(
                         role="assistant",
-                        contents=[Content.from_text(data.delta_content)],
+                        contents=[Content.from_text(data.delta_content, merge_mode="append")],
                         response_id=data.message_id,
                         message_id=data.message_id,
                         raw_representation=event,
@@ -1040,7 +1165,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 model = event.data.model or None
                 if usage_details or finish_reason or model:
                     update = AgentResponseUpdate(
-                        contents=[Content.from_usage(usage_details, raw_representation=event.data)]
+                        contents=[
+                            Content.from_usage(
+                                usage_details,
+                                merge_mode="replace",
+                                raw_representation=event.data,
+                            )
+                        ]
                         if usage_details
                         else None,
                         finish_reason=cast(Any, finish_reason),
@@ -1056,6 +1187,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     call_id=tool_call_id,
                     name=tool_name,
                     arguments=arguments,
+                    hosted=True,
+                    merge_mode="replace",
                     raw_representation=event.data,
                 )
                 update = AgentResponseUpdate(
@@ -1092,18 +1225,28 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 error_msg = error_data.message or "Unknown error"
                 queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
 
-        unsubscribe = copilot_session.on(event_handler)
+        async with self._session_run_scope(
+            session,
+            streaming=True,
+            runtime_options=opts,
+            function_invocation_kwargs=function_invocation_kwargs,
+        ) as copilot_session:
+            if _ctx_holder is not None:
+                _ctx_holder["session_context"] = session_context
+                _ctx_holder["session"] = session
 
-        try:
-            mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-            await copilot_session.send(prompt, attachments=attachments)
+            unsubscribe = copilot_session.on(event_handler)
 
-            while (item := await queue.get()) is not None:
-                if isinstance(item, Exception):
-                    raise item
-                yield item
-        finally:
-            unsubscribe()
+            try:
+                mark_feature_used(FeatureIndex.GITHUB_COPILOT)
+                await copilot_session.send(prompt, attachments=attachments)
+
+                while (item := await queue.get()) is not None:
+                    if isinstance(item, Exception):
+                        raise item
+                    yield item
+            finally:
+                unsubscribe()
 
     async def _run_before_providers(
         self,
@@ -1221,30 +1364,58 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     def _prepare_tools(
         self,
         tools: Sequence[ToolTypes | CopilotTool],
+        *,
+        agent_session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> list[CopilotTool]:
         """Convert Agent Framework tools to Copilot SDK tools.
 
         Args:
             tools: List of Agent Framework tools.
 
+        Keyword Args:
+            agent_session: The conversation session, exposed to tools through their
+                ``FunctionInvocationContext``.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
+
         Returns:
             List of Copilot SDK tools.
         """
         copilot_tools: list[CopilotTool] = []
+        parent_service_session_state_keys = _provider_service_session_state_keys(self, self._client)
 
         for tool in tools:
             if isinstance(tool, CopilotTool):
                 copilot_tools.append(tool)
             elif isinstance(tool, FunctionTool):
-                copilot_tools.append(self._tool_to_copilot_tool(tool))
+                copilot_tools.append(
+                    self._tool_to_copilot_tool(
+                        tool,
+                        agent_session=agent_session,
+                        function_invocation_kwargs=function_invocation_kwargs,
+                        parent_service_session_state_keys=parent_service_session_state_keys,
+                    )
+                )
             elif isinstance(tool, MutableMapping):
                 copilot_tools.append(tool)  # type: ignore[arg-type]
             # Note: Other tool types (e.g., dict-based hosted tools) are skipped
 
         return copilot_tools
 
-    def _tool_to_copilot_tool(self, ai_func: FunctionTool) -> CopilotTool:
+    def _tool_to_copilot_tool(
+        self,
+        ai_func: FunctionTool,
+        *,
+        agent_session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        parent_service_session_state_keys: frozenset[str] = frozenset(),
+    ) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool.
+
+        Each invocation receives a ``FunctionInvocationContext`` carrying the run's
+        ``function_invocation_kwargs`` and ``agent_session``, so tools that declare a
+        ``FunctionInvocationContext`` parameter can read them the same way they do
+        with a chat-client-backed agent.
 
         Approval for tools declared with ``approval_mode="always_require"`` is normally
         enforced by the Copilot SDK's native ``on_pre_tool_use`` hook (see
@@ -1252,9 +1423,18 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         callback is configured instead, approval is enforced inside this handler for
         backward compatibility. (``on_function_approval`` and ``on_pre_tool_use`` are
         mutually exclusive, so only one mechanism is ever active.)
+
+        Args:
+            ai_func: Agent Framework function tool to convert.
+
+        Keyword Args:
+            agent_session: Parent agent session passed to the tool.
+            function_invocation_kwargs: Runtime keyword arguments forwarded to the tool.
+            parent_service_session_state_keys: Provider-owned state declared by the parent agent and client.
         """
         approval_handler = self._function_approval_handler
         enforce = approval_handler is not None and ai_func.approval_mode == "always_require"
+        runtime_kwargs = dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
             args: dict[str, Any] = invocation.arguments or {}
@@ -1273,11 +1453,22 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         result_type="failure",
                         error="approval_denied",
                     )
+                context = FunctionInvocationContext(
+                    function=ai_func,
+                    arguments=args,
+                    session=agent_session,
+                    kwargs=runtime_kwargs,
+                    parent_service_session_state_keys=parent_service_session_state_keys,
+                )
                 if ai_func.input_model:
                     args_instance = ai_func.input_model(**args)
-                    result = await ai_func.invoke(arguments=args_instance)
+                    result = await ai_func.invoke(
+                        arguments=args_instance, context=context, tool_call_id=invocation.tool_call_id or None
+                    )
                 else:
-                    result = await ai_func.invoke(arguments=args)
+                    result = await ai_func.invoke(
+                        arguments=args, context=context, tool_call_id=invocation.tool_call_id or None
+                    )
                 rich = [c for c in result if c.type in ("data", "uri")]
                 if rich:
                     logger.warning(
@@ -1391,11 +1582,73 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         return {"on_pre_tool_use": default_pre_tool_use}
 
+    def _session_run_lock(self, service_session_id: str) -> asyncio.Lock:
+        """Return the lock that serializes runs on one Copilot service session."""
+        key = (id(self._client), service_session_id)
+        lock = _SESSION_RUN_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _SESSION_RUN_LOCKS[key] = lock
+        return lock
+
+    @contextlib.asynccontextmanager
+    async def _session_run_scope(
+        self,
+        agent_session: AgentSession,
+        *,
+        streaming: bool,
+        runtime_options: dict[str, Any],
+        function_invocation_kwargs: Mapping[str, Any] | None,
+    ) -> AsyncGenerator[CopilotSession]:
+        """Open the Copilot session for one run and hold it exclusively until the run ends.
+
+        The Copilot SDK keeps a single session object per service session ID and
+        re-registers tools on it on every resume, dispatching tool calls by session ID.
+        Tool handlers capture the run's ``function_invocation_kwargs`` and session, so
+        an overlapping resume would let one run's tool calls execute with another run's
+        context. Runs on the same service session are therefore serialized.
+
+        Args:
+            agent_session: The conversation session.
+
+        Keyword Args:
+            streaming: Whether to enable streaming for the session.
+            runtime_options: Runtime options from run that take precedence.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
+
+        Yields:
+            The created or resumed CopilotSession.
+        """
+        lock: asyncio.Lock | None = None
+        service_session_id = agent_session.service_session_id
+        if isinstance(service_session_id, str):
+            resume_lock = self._session_run_lock(service_session_id)
+            await resume_lock.acquire()
+            lock = resume_lock
+        try:
+            copilot_session = await self._get_or_create_session(
+                agent_session,
+                streaming=streaming,
+                runtime_options=runtime_options,
+                function_invocation_kwargs=function_invocation_kwargs,
+            )
+            if lock is None:
+                # A newly created service session ID is not known to any other run yet,
+                # so this acquire never waits.
+                create_lock = self._session_run_lock(copilot_session.session_id)
+                await create_lock.acquire()
+                lock = create_lock
+            yield copilot_session
+        finally:
+            if lock is not None:
+                lock.release()
+
     async def _get_or_create_session(
         self,
         agent_session: AgentSession,
         streaming: bool = False,
         runtime_options: dict[str, Any] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> CopilotSession:
         """Get an existing session or create a new one for the session.
 
@@ -1403,6 +1656,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             agent_session: The conversation session.
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options from run that take precedence.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
 
         Returns:
             A CopilotSession instance.
@@ -1420,18 +1674,53 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     raise AgentException(
                         "GitHubCopilotAgent expects a string service_session_id for session resumption."
                     )
-                return await self._resume_session(service_session_id, streaming, runtime_options)
+                return await self._resume_session(
+                    service_session_id,
+                    streaming,
+                    runtime_options,
+                    agent_session=agent_session,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                )
 
-            session = await self._create_session(streaming, runtime_options)
+            session = await self._create_session(
+                streaming,
+                runtime_options,
+                agent_session=agent_session,
+                function_invocation_kwargs=function_invocation_kwargs,
+            )
             agent_session.service_session_id = session.session_id
             return session
         except Exception as ex:
             raise AgentException(f"Failed to create GitHub Copilot session: {ex}") from ex
 
+    def _warn_once_about_unloaded_file_hooks(self, session_working_directory: str | None) -> None:
+        """Warn once when the effective working directory defines file hooks that will not run.
+
+        Without this the default is silent: hooks simply stop running, with nothing to
+        point at the cause. The warning fires at most once per agent so a long-lived agent
+        does not repeat it on every run.
+        """
+        if self._file_hooks_warning_emitted:
+            return
+        working_directory = _resolve_effective_working_directory(session_working_directory, self._client)
+        if not _has_file_hooks(working_directory):
+            return
+        self._file_hooks_warning_emitted = True
+        logger.warning(
+            "Not loading the file hooks defined in '%s': GitHubCopilotAgent leaves "
+            "enable_file_hooks off so a session behaves the same way in every working "
+            "directory. Set enable_file_hooks=True in default_options (or in per-run "
+            "options) to run them.",
+            working_directory / ".github" / "hooks",
+        )
+
     def _build_session_kwargs(
         self,
         streaming: bool,
         runtime_options: dict[str, Any] | None,
+        *,
+        agent_session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Assemble keyword arguments for ``create_session`` / ``resume_session``.
 
@@ -1439,15 +1728,21 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``runtime_options`` which override them. Every key is forwarded verbatim to
         the Copilot SDK, so any ``create_session`` parameter is supported without a
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
-        SDK). A few keys are handled specially because they need a secure default
-        (``on_permission_request`` defaults to denying all requests, and is wrapped so
-        under-specified ``approve-for-session`` decisions are scoped to the request that
-        triggered them) or transforming: ``tools`` are merged with the agent's tools and
-        converted to SDK tools, and approval callbacks are turned into ``hooks``.
+        SDK). A few keys are handled specially because they need a specific default or
+        transforming: ``on_permission_request`` defaults to denying all requests and is
+        wrapped so under-specified ``approve-for-session`` decisions are scoped to the
+        request that triggered them, ``enable_file_hooks`` defaults to off, ``tools`` are
+        merged with the agent's tools and converted to SDK tools, and approval callbacks
+        are turned into ``hooks``.
 
         Args:
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options that take precedence over default_options.
+
+        Keyword Args:
+            agent_session: The conversation session, exposed to tools through their
+                ``FunctionInvocationContext``.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
 
         Returns:
             The keyword arguments to splat into the SDK session factory.
@@ -1459,8 +1754,19 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         # Merge agent-level tools with any caller-supplied tools (from default_options
         # or per-run options, the latter winning) and convert to SDK tools.
-        all_tools = list(self._tools or []) + list(kwargs.get("tools") or [])
-        kwargs["tools"] = self._prepare_tools(all_tools) if all_tools else None
+        # Normalize the option-supplied tools the way the constructor does: it converts callables
+        # and flattens tool-collection wrappers, which can otherwise hide an MCPTool.
+        all_tools = normalize_tools(list(self._tools or []) + list(kwargs.get("tools") or []))
+        _reject_mcp_tools(all_tools)
+        kwargs["tools"] = (
+            self._prepare_tools(
+                all_tools,
+                agent_session=agent_session,
+                function_invocation_kwargs=function_invocation_kwargs,
+            )
+            if all_tools
+            else None
+        )
 
         kwargs["streaming"] = streaming
         # model may already be present from per-run options (merged above); otherwise fall
@@ -1468,8 +1774,17 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if not kwargs.get("model"):
             kwargs["model"] = self._settings.get("model") or None
         kwargs["on_permission_request"] = _with_normalized_permission_decisions(
-            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
+            cast(
+                PermissionHandlerType,
+                opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions,
+            )
         )
+        # File hooks let the working directory's checked-in configuration influence what the
+        # CLI does on the host, so the agent leaves them off for a consistent session in every
+        # checkout. Callers opt in through ``default_options`` or per-run options.
+        if kwargs.get("enable_file_hooks") is None:
+            kwargs["enable_file_hooks"] = False
+            self._warn_once_about_unloaded_file_hooks(kwargs.get("working_directory"))
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
 
         # Strip agent-internal and client-level keys that are consumed here or in the
@@ -1492,23 +1807,40 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self,
         streaming: bool,
         runtime_options: dict[str, Any] | None = None,
+        *,
+        agent_session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> CopilotSession:
         """Create a new Copilot session.
 
         Args:
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options that take precedence over default_options.
+
+        Keyword Args:
+            agent_session: The conversation session, exposed to tools.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
         """
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        return await self._client.create_session(**self._build_session_kwargs(streaming, runtime_options))
+        return await self._client.create_session(
+            **self._build_session_kwargs(
+                streaming,
+                runtime_options,
+                agent_session=agent_session,
+                function_invocation_kwargs=function_invocation_kwargs,
+            )
+        )
 
     async def _resume_session(
         self,
         session_id: str,
         streaming: bool,
         runtime_options: dict[str, Any] | None = None,
+        *,
+        agent_session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> CopilotSession:
         """Resume an existing Copilot session by ID.
 
@@ -1516,11 +1848,23 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session_id: The session ID to resume.
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options that take precedence over default_options.
+
+        Keyword Args:
+            agent_session: The conversation session, exposed to tools.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
         """
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        return await self._client.resume_session(session_id, **self._build_session_kwargs(streaming, runtime_options))
+        return await self._client.resume_session(
+            session_id,
+            **self._build_session_kwargs(
+                streaming,
+                runtime_options,
+                agent_session=agent_session,
+                function_invocation_kwargs=function_invocation_kwargs,
+            ),
+        )
 
 
 class GitHubCopilotAgent(  # type: ignore[misc]

@@ -134,7 +134,8 @@ public sealed class SessionFilesHostedAgentTests(SessionFilesHostedAgentFixture 
                 // The platform mutates session/conversation revision when AgentSessionFiles uploads land,
                 // so an immediate /responses follow-up races and 400's with "modified concurrently. Please
                 // retry." — the response message literally tells us to retry. Bounded retry handles it.
-                var readOptions = new CreateResponseOptions { AgentConversationId = conversationId };
+                var readOptions = ProjectResponsesTestOptions.Create();
+                readOptions.AgentConversationId = conversationId;
                 readOptions.InputItems.Add(ResponseItem.CreateUserMessageItem(
                     $"Read {TestDataFileName} from $HOME and quote the headline total revenue figure verbatim, no commentary."));
 

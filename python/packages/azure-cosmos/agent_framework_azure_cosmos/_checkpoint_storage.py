@@ -120,7 +120,7 @@ class CosmosCheckpointStorage:
         endpoint: str | None = None,
         database_name: str | None = None,
         container_name: str | None = None,
-        credential: str | AzureCredentialTypes | None = None,
+        credential: str | SecretString | AzureCredentialTypes | None = None,
         cosmos_client: CosmosClient | None = None,
         container_client: ContainerProxy | None = None,
         env_file_path: str | None = None,
@@ -186,7 +186,7 @@ class CosmosCheckpointStorage:
             endpoint=endpoint,
             database_name=database_name,
             container_name=container_name,
-            key=credential if isinstance(credential, str) else None,
+            key=credential if isinstance(credential, (str, SecretString)) else None,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -194,6 +194,8 @@ class CosmosCheckpointStorage:
         self.container_name = settings["container_name"]  # type: ignore[assignment]
 
         if self._cosmos_client is None:
+            if isinstance(credential, SecretString):
+                credential = credential.get_secret_value()
             self._cosmos_client = CosmosClient(
                 url=settings["endpoint"],  # type: ignore[arg-type]
                 credential=credential or settings["key"].get_secret_value(),  # type: ignore[arg-type,union-attr]

@@ -12,7 +12,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 import pytest
 
 try:
@@ -36,6 +38,7 @@ pytestmark = [
 from agent_framework_declarative import WorkflowFactory  # noqa: E402
 from agent_framework_declarative._workflows import DECLARATIVE_STATE_KEY  # noqa: E402
 from agent_framework_declarative._workflows._http_handler import (  # noqa: E402
+    DefaultHttpRequestHandler,
     HttpRequestInfo,
     HttpRequestResult,
 )
@@ -96,6 +99,86 @@ async def test_http_request_yaml_roundtrip() -> None:
     assert sent.url == "https://api.github.com/repos/dotnet/runtime"
     assert sent.headers["Accept"] == "application/vnd.github+json"
     assert sent.headers["User-Agent"] == "agent-framework-integration-test"
+
+
+async def test_http_request_yaml_shared_handler_does_not_replay_cookies() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text="ok",
+            headers={"Set-Cookie": "session=first; Path=/; HttpOnly; Secure"} if len(requests) == 1 else {},
+        )
+
+    original_ctor = httpx.AsyncClient
+
+    def create_client(**kwargs: Any) -> httpx.AsyncClient:
+        return original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+
+    definition = """
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: http_cookie_test
+  actions:
+    - kind: HttpRequestAction
+      id: request
+      method: GET
+      url: https://api.example.test/x
+      headers:
+        Authorization: caller-a
+      response: Local.Response
+"""
+    with patch("httpx.AsyncClient", side_effect=create_client):
+        async with DefaultHttpRequestHandler() as handler:
+            factory = WorkflowFactory(http_request_handler=handler)
+            first = factory.create_workflow_from_yaml(definition)
+            second = factory.create_workflow_from_yaml(definition.replace("caller-a", "caller-b"))
+            await first.run({})
+            client = handler._owned_client
+            await second.run({})
+            assert handler._owned_client is client
+    assert [request.headers["Authorization"] for request in requests] == ["caller-a", "caller-b"]
+    assert all("Cookie" not in request.headers for request in requests)
+
+
+async def test_http_request_yaml_provider_receives_canonical_input_url() -> None:
+    provider_urls: list[str] = []
+    request_urls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        request_urls.append(str(request.url))
+        return httpx.Response(200, text="ok")
+
+    definition = """
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: canonical_url_test
+  actions:
+    - kind: HttpRequestAction
+      id: request
+      method: GET
+      url: '=Concatenate("https://api.example.test/", inputs.path)'
+      queryParameters:
+        term: =inputs.term
+      response: Local.Response
+"""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+
+        async def provider(info: HttpRequestInfo) -> httpx.AsyncClient:
+            provider_urls.append(info.url)
+            return client
+
+        async with DefaultHttpRequestHandler(client_provider=provider) as handler:
+            workflow = WorkflowFactory(http_request_handler=handler).create_workflow_from_yaml(definition)
+            await workflow.run({"path": "items/../settings?keep=a%20b", "term": "c d"})
+
+    expected_url = "https://api.example.test/settings?keep=a%20b&term=c%20d"
+    assert provider_urls == [expected_url]
+    assert request_urls == [expected_url]
 
 
 @pytest.mark.asyncio

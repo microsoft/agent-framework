@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -26,6 +27,9 @@ from agent_framework import (
     MemoryTopicRecord,
     Message,
 )
+from agent_framework import _filesystem as filesystem_module
+
+from .test_filesystem import COLLIDING_IDENTIFIERS
 
 
 def _no_store_options() -> ChatOptions:
@@ -131,6 +135,60 @@ def test_memory_topic_record_round_trips_through_dict_and_markdown() -> None:
     assert "MemoryTopicRecord(" in repr(record)
 
 
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Updated: the release date changed.",
+        "Sessions: keep the troubleshooting context.",
+        "The plan was Updated: yesterday and Sessions: remain useful.",
+        "Prefers concise answers.",
+        "## Summary is part of the stored text.",
+    ],
+)
+def test_memory_file_store_preserves_metadata_like_summary_text(tmp_path: Path, summary: str) -> None:
+    """Summary text must not replace metadata when a topic is reloaded from disk."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    record = MemoryTopicRecord(
+        topic="preferences",
+        summary=summary,
+        memories=["Updated: the milestone moved.", "Sessions: retain previous notes."],
+        updated_at="2026-04-21T10:05:00+00:00",
+        session_ids=["session-1", "session-2"],
+    )
+
+    assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record
+    store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic=record.slug) == record
+    assert store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == [record]
+    entries = store.rebuild_index(session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=200, line_length=150)
+    assert entries == [MemoryIndexEntry.from_topic_record(record)]
+
+
+@pytest.mark.parametrize("summary_line", ["Updated: the release date changed.", "Sessions: keep previous notes."])
+def test_memory_topic_record_preserves_multiline_summary_metadata_text(summary_line: str) -> None:
+    """Metadata labels inside a multiline summary remain content in that section."""
+    markdown = (
+        "# preferences\n\n"
+        "Updated: 2026-04-21T10:05:00+00:00\n"
+        "Sessions: session-1, session-2\n\n"
+        "## Summary\n\n"
+        f"Keep the release notes.\n{summary_line}\n\n"
+        "## Memories\n\n"
+        "- Updated: the milestone moved.\n"
+        "- Sessions: retain previous notes.\n"
+    )
+
+    record = MemoryTopicRecord.from_markdown(markdown)
+
+    assert record.summary == f"Keep the release notes. {summary_line}"
+    assert record.updated_at == "2026-04-21T10:05:00+00:00"
+    assert record.session_ids == ["session-1", "session-2"]
+    assert record.memories == ["Updated: the milestone moved.", "Sessions: retain previous notes."]
+
+
 async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_path) -> None:
     """The file-backed memory store should manage topics, ``MEMORY.md``, state, and transcript search."""
     store = MemoryFileStore(
@@ -211,6 +269,75 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
             "text": "I prefer aisle seats.",
         }
     ]
+
+
+async def _write_transcript(store: MemoryFileStore, session: AgentSession, session_id: str, text: str) -> None:
+    """Append a one-message transcript for ``session_id`` through the real write path."""
+    provider = FileHistoryProvider(store.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID))
+    await provider.save_messages(session_id, [Message(role="user", contents=[text])])
+
+
+async def test_search_transcripts_finds_session_stored_under_digest_stem(tmp_path) -> None:
+    """A session ID too long to encode is stored under an irreversible digest stem but stays findable."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "user-1"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    long_session_id = "a/" + "a" * 108
+
+    await _write_transcript(store, session, "short-id", "Short session transcript.")
+    await _write_transcript(store, session, long_session_id, "Long session transcript.")
+
+    # The long ID must genuinely land on a digest stem, otherwise this test proves nothing.
+    stem = store._transcript_file_stem(long_session_id)
+    assert "sha256-" in stem
+    assert store._decode_transcript_session_id(Path(f"{stem}.jsonl")) is None
+
+    results = store.search_transcripts(
+        session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", session_id=long_session_id
+    )
+    assert [(result["session_id"], result["text"]) for result in results] == [
+        (long_session_id, "Long session transcript.")
+    ]
+
+    results = store.search_transcripts(
+        session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", session_id="short-id"
+    )
+    assert [(result["session_id"], result["text"]) for result in results] == [("short-id", "Short session transcript.")]
+
+    unfiltered = store.search_transcripts(session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript")
+    assert {result["text"] for result in unfiltered} == {"Short session transcript.", "Long session transcript."}
+
+
+async def test_search_transcripts_isolates_colliding_session_ids(tmp_path) -> None:
+    """Session IDs that normalize alike must each retrieve only their own transcript."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "user-1"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+
+    for index, candidate in enumerate(COLLIDING_IDENTIFIERS):
+        await _write_transcript(store, session, candidate, f"Transcript {index}.")
+
+    for index, candidate in enumerate(COLLIDING_IDENTIFIERS):
+        results = store.search_transcripts(
+            session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="Transcript", session_id=candidate
+        )
+        assert [result["text"] for result in results] == [f"Transcript {index}."]
+        assert all(result["session_id"] == candidate for result in results)
+
+
+async def test_search_transcripts_returns_nothing_for_unknown_session(tmp_path) -> None:
+    """Filtering by a session that never wrote a transcript should return no results."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "user-1"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    await _write_transcript(store, session, "known-id", "Known transcript.")
+
+    assert (
+        store.search_transcripts(
+            session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", session_id="unknown-id"
+        )
+        == []
+    )
 
 
 def test_memory_file_store_rejects_owner_path_traversal(tmp_path) -> None:
@@ -694,8 +821,6 @@ def test_memory_topic_record_round_trips_when_text_contains_section_markers() ->
 
 async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(tmp_path, monkeypatch) -> None:
     """If ``os.replace`` fails mid-write, the previous topic file must remain intact."""
-    from agent_framework._harness import _memory as memory_module
-
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
@@ -708,12 +833,12 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
     )
     store.write_topic(session, original, source_id=DEFAULT_MEMORY_SOURCE_ID)
 
-    real_replace = memory_module.os.replace
+    real_replace = filesystem_module.os.replace
 
     def _boom(*args: object, **kwargs: object) -> None:
         raise OSError("simulated disk-full")
 
-    monkeypatch.setattr(memory_module.os, "replace", _boom)
+    monkeypatch.setattr(filesystem_module.os, "replace", _boom)
     with pytest.raises(OSError, match="simulated disk-full"):
         store.write_topic(
             session,
@@ -727,12 +852,12 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
             source_id=DEFAULT_MEMORY_SOURCE_ID,
         )
 
-    monkeypatch.setattr(memory_module.os, "replace", real_replace)
+    monkeypatch.setattr(filesystem_module.os, "replace", real_replace)
     surviving = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
     assert surviving.summary == "Prefers concise answers."
     # Temp file should not be left behind.
     topics_dir = surviving_dir = tmp_path
-    leftover = [path for path in topics_dir.rglob("*.tmp.*")]
+    leftover = [path for path in topics_dir.rglob(".maf-state-*.tmp")]
     assert leftover == []
     del surviving_dir
 
@@ -875,3 +1000,62 @@ def test_extract_keywords_handles_non_english_text() -> None:
     assert cyrillic == {"привет", "мир", "друзья"}
     # English extraction is unchanged.
     assert english == {"hello", "world"}
+
+
+# region Storage-key parity: identifiers must map injectively onto directories
+
+
+def test_memory_file_store_derives_distinct_roots_for_colliding_owner_ids(tmp_path) -> None:
+    """Owner IDs that a path normalizer would fold together stay separate.
+
+    ``MemoryFileStore`` shares the storage-key derivation with the session
+    store, the todo store, and the file-memory provider, so it is held to the
+    same injectivity contract. Owner IDs that trip the independent traversal
+    guard are rejected outright rather than merged.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    roots: dict[str, Path] = {}
+    rejected: set[str] = set()
+    for owner_id in COLLIDING_IDENTIFIERS:
+        session = AgentSession(session_id="session-1")
+        session.state["owner_id"] = owner_id
+        try:
+            roots[owner_id] = store._get_memory_root(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+        except ValueError:
+            rejected.add(owner_id)
+
+    assert rejected, "the traversal guard should still reject absolute and '..' owner IDs"
+    assert len(set(roots.values())) == len(roots), roots
+    assert len({str(root).lower() for root in roots.values()}) == len(roots), roots
+    assert len(roots) + len(rejected) == len(COLLIDING_IDENTIFIERS)
+    for root in roots.values():
+        assert root.is_relative_to(tmp_path.resolve())
+
+
+def test_memory_file_store_encodes_non_ascii_owner_ids(tmp_path) -> None:
+    """NFC and NFD spellings of one word must not share a directory."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    roots: list[Path] = []
+    for owner_id in ("caf\u00e9", "cafe\u0301"):
+        session = AgentSession(session_id="session-1")
+        session.state["owner_id"] = owner_id
+        root = store._get_memory_root(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+        assert all(part.isascii() for part in root.relative_to(tmp_path.resolve()).parts)
+        roots.append(root)
+
+    assert roots[0] != roots[1]
+
+
+def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -> None:
+    """Safe identifiers are readable on disk rather than opaque encoded segments."""
+    store = MemoryFileStore(tmp_path, owner_prefix="user_", owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    root = store._get_memory_root(session, source_id="memory")
+    parts = root.relative_to(tmp_path.resolve()).parts
+    assert parts[0] == "memory"
+    assert parts[1] == "user_alice"
+
+
+# endregion

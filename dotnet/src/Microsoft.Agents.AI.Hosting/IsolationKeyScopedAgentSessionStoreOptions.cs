@@ -16,9 +16,9 @@ public class IsolationKeyScopedAgentSessionStoreOptions
     /// when <see cref="AgentIsolationKeyProvider.GetIsolationKeyAsync"/> returns <see langword="null"/>.
     /// </para>
     /// <para>
-    /// If <see langword="false"/>, the conversation ID is passed through unmodified when the isolation key is absent,
-    /// allowing unscoped access to the underlying session store. This mode is suitable for development scenarios
-    /// or mixed environments where not all requests have isolation keys.
+    /// If <see langword="false"/>, the original <see cref="AgentSessionStoreKey"/> is passed through without
+    /// an <c>isolation</c> partition when the provider returns <see langword="null"/>. This mode is suitable
+    /// for development scenarios or environments where not all requests have isolation keys.
     /// </para>
     /// </remarks>
     public bool Strict { get; set; } = true;

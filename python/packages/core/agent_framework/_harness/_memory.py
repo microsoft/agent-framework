@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import threading
 import weakref
 from abc import ABC, abstractmethod
-from base64 import urlsafe_b64decode, urlsafe_b64encode
+from base64 import b32decode
+from binascii import Error as BinasciiError
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,6 +19,10 @@ from typing import Any, ClassVar, Final, cast
 from .._clients import SupportsChatGetResponse
 from .._compaction import group_messages
 from .._feature_stage import ExperimentalFeature, experimental
+from .._filesystem import (
+    _atomic_write_text,  # pyright: ignore[reportPrivateUsage]
+    _storage_key_segment,  # pyright: ignore[reportPrivateUsage]
+)
 from .._sessions import AgentSession, FileHistoryProvider, HistoryProvider, JsonDumps, JsonLoads, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
@@ -118,22 +122,6 @@ def _unescape_markdown_line(line: str) -> str:
     if body.startswith("\\#"):
         return f"{line[:leading_whitespace_length]}{body[1:]}"
     return line
-
-
-def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    """Write text to ``path`` atomically via a sibling temp file plus :func:`os.replace`.
-
-    A crash, OOM, or disk-full mid-write leaves the previous file (if any) intact instead of
-    producing a truncated file that breaks every subsequent read.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    try:
-        temp_path.write_text(text, encoding=encoding)
-        os.replace(temp_path, path)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
 
 
 def _slugify_topic(topic: str) -> str:
@@ -504,10 +492,10 @@ class MemoryTopicRecord:
                 topic = stripped[2:].strip()
                 current_section = None
                 continue
-            if stripped.startswith("Updated: "):
+            if current_section is None and stripped.startswith("Updated: "):
                 updated_at = stripped.removeprefix("Updated: ").strip()
                 continue
-            if stripped.startswith("Sessions: "):
+            if current_section is None and stripped.startswith("Sessions: "):
                 raw_sessions = stripped.removeprefix("Sessions: ").strip()
                 session_ids = (
                     []
@@ -648,12 +636,22 @@ class MemoryStore(ABC):
         session_id: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        """Search the raw transcript archive for matching text snippets."""
+        """Search the raw transcript archive for matching text snippets.
+
+        When ``session_id`` is given, only transcripts belonging to that session are searched, and
+        every returned row reports that same ``session_id``. Otherwise all transcripts are searched
+        and each row reports the session the transcript could be attributed to, or ``None`` when the
+        implementation cannot determine it.
+        """
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class MemoryFileStore(MemoryStore):
-    """Store memory files under ``MEMORY.md``, ``topics/``, and ``transcripts/``."""
+    """Store memory files under ``MEMORY.md``, ``topics/``, and ``transcripts/``.
+
+    The storage directory must not be writable by untrusted users, because they could
+    replace the final memory files independently of this store's secure temporary writes.
+    """
 
     def __init__(
         self,
@@ -731,10 +729,18 @@ class MemoryFileStore(MemoryStore):
             )
         session.state[self.owner_state_key] = owner_value
 
-    @staticmethod
-    def _encode_path_component(value: str) -> str:
-        encoded_value = urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
-        return encoded_value or "_"
+    _ENCODED_SEGMENT_PREFIX: ClassVar[str] = "~memory-"
+
+    @classmethod
+    def _encode_path_component(cls, value: str) -> str:
+        """Return a filesystem-safe path segment for an owner ID or source ID.
+
+        Delegates to the shared
+        :func:`~agent_framework._filesystem._storage_key_segment` derivation, so
+        two byte-distinct values do not share a directory (values past a
+        length cap fall back to a collision-resistant digest).
+        """
+        return _storage_key_segment(value, encoded_prefix=cls._ENCODED_SEGMENT_PREFIX)
 
     def _get_memory_root(self, session: AgentSession, *, source_id: str) -> Path:
         owner_component = self._encode_path_component(f"{self.owner_prefix}{self._get_owner_id(session)}")
@@ -773,8 +779,26 @@ class MemoryFileStore(MemoryStore):
         if not file_stem.startswith(_FILE_HISTORY_ENCODED_SESSION_PREFIX):
             return file_stem
         encoded_value = file_stem[len(_FILE_HISTORY_ENCODED_SESSION_PREFIX) :]
-        padded_value = encoded_value + ("=" * (-len(encoded_value) % 4))
-        return urlsafe_b64decode(padded_value.encode("ascii")).decode("utf-8")
+        padded_value = encoded_value + ("=" * (-len(encoded_value) % 8))
+        try:
+            return b32decode(padded_value.encode("ascii"), casefold=True).decode("utf-8")
+        except (BinasciiError, UnicodeDecodeError, ValueError):
+            # Very long session IDs are stored under an irreversible digest stem,
+            # and unrelated files may share the prefix. Neither maps back to a
+            # session ID, so treat the transcript as unattributed rather than
+            # failing the whole scan.
+            return None
+
+    @staticmethod
+    def _transcript_file_stem(session_id: str) -> str:
+        """Return the transcript file stem that ``FileHistoryProvider`` writes for ``session_id``.
+
+        This is the forward counterpart to :meth:`_decode_transcript_session_id`. Deriving the stem
+        works for every session ID, including the very long ones stored under an irreversible digest
+        stem that cannot be decoded back to a session ID.
+        """
+        raw_session_id = session_id or FileHistoryProvider.DEFAULT_SESSION_FILE_STEM
+        return _storage_key_segment(raw_session_id, encoded_prefix=_FILE_HISTORY_ENCODED_SESSION_PREFIX)
 
     def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
         """Return all topic memory files visible from the current owner."""
@@ -890,7 +914,13 @@ class MemoryFileStore(MemoryStore):
         session_id: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        """Search the raw transcript archive for matching text snippets."""
+        """Search the raw transcript archive for matching text snippets.
+
+        When ``session_id`` is given, transcripts are selected by deriving the file stem that
+        :class:`FileHistoryProvider` writes for that session ID and comparing it to each file's stem.
+        Matching forward this way keeps transcripts reachable even when their stem is an irreversible
+        digest, which reverse-decoding cannot recover.
+        """
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("query must not be empty.")
@@ -898,12 +928,17 @@ class MemoryFileStore(MemoryStore):
         transcripts_directory = self.get_transcripts_directory(session, source_id=source_id)
         if not transcripts_directory.exists():
             return []
+        expected_stem = None if session_id is None else self._transcript_file_stem(session_id)
         transcript_files = sorted(transcripts_directory.glob("*.jsonl"))
         results: list[dict[str, Any]] = []
         for transcript_file in transcript_files:
-            decoded_session_id = self._decode_transcript_session_id(transcript_file)
-            if session_id is not None and decoded_session_id != session_id:
-                continue
+            if expected_stem is not None:
+                if transcript_file.stem != expected_stem:
+                    continue
+                # Report what the caller asked for: decoding a digest stem yields ``None``.
+                matched_session_id = session_id
+            else:
+                matched_session_id = self._decode_transcript_session_id(transcript_file)
             with transcript_file.open(encoding="utf-8") as file_handle:
                 for line_number, line in enumerate(file_handle, start=1):
                     serialized = line.strip()
@@ -917,7 +952,7 @@ class MemoryFileStore(MemoryStore):
                     if not text or query_casefold not in text.casefold():
                         continue
                     results.append({
-                        "session_id": decoded_session_id,
+                        "session_id": matched_session_id,
                         "line_number": line_number,
                         "role": message.role,
                         "text": text,

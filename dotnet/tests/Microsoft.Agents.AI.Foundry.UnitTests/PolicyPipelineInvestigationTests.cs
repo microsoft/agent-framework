@@ -10,8 +10,8 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.OpenAI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 using OpenAI.Responses;
 
@@ -20,7 +20,7 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.Foundry.UnitTests;
 
 /// <summary>
-/// Executable probes documenting the System.ClientModel policy behavior Stage 1 can rely on.
+/// Executable probes documenting the System.ClientModel policy behavior used by Foundry clients.
 /// </summary>
 public sealed class PolicyPipelineInvestigationTests
 {
@@ -88,9 +88,9 @@ public sealed class PolicyPipelineInvestigationTests
 }
 
 /// <summary>
-/// Executable probes for caller-owned Azure OpenAI clients wrapped by Microsoft.Extensions.AI.
+/// Executable probes for caller-owned OpenAI clients targeting Azure OpenAI endpoints and wrapped by Microsoft.Extensions.AI.
 /// </summary>
-public sealed class AzureOpenAIRequestPoliciesInvestigationTests
+public sealed class OpenAIRequestPoliciesInvestigationTests
 {
     [Fact]
     public async Task CallerOwnedChatAndResponsesWrappers_HaveIsolatedPolicies_PreserveTransport_AndRunAfterBaseUserAgentAsync()
@@ -100,14 +100,12 @@ public sealed class AzureOpenAIRequestPoliciesInvestigationTests
 #pragma warning disable CA5399
         using var httpClient = new HttpClient(handler, disposeHandler: false);
 #pragma warning restore CA5399
-        var options = new AzureOpenAIClientOptions
+        var options = new OpenAIClientOptions
         {
+            Endpoint = new Uri("https://resource.openai.azure.com/openai/v1/"),
             Transport = new HttpClientPipelineTransport(httpClient),
         };
-        var azureClient = new AzureOpenAIClient(
-            new Uri("https://resource.openai.azure.com/"),
-            new ApiKeyCredential("test-key"),
-            options);
+        var azureClient = new OpenAIClient(new ApiKeyCredential("test-key"), options);
 
         ChatClient callerOwnedChatClient = azureClient.GetChatClient("deployment");
         ResponsesClient callerOwnedResponsesClient = azureClient.GetResponsesClient();
@@ -134,7 +132,6 @@ public sealed class AzureOpenAIRequestPoliciesInvestigationTests
         Assert.Contains(handler.Requests, static request => request.Marker == "chat-only");
         Assert.Equal(2, handler.Requests.Count(static request => request.Marker is null));
         Assert.Single(probe.ObservedUserAgents);
-        Assert.Contains("azsdk-net-AI.OpenAI/", probe.ObservedUserAgents[0]);
         Assert.Contains("MEAI/", probe.ObservedUserAgents[0]);
     }
 
@@ -168,11 +165,12 @@ public sealed class AzureOpenAIRequestPoliciesInvestigationTests
 
     private static IChatClient CreateChatWrapper(Uri endpoint, HttpClient httpClient)
     {
-        var options = new AzureOpenAIClientOptions
+        var options = new OpenAIClientOptions
         {
+            Endpoint = endpoint,
             Transport = new HttpClientPipelineTransport(httpClient),
         };
-        return new AzureOpenAIClient(endpoint, new ApiKeyCredential("test-key"), options)
+        return new OpenAIClient(new ApiKeyCredential("test-key"), options)
             .GetChatClient("deployment")
             .AsIChatClient();
     }

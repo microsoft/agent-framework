@@ -12,25 +12,25 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 public sealed class AgentRunModeTests
 {
     /// <summary>
-    /// Verifies that AllowBackgroundWhen throws ArgumentNullException for null delegate.
+    /// Verifies that ReturnTaskWhen throws ArgumentNullException for null delegate.
     /// </summary>
     [Fact]
-    public void AllowBackgroundWhen_NullDelegate_ThrowsArgumentNullException()
+    public void ReturnTaskWhen_NullDelegate_ThrowsArgumentNullException()
     {
         // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
-            AgentRunMode.AllowBackgroundWhen(null!));
+            AgentRunMode.ReturnTaskWhen(null!));
     }
 
     /// <summary>
-    /// Verifies that DisallowBackground equals another DisallowBackground instance.
+    /// Verifies that ReturnMessage equals another ReturnMessage instance.
     /// </summary>
     [Fact]
-    public void Equals_DisallowBackground_AreEqual()
+    public void Equals_ReturnMessage_AreEqual()
     {
         // Arrange
-        var mode1 = AgentRunMode.DisallowBackground;
-        var mode2 = AgentRunMode.DisallowBackground;
+        var mode1 = AgentRunMode.ReturnMessage;
+        var mode2 = AgentRunMode.ReturnMessage;
 
         // Act & Assert
         Assert.True(mode1.Equals(mode2));
@@ -40,14 +40,14 @@ public sealed class AgentRunModeTests
     }
 
     /// <summary>
-    /// Verifies that AllowBackgroundIfSupported equals another AllowBackgroundIfSupported instance.
+    /// Verifies that ReturnTask equals another ReturnTask instance.
     /// </summary>
     [Fact]
-    public void Equals_AllowBackgroundIfSupported_AreEqual()
+    public void Equals_ReturnTask_AreEqual()
     {
         // Arrange
-        var mode1 = AgentRunMode.AllowBackgroundIfSupported;
-        var mode2 = AgentRunMode.AllowBackgroundIfSupported;
+        var mode1 = AgentRunMode.ReturnTask;
+        var mode2 = AgentRunMode.ReturnTask;
 
         // Act & Assert
         Assert.True(mode1.Equals(mode2));
@@ -55,19 +55,18 @@ public sealed class AgentRunModeTests
     }
 
     /// <summary>
-    /// Verifies that DisallowBackground and AllowBackgroundIfSupported are not equal.
+    /// Verifies that ReturnMessage and ReturnTask are not equal.
     /// </summary>
     [Fact]
     public void Equals_DifferentModes_AreNotEqual()
     {
         // Arrange
-        var disallow = AgentRunMode.DisallowBackground;
-        var allow = AgentRunMode.AllowBackgroundIfSupported;
+        var message = AgentRunMode.ReturnMessage;
+        var task = AgentRunMode.ReturnTask;
 
         // Act & Assert
-        Assert.False(disallow.Equals(allow));
-        Assert.False(disallow == allow);
-        Assert.True(disallow != allow);
+        Assert.False(message.Equals(task));
+        Assert.False(message == task);
     }
 
     /// <summary>
@@ -77,7 +76,7 @@ public sealed class AgentRunModeTests
     public void Equals_Null_ReturnsFalse()
     {
         // Arrange
-        var mode = AgentRunMode.DisallowBackground;
+        var mode = AgentRunMode.ReturnMessage;
 
         // Act & Assert
         Assert.False(mode.Equals(null));
@@ -108,9 +107,9 @@ public sealed class AgentRunModeTests
     public void ToString_ReturnsExpectedValues()
     {
         // Act & Assert
-        Assert.Equal("message", AgentRunMode.DisallowBackground.ToString());
-        Assert.Equal("task", AgentRunMode.AllowBackgroundIfSupported.ToString());
-        Assert.Equal("dynamic", AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(true)).ToString());
+        Assert.Equal("message", AgentRunMode.ReturnMessage.ToString());
+        Assert.Equal("task", AgentRunMode.ReturnTask.ToString());
+        Assert.Equal("dynamic", AgentRunMode.ReturnTaskWhen((_, _) => ValueTask.FromResult(true)).ToString());
     }
 
     /// <summary>
@@ -120,24 +119,24 @@ public sealed class AgentRunModeTests
     public void Equals_WithObjectParameter_WorksCorrectly()
     {
         // Arrange
-        var mode = AgentRunMode.DisallowBackground;
+        var mode = AgentRunMode.ReturnMessage;
 
         // Act & Assert
-        Assert.True(mode.Equals((object)AgentRunMode.DisallowBackground));
-        Assert.False(mode.Equals((object)AgentRunMode.AllowBackgroundIfSupported));
+        Assert.True(mode.Equals((object)AgentRunMode.ReturnMessage));
+        Assert.False(mode.Equals((object)AgentRunMode.ReturnTask));
         Assert.False(mode.Equals("not a run mode"));
     }
 
     /// <summary>
-    /// Verifies that two AllowBackgroundWhen instances with different delegates are not considered equal,
+    /// Verifies that two ReturnTaskWhen instances with different delegates are not considered equal,
     /// because equality includes delegate identity for dynamic modes.
     /// </summary>
     [Fact]
-    public void Equals_AllowBackgroundWhen_DifferentDelegates_AreNotEqual()
+    public void Equals_ReturnTaskWhen_DifferentDelegates_AreNotEqual()
     {
         // Arrange
-        var mode1 = AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(true));
-        var mode2 = AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(false));
+        var mode1 = AgentRunMode.ReturnTaskWhen((_, _) => ValueTask.FromResult(true));
+        var mode2 = AgentRunMode.ReturnTaskWhen((_, _) => ValueTask.FromResult(false));
 
         // Act & Assert
         Assert.False(mode1.Equals(mode2));
@@ -145,15 +144,15 @@ public sealed class AgentRunModeTests
     }
 
     /// <summary>
-    /// Verifies that two AllowBackgroundWhen instances with the same delegate are considered equal.
+    /// Verifies that two ReturnTaskWhen instances with the same delegate are considered equal.
     /// </summary>
     [Fact]
-    public void Equals_AllowBackgroundWhen_SameDelegate_AreEqual()
+    public void Equals_ReturnTaskWhen_SameDelegate_AreEqual()
     {
         // Arrange
         static ValueTask<bool> CallbackAsync(A2ARunDecisionContext _, CancellationToken __) => ValueTask.FromResult(true);
-        var mode1 = AgentRunMode.AllowBackgroundWhen(CallbackAsync);
-        var mode2 = AgentRunMode.AllowBackgroundWhen(CallbackAsync);
+        var mode1 = AgentRunMode.ReturnTaskWhen(CallbackAsync);
+        var mode2 = AgentRunMode.ReturnTaskWhen(CallbackAsync);
 
         // Act & Assert
         Assert.True(mode1.Equals(mode2));

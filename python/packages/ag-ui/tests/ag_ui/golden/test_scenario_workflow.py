@@ -15,8 +15,10 @@ Covers the full matrix of workflow-specific AG-UI patterns:
 """
 
 import json
+import logging
 from typing import Any, cast
 
+import pytest
 from ag_ui.core import EventType, StateSnapshotEvent
 from agent_framework import (
     AgentResponse,
@@ -443,26 +445,30 @@ async def test_workflow_emits_distinct_consecutive_outputs() -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 
-async def test_workflow_error_emits_run_error_event() -> None:
-    """Exceptions during workflow streaming produce RUN_ERROR events."""
+async def test_workflow_error_emits_run_error_event(caplog: pytest.LogCaptureFixture) -> None:
+    """Real executor failures reach the wrapper as sanitized RUN_ERROR events."""
+    caplog.set_level(logging.ERROR, logger="agent_framework_ag_ui._workflow_run")
 
-    class FailingWorkflow:
-        def run(self, **kwargs: Any):
-            async def _stream():
-                raise RuntimeError("workflow exploded")
-                yield  # pragma: no cover
+    @executor(id="failing")
+    async def failing(message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        raise RuntimeError("workflow exploded")
 
-            return _stream()
-
-    wrapper = AgentFrameworkWorkflow(workflow=cast(Any, FailingWorkflow()))
+    wrapper = AgentFrameworkWorkflow(workflow=WorkflowBuilder(start_executor=failing).build())
     stream = await _run(wrapper, _payload())
 
-    # Should still have RUN_STARTED
-    stream.assert_has_type("RUN_STARTED")
-    # Should have RUN_ERROR
-    stream.assert_has_type("RUN_ERROR")
+    assert stream.types()[0] == "RUN_STARTED"
+    assert len(stream.get("RUN_ERROR")) == 1
+    assert "RUN_FINISHED" not in stream.types()
     error = stream.first("RUN_ERROR")
-    assert "workflow exploded" in error.message
+    assert error.code == "RuntimeError"
+    assert error.message
+    assert "workflow exploded" not in error.message
+    records = [record for record in caplog.records if record.name == "agent_framework_ag_ui._workflow_run"]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    assert isinstance(records[0].exc_info[1], RuntimeError)
+    assert records[0].exc_info[2] is not None
+    assert "workflow exploded" in records[0].getMessage()
 
 
 async def test_workflow_error_preserves_bookend_structure() -> None:

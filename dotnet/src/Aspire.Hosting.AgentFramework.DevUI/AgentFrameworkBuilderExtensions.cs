@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using Aspire.Hosting.AgentFramework;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,12 @@ public static class AgentFrameworkBuilderExtensions
     /// </para>
     /// <para>
     /// This resource is excluded from the deployment manifest as it is intended for development use only.
+    /// </para>
+    /// <para>
+    /// Keep the UI and aggregator accessible only to trusted developers. Adding this resource does not
+    /// configure authentication, endpoint authorization, or per-user isolation on backend agent services.
+    /// Protect independently reachable backends separately, and ensure any client/proxy credential flow
+    /// matches their requirements. A shared development credential is not a per-user isolation identity.
     /// </para>
     /// </remarks>
     /// <param name="builder">The <see cref="IDistributedApplicationBuilder"/>.</param>
@@ -63,7 +70,10 @@ public static class AgentFrameworkBuilderExtensions
         builder.Eventing.Subscribe<InitializeResourceEvent>(resource, async (e, ct) =>
         {
             var logger = e.Logger;
-            var aggregator = new DevUIAggregatorHostedService(resource, e.Services.GetRequiredService<ILoggerFactory>().CreateLogger<DevUIAggregatorHostedService>());
+            var aggregator = new DevUIAggregatorHostedService(
+                resource,
+                e.Services.GetRequiredService<ILoggerFactory>().CreateLogger<DevUIAggregatorHostedService>(),
+                e.Services.GetService<IConfiguration>());
 
             try
             {

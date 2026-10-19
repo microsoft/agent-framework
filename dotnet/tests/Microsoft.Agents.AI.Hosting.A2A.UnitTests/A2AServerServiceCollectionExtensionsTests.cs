@@ -196,7 +196,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
 
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         services.AddKeyedSingleton(AgentName, mockSessionStore.Object);
 
         // Act
@@ -206,6 +206,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         await using var provider = services.BuildServiceProvider();
         var server = provider.GetKeyedService<A2AServer>(AgentName);
         Assert.NotNull(server);
+        mockSessionStore.Verify(s => s.GetService(typeof(IsolationKeyScopedAgentSessionStore), null), Times.Once);
     }
 
     /// <summary>
@@ -249,7 +250,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         services.AddA2AServer(AgentName, options =>
         {
             callbackInvoked = true;
-            options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported;
+            options.AgentRunMode = AgentRunMode.ReturnTask;
         });
 
         // Assert - callback is invoked during resolution
@@ -277,6 +278,88 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         await using var provider = services.BuildServiceProvider();
         var server = provider.GetKeyedService<A2AServer>(AgentName);
         Assert.NotNull(server);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AddA2AServer_WithServerOptions_RejectsUnsupportedRequestsAsync(bool registerByName)
+    {
+        // Arrange
+        const string AgentName = "text-only-agent";
+        var services = new ServiceCollection();
+        var agentMock = CreateAgentMock(AgentName);
+        void configureOptions(A2AServerRegistrationOptions options) => options.ServerOptions = new A2AServerOptions
+        {
+            SupportsStreaming = false,
+            SupportedInputModes = ["text/plain"]
+        };
+
+        if (registerByName)
+        {
+            services.AddKeyedSingleton(AgentName, agentMock.Object);
+            services.AddA2AServer(AgentName, configureOptions);
+        }
+        else
+        {
+            services.AddA2AServer(agentMock.Object, configureOptions);
+        }
+
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+        var imageRequest = CreateTestSendMessageRequest();
+        imageRequest.Message.Parts = [Part.FromRaw([1, 2, 3], "image/png")];
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var streamingException = await Assert.ThrowsAsync<A2AException>(async () =>
+        {
+            await foreach (var _ in server.SendStreamingMessageAsync(CreateTestSendMessageRequest(), cts.Token))
+            {
+                Assert.Fail("A server with streaming disabled must not return stream events.");
+            }
+        });
+        var inputException = await Assert.ThrowsAsync<A2AException>(() => server.SendMessageAsync(imageRequest, cts.Token));
+
+        // Assert
+        Assert.Equal(A2AErrorCode.UnsupportedOperation, streamingException.ErrorCode);
+        Assert.Equal(A2AErrorCode.ContentTypeNotSupported, inputException.ErrorCode);
+        agentMock.Protected().Verify("RunCoreStreamingAsync", Times.Never(),
+            ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+            ItExpr.IsAny<AgentSession?>(),
+            ItExpr.IsAny<AgentRunOptions?>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AddA2AServer_WithServerOptions_DoesNotChangeOtherRegistrationsDefaultsAsync()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddA2AServer(CreateAgentMock("text-only-agent").Object, options => options.ServerOptions = new A2AServerOptions
+        {
+            SupportsStreaming = false,
+            SupportedInputModes = ["text/plain"]
+        });
+        services.AddA2AServer(CreateAgentMock("default-agent").Object);
+        await using var provider = services.BuildServiceProvider();
+        var textOnlyServer = provider.GetRequiredKeyedService<A2AServer>("text-only-agent");
+        var defaultServer = provider.GetRequiredKeyedService<A2AServer>("default-agent");
+        var imageRequest = CreateTestSendMessageRequest();
+        imageRequest.Message.Parts = [Part.FromRaw([1, 2, 3], "image/png")];
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var textResponse = await textOnlyServer.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+        var imageResponses = new List<StreamResponse>();
+        await foreach (var response in defaultServer.SendStreamingMessageAsync(imageRequest, cts.Token))
+        {
+            imageResponses.Add(response);
+        }
+
+        // Assert
+        Assert.Equal("Test response", Assert.Single(textResponse.Message!.Parts).Text);
+        Assert.Equal("Test response", Assert.Single(Assert.Single(imageResponses).Message!.Parts).Text);
     }
 
     /// <summary>
@@ -423,17 +506,17 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
 
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
             .Setup(x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
             .Setup(x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
@@ -452,7 +535,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         mockSessionStore.Verify(
             x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
         Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
@@ -485,6 +568,79 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         Assert.NotNull(response.Message);
     }
 
+    /// <summary>
+    /// Verifies that a non-immediate request waits for all streaming updates and returns a completed task.
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithBackgroundResponsesAndNonImmediateRequest_ReturnsCompletedTaskAsync()
+    {
+        // Arrange
+        const string AgentName = "completed-task-request";
+        var services = new ServiceCollection();
+        Mock<AIAgent> agentMock = CreateAgentMockForRequests(AgentName);
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToAsyncEnumerableAsync(
+            [
+                new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" },
+                new AgentResponseUpdate(ChatRole.Assistant, "chunk 2") { ResponseId = "r1", MessageId = "m1" }
+            ]));
+        services.AddKeyedSingleton(AgentName, (_, _) => agentMock.Object);
+        services.AddA2AServer(
+            AgentName,
+            options => options.AgentRunMode = AgentRunMode.ReturnTask);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+        SendMessageRequest request = CreateTestSendMessageRequest();
+        request.Configuration = new SendMessageConfiguration { ReturnImmediately = false };
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        SendMessageResponse response = await server.SendMessageAsync(request, cts.Token);
+
+        // Assert
+        Assert.Equal(SendMessageResponseCase.Task, response.PayloadCase);
+        Assert.Equal(TaskState.Completed, response.Task!.Status.State);
+        Assert.Equal("chunk 1chunk 2", Assert.Single(Assert.Single(response.Task.Artifacts!).Parts!).Text);
+    }
+
+    /// <summary>
+    /// Verifies that a non-streaming request returns an empty message when the agent produces no updates.
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithEmptyAgentResponse_ReturnsEmptyMessageAsync()
+    {
+        // Arrange
+        const string AgentName = "empty-response-request";
+        var services = new ServiceCollection();
+        Mock<AIAgent> agentMock = CreateAgentMockForRequests(AgentName);
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToAsyncEnumerableAsync<AgentResponseUpdate>([]));
+        services.AddKeyedSingleton(AgentName, (_, _) => agentMock.Object);
+        services.AddA2AServer(AgentName);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        SendMessageResponse response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+
+        // Assert
+        Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
+        Assert.Empty(response.Message!.Parts!);
+    }
+
     private static SendMessageRequest CreateTestSendMessageRequest() =>
         new()
         {
@@ -512,6 +668,15 @@ public sealed class A2AServerServiceCollectionExtensionsTests
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]));
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToAsyncEnumerableAsync(
+                new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]).ToAgentResponseUpdates()));
 
         return agentMock;
     }
@@ -532,6 +697,15 @@ public sealed class A2AServerServiceCollectionExtensionsTests
             .ReturnsAsync(JsonDocument.Parse("{}").RootElement);
 
         return agentMock;
+    }
+
+    private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> items)
+    {
+        await Task.Yield();
+        foreach (T item in items)
+        {
+            yield return item;
+        }
     }
 
     private sealed class TestAgentSession : AgentSession;

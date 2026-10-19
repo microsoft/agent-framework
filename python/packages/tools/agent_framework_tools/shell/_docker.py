@@ -60,7 +60,13 @@ from .._feature_usage import FeatureIndex
 from ._policy import ShellPolicy, ShellRequest
 from ._session import ShellSession
 from ._truncate import truncate_head_tail as _truncate_bytes
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,59 +78,12 @@ DEFAULT_MEMORY = "512m"
 DEFAULT_PIDS_LIMIT = 256
 DEFAULT_WORKDIR = "/workspace"
 
-# Docker run flags that would silently dismantle the isolation defaults
-# (--cap-drop ALL, --security-opt no-new-privileges, --network none,
-# --read-only root, pids/memory caps) if spliced in via ``extra_run_args``.
-# These are rejected at construction time so the failure surfaces loudly
-# rather than as a silently-unsandboxed container at runtime.
-_BLOCKED_EXTRA_RUN_FLAGS: tuple[str, ...] = (
-    "--privileged",
-    "--cap-add",
-    "--security-opt",
-    "--network",
-    "--net",
-    "--volume",
-    "-v",
-    "--mount",
-    "--device",
-    "--device-cgroup-rule",
-    "--pid",
-    "--ipc",
-    "--userns",
-    "--user",
-    "--cgroupns",
-    "--add-host",
-    "--gpus",
-    "--read-only",
-    "--tmpfs",
-)
 
-
-def _validate_extra_run_args(args: Sequence[str]) -> None:
-    """Reject extra ``docker run`` args that would break the isolation contract.
-
-    A caller can otherwise pass ``["--privileged"]``, ``["--network=host"]``,
-    ``["-v", "/:/host:rw"]``, etc. and silently undo every isolation flag
-    this tool sets. The blocklist covers the obvious offenders; operators
-    that genuinely need one of these flags should subclass the tool or
-    build their own argv rather than slip past the check.
-    """
-    bad: list[str] = []
-    for raw in args:
-        if not raw.startswith("-"):
-            continue
-        # Split off any "=value" tail so "--network=host" matches "--network".
-        flag = raw.split("=", 1)[0]
-        if flag in _BLOCKED_EXTRA_RUN_FLAGS:
-            bad.append(raw)
-    if bad:
-        raise ValueError(
-            "extra_run_args contains flags that would dismantle DockerShellTool's "
-            f"isolation defaults: {bad}. Override these via dedicated constructor "
-            "arguments (network, host_workdir, mount_readonly, read_only_root, "
-            "memory, pids_limit, user) or subclass the tool if you really need "
-            "to relax the sandbox."
-        )
+def _validate_unsafe_extra_run_args(args: Sequence[str]) -> None:
+    """Validate the shape of trusted ``docker run`` extensions."""
+    for index, raw in enumerate(args):
+        if not isinstance(raw, str):
+            raise ValueError(f"unsafe_extra_run_args contains a non-string token at index {index}: {raw!r}")
 
 
 class DockerNotAvailableError(RuntimeError):
@@ -289,22 +248,14 @@ class DockerShellTool:
         pids_limit: Max processes inside the container.
         user: ``UID:GID`` to run as. Default ``65534:65534`` (nobody).
         read_only_root: Mount the root filesystem read-only. Default ``True``.
-        extra_run_args: Additional args appended to ``docker run``.
-
-            .. warning::
-               This parameter can dismantle the tool's isolation
-               contract. Flags that would undo the default sandbox
-               (``--privileged``, ``--cap-add``, ``--security-opt``,
-               ``--network``/``--net``, ``-v``/``--volume``,
-               ``--mount``, ``--device``, ``--pid``, ``--ipc``,
-               ``--userns``, ``--user``, ``--read-only``,
-               ``--tmpfs``, ``--add-host``, ``--gpus``, ``--cgroupns``,
-               ``--device-cgroup-rule``) are rejected at construction
-               time. Override the corresponding dedicated argument
-               (``network``, ``host_workdir``, ``mount_readonly``,
-               ``read_only_root``, ``user``, etc.) instead. If you
-               genuinely need to relax the sandbox further, subclass
-               the tool — don't slip past this check.
+        unsafe_extra_run_args: Trusted application-supplied Docker options
+            appended verbatim to ``docker run``. Set this only from
+            developer-controlled configuration; never use values from users,
+            model output, or other untrusted sources. These options can weaken
+            or completely remove container isolation. Review every option
+            carefully. In particular, avoid options such as ``--privileged``,
+            ``--network=host``, host-path volume mounts, and added capabilities
+            unless the application explicitly requires and secures them.
         env: Environment variables to set inside the container. These are
             passed via ``-e`` and apply to every command.
         policy: Optional :class:`ShellPolicy`. Less critical than for
@@ -341,7 +292,7 @@ class DockerShellTool:
         pids_limit: int = DEFAULT_PIDS_LIMIT,
         user: str = DEFAULT_CONTAINER_USER,
         read_only_root: bool = True,
-        extra_run_args: Sequence[str] | None = None,
+        unsafe_extra_run_args: Sequence[str] | None = None,
         env: Mapping[str, str] | None = None,
         policy: ShellPolicy | None = None,
         timeout: float | None = 30.0,
@@ -353,7 +304,8 @@ class DockerShellTool:
     ) -> None:
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
-        _validate_extra_run_args(tuple(extra_run_args or ()))
+        unsafe_extra_run_args_snapshot = tuple(unsafe_extra_run_args or ())
+        _validate_unsafe_extra_run_args(unsafe_extra_run_args_snapshot)
         self._image = image
         self._container_name = container_name or f"af-shell-{secrets.token_hex(6)}"
         self._mode: ShellMode = mode
@@ -365,7 +317,7 @@ class DockerShellTool:
         self._pids_limit = pids_limit
         self._user = user
         self._read_only_root = read_only_root
-        self._extra_run_args = tuple(extra_run_args or ())
+        self._unsafe_extra_run_args = unsafe_extra_run_args_snapshot
         self._env = dict(env or {})
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
@@ -505,7 +457,7 @@ class DockerShellTool:
             argv.extend(["-v", f"{self._host_workdir}:{self._workdir}:{ro}"])
         for k, v in self._env.items():
             argv.extend(["-e", f"{k}={v}"])
-        argv.extend(self._extra_run_args)
+        argv.extend(self._unsafe_extra_run_args)
         argv.extend([self._image, self._shell, "-c", command])
 
         started = time.monotonic()
@@ -614,7 +566,7 @@ class DockerShellTool:
             mount_readonly=self._mount_readonly,
             read_only_root=self._read_only_root,
             extra_env=self._env,
-            extra_args=self._extra_run_args,
+            extra_args=self._unsafe_extra_run_args,
         )
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -706,7 +658,7 @@ class DockerShellTool:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -716,4 +668,5 @@ class DockerShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )

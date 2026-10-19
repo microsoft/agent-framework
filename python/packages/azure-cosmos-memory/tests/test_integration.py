@@ -6,9 +6,11 @@
 These tests require valid Azure credentials and environment variables:
 - COSMOS_ENDPOINT: Cosmos DB account endpoint
 - COSMOS_DATABASE: Database name (will be created if not exists)
-- FOUNDRY_ENDPOINT: AI Foundry project endpoint
+- FOUNDRY_PROJECT_ENDPOINT: AI Foundry project endpoint
 - EMBEDDING_MODEL: Embedding model deployment
 - CHAT_MODEL: Chat model deployment
+
+The legacy ``FOUNDRY_ENDPOINT`` name remains supported.
 
 Run with: pytest -m integration tests/
 """
@@ -44,13 +46,14 @@ _STUB_AGENT: Any = None
 
 REQUIRED_ENV_VARS = [
     "COSMOS_ENDPOINT",
-    "FOUNDRY_ENDPOINT",
 ]
 
 
 def _check_env_vars() -> tuple[bool, list[str]]:
     """Check if required environment variables are set."""
     missing = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
+    if not (os.getenv("FOUNDRY_PROJECT_ENDPOINT") or os.getenv("FOUNDRY_ENDPOINT")):
+        missing.append("FOUNDRY_PROJECT_ENDPOINT")
     return len(missing) == 0, missing
 
 
@@ -68,7 +71,6 @@ async def live_provider(skip_if_no_env: None) -> AsyncGenerator[CosmosMemoryCont
     provider = CosmosMemoryContextProvider(
         cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
         cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
-        foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
         chat_model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
         credential=DefaultAzureCredential(),
@@ -222,7 +224,6 @@ class TestConfiguration:
         provider = CosmosMemoryContextProvider(
             cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
             cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
-            foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
             credential=DefaultAzureCredential(),
             memory_types=["fact", "episodic", "procedural"],
             min_confidence=0.8,
@@ -248,7 +249,6 @@ class TestConfiguration:
         provider = CosmosMemoryContextProvider(
             cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
             cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
-            foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
             credential=DefaultAzureCredential(),
             processor_config={
                 "FACT_EXTRACTION_EVERY_N": 1,
@@ -287,7 +287,6 @@ class TestTransparentExtraction:
         return CosmosMemoryContextProvider(
             cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
             cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
-            foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
             credential=DefaultAzureCredential(),
             top_k=5,
             min_confidence=0.3,

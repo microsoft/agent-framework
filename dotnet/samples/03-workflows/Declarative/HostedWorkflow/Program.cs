@@ -3,7 +3,6 @@
 // Uncomment this to enable JSON checkpointing to the local file system.
 //#define CHECKPOINT_JSON
 
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
@@ -11,6 +10,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using OpenAI.Conversations;
 using Shared.Foundry;
 using Shared.Workflows;
 
@@ -54,7 +54,7 @@ internal sealed class Program
 
         AgentSession session = await agent.CreateSessionAsync();
 
-        ProjectConversation conversation =
+        ConversationResource conversation =
             await aiProjectClient
                 .GetProjectOpenAIClient()
                 .GetProjectConversationsClient()

@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from agent_framework import ChatResponse
 
-from agent_framework_ag_ui._event_converters import AGUIEventConverter
+from agent_framework_ag_ui._event_converters import AGUIEventConverter, _finalize_agui_response
 
 
 class TestAGUIEventConverter:
@@ -65,6 +65,7 @@ class TestAGUIEventConverter:
         assert update.message_id == "msg_1"
         assert len(update.contents) == 1
         assert update.contents[0].text == "Hello"
+        assert update.contents[0].merge_mode == "append"
 
     def test_text_message_streaming(self) -> None:
         """Test streaming text across multiple TEXT_MESSAGE_CONTENT events."""
@@ -112,6 +113,7 @@ class TestAGUIEventConverter:
         assert update.contents[0].call_id == "call_123"
         assert update.contents[0].name == "get_weather"
         assert update.contents[0].arguments == ""
+        assert update.contents[0].merge_mode == "append"
         assert converter.current_tool_call_id == "call_123"
         assert converter.current_tool_name == "get_weather"
 
@@ -161,6 +163,8 @@ class TestAGUIEventConverter:
         assert all(update is not None for update in updates)
         assert updates[0].contents[0].arguments == '{"query": "'
         assert updates[1].contents[0].arguments == 'latest news"}'
+        assert updates[0].contents[0].merge_mode == "append"
+        assert updates[1].contents[0].merge_mode == "append"
         assert converter.accumulated_tool_args == '{"query": "latest news"}'
 
     def test_tool_call_end_event(self) -> None:
@@ -194,6 +198,20 @@ class TestAGUIEventConverter:
         assert len(update.contents) == 1
         assert update.contents[0].call_id == "call_123"
         assert update.contents[0].result == '{"temperature": 22, "condition": "sunny"}'
+
+    def test_tool_call_result_event_snake_case_id(self) -> None:
+        """TOOL_CALL_RESULT accepts tool_call_id like the other tool call events."""
+        converter = AGUIEventConverter()
+        event = {
+            "type": "TOOL_CALL_RESULT",
+            "tool_call_id": "call_snake",
+            "content": "sunny",
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.contents[0].call_id == "call_snake"
 
     def test_run_finished_event(self) -> None:
         """Test conversion of RUN_FINISHED event."""
@@ -376,6 +394,95 @@ class TestAGUIEventConverter:
         assert updates[1] is not None
         assert updates[0].additional_properties["ag_ui_custom_event"]["raw_type"] == "CUSTOM_EVENT"
         assert updates[1].additional_properties["ag_ui_custom_event"]["raw_type"] == "custom_event"
+
+    @pytest.mark.parametrize("event_type", ["CUSTOM", "CUSTOM_EVENT", "custom_event"])
+    def test_annotations_custom_event_restores_content(self, event_type: str) -> None:
+        """Annotation custom events preserve their explicit message correlation and metadata."""
+        converter = AGUIEventConverter()
+        converter.current_message_id = "another-message"
+        annotations = [
+            {
+                "type": "citation",
+                "title": "Document",
+                "url": "https://example.sharepoint.com/document.pdf",
+                "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 6}],
+            }
+        ]
+        event = {
+            "type": event_type,
+            "name": "annotations",
+            "value": {"messageId": "msg_citations", "annotations": annotations},
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.message_id == "msg_citations"
+        assert len(update.contents) == 1
+        assert update.contents[0].type == "text"
+        assert update.contents[0].text == ""
+        assert update.contents[0].annotations == annotations
+        assert update.additional_properties is not None
+        assert update.additional_properties["ag_ui_custom_event"]["value"] == event["value"]
+
+    def test_annotation_finalizer_targets_an_existing_message_after_later_events(self) -> None:
+        """Late annotations attach by message ID without creating a duplicate message."""
+        converter = AGUIEventConverter()
+        annotations = [
+            {
+                "type": "citation",
+                "url": "https://example.com/first",
+                "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 5}],
+            }
+        ]
+        events: list[dict[str, Any]] = [
+            {"type": "TEXT_MESSAGE_START", "messageId": "m1"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+            {"type": "TEXT_MESSAGE_START", "messageId": "m2"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+            {"type": "TOOL_CALL_RESULT", "toolCallId": "call-1", "result": "done"},
+            {
+                "type": "CUSTOM",
+                "name": "annotations",
+                "value": {"messageId": "m1", "annotations": annotations},
+            },
+        ]
+        updates = [update for event in events if (update := converter.convert_event(event)) is not None]
+
+        response = _finalize_agui_response(updates)
+
+        assert [message.message_id for message in response.messages].count("m1") == 1
+        first_message = next(message for message in response.messages if message.message_id == "m1")
+        first_text = next(content for content in first_message.contents if content.type == "text")
+        assert first_text.text == "First"
+        assert first_text.annotations == annotations
+        assert [message.message_id for message in response.messages].count(None) == 1
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            {"annotations": []},
+            {"messageId": 123, "annotations": []},
+            {"messageId": "msg_citations", "annotations": "invalid"},
+            {"messageId": "msg_citations", "annotations": ["invalid"]},
+        ],
+    )
+    def test_malformed_annotations_custom_event_preserves_metadata(
+        self, value: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Malformed known custom events remain observable and log an explicit warning."""
+        converter = AGUIEventConverter()
+        event = {"type": "CUSTOM", "name": "annotations", "value": value}
+
+        with caplog.at_level(logging.WARNING):
+            update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.contents == []
+        assert update.additional_properties is not None
+        assert update.additional_properties["ag_ui_custom_event"]["value"] == value
+        assert "annotations" in caplog.text
 
     def test_full_conversation_flow(self) -> None:
         """Test complete conversation flow with multiple event types."""

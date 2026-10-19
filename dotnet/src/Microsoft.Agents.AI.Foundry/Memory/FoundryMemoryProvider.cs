@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Memory;
 using Microsoft.Extensions.AI;
@@ -155,6 +156,11 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 }
             }
 
+            if (string.IsNullOrEmpty(outputMessageText))
+            {
+                return new AIContext();
+            }
+
             return new AIContext
             {
                 Messages = [new ChatMessage(ChatRole.User, outputMessageText)]
@@ -164,7 +170,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {
@@ -232,7 +238,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                     response.UpdateId);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {

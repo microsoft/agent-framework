@@ -2,13 +2,14 @@
 
 """Tests for ChatKit to Agent Framework converter utilities."""
 
+import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import Message
-from chatkit.types import InferenceOptions, UserMessageTextContent
+from agent_framework import Content, Message
+from chatkit.types import InferenceOptions, UserMessageTagContent, UserMessageTextContent
 from pydantic import AnyUrl
 
 from agent_framework_chatkit import ThreadItemConverter, simple_to_agent_input
@@ -109,6 +110,98 @@ class TestThreadItemConverter:
 
         assert len(result) == 1
         assert result[0].text == "Hello world!"
+
+    async def test_to_agent_input_keeps_tag_inline_with_text(self, converter):
+        """Test converting user message tags in their original text position."""
+        from chatkit.types import UserMessageItem
+
+        input_item = UserMessageItem(
+            id="msg_tag",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="user_message",
+            content=[
+                UserMessageTextContent(text="Ask "),
+                UserMessageTagContent(
+                    type="input_tag",
+                    id="tag_1",
+                    text="john",
+                    data={"name": "John Doe"},
+                    interactive=False,
+                ),
+                UserMessageTextContent(text=" about the report."),
+            ],
+            attachments=[],
+            inference_options=InferenceOptions(),
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].text == "Ask <TAG>Name:John Doe</TAG> about the report."
+
+    async def test_to_agent_input_keeps_tag_only_message(self, converter):
+        """Test that a user message containing only a tag is not discarded."""
+        from chatkit.types import UserMessageItem
+
+        input_item = UserMessageItem(
+            id="msg_tag_only",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="user_message",
+            content=[
+                UserMessageTagContent(
+                    type="input_tag",
+                    id="tag_1",
+                    text="john",
+                    data={"name": "John Doe"},
+                    interactive=False,
+                )
+            ],
+            attachments=[],
+            inference_options=InferenceOptions(),
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].text == "<TAG>Name:John Doe</TAG>"
+
+    async def test_to_agent_input_preserves_non_text_tag_position(self):
+        """Test that custom non-text tag conversions remain between adjacent text."""
+        from chatkit.types import UserMessageItem
+
+        class UriTagConverter(ThreadItemConverter):
+            def tag_to_message_content(self, tag: UserMessageTagContent) -> Content:
+                return Content.from_uri(uri=f"https://example.com/users/{tag.text}", media_type="text/html")
+
+        input_item = UserMessageItem(
+            id="msg_uri_tag",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="user_message",
+            content=[
+                UserMessageTextContent(text="Ask"),
+                UserMessageTagContent(
+                    type="input_tag",
+                    id="tag_1",
+                    text="john",
+                    data={"name": "John Doe"},
+                    interactive=False,
+                ),
+                UserMessageTextContent(text="about the report."),
+            ],
+            attachments=[],
+            inference_options=InferenceOptions(),
+        )
+
+        result = await UriTagConverter().to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert [content.type for content in result[0].contents] == ["text", "uri", "text"]
+        assert result[0].contents[0].text == "Ask"
+        assert result[0].contents[1].uri == "https://example.com/users/john"
+        assert result[0].contents[2].text == "about the report."
 
     async def test_to_agent_input_with_quoted_text_for_last_message(self, converter):
         """Test quoted text is prepended as context for the last user message."""
@@ -549,6 +642,221 @@ class TestThreadItemConverter:
 
         assert await converter.end_of_turn_to_input(end_item) is None
 
+    @pytest.mark.parametrize("status", ["pending", "answered", "skipped"])
+    async def test_to_agent_input_with_structured_input(self, converter, status):
+        """Test structured input answers are preserved as model context."""
+        from chatkit.types import (
+            StructuredInputAnswer,
+            StructuredInputFreeform,
+            StructuredInputItem,
+            StructuredInputMultipleChoice,
+            StructuredInputMultipleChoiceOption,
+        )
+
+        input_item = StructuredInputItem(
+            id="structured_1",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="structured_input",
+            status=status,
+            inputs=[
+                StructuredInputMultipleChoice(
+                    id="priority",
+                    question="What priority should I use?",
+                    options=[
+                        StructuredInputMultipleChoiceOption(value="High"),
+                        StructuredInputMultipleChoiceOption(value="Urgent"),
+                    ],
+                    multiple=True,
+                    answer=StructuredInputAnswer(values=["High", "Urgent"]),
+                ),
+                StructuredInputFreeform(
+                    id="notes",
+                    question="Any extra context?",
+                    answer=StructuredInputAnswer(skipped=True),
+                ),
+                StructuredInputFreeform(
+                    id="owner",
+                    question="Who owns this?",
+                ),
+            ],
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].role == "user"
+        assert result[0].text == (
+            f"A structured input request was displayed to the user with the following status: {status}\n"
+            "<StructuredInput>\n"
+            "- What priority should I use?: High, Urgent\n"
+            "- Any extra context?: skipped\n"
+            "- Who owns this?: unanswered\n"
+            "</StructuredInput>"
+        )
+
+    @pytest.mark.parametrize(
+        ("converted", "expected_texts"),
+        [
+            (None, []),
+            ([], []),
+            (Message(role="user", contents=["redacted"]), ["redacted"]),
+            ([Message("user", ["first"]), Message("user", ["second"])], ["first", "second"]),
+        ],
+        ids=["skip", "empty", "single", "multiple"],
+    )
+    async def test_to_agent_input_uses_structured_input_override(
+        self, converted: Message | list[Message] | None, expected_texts: list[str]
+    ) -> None:
+        """Test async overrides can skip or expand an item without changing message order."""
+        from chatkit.types import HiddenContextItem, StructuredInputItem
+
+        calls: list[StructuredInputItem] = []
+
+        class CustomConverter(ThreadItemConverter):
+            async def structured_input_to_input(self, item: StructuredInputItem) -> Message | list[Message] | None:
+                calls.append(item)
+                return converted
+
+        input_item = StructuredInputItem(id="structured_1", thread_id="thread_1", created_at=datetime.now(), inputs=[])
+        before = HiddenContextItem(id="before", thread_id="thread_1", created_at=datetime.now(), content="before")
+        after = HiddenContextItem(id="after", thread_id="thread_1", created_at=datetime.now(), content="after")
+
+        result = await CustomConverter().to_agent_input([before, input_item, after])
+
+        assert calls == [input_item]
+        assert [message.text for message in result[1:-1]] == expected_texts
+        assert result[0].text == "<HIDDEN_CONTEXT>before</HIDDEN_CONTEXT>"
+        assert result[-1].text == "<HIDDEN_CONTEXT>after</HIDDEN_CONTEXT>"
+
+    @pytest.mark.parametrize("error", [ValueError("conversion failed"), asyncio.CancelledError()])
+    async def test_to_agent_input_propagates_structured_input_override_errors(self, error: BaseException) -> None:
+        """Test custom conversion failures and cancellation propagate to the caller."""
+        from chatkit.types import StructuredInputItem
+
+        class FailingConverter(ThreadItemConverter):
+            async def structured_input_to_input(self, item: StructuredInputItem) -> Message | list[Message] | None:
+                raise error
+
+        input_item = StructuredInputItem(id="structured_1", thread_id="thread_1", created_at=datetime.now(), inputs=[])
+
+        with pytest.raises(type(error)) as exception:
+            await FailingConverter().to_agent_input(input_item)
+
+        assert exception.value is error
+
+    @pytest.mark.parametrize("url", ["https://example.com/image.png", "https://example.com/asset?signature=sample"])
+    async def test_to_agent_input_with_generated_image(self, converter, url):
+        """Test generated images are preserved as multimodal model context."""
+        from chatkit.types import GeneratedImage, GeneratedImageItem
+
+        input_item = GeneratedImageItem(
+            id="generated_1",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="generated_image",
+            image=GeneratedImage(id="image_1", url=url),
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].role == "user"
+        assert [content.type for content in result[0].contents] == ["text", "uri"]
+        assert result[0].contents[0].text == "The following image was generated by the agent."
+        assert result[0].contents[1].uri == url
+        assert result[0].contents[1].media_type == "image/*"
+
+    @pytest.mark.parametrize("media_type", ["image/png", "image/jpeg", "image/webp"])
+    async def test_to_agent_input_preserves_generated_image_data_uri_media_type(self, converter, media_type):
+        """Test data URI media types remain available to provider serializers."""
+        from chatkit.types import GeneratedImage, GeneratedImageItem
+
+        uri = f"data:{media_type};base64,YQ=="
+        input_item = GeneratedImageItem(
+            id="generated_1",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            image=GeneratedImage(id="image_1", url=uri),
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].role == "user"
+        assert [content.type for content in result[0].contents] == ["text", "data"]
+        assert result[0].contents[1].uri == uri
+        assert result[0].contents[1].media_type == media_type
+
+    async def test_generated_image_to_input_without_image_returns_none(self, converter):
+        """Test unfinished image items are skipped by both conversion entry points."""
+        from chatkit.types import GeneratedImageItem
+
+        input_item = GeneratedImageItem(id="generated_1", thread_id="thread_1", created_at=datetime.now())
+
+        assert await converter.generated_image_to_input(input_item) is None
+        assert await converter.to_agent_input(input_item) == []
+
+    @pytest.mark.parametrize(
+        ("converted", "expected_texts"),
+        [
+            (None, []),
+            ([], []),
+            (Message("user", ["image omitted"]), ["image omitted"]),
+            ([Message("user", ["first"]), Message("user", ["second"])], ["first", "second"]),
+        ],
+        ids=["skip", "empty", "single", "multiple"],
+    )
+    async def test_to_agent_input_uses_generated_image_override(
+        self, converted: Message | list[Message] | None, expected_texts: list[str]
+    ) -> None:
+        """Test async image overrides can skip or expand an item while preserving order."""
+        from chatkit.types import GeneratedImage, GeneratedImageItem, HiddenContextItem
+
+        calls: list[GeneratedImageItem] = []
+
+        class CustomConverter(ThreadItemConverter):
+            async def generated_image_to_input(self, item: GeneratedImageItem) -> Message | list[Message] | None:
+                calls.append(item)
+                return converted
+
+        input_item = GeneratedImageItem(
+            id="generated_1",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            image=GeneratedImage(id="image_1", url="https://example.com/image.png"),
+        )
+        before = HiddenContextItem(id="before", thread_id="thread_1", created_at=datetime.now(), content="before")
+        after = HiddenContextItem(id="after", thread_id="thread_1", created_at=datetime.now(), content="after")
+
+        result = await CustomConverter().to_agent_input([before, input_item, after])
+
+        assert calls == [input_item]
+        assert [message.text for message in result[1:-1]] == expected_texts
+        assert result[0].text == "<HIDDEN_CONTEXT>before</HIDDEN_CONTEXT>"
+        assert result[-1].text == "<HIDDEN_CONTEXT>after</HIDDEN_CONTEXT>"
+
+    @pytest.mark.parametrize("error", [ValueError("conversion failed"), asyncio.CancelledError()])
+    async def test_to_agent_input_propagates_generated_image_override_errors(self, error: BaseException) -> None:
+        """Test custom image conversion failures and cancellation propagate to the caller."""
+        from chatkit.types import GeneratedImage, GeneratedImageItem
+
+        class FailingConverter(ThreadItemConverter):
+            async def generated_image_to_input(self, item: GeneratedImageItem) -> Message | list[Message] | None:
+                raise error
+
+        input_item = GeneratedImageItem(
+            id="generated_1",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            image=GeneratedImage(id="image_1", url="https://example.com/image.png"),
+        )
+
+        with pytest.raises(type(error)) as exception:
+            await FailingConverter().to_agent_input(input_item)
+
+        assert exception.value is error
+
     async def test_to_agent_input_dispatches_supported_variants(self, converter):
         """Test thread item dispatch converts supported items and skips unsupported variants."""
         from chatkit.types import (
@@ -651,6 +959,7 @@ class TestThreadItemConverter:
             "user",
             "system",
             "system",
+            "user",
         ]
         assert result[0].text == "Assistant"
         assert result[2].contents[0].result is not None
@@ -659,6 +968,11 @@ class TestThreadItemConverter:
         assert "Analysis: Completed" in result[5].text
         assert result[6].text == "<HIDDEN_CONTEXT>secret</HIDDEN_CONTEXT>"
         assert result[7].text == "<HIDDEN_CONTEXT>sdk secret</HIDDEN_CONTEXT>"
+        assert result[8].text == (
+            "A structured input request was displayed to the user with the following status: pending\n"
+            "<StructuredInput>\n"
+            "\n</StructuredInput>"
+        )
 
 
 class TestSimpleToAgentInput:

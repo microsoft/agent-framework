@@ -10,7 +10,7 @@ This sample deploys to Foundry **directly from source (code / ZIP upload)**: the
 > deploying.
 
 > **The deployed agent needs its own role on that Azure OpenAI resource.** Because the workflow
-> builds its own `AzureOpenAIClient` (a data-plane client) instead of using the Foundry project's
+> builds its own `OpenAIClient` targeting the Azure OpenAI v1 endpoint instead of using the Foundry project's
 > hosted model, `azd deploy` does **not** grant it access automatically. `azd` only grants the agent
 > identity the `Foundry User` role on the project; it does not touch a separate Azure OpenAI account.
 > After the first deploy, grant the agent's managed identity the **`Cognitive Services OpenAI User`**

@@ -20,8 +20,13 @@ from agent_framework import (
     WorkflowRunState,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
+from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
+from agent_framework._workflows._const import (
+    GLOBAL_KWARGS_KEY,
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+)
 
 
 class _CountingAgent(BaseAgent):
@@ -330,6 +335,34 @@ async def test_prepare_agent_run_args_returns_none_when_no_kwargs() -> None:
     assert ci_kwargs is None
 
 
+async def test_prepare_executor_run_kwargs_resolves_channels_and_removes_internal_state() -> None:
+    """Executor-ready kwargs preserve options without leaking raw-routing snapshots."""
+    raw = {
+        "function_invocation_kwargs": {GLOBAL_KWARGS_KEY: {"legacy": True}},
+        "client_kwargs": {GLOBAL_KWARGS_KEY: {"legacy": True}},
+        RAW_FUNCTION_INVOCATION_KWARGS_KEY: {"agent": {"raw": True}},
+        RAW_CLIENT_KWARGS_KEY: {"agent": {"raw": True}},
+        "options": {"temperature": 0.5},
+    }
+    resolved = {
+        "function_invocation_kwargs": {
+            "global_kwargs": {"shared": "G"},
+            "executor_kwargs": {"agent": {"specific": "A"}},
+        },
+        "client_kwargs": {"executor_kwargs": {"other": {"ignored": True}}},
+    }
+
+    actual = prepare_executor_run_kwargs("agent", raw, resolved)
+
+    assert actual == {
+        "function_invocation_kwargs": {"shared": "G", "specific": "A"},
+        "options": {"temperature": 0.5},
+    }
+    assert prepare_executor_run_kwargs("agent", raw, {}) == {"options": {"temperature": 0.5}}
+    with pytest.raises(TypeError, match="Resolved workflow run kwargs state must be a dict"):
+        prepare_executor_run_kwargs("agent", raw, "invalid")
+
+
 class _NonCopyableRaw:
     """Simulates an LLM SDK response object that cannot be deep-copied (e.g., proto/gRPC)."""
 
@@ -543,6 +576,130 @@ async def test_from_response_context_mode_custom_uses_filter() -> None:
     assert seen[0].role == "user" and "hello" in (seen[0].text or "")
 
 
+def test_ensure_trailing_user_turn_defaults_to_false() -> None:
+    """ensure_trailing_user_turn should default to False, preserving existing behavior."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent)
+    assert executor._ensure_trailing_user_turn is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_build_invocation_messages_noop_when_flag_disabled() -> None:
+    """When the flag is off, the returned messages match the cache without modification."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=False)
+    executor._cache = [
+        Message(role="user", contents=["go"]),
+        Message(role="assistant", contents=["W-OK"]),
+    ]
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 2
+    assert messages[-1].role == "assistant"
+    assert len(executor._cache) == 2
+
+
+def test_build_invocation_messages_noop_when_cache_not_assistant_ending() -> None:
+    """When the flag is on but the cache already ends on user/tool, nothing is appended."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
+    executor._cache = [
+        Message(role="user", contents=["go"]),
+        Message(role="assistant", contents=["W-OK"]),
+        Message(role="user", contents=["continue"]),
+    ]
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 3
+    assert messages[-1].role == "user"
+    assert len(executor._cache) == 3
+
+
+def test_build_invocation_messages_appends_synthetic_user_turn_when_enabled() -> None:
+    """When the flag is on and cache ends on assistant, a synthetic user turn is
+    appended to the returned copy — but the original cache is not mutated."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
+    executor._cache = [
+        Message(role="user", contents=["go"]),
+        Message(role="assistant", contents=["W-OK"]),
+    ]
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 3
+    assert messages[-1].role == "user"
+    assert "please continue" in (messages[-1].text or "")
+    assert len(executor._cache) == 2
+    assert executor._cache[-1].role == "assistant"
+
+
+def test_build_invocation_messages_noop_when_cache_empty() -> None:
+    """An empty cache must not raise or append anything, even with the flag enabled."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
+    assert executor._cache == []
+    messages = executor._build_invocation_messages()
+    assert messages == []
+    assert executor._cache == []
+
+
+async def test_synthetic_turn_does_not_leak_to_third_agent() -> None:
+    """The synthetic 'please continue.' must not appear in the third agent's
+    context — it is invocation-only and must not persist in full_conversation."""
+    a1 = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")
+    a2 = _MessageCapturingAgent(id="second", name="Second", reply_text="second reply")
+    a3 = _MessageCapturingAgent(id="third", name="Third", reply_text="third reply")
+    exec_a = AgentExecutor(a1, id="exec_a")
+    exec_b = AgentExecutor(a2, id="exec_b", context_mode="full", ensure_trailing_user_turn=True)
+    exec_c = AgentExecutor(a3, id="exec_c", context_mode="full")
+    wf = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).add_edge(exec_b, exec_c).build()
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+    seen = a3.last_messages
+    assert len(seen) == 3
+    for msg in seen:
+        assert "please continue" not in (msg.text or "")
+
+
+async def test_from_response_ensure_trailing_user_turn_end_to_end_full_mode() -> None:
+    """chained full mode context should get a synthetic  trailing user turn before the second agent runs,
+    when the flag is enabled."""
+
+    first = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")
+    second = _MessageCapturingAgent(id="second", name="Second", reply_text="second reply")
+
+    exec_a = AgentExecutor(first, id="exec_a")
+    exec_b = AgentExecutor(second, id="exec_b", context_mode="full", ensure_trailing_user_turn=True)
+
+    wf = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = second.last_messages
+    assert len(seen) == 3
+    assert seen[0].role == "user" and "hello" in (seen[0].text or "")
+    assert seen[1].role == "assistant" and "first reply" in (seen[1].text or "")
+    assert seen[2].role == "user"
+
+
+async def test_from_response_without_ensure_trailing_user_turn_still_ends_on_assistant() -> None:
+    """Default (flag off) behavior is unchanged: chained context still ends on assistant."""
+    first = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")
+    second = _MessageCapturingAgent(id="second", name="Second", reply_text="second reply")
+
+    exec_a = AgentExecutor(first, id="exec_a")
+    exec_b = AgentExecutor(second, id="exec_b", context_mode="full")
+
+    wf = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = second.last_messages
+    assert len(seen) == 2
+    assert seen[-1].role == "assistant"
+
+
 async def test_checkpoint_save_does_not_include_context_mode() -> None:
     """on_checkpoint_save should not include context_mode in the saved state."""
     agent = _CountingAgent(id="a", name="A")
@@ -576,6 +733,140 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
     assert cache[0].text == "cached msg"
     # context_mode should remain as configured in the constructor, not changed by restore
     assert executor._context_mode == "last_agent"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
+    """Saved AgentExecutor checkpoint state exposes the public TypedDict keys."""
+    from agent_framework import AgentExecutorCheckpointState
+    from agent_framework._sessions import AgentSessionDict
+
+    agent = _CountingAgent(id="schema_agent", name="SchemaAgent")
+    executor = AgentExecutor(agent)
+    executor._cache = [Message(role="user", contents=["hello"])]  # pyright: ignore[reportPrivateUsage]
+
+    state = await executor.on_checkpoint_save()
+
+    assert set(state) == {
+        "cache",
+        "full_conversation",
+        "agent_session",
+        "pending_agent_requests",
+        "pending_responses_to_agent",
+        "pending_request_order",
+    }
+    assert isinstance(state, dict)
+    assert len(state["cache"]) == 1
+    assert "session_id" in state["agent_session"]
+    # Checkpoint schema stays public; session payload TypedDict is sessions-internal.
+    _: type[AgentExecutorCheckpointState] = AgentExecutorCheckpointState
+    __: type[AgentSessionDict] = AgentSessionDict
+    assert isinstance(state["agent_session"], dict)
+    # Postponed annotations must not mark optional AgentSessionDict fields as required.
+    assert AgentSessionDict.__required_keys__ == frozenset({"session_id"})
+    assert AgentSessionDict.__optional_keys__ == frozenset({"type", "service_session_id", "state"})
+
+
+async def test_agent_executor_checkpoint_restore_missing_optional_fields() -> None:
+    """Restore accepts older partial payloads (missing optional TypedDict fields)."""
+    agent = _CountingAgent(id="partial_agent", name="PartialAgent")
+    executor = AgentExecutor(agent)
+    executor._cache = [Message(role="user", contents=["stale"])]  # pyright: ignore[reportPrivateUsage]
+
+    await executor.on_checkpoint_restore({})
+
+    assert executor._cache == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._full_conversation == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_agent_requests == {}  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_responses_to_agent == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_request_order == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_agent_executor_restores_legacy_pending_request_order() -> None:
+    """A checkpoint without ordering metadata can still order replies when none were queued."""
+    request = Content.from_function_call(id="request-1", call_id="call-1", name="tool", arguments={})
+    executor = AgentExecutor(_CountingAgent(id="legacy_agent", name="LegacyAgent"))
+
+    await executor.on_checkpoint_restore({"pending_agent_requests": {"request-1": request}})
+
+    assert executor._pending_request_order == ["request-1"]  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(("pending", "responses"), [(1, 1), (0, 2)])
+async def test_agent_executor_rejects_ambiguous_legacy_partial_checkpoint(pending: int, responses: int) -> None:
+    """Old checkpoints cannot reconstruct call order once multiple outcomes are in flight."""
+    from agent_framework import WorkflowCheckpointException
+
+    request = Content.from_function_call(id="request-1", call_id="call-1", name="tool", arguments={})
+    result = Content.from_function_result(call_id="call-2", result="done")
+    executor = AgentExecutor(_CountingAgent(id="legacy_agent", name="LegacyAgent"))
+    state = {
+        "pending_agent_requests": {"request-1": request} if pending else {},
+        "pending_responses_to_agent": [result] * responses,
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore(state)
+
+
+async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> None:
+    """Restore raises WorkflowCheckpointException for wrong field types."""
+    from agent_framework import Content, WorkflowCheckpointException
+
+    agent = _CountingAgent(id="bad_agent", name="BadAgent")
+    executor = AgentExecutor(agent)
+
+    with pytest.raises(WorkflowCheckpointException, match="cache"):
+        await executor.on_checkpoint_restore({"cache": "not-a-list"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match=r"'cache'\[0\]"):
+        await executor.on_checkpoint_restore({"cache": ["not-a-message"]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_responses_to_agent"):
+        await executor.on_checkpoint_restore({"pending_responses_to_agent": ["bad"]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": "not-a-list"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": [1]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": ["req", "req"]})
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session"):
+        await executor.on_checkpoint_restore({"agent_session": "not-a-dict"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.session_id"):
+        await executor.on_checkpoint_restore({"agent_session": {}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.session_id"):
+        await executor.on_checkpoint_restore({"agent_session": {"session_id": 1}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.state"):
+        await executor.on_checkpoint_restore({"agent_session": {"session_id": "s", "state": []}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": []})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": {1: Content(type="text", text="x")}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": {"req": "not-content"}})  # type: ignore[typeddict-item]
+
+
+async def test_agent_executor_checkpoint_restore_ignores_unknown_keys() -> None:
+    """Forward-compatible restore ignores unknown checkpoint keys."""
+    agent = _CountingAgent(id="fwd_agent", name="FwdAgent")
+    executor = AgentExecutor(agent)
+
+    await executor.on_checkpoint_restore({
+        "cache": [Message(role="user", contents=["ok"])],
+        "future_field": {"ignored": True},
+    })
+
+    assert len(executor._cache) == 1  # pyright: ignore[reportPrivateUsage]
+    assert executor._cache[0].text == "ok"  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -622,15 +913,15 @@ async def test_resolve_executor_kwargs_returns_none_for_none_input() -> None:
     assert result is None
 
 
-async def test_resolve_executor_kwargs_prefers_executor_id_over_global() -> None:
-    """_resolve_executor_kwargs prefers executor-specific entry over __global__."""
+async def test_resolve_executor_kwargs_merges_executor_id_over_global() -> None:
+    """_resolve_executor_kwargs merges executor-specific entries over __global__."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
     # Dict has both a per-executor entry and a global entry
     resolved = {"exec_a": {"specific": True}, GLOBAL_KWARGS_KEY: {"global": True}}
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result == {"specific": True}
+    assert result == {"global": True, "specific": True}
 
 
 async def test_prepare_agent_run_args_extracts_function_invocation_kwargs() -> None:
@@ -689,16 +980,15 @@ async def test_prepare_agent_run_args_per_executor_no_match() -> None:
     assert fi_kwargs is None
 
 
-async def test_resolve_executor_kwargs_empty_per_executor_does_not_fallback_to_global() -> None:
-    """An explicit empty per-executor dict should not fall through to global kwargs."""
+async def test_resolve_executor_kwargs_empty_per_executor_keeps_global_kwargs() -> None:
+    """An explicit empty per-executor dict keeps the global kwargs."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
-    # Per-executor entry for exec_a is empty, but global has values.
-    # The empty dict should be honoured (no fallback to global).
+    # Per-executor entry for exec_a is empty, so only global values apply.
     resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}  # type: ignore[var-annotated]
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result == {}
+    assert result == {"global_key": "global_val"}
 
 
 # region Tool approval emission

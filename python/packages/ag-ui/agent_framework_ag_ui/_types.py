@@ -149,7 +149,8 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
 
     Extends base ChatOptions for the AG-UI (Agent-UI) protocol.
     AG-UI is a streaming protocol for connecting AI agents to user interfaces.
-    Options are forwarded to the remote AG-UI server.
+    Options are forwarded to the remote AG-UI server unless explicitly
+    documented as client-only.
 
     See: https://github.com/ag-ui/ag-ui-protocol
 
@@ -182,11 +183,15 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
         forward_props: Additional properties to forward to the AG-UI server.
             Useful for passing custom parameters to specific server implementations.
         context: Shared context/state to send to the server.
+        allow_legacy_state_carrier: Client-only migration option. When true,
+            recognize the deprecated implicit final single-content base64 JSON
+            state convention and emit a deprecation warning. Defaults to false.
 
     Note:
         AG-UI is a protocol bridge - actual option support depends on the
         remote server implementation. The client sends all options to the
-        server, which decides how to handle them.
+        server, which decides how to handle them, except client-only options
+        consumed by the client itself.
 
         Thread ID management:
         - Pass ``thread_id`` in ``metadata`` to maintain conversation continuity
@@ -199,6 +204,9 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
 
     context: dict[str, Any]
     """Shared context/state to send to the server."""
+
+    allow_legacy_state_carrier: bool
+    """Recognize the deprecated implicit final JSON state convention."""
 
     available_interrupts: list[Interrupt]
     """Canonical AG-UI interrupt descriptors available for resumption."""

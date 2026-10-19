@@ -7,20 +7,19 @@ See: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#client
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from mcp import types
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from mcp import MCPError, types
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind, StatusCode
 
-from agent_framework import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
+from agent_framework import MCPStdioTool, MCPStreamableHTTPTool
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ToolExecutionException
-from agent_framework.observability import OtelAttr
+from agent_framework.observability import OtelAttr, create_mcp_client_span
 
 # region helpers
 
@@ -32,7 +31,7 @@ def _make_connected_mcp_tool(
     supports_prompts: bool = True,
 ) -> MCPTool:
     """Create an MCPTool with a mocked session, ready for testing."""
-    tool = MCPTool(name=name)  # type: ignore[abstract]
+    tool = MCPTool(name=name)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = AsyncMock()
     tool.is_connected = True
     tool._supports_tools = supports_tools
@@ -50,10 +49,10 @@ def _make_tool_list_result(
         tools = [{"name": "get-weather", "description": "Get weather", "inputSchema": {"type": "object"}}]
     result = Mock()
     result.tools = [
-        types.Tool(name=t["name"], description=t.get("description", ""), inputSchema=t.get("inputSchema", {}))
+        types.Tool(name=t["name"], description=t.get("description", ""), input_schema=t.get("inputSchema", {}))
         for t in tools
     ]
-    result.nextCursor = None
+    result.next_cursor = None
     return result
 
 
@@ -67,16 +66,16 @@ def _make_prompt_list_result(
     result.prompts = [
         types.Prompt(name=p["name"], description=p.get("description", ""), arguments=None) for p in prompts
     ]
-    result.nextCursor = None
+    result.next_cursor = None
     return result
 
 
 def _make_call_tool_result(text: str = "result", is_error: bool = False) -> Mock:
     """Create a mock CallToolResult."""
     result = Mock()
-    result.isError = is_error
+    result.is_error = is_error
     result.content = [types.TextContent(type="text", text=text)]
-    result.structuredContent = None
+    result.structured_content = None
     return result
 
 
@@ -93,6 +92,42 @@ def _make_get_prompt_result(text: str = "prompt result") -> types.GetPromptResul
     )
 
 
+def _assert_error_detail_policy(span: Any, private_error_detail: str, enable_sensitive_data: bool) -> None:
+    assert span.status.status_code == StatusCode.ERROR
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        assert private_error_detail in str(exception_events[0].attributes.get("exception.message"))
+
+
+# endregion
+
+
+# region client span error policy
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+def test_mcp_client_span_unhandled_exception_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
+    """External MCP span callers should retain error classification without leaking details."""
+    private_error_detail = "founder-secret-token"
+
+    span_exporter.clear()
+    with pytest.raises(RuntimeError, match="MCP operation failed"):  # noqa: SIM117
+        # Keep these contexts nested so static analysis recognizes the following assertions as reachable.
+        with create_mcp_client_span("test/operation"):
+            raise RuntimeError(f"MCP operation failed: {private_error_detail}")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
+
+
 # endregion
 
 
@@ -101,12 +136,12 @@ def _make_get_prompt_result(text: str = "prompt result") -> types.GetPromptResul
 
 async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     """session.initialize() should produce an MCP CLIENT span named 'initialize'."""
-    tool = MCPTool(name="test-server")  # type: ignore[abstract]
+    tool = MCPTool(name="test-server")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     mock_session_cls = AsyncMock()
     init_result = Mock()
     init_result.capabilities = None
-    init_result.protocolVersion = "2025-06-18"
+    init_result.protocol_version = "2025-06-18"
     mock_session_cls.initialize = AsyncMock(return_value=init_result)
 
     # Create a mock transport context manager
@@ -124,14 +159,16 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     with pytest.MonkeyPatch.context() as m:
         m.setattr(tool, "get_mcp_client", lambda: mock_transport)
 
-        async def patched_connect(self_: Any, *, reset: bool = False, load_configured: bool = True) -> None:
+        async def patched_connect(
+            self_: Any, *, reset: bool = False, load_configured: bool = True, reset_discovery: bool = False
+        ) -> None:
             # Simulate _connect_on_owner: create initialize span and call session.initialize()
             from agent_framework._mcp import create_mcp_client_span
             from agent_framework.observability import OtelAttr
 
             with create_mcp_client_span("initialize", attributes=self_._mcp_base_span_attributes()) as init_span:
                 result = await mock_session_cls.initialize()
-                protocol_version = getattr(result, "protocolVersion", None)
+                protocol_version = getattr(result, "protocol_version", None)
                 if protocol_version:
                     init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, protocol_version)
 
@@ -220,38 +257,116 @@ async def test_mcp_tools_call_creates_client_span_when_no_parent(span_exporter: 
     assert span.attributes[OtelAttr.TOOL_NAME] == "get-weather"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemorySpanExporter):
-    """When CallToolResult.isError is true, error.type should be 'tool_error' per MCP spec."""
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_call_tool_error_sets_error_type(
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When CallToolResult.is_error is true, error.type should be 'tool_error' per MCP spec."""
+    private_error_detail = "founder-secret-token"
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("bad input", is_error=True))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        return_value=_make_call_tool_result(f"bad input: {private_error_detail}", is_error=True)
+    )
 
     span_exporter.clear()
-    with pytest.raises(ToolExecutionException):
+    with (
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException) as exc_info,
+    ):
         await tool.call_tool("get-weather", city="invalid")
 
+    assert private_error_detail in str(exc_info.value)
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
     spans = span_exporter.get_finished_spans()
     call_spans = [s for s in spans if "tools/call" in s.name]
     assert len(call_spans) == 1
     span = call_spans[0]
     assert span.attributes.get(OtelAttr.ERROR_TYPE) == "tool_error"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-    assert span.status.status_code == StatusCode.ERROR
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
 
 
-async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
-    """When session.call_tool() raises McpError, error.type should be the exception class name."""
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_call_mcp_error_sets_error_type(
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When session.call_tool() raises MCPError, error.type should be the exception class name."""
+    private_error_detail = "founder-secret-token"
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(side_effect=McpError(ErrorData(code=-32600, message="invalid request")))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=MCPError(-32600, f"invalid request: {private_error_detail}")
+    )
 
     span_exporter.clear()
-    with pytest.raises(ToolExecutionException):
+    with (
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException) as exc_info,
+    ):
         await tool.call_tool("get-weather")
 
+    assert private_error_detail in str(exc_info.value)
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
     spans = span_exporter.get_finished_spans()
     call_spans = [s for s in spans if "tools/call" in s.name]
     assert len(call_spans) == 1
     span = call_spans[0]
-    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "MCPError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_call_second_connection_loss_log_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Second connection loss should retain an error log without exporting exception details by default."""
+    private_error_detail = "founder-secret-token"
+    tool = _make_connected_mcp_tool()
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=[
+            MCPError(-32000, f"session terminated: {private_error_detail}"),
+            MCPError(-32000, f"session terminated: {private_error_detail}"),
+        ]
+    )
+    tool.connect = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    span_exporter.clear()
+    with (
+        caplog.at_level(logging.ERROR, logger="agent_framework._mcp"),
+        pytest.raises(ToolExecutionException, match="connection lost"),
+    ):
+        await tool.call_tool("get-weather")
+
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
+    if not enable_sensitive_data:
+        assert "MCP tool call connection closed after reconnection (MCPError)." in caplog.text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_list_error_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
+    """tools/list errors should keep their type without exporting private details by default."""
+    private_error_detail = "founder-secret-token"
+    tool = _make_connected_mcp_tool()
+    tool.session.list_tools = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=RuntimeError(f"list failed: {private_error_detail}")
+    )
+
+    span_exporter.clear()
+    with pytest.raises(RuntimeError, match="list failed"):
+        await tool.load_tools()
+
+    spans = span_exporter.get_finished_spans()
+    list_spans = [span for span in spans if span.name == "tools/list"]
+    assert len(list_spans) == 1
+    span = list_spans[0]
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "RuntimeError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
 
 
 # endregion
@@ -279,23 +394,34 @@ async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanEx
     assert span.attributes[OtelAttr.PROMPT_NAME] == "analyze-code"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
-    """When session.get_prompt() raises McpError, the span should have error.type and ERROR status."""
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_prompts_get_mcp_error_sets_error_type(
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When session.get_prompt() raises MCPError, the span should have error.type and ERROR status."""
+    private_error_detail = "founder-secret-token"
     tool = _make_connected_mcp_tool()
     tool.session.get_prompt = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
-        side_effect=McpError(ErrorData(code=-32602, message="prompt not found"))
+        side_effect=MCPError(-32602, f"prompt not found: {private_error_detail}")
     )
 
     span_exporter.clear()
-    with pytest.raises(ToolExecutionException):
+    with (
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException) as exc_info,
+    ):
         await tool.get_prompt("missing-prompt")
 
+    assert private_error_detail in str(exc_info.value)
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
     spans = span_exporter.get_finished_spans()
     prompt_spans = [s for s in spans if "prompts/get" in s.name]
     assert len(prompt_spans) == 1
     span = prompt_spans[0]
-    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "MCPError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
 
 
 # endregion
@@ -334,23 +460,6 @@ def test_mcp_http_tool_http_default_port():
     tool = MCPStreamableHTTPTool(name="test", url="http://localhost/mcp")
     attrs = tool._mcp_base_span_attributes()
     assert attrs[OtelAttr.PORT] == 80
-
-
-def test_mcp_websocket_tool_transport_attributes():
-    """MCPWebsocketTool should have tcp transport and URL-based server address/port."""
-    tool = MCPWebsocketTool(name="test", url="wss://ws.example.com:9090/mcp")
-    attrs = tool._mcp_base_span_attributes()
-    assert attrs[OtelAttr.NETWORK_TRANSPORT] == "tcp"
-    assert attrs[OtelAttr.NETWORK_PROTOCOL_NAME] == "websocket"
-    assert attrs[OtelAttr.ADDRESS] == "ws.example.com"
-    assert attrs[OtelAttr.PORT] == 9090
-
-
-def test_mcp_websocket_tool_default_port():
-    """MCPWebsocketTool should default to 443 for wss."""
-    tool = MCPWebsocketTool(name="test", url="wss://ws.example.com/mcp")
-    attrs = tool._mcp_base_span_attributes()
-    assert attrs[OtelAttr.PORT] == 443
 
 
 # endregion

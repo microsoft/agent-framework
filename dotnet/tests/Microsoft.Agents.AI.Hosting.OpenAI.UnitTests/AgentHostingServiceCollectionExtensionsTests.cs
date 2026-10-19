@@ -11,7 +11,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
@@ -28,7 +27,7 @@ public sealed class AgentHostingServiceCollectionExtensionsTests
 #pragma warning restore CA5399
         using IChatClient chatClient = new ResponsesClient(
             new ApiKeyCredential("test-key"),
-            new OpenAIClientOptions
+            new ResponsesClientOptions
             {
                 Endpoint = new Uri("https://example.test/v1"),
                 Transport = new HttpClientPipelineTransport(httpClient)

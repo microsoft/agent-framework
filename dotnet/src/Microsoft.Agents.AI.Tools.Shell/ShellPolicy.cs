@@ -141,6 +141,14 @@ public readonly struct ShellPolicyOutcome : IEquatable<ShellPolicyOutcome>
 /// </remarks>
 public sealed class ShellPolicy
 {
+    /// <summary>
+    /// Ceiling on any single pattern match. Policy patterns are operator-authored, but the
+    /// commands they filter are model-generated, so a pattern that backtracks catastrophically
+    /// would stall the authorization path itself. The timeout makes that failure bounded and
+    /// recoverable rather than a hang.
+    /// </summary>
+    private static readonly TimeSpan s_patternMatchTimeout = TimeSpan.FromSeconds(1);
+
     private readonly IReadOnlyList<Regex> _denyList;
     private readonly IReadOnlyList<Regex>? _allowList;
     private readonly Func<ShellRequest, ShellPolicyOutcome?>? _custom;
@@ -170,11 +178,11 @@ public sealed class ShellPolicy
         Func<ShellRequest, ShellPolicyOutcome?>? custom = null)
     {
         this._denyList = denyList?
-            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase))
+            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase, s_patternMatchTimeout))
             .ToArray() ?? Array.Empty<Regex>();
 
         this._allowList = allowList?
-            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase))
+            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase, s_patternMatchTimeout))
             .ToArray();
 
         this._custom = custom;
@@ -200,15 +208,36 @@ public sealed class ShellPolicy
 
         foreach (var deny in this._denyList)
         {
-            if (deny.IsMatch(command))
+            // A deny pattern that cannot be evaluated in time fails closed: an
+            // unevaluated rule must never read as "this command is fine".
+            try
             {
-                return ShellPolicyOutcome.Deny($"matched deny pattern: {deny}");
+                if (deny.IsMatch(command))
+                {
+                    return ShellPolicyOutcome.Deny($"matched deny pattern: {deny}");
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return ShellPolicyOutcome.Deny($"deny pattern could not be evaluated in time: {deny}");
             }
         }
 
         if (this._allowList is not null)
         {
-            var matched = this._allowList.Any(allow => allow.IsMatch(command));
+            var matched = this._allowList.Any(allow =>
+            {
+                // A timed-out allow pattern is treated as a non-match, so it can
+                // never be the thing that grants permission.
+                try
+                {
+                    return allow.IsMatch(command);
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    return false;
+                }
+            });
             if (!matched)
             {
                 return ShellPolicyOutcome.Deny("command does not match allow list");

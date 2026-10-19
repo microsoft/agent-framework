@@ -221,8 +221,8 @@ using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
 // Provider-specific namespaces (add only if needed):
-using OpenAI; // For OpenAI provider
-using Azure.AI.OpenAI; // For Azure OpenAI provider
+using OpenAI; // For OpenAI and Azure OpenAI providers
+using System.ClientModel.Primitives; // For BearerTokenPolicy with Azure OpenAI
 using Azure.AI.Agents.Persistent; // For Microsoft Foundry provider
 using Azure.Identity; // For Azure authentication
 ```
@@ -545,9 +545,13 @@ AIAgent agent = new OpenAIClient(apiKey)
 
 **Azure OpenAI:**
 ```csharp
-AIAgent agent = new AzureOpenAIClient(endpoint, credential)
+Uri openAIEndpoint = new($"{endpoint.ToString().TrimEnd('/')}/openai/v1/");
+
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = openAIEndpoint })
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: instructions);
+    .AsAIAgent(instructions: instructions);
 ```
 
 **Microsoft Foundry (New):**
@@ -571,9 +575,13 @@ AIAgent agent = new OpenAIClient(apiKey)
 
 **Azure OpenAI Responses:** *(Recommended for Azure OpenAI)*
 ```csharp
-AIAgent agent = new AzureOpenAIClient(endpoint, credential)
-    .GetOpenAIResponseClient(deploymentName)
-    .CreateAIAgent(instructions: instructions);
+Uri openAIEndpoint = new($"{endpoint.ToString().TrimEnd('/')}/openai/v1/");
+
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = openAIEndpoint })
+    .GetResponsesClient()
+    .AsAIAgent(model: deploymentName, instructions: instructions);
 ```
 
 **A2A:**
@@ -979,11 +987,11 @@ AgentThread thread = agent.GetNewThread();
 **Add Agent Framework Packages:**
 ```xml
 <PackageReference Include="Microsoft.Agents.AI.OpenAI" />
-<PackageReference Include="Azure.AI.OpenAI" />
+<PackageReference Include="OpenAI" />
 <PackageReference Include="Azure.Identity" />
 ```
 
-**Note**: If not using `AzureCliCredential`, you can use `ApiKeyCredential` instead without the `Azure.Identity` package.
+**Note**: If not using Entra ID (`AzureCliCredential` / `DefaultAzureCredential`), you can use `ApiKeyCredential` instead without the `Azure.Identity` package.
 </configuration_changes>
 
 **Before (Semantic Kernel):**
@@ -1005,13 +1013,18 @@ ChatCompletionAgent agent = new()
 
 **After (Agent Framework):**
 ```csharp
-using Microsoft.Agents.AI;
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI;
+using OpenAI.Chat;
 
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+var openAIEndpoint = $"{endpoint.TrimEnd('/')}/openai/v1/";
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = new Uri(openAIEndpoint) })
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are a helpful assistant");
+    .AsAIAgent(instructions: "You are a helpful assistant");
 ```
 
 ### 3. OpenAI Assistants Migration
@@ -1273,14 +1286,15 @@ var result = await agent.RunAsync(userInput, thread);
 **Add Agent Framework Packages:**
 ```xml
 <PackageReference Include="Microsoft.Agents.AI.OpenAI" />
-<PackageReference Include="Azure.AI.OpenAI" />
+<PackageReference Include="OpenAI" />
+<PackageReference Include="Azure.Identity" />
 ```
 </configuration_changes>
 
 <api_changes>
 **Replace this Semantic Kernel pattern:**
 
-Azure OpenAI Responses uses `AzureOpenAIClient` instead of `OpenAIClient`. The thread management is done manually where the thread needs to be passed to the `InvokeAsync` method and updated with the `item.Thread` from the response.
+Azure OpenAI Responses uses the OpenAI SDK with a custom endpoint and Entra token policy. The thread management is done manually where the thread needs to be passed to the `InvokeAsync` method and updated with the `item.Thread` from the response.
 
 ```csharp
 using Microsoft.SemanticKernel.Agents.OpenAI;
@@ -1311,21 +1325,28 @@ await foreach (AgentResponseItem<ChatMessageContent> responseItem in responseIte
 Agent Framework automatically manages the thread, so there's no need to manually update it.
 
 ```csharp
-using Microsoft.Agents.AI.OpenAI;
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI;
+using OpenAI.Responses;
 
-AIAgent agent = new AzureOpenAIClient(endpoint, new AzureCliCredential())
-    .GetOpenAIResponseClient(modelId)
-    .CreateAIAgent(
+Uri openAIEndpoint = new($"{endpoint.ToString().TrimEnd('/')}/openai/v1/");
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = openAIEndpoint })
+    .GetResponsesClient()
+    .AsAIAgent(
+        model: modelId,
         name: "ResponseAgent",
         instructions: "Answer all queries in English and French.",
         tools: [/* AITools */]);
 
-AgentThread thread = agent.GetNewThread();
+AgentSession session = await agent.CreateSessionAsync();
 
-var result = await agent.RunAsync(userInput, thread);
+var result = await agent.RunAsync(userInput, session);
 
-// The thread will be automatically updated with the new response id from this point
+// The session is updated with the new response id.
 ```
 </api_changes>
 
@@ -1607,5 +1628,4 @@ var filteredAgent = originalAgent
     .Use(CustomAutoFunctionMiddleware)
     .Build();
 ```
-
 

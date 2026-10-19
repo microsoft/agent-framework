@@ -17,7 +17,7 @@ The resumed invocation MUST come from the framework-delivered
 * Resume works on a freshly constructed executor (checkpoint-restore
   simulation), without any prior ``ctx.state`` write.
 * For MCP, ``connection_name`` is sourced from the approval payload and
-  ``headers`` are re-evaluated from the action definition on resume.
+  re-evaluated headers require a matching binding or a fresh approval.
 """
 
 import sys
@@ -400,8 +400,8 @@ class TestMcpToolApprovalBinding:
         assert handler.invocations[1].connection_name == "conn-A"
 
     @pytest.mark.asyncio
-    async def test_headers_reevaluated_from_action_def_on_resume(self, mock_state, mock_context) -> None:
-        """Headers come from the action definition (re-evaluated) so secrets are not in the payload."""
+    async def test_legacy_headers_require_fresh_approval(self, mock_state, mock_context) -> None:
+        """A legacy request cannot establish which headers the reviewer approved."""
         _seed_state(mock_state)
         handler = _RecordingMcpHandler()
         executor = InvokeMcpToolActionExecutor(
@@ -419,8 +419,105 @@ class TestMcpToolApprovalBinding:
         )
         await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
+        assert handler.last is None
+        replacement = mock_context.request_info.call_args.args[0]
+        assert replacement.request_id != request.request_id
+        assert replacement.arguments == request.arguments
+        await executor.handle_approval_response(replacement, ToolApprovalResponse(approved=True), mock_context)
         assert handler.last is not None
         assert handler.last.headers == {"Authorization": "Bearer tk"}
+
+    @pytest.mark.parametrize("new_headers", [{}, {"Authorization": "different"}, {"X-Context": "added"}])
+    @pytest.mark.asyncio
+    async def test_changed_header_set_never_consumes_previous_approval(
+        self, mock_state, mock_context, new_headers
+    ) -> None:
+        from agent_framework_declarative._workflows import ActionTrigger
+
+        _seed_state(mock_state)
+        handler = _RecordingMcpHandler()
+        action = self._action(headers={"Authorization": "original"})
+        executor = InvokeMcpToolActionExecutor(action, mcp_tool_handler=handler)
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args.args[0]
+        action["headers"] = new_headers
+
+        await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
+
+        assert handler.call_count == 0
+        replacement = mock_context.request_info.call_args.args[0]
+        assert replacement.request_id != request.request_id
+        assert replacement.header_names == sorted(new_headers)
+        await executor.handle_approval_response(replacement, ToolApprovalResponse(approved=False), mock_context)
+        assert handler.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_header_binding_normalizes_names_and_order(self, mock_state, mock_context) -> None:
+        from agent_framework_declarative._workflows import ActionTrigger
+
+        _seed_state(mock_state)
+        handler = _RecordingMcpHandler()
+        action = self._action(headers={"Authorization": "original", "X-Context": "context"})
+        executor = InvokeMcpToolActionExecutor(action, mcp_tool_handler=handler)
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args.args[0]
+        action["headers"] = {"x-context": "context", "authorization": "original"}
+
+        await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
+
+        assert handler.call_count == 1
+        mock_context.request_info.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("retain_binding_key", [False, True])
+    async def test_fresh_executor_verifies_checkpoint_header_binding(
+        self, mock_state, mock_context, retain_binding_key
+    ) -> None:
+        from agent_framework_declarative._workflows import ActionTrigger
+        from agent_framework_declarative._workflows._executors_mcp import _HEADER_BINDING_KEY
+
+        _seed_state(mock_state)
+        handler = _RecordingMcpHandler()
+        action = self._action(headers={"Authorization": "original"})
+        original = InvokeMcpToolActionExecutor(action, mcp_tool_handler=handler)
+        await original.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args.args[0]
+        fresh = InvokeMcpToolActionExecutor(action, mcp_tool_handler=handler)
+
+        key = mock_state.get(_HEADER_BINDING_KEY)
+        assert key not in repr(request)
+        if not retain_binding_key:
+            mock_state.delete(_HEADER_BINDING_KEY)
+
+        await fresh.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
+
+        if retain_binding_key:
+            assert handler.call_count == 1
+            mock_context.request_info.assert_awaited_once()
+            return
+        assert handler.call_count == 0
+        replacement = mock_context.request_info.call_args.args[0]
+        assert replacement.request_id != request.request_id
+        assert replacement.header_binding != request.header_binding
+        await fresh.handle_approval_response(replacement, ToolApprovalResponse(approved=True), mock_context)
+        assert handler.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_duplicate_header_name_order_requires_reapproval(self, mock_state, mock_context) -> None:
+        from agent_framework_declarative._workflows import ActionTrigger
+
+        _seed_state(mock_state)
+        handler = _RecordingMcpHandler()
+        action = self._action(headers={"Authorization": "first", "authorization": "second"})
+        executor = InvokeMcpToolActionExecutor(action, mcp_tool_handler=handler)
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args.args[0]
+        action["headers"] = {"authorization": "second", "Authorization": "first"}
+
+        await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
+
+        assert handler.call_count == 0
+        assert mock_context.request_info.call_args.args[0].request_id != request.request_id
 
     @pytest.mark.asyncio
     async def test_mcp_resume_ignores_stale_state_at_old_approval_key(self, mock_state, mock_context) -> None:

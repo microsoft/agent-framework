@@ -75,7 +75,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     public HyperlightCodeActProvider(HyperlightCodeActProviderOptions? options = null)
     {
         this._options = options ?? new HyperlightCodeActProviderOptions();
-        this._executor = new SandboxExecutor(this._options);
+        this._executor = new SandboxExecutor();
 
         if (this._options.Tools is not null)
         {
@@ -280,7 +280,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
                 this._tools.Values.ToList(),
                 this._fileMounts.Values.ToList(),
                 this._allowedDomains.Values.ToList(),
-                this._options.HostInputDirectory,
+                this._options,
                 this._toolRegistryVersion);
         }
 

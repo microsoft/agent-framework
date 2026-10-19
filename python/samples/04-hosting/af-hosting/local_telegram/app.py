@@ -5,7 +5,7 @@
 #     "agent-framework-hosting",
 #     "agent-framework-hosting-telegram",
 #     "aiogram>=3.29.1,<4",
-#     "fastapi>=0.115.0,<0.138.1",
+#     "fastapi>=0.115.0,<0.142.0",
 #     "hypercorn>=0.17",
 # ]
 # ///
@@ -187,8 +187,12 @@ async def handle_update(update: Mapping[str, Any]) -> None:
     # Background webhook tasks may overlap. Serialize each chat so /new cannot
     # delete a session while an earlier response is still updating it.
     async with session_locks.setdefault(session_id, asyncio.Lock()):
-        if (command := telegram_command(update)) is not None and await handle_command(update, command):
-            return
+        if (command := telegram_command(update)) is not None:
+            username = (await bot.me()).username
+            if not username or telegram_command(update, bot_username=username) is None:
+                return
+            if await handle_command(update, command):
+                return
 
         async def resolve_file_url(file_id: str) -> str | None:
             file = await bot.get_file(file_id)

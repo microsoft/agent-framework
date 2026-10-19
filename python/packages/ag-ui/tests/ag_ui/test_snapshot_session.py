@@ -8,6 +8,8 @@ resume message seeding, and save-with-swallow semantics. These tests drive
 that interface only; runner integration is covered by the existing suite.
 """
 
+from typing import Any
+
 import pytest
 from ag_ui.core import (
     EventType,
@@ -122,6 +124,38 @@ class TestHydrateEvents:
             EventType.RUN_FINISHED,
         ]
 
+    async def test_hydration_projects_private_mcp_host_payload(self) -> None:
+        """Stored canonical content stays safe while hydration restores the Host projection."""
+        from agent_framework_ag_ui._utils import (
+            _AGUI_MCP_TOOL_RESULT_KEY,
+            _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+            _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+        )
+
+        host_content = '{"structuredContent":{"widget":"host"}}'
+        snapshot = AGUIThreadSnapshot(
+            messages=[
+                {
+                    "id": "result",
+                    "role": "tool",
+                    "toolCallId": "mcp-call",
+                    "content": "Model summary",
+                    _AGUI_MCP_TOOL_RESULT_KEY: True,
+                    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: host_content,
+                    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": "Model summary"}],
+                }
+            ]
+        )
+        store = await make_store_with("user-1", "t1", snapshot)
+        session = await ThreadSnapshotSession.open(store=store, scope="user-1", thread_id="t1")
+
+        events = [event async for event in session.hydrate_events(run_id="r1")]
+        messages_snapshot = next(event for event in events if isinstance(event, MessagesSnapshotEvent))
+        hydrated = messages_snapshot.messages[0].model_dump(by_alias=True, exclude_none=True)
+
+        assert hydrated["content"] == host_content
+        assert _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY not in hydrated
+
 
 class TestRebindThreadId:
     """A late provider fallback becomes the key for subsequent writes."""
@@ -208,6 +242,38 @@ class TestResumeSeededMessages:
 
         assert session.stored is not None
         assert session.stored.messages[0]["content"] == "hi"
+
+    async def test_replayed_transcript_uses_reconstructor_not_blind_prepend(self) -> None:
+        """Client-replayed history must not be naively prepended again (#8140)."""
+        from agent_framework_ag_ui._run_common import _reconstruct_messages_from_thread_snapshot
+
+        stored: list[dict[str, Any]] = [
+            {"id": "u1", "role": "user", "content": "please run the tool"},
+            {
+                "id": "a1",
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [
+                    {"id": "c1", "type": "function", "function": {"name": "needs_approval", "arguments": "{}"}}
+                ],
+            },
+        ]
+        incoming: list[dict[str, Any]] = [
+            *stored,
+            {"id": "u2", "role": "user", "content": "approved"},
+        ]
+        reconstructed = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored,
+            incoming_messages=incoming,
+            stored_interrupt=[{"interruptId": "int-1"}],
+        )
+        assert [message["id"] for message in reconstructed] == ["u1", "a1", "u2"]
+        # resume_seeded_messages remains blind prepend for save-time / empty seeds.
+        snapshot = AGUIThreadSnapshot(messages=stored, interrupt=[{"interruptId": "int-1"}])
+        store = await make_store_with("user-1", "t-replay", snapshot)
+        session = await ThreadSnapshotSession.open(store=store, scope="user-1", thread_id="t-replay")
+        seeded = session.resume_seeded_messages([{"id": "u2", "role": "user", "content": "approved"}])
+        assert [message["id"] for message in seeded] == ["u1", "a1", "u2"]
 
     async def test_without_stored_snapshot_returns_incoming_unchanged(self) -> None:
         session = await ThreadSnapshotSession.open(store=None, scope=None, thread_id="t1")

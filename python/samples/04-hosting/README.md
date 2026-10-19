@@ -9,7 +9,7 @@ This directory contains Python samples that demonstrate different ways to host A
 | A2A | Agent-to-Agent protocol interoperability or remote agent invocation. | [`a2a/README.md`](./a2a/README.md) |
 | Azure Functions | HTTP or serverless hosting on Azure Functions. | [Durable extension Azure Functions samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples/azure_functions) |
 | Durable Task | Durable execution, long-running flows, or orchestration patterns. | [Durable extension samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples) |
-| Foundry Hosted Agents | Microsoft Foundry hosted agent deployment. | [`foundry-hosted-agents/README.md`](./foundry-hosted-agents/README.md) |
+| Foundry Hosted Agents | Microsoft Foundry hosted agent deployment, including a Telegram + APIM Invocations sample. | [`foundry-hosted-agents/README.md`](./foundry-hosted-agents/README.md) |
 | Self-Hosted Protocol Helpers | Application-owned OpenAI Responses endpoints or Telegram bots. | [`af-hosting/README.md`](./af-hosting/README.md) |
 
 ## How to Choose
@@ -33,3 +33,8 @@ Most hosting samples share a small set of prerequisites:
 1. Pick the hosting approach that matches your scenario.
 2. Open the corresponding README for setup and run instructions.
 3. Follow that sample's environment, dependency, and execution steps.
+
+## Security in Hosted Environments
+
+Hosted agents that accept remote requests or execute tools with external effects should implement defense-in-depth controls. Review the [Agent Safety](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety) guidance on Microsoft Learn, then [`../02-agents/security/`](../02-agents/security/) for patterns covering `SecureAgentConfig`, policy enforcement middleware, and isolated processing of untrusted content.
+

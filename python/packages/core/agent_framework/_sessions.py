@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
-import hashlib
 import json
 import logging
 import math
@@ -28,7 +27,6 @@ import uuid
 import warnings
 import weakref
 from abc import abstractmethod
-from base64 import urlsafe_b64encode
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
@@ -38,8 +36,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
+from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
+from ._filesystem import (
+    _is_literal_storage_key_segment_safe,  # pyright: ignore[reportPrivateUsage]
+    _storage_key_segment,  # pyright: ignore[reportPrivateUsage]
+)
 from ._middleware import ChatContext, ChatMiddleware
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
@@ -50,6 +53,7 @@ from ._types import (
     Content,
     Message,
     ResponseStream,
+    _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     normalize_messages,
 )
@@ -64,6 +68,7 @@ logger = logging.getLogger("agent_framework")
 
 MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
 _MESSAGE_INJECTION_LOCK = threading.Lock()
+_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_function_results"
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -73,36 +78,6 @@ StateT = TypeVar("StateT")
 StateEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
 StateDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
 _STATE_SCALAR_TYPES = (str, int, float, bool, type(None))
-_WINDOWS_RESERVED_FILE_STEMS: frozenset[str] = frozenset({
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    "COM1",
-    "COM2",
-    "COM3",
-    "COM4",
-    "COM5",
-    "COM6",
-    "COM7",
-    "COM8",
-    "COM9",
-    "LPT1",
-    "LPT2",
-    "LPT3",
-    "LPT4",
-    "LPT5",
-    "LPT6",
-    "LPT7",
-    "LPT8",
-    "LPT9",
-    "COM¹",
-    "COM²",
-    "COM³",
-    "LPT¹",
-    "LPT²",
-    "LPT³",
-})
 
 
 _DEFAULT_JSON_ENCODER = msgspec.json.Encoder()
@@ -113,7 +88,6 @@ _JSON_FILE_EXTENSION = ".json"
 _JSON_LINES_FILE_EXTENSION = ".jsonl"
 _MSGPACK_FILE_EXTENSION = ".msgpack"
 _SESSION_SNAPSHOT_VERSION = "1.0"
-_MAX_ENCODED_SESSION_FILE_STEM_LENGTH = 180
 
 
 def _default_json_dumps(value: Any) -> bytes:
@@ -152,29 +126,17 @@ def _is_literal_session_file_stem_safe(session_id: str) -> bool:
     with separators and platform-reserved names such as ``CON``. Unsafe values
     are encoded by :func:`_session_file_stem` rather than rejected.
     """
-    windows_stem = session_id.split(".", maxsplit=1)[0].upper()
-    if (
-        not session_id
-        or session_id.startswith(".")
-        or session_id.endswith((" ", "."))
-        or windows_stem in _WINDOWS_RESERVED_FILE_STEMS
-    ):
-        return False
-    if any(ord(character) < 32 for character in session_id):
-        return False
-    return all(character.isascii() and (character.isalnum() or character in "._-") for character in session_id)
+    return _is_literal_storage_key_segment_safe(session_id)
 
 
 def _session_file_stem(session_id: str, *, encoded_prefix: str) -> str:
-    """Return a safe filename stem for an opaque session ID."""
-    if _is_literal_session_file_stem_safe(session_id):
-        return session_id
-    encoded_session_id = urlsafe_b64encode(session_id.encode("utf-8")).decode("ascii").rstrip("=")
-    encoded_stem = f"{encoded_prefix}{encoded_session_id}"
-    if len(encoded_stem) <= _MAX_ENCODED_SESSION_FILE_STEM_LENGTH:
-        return encoded_stem
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-    return f"{encoded_prefix}sha256-{digest}"
+    """Return a safe filename stem for an opaque session ID.
+
+    Delegates to the shared :func:`~agent_framework._filesystem._storage_key_segment`
+    derivation so every component that maps an identifier onto storage produces
+    the same injective result.
+    """
+    return _storage_key_segment(session_id, encoded_prefix=encoded_prefix)
 
 
 def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
@@ -214,7 +176,7 @@ def _get_message_hash(message: Message) -> MessageIdentity:
 
 
 def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]) -> list[Message]:
-    """Filters incoming messages to only those that are truly new.
+    """Return messages after the ordered overlap with persisted history.
 
     Handles both 'append-only' and 'full transcript replay' scenarios.
     Prevents superlinear growth and preserves legitimate duplicate turns.
@@ -225,23 +187,20 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
     existing_hashes = [_get_message_hash(m) for m in existing]
     incoming_hashes = [_get_message_hash(m) for m in incoming]
 
-    if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
-        return list(incoming[len(existing) :])
+    for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
+        if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
+            if i == 0 and len(existing) == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+                break  # A repeated input without an ID is more important to retain than a possible replay.
+            return list(incoming[i + len(existing_hashes) :])
 
-    try:
-        for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
-            if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
-                return list(incoming[i + len(existing_hashes) :])
-    except Exception:
-        logger.debug("sequence alignment check failed, falling back to set-based deduplication")
+    for overlap in range(min(len(existing_hashes), len(incoming_hashes)), 0, -1):
+        if existing_hashes[-overlap:] != incoming_hashes[:overlap]:
+            continue
+        if overlap == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+            continue
+        return list(incoming[overlap:])
 
-    existing_set = set(existing_hashes)
-    new_msgs: list[Message] = []
-    for m, h in zip(incoming, incoming_hashes):
-        if h not in existing_set:
-            new_msgs.append(m)
-            existing_set.add(h)
-    return new_msgs
+    return list(incoming)
 
 
 @dataclass(frozen=True, slots=True)
@@ -870,48 +829,87 @@ class ContextProvider:
         """
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
+    local_request_ids_by_call_id: dict[str, deque[str]] = {}
+    local_request_ids_by_occurrence: dict[str, str] = {}
+    local_requests_by_id: dict[str, Content] = {}
+    closed_request_occurrences: set[int] = set()
     unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_response_ids_by_call_id: dict[str, deque[str]] = {}
+    local_responses_by_call_id: dict[str, deque[tuple[str, Content | None]]] = {}
 
     for message in messages:
         for content in message.contents:
             if content.type == "function_approval_request":
                 function_call = content.function_call
                 if content.id is not None and function_call is not None and function_call.call_id is not None:
-                    unresolved_requests_by_id.setdefault(content.id, content)
+                    if content.id not in unresolved_requests_by_id:
+                        unresolved_requests_by_id[content.id] = content
+                        local_requests_by_id[content.id] = content
+                        local_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                        if function_call.id is not None:
+                            local_request_ids_by_occurrence[function_call.id] = content.id
+                    # A replacement request supersedes the decision that triggered
+                    # reapproval; that old decision is no longer executable authority.
+                    unresolved_local_responses_by_id.pop(content.id, None)
+                    if (
+                        content.additional_properties.get("_replacement_approval_request") is True
+                        and function_call.id is not None
+                    ):
+                        unresolved_local_responses_by_id.pop(function_call.id, None)
                 continue
             if content.type == "function_approval_response":
                 function_call = content.function_call
-                if content.id is not None:
-                    unresolved_requests_by_id.pop(content.id, None)
+                request_id = (
+                    local_request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
+                )
+                request = local_requests_by_id.get(request_id) if request_id is not None else None
+                if request_id is not None:
+                    unresolved_requests_by_id.pop(request_id, None)
+                if request is not None and id(request) in closed_request_occurrences:
+                    continue
                 if (
                     content.id is not None
                     and function_call is not None
                     and function_call.call_id is not None
-                    and not function_call.additional_properties.get("server_label")
+                    # server_name is descriptive; only hosted controls execution ownership.
+                    and not function_call.hosted
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
-                    local_response_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                    local_responses_by_call_id.setdefault(function_call.call_id, deque()).append((
+                        content.id,
+                        request,
+                    ))
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
             }
             if not (is_terminal_result or is_follow_up_request):
                 continue
-            if response_ids := local_response_ids_by_call_id.get(content.call_id):
-                unresolved_local_responses_by_id.pop(response_ids.popleft(), None)
+            resolved_response = False
+            if responses := local_responses_by_call_id.get(content.call_id):
+                while responses and responses[0][0] not in unresolved_local_responses_by_id:
+                    responses.popleft()
+                if responses:
+                    response_id, request = responses.popleft()
+                    unresolved_local_responses_by_id.pop(response_id, None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
+                        if request.id is not None:
+                            unresolved_requests_by_id.pop(request.id, None)
+                    resolved_response = True
+            if not resolved_response and (request_ids := local_request_ids_by_call_id.get(content.call_id)):
+                while request_ids and request_ids[0] not in unresolved_requests_by_id:
+                    request_ids.popleft()
+                if request_ids:
+                    request = unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
 
     return {
         id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
@@ -938,6 +936,53 @@ def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Messa
         filtered_message.contents = filtered_contents
         filtered_messages.append(filtered_message)
     return filtered_messages
+
+
+def _paired_local_function_results(contents: Sequence[Content]) -> dict[int, Content]:
+    """Match completed local results to their function-call occurrences."""
+    results_by_call_id: dict[str, deque[Content]] = {}
+    for content in contents:
+        if content.type == "function_result" and content.call_id:
+            results_by_call_id.setdefault(content.call_id, deque()).append(content)
+    pairs: dict[int, Content] = {}
+    for content in contents:
+        if (
+            content.type == "function_call"
+            and not content.informational_only
+            and content.id
+            and content.call_id
+            and (results := results_by_call_id.get(content.call_id))
+        ):
+            pairs[id(content)] = results.popleft()
+    return pairs
+
+
+def _without_deferred_workflow_function_results(messages: Sequence[Message]) -> list[Message]:
+    """Persist mixed computer turns without results staged for workflow resume."""
+    start = next(
+        (
+            index
+            for index, message in enumerate(messages)
+            if any(content.type == "computer_tool_call" and content.user_input_request for content in message.contents)
+        ),
+        None,
+    )
+    if start is None:
+        return list(messages)
+    contents = [content for message in messages[start:] for content in message.contents]
+    deferred_ids = {id(result) for result in _paired_local_function_results(contents).values()}
+    if not deferred_ids:
+        return list(messages)
+    stored = list(messages[:start])
+    for message in messages[start:]:
+        kept = [content for content in message.contents if id(content) not in deferred_ids]
+        if len(kept) == len(message.contents):
+            stored.append(message)
+        elif kept:
+            copied = copy.copy(message)
+            copied.contents = kept
+            stored.append(copied)
+    return stored
 
 
 class HistoryProvider(ContextProvider):
@@ -1070,7 +1115,14 @@ class HistoryProvider(ContextProvider):
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
         if self.store_outputs and context.response and context.response.messages:
-            messages_to_store.extend(context.response.messages)
+            output_messages = context.response.messages
+            if (
+                self.load_messages
+                and self.store_inputs
+                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
+            ):
+                output_messages = _without_deferred_workflow_function_results(output_messages)
+            messages_to_store.extend(output_messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
@@ -1109,7 +1161,7 @@ def _current_run_identity() -> object | None:  # pyright: ignore[reportUnusedFun
 
 
 @contextlib.contextmanager
-def _run_identity_scope(identity: object) -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+def _run_identity_scope(identity: object) -> Generator[None]:
     """Stamp ``identity`` as the current run identity for the enclosed extent."""
     token = _CURRENT_RUN_IDENTITY.set(identity)
     try:
@@ -1537,9 +1589,10 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
 
     This middleware runs around each model call when
     ``require_per_service_call_history_persistence`` is enabled. It loads history providers
-    before the model call, persists them after the model call, and uses a local
-    sentinel conversation id so the function loop follows the existing
-    service-managed branch without forwarding that sentinel to the leaf client.
+    before the model call, carries their messages, tools, and instructions into
+    the function loop, persists them after the model call, and uses a local sentinel
+    conversation id so the function loop follows the existing service-managed
+    branch without forwarding that sentinel to the leaf client.
     """
 
     def __init__(
@@ -1566,6 +1619,8 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         self._session = session
         self._providers = list(providers)
         self._service_stores_history = service_stores_history
+        self._merged_provider_tool_names: set[str] = set()
+        self._merged_provider_instructions: set[str] = set()
 
     async def _prepare_service_call_context(self, messages: Sequence[Message]) -> SessionContext:
         """Create a per-call SessionContext and load history providers into it."""
@@ -1618,10 +1673,55 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         if context.options is None:
             return
 
-        mutable_options = dict(context.options)
+        mutable_options = context.options if isinstance(context.options, dict) else dict(context.options)
         if is_local_history_conversation_id(cast(str | None, mutable_options.get("conversation_id"))):
             mutable_options.pop("conversation_id", None)
         context.options = mutable_options
+
+    def _merge_provider_context(self, context: ChatContext, service_call_context: SessionContext) -> None:
+        """Merge per-call provider tools and instructions into the function-loop options."""
+        if not service_call_context.tools and not service_call_context.instructions:
+            return
+        if context.options is None:
+            mutable_options: dict[str, Any] = {}
+            context.options = mutable_options
+        elif isinstance(context.options, dict):
+            mutable_options = context.options
+        else:
+            mutable_options = dict(context.options)
+            context.options = mutable_options
+
+        if service_call_context.tools:
+            from ._tools import _get_tool_name, normalize_tools  # pyright: ignore[reportPrivateUsage]
+
+            existing_value = mutable_options.get("tools")
+            if existing_value is None:
+                tools: list[Any] = []
+            elif isinstance(existing_value, Sequence) and not isinstance(existing_value, (str, bytes, bytearray)):
+                tools = list(cast(Sequence[Any], existing_value))
+            else:
+                tools = [existing_value]
+            previously_merged_names = set(self._merged_provider_tool_names)
+            newly_merged_names: set[str] = set()
+            for tool in normalize_tools(service_call_context.tools):
+                tool_name = _get_tool_name(tool)
+                if isinstance(tool_name, str) and tool_name in previously_merged_names:
+                    continue
+                tools.append(tool)
+                if isinstance(tool_name, str):
+                    newly_merged_names.add(tool_name)
+            self._merged_provider_tool_names.update(newly_merged_names)
+            mutable_options["tools"] = tools
+
+        new_instructions = [
+            instruction
+            for instruction in service_call_context.instructions
+            if instruction not in self._merged_provider_instructions
+        ]
+        if new_instructions:
+            addition = "\n".join(new_instructions)
+            mutable_options["instructions"] = _append_instructions(mutable_options.get("instructions"), addition)
+            self._merged_provider_instructions.update(new_instructions)
 
     async def _finalize_response(
         self,
@@ -1688,6 +1788,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         # outgoing messages from the loaded local history and strip the local sentinel.
         if not self._service_stores_history:
             context.messages = service_call_context.get_messages(include_input=True)
+            self._merge_provider_context(context, service_call_context)
             self._strip_local_conversation_id(context)
 
         await call_next()
@@ -1712,6 +1813,32 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             service_call_context=service_call_context,
             response=context.result,
         )
+
+
+class _AgentSessionDictRequired(TypedDict):
+    """Required fields for a serialized :class:`AgentSession`."""
+
+    session_id: str
+
+
+class AgentSessionDict(_AgentSessionDictRequired, total=False):
+    """Serialized :class:`AgentSession` payload shape produced by :meth:`AgentSession.to_dict`.
+
+    ``AgentSession.to_dict`` returns a plain ``dict[str, Any]`` that conforms to this
+    schema. Callers that need a TypedDict view can ``cast`` the result.
+
+    Built as a required base plus ``total=False`` optional fields so postponed
+    annotations do not turn optional keys into required runtime metadata.
+
+    ``service_session_id`` may be a plain string or a structured
+    :data:`ServiceSessionId` mapping, matching :attr:`AgentSession.service_session_id`.
+    ``state`` holds session-local data and may be incomplete when the session uses
+    service-side storage.
+    """
+
+    type: str
+    service_session_id: str | ServiceSessionId | None
+    state: dict[str, Any]
 
 
 class AgentSession:
@@ -1756,6 +1883,11 @@ class AgentSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
+
+        The returned mapping matches :class:`AgentSessionDict`. The annotated
+        return type stays ``dict[str, Any]`` so subclasses and callers that
+        extend or pass the payload as a mutable ``dict`` remain type-correct
+        (TypedDict is not assignable to ``dict`` under pyright).
 
         Registered custom values use their configured codecs. Unregistered
         values defining ``to_dict`` retain the established dictionary behavior.
@@ -2324,29 +2456,19 @@ class FileHistoryProvider(HistoryProvider):
         def _append_messages() -> None:
             with file_lock:
                 if self.serialization_format == "json":
-                    existing_messages: list[Message] = []
-                    if file_path.exists():
-                        with file_path.open("r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                try:
-                                    payload = self.loads(line)
-                                    msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                                    existing_messages.append(msg)
-                                except Exception:
-                                    logger.debug("failed to parse history line for deduplication")
-                                    continue
-
+                    existing_messages = self._read_json_messages(file_path) if file_path.exists() else []
                     new_messages = filter_new_messages(existing_messages, messages)
                     if new_messages:
                         with file_path.open("a", encoding="utf-8") as file_handle:
                             for message in new_messages:
                                 file_handle.write(f"{self._serialize_json_message(message)}\n")
                     return
+                existing_messages = self._read_msgpack_messages(file_path) if file_path.exists() else []
+                new_messages = filter_new_messages(existing_messages, messages)
+                if not new_messages:
+                    return
                 with file_path.open("ab") as file_handle:
-                    for message in messages:
+                    for message in new_messages:
                         serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
                         file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
                         file_handle.write(serialized)

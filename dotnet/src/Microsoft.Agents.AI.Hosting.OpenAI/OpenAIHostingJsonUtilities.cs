@@ -147,6 +147,7 @@ internal static class OpenAIHostingJsonUtilities
 [JsonSerializable(typeof(ItemContentOutputText))]
 [JsonSerializable(typeof(ItemContentOutputAudio))]
 [JsonSerializable(typeof(ItemContentRefusal))]
+[JsonSerializable(typeof(ItemContentFunctionApprovalResponse))]
 [JsonSerializable(typeof(TextConfiguration))]
 [JsonSerializable(typeof(ResponseTextFormatConfiguration))]
 [JsonSerializable(typeof(ResponseTextFormatConfigurationText))]

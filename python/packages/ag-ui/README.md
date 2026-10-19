@@ -8,6 +8,14 @@ AG-UI protocol integration for Agent Framework, enabling seamless integration wi
 pip install agent-framework-ag-ui
 ```
 
+The base package supports Python 3.10–3.15. The optional A2UI integration
+currently supports Python 3.10–3.14 because `ag-ui-a2ui-toolkit` declares
+`Requires-Python <3.15`:
+
+```bash
+pip install "agent-framework-ag-ui[a2ui]"
+```
+
 ## Quick Start
 
 ### Server (Host an AI Agent)
@@ -31,7 +39,8 @@ agent = Agent(
 
 # Create FastAPI app and add AG-UI endpoint
 app = FastAPI()
-add_agent_framework_fastapi_endpoint(app, agent, "/")
+# Local/single-user only. Shared services must provide authorization_scope_resolver.
+add_agent_framework_fastapi_endpoint(app, agent, "/", single_user=True)
 
 # Run with: uvicorn main:app --reload
 ```
@@ -52,7 +61,8 @@ async def start(message: str, ctx: WorkflowContext) -> None:
 workflow = WorkflowBuilder(start_executor=start).build()
 
 app = FastAPI()
-add_agent_framework_fastapi_endpoint(app, workflow, "/")
+# Local/single-user only. Shared services must provide authorization_scope_resolver.
+add_agent_framework_fastapi_endpoint(app, workflow, "/", single_user=True)
 ```
 
 ### Server (Thread-Scoped WorkflowBuilder)
@@ -75,7 +85,8 @@ thread_scoped_workflow = AgentFrameworkWorkflow(
     workflow_factory=build_workflow_for_thread,
     name="my_workflow",
 )
-add_agent_framework_fastapi_endpoint(app, thread_scoped_workflow, "/")
+# Local/single-user only. Shared services must provide authorization_scope_resolver.
+add_agent_framework_fastapi_endpoint(app, thread_scoped_workflow, "/", single_user=True)
 ```
 
 ### Client (Connect to an AG-UI Server)
@@ -104,6 +115,56 @@ The `AGUIChatClient` supports:
 - Automatic thread management for conversation continuity
 - Integration with `Agent` for client-side history management
 - Canonical interrupt/resume passthrough (`availableInterrupts` and `resume`)
+
+#### HTTP client ownership and cookies
+
+**Breaking change:** `AGUIChatClient` and `AGUIHttpService` reuse an internally owned HTTP client
+for connection pooling but no longer persist response cookies. This applies to all runs,
+including repeated requests with the same thread ID. Closing the AG-UI client or leaving
+its async context manager closes its internally owned HTTP client.
+
+Applications that need cookies for upstream authentication, sessions, or load-balancer affinity, including those migrating from
+the previous default of retaining response cookies, must supply an `httpx.AsyncClient`
+through `http_client`. Supplied clients retain their headers, cookies, timeout, transport,
+and response-cookie handling, and must be closed by the caller. Scope a cookie-bearing
+client to a single authenticated principal; do not share it across users. AG-UI thread IDs
+are correlation identifiers, not authentication boundaries.
+
+## Citations and annotations
+
+Text content carrying `Content.annotations` emits a message-linked `CUSTOM` event named `annotations`.
+This includes annotation-only updates received after the response text, such as SharePoint grounding
+citations from the Responses API. The event arrives before `RUN_FINISHED` and does not repeat response text:
+
+```json
+{
+  "type": "CUSTOM",
+  "name": "annotations",
+  "value": {
+    "messageId": "assistant-message-id",
+    "annotations": [
+      {
+        "type": "citation",
+        "title": "Document",
+        "url": "https://example.sharepoint.com/document.pdf",
+        "annotated_regions": [
+          {"type": "text_span", "start_index": 0, "end_index": 6}
+        ]
+      }
+    ]
+  }
+}
+```
+
+Each event contains a batch of newly emitted annotations for the indicated text message. Frontends can
+append those annotations to that message and use the citation URL, title, or file ID to render sources.
+Framework annotation fields and additional properties are retained, but provider `raw_representation`
+objects are omitted.
+
+`AGUIChatClient` restores these batches as `Content.annotations` in streaming updates and aggregated
+responses, while retaining the custom-event payload in `update.additional_properties["ag_ui_custom_event"]`.
+Custom events are live run metadata: citation rendering and persistence alongside frontend message history
+remain application responsibilities; `MESSAGES_SNAPSHOT` does not restore these custom events.
 
 ## Tool Return Helpers
 
@@ -211,6 +272,12 @@ argument fields remain supported as partial edits. Cancellation is a normal term
 not execute, while resolved siblings in the same complete resume continue normally. The same tool-approval shape and
 resume payloads apply when an agent approval is surfaced through a workflow `request_info` event.
 
+For built-in Agents, validated approvals resume through the normal `Agent.run()` path. Agent middleware still
+controls admission and scheduling, and provider and function middleware still apply before tool execution.
+For example, `ToolApprovalMiddleware` collects queued decisions before releasing the batch; AG-UI does not
+execute an individually approved tool ahead of that middleware. Completed results remain replayable without
+repeating tool execution.
+
 ```json
 {
   "threadId": "thread-1",
@@ -239,11 +306,13 @@ Review focus: whether these names are the right stable contract for Python users
 
 | Surface | Public exports |
 | --- | --- |
-| `agent_framework.ag_ui` facade | `AgentFrameworkAgent`, `AgentFrameworkWorkflow`, `AGUIChatClient`, `AGUIEventConverter`, `AGUIHttpService`, `AGUIThreadSnapshot`, `AGUIThreadSnapshotStore`, `InMemoryAGUIThreadSnapshotStore`, `SnapshotScopeResolver`, `add_agent_framework_fastapi_endpoint`, `state_update`, `__version__` |
+| `agent_framework.ag_ui` facade | `AgentFrameworkAgent`, `AgentFrameworkWorkflow`, `AGUIChatClient`, `AGUIEventConverter`, `AGUIHttpService`, `AGUIThreadSnapshot`, `AGUIThreadSnapshotStore`, `AuthorizationScopeResolver`, `InMemoryAGUIThreadSnapshotStore`, `SnapshotScopeResolver`, `add_agent_framework_fastapi_endpoint`, `state_carrier`, `state_update`, `__version__` |
 | Direct `agent_framework_ag_ui` package | Facade exports plus `AGUIChatOptions`, `AGUIRequest`, `AGUIThreadID`, `AgentState`, `DEFAULT_MAX_THREAD_SNAPSHOTS`, `DEFAULT_TAGS`, `PredictStateConfig`, `RunMetadata`, `SnapshotScope`, `WorkflowFactory` |
 | AG-UI protocol package (`ag_ui.core`) | `Interrupt`, `ResumeEntry`, `RunFinishedInterruptOutcome`, and related run outcome models |
 
 Interrupt support is protocol data rather than a separate Agent Framework Python class. Requests accept canonical `availableInterrupts`/`available_interrupts` and `resume` values; `AGUIChatClient` and `AGUIHttpService.post_run(...)` forward those fields with AG-UI wire aliases; agent approval and workflow `request_info` pauses emit `RUN_FINISHED.outcome.interrupts`; `AGUIEventConverter` preserves canonical interrupt outcome metadata on the final `ChatResponseUpdate`; and thread snapshot hydration replays the canonical interrupt outcome when a scoped snapshot stores an unresolved pause.
+
+Use `state_carrier(...)` to mark JSON content that should be sent in the AG-UI request's `state` field rather than as a model-visible document. The client removes explicitly marked carriers from all client-controlled history and uses the most recent carrier. Ordinary `application/json` content remains a document. For migration, pass `allow_legacy_state_carrier=True` in `AGUIChatOptions` to recognize the deprecated final single-content base64 JSON convention; mixed text and document messages remain model-visible. This client-only option emits a `DeprecationWarning` when the legacy convention is used and is not sent to the remote server.
 
 ## Features
 
@@ -266,13 +335,49 @@ Additional compatibility and draft support:
 
 ## Security: Authentication & Authorization
 
-The AG-UI endpoint does not enforce authentication by default. **For production deployments, you should add authentication** using FastAPI's dependency injection system via the `dependencies` parameter.
+Every AG-UI endpoint must choose an authorization mode:
+
+- **Authenticated/shared applications:** provide `authorization_scope_resolver`. FastAPI invokes it as a dependency, so
+  it can declare `Depends`, `Security`, header, cookie, or `Request` parameters. It must return a stable, non-empty
+  scope for the authenticated principal or collaboration boundary that may access the same server-side AG-UI state.
+- **Local or genuinely single-user applications:** set `single_user=True`. This deliberately treats every caller as
+  one authorization principal and assigns an opaque scope for the lifetime of that endpoint registration. Do not use
+  it on a shared service or where durable state must retain the same scope across process restarts.
+- **Compatibility:** existing `snapshot_scope_resolver` integrations remain supported and provide the same trusted
+  scope to snapshots, internal sessions, workflows, detached-run admission, and approvals.
+
+Authentication in the separate `dependencies` list can allow or reject a request, but its return value does not scope
+server-side state. Do not combine authentication-only dependencies with `single_user=True` when different authenticated
+callers can reach the endpoint.
+
+### Stable Single-User Scope
+
+`single_user=True` creates an opaque scope for one endpoint registration, which is appropriate for local and
+process-local examples. A single-user application that uses durable snapshots, checkpoints, or provider state can
+instead provide an application-owned constant through the normal resolver:
+
+```python
+def resolve_single_user_scope() -> str:
+    # Keep this stable for the lifetime of the persisted state and unique to this application boundary.
+    return "my-app:single-user:v1"
+
+
+add_agent_framework_fastapi_endpoint(
+    app,
+    agent,
+    "/",
+    authorization_scope_resolver=resolve_single_user_scope,
+)
+```
+
+The value is a server-owned namespace, not a credential. Do not read it from AG-UI request state or other
+client-controlled input.
 
 ### API Key Authentication Example
 
 ```python
 import os
-from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from agent_framework import Agent
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
@@ -282,28 +387,29 @@ API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 EXPECTED_API_KEY = os.environ.get("AG_UI_API_KEY")
 
 
-async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None:
-    """Verify the API key provided in the request header."""
+async def resolve_authorization_scope(api_key: str | None = Security(API_KEY_HEADER)) -> str:
+    """Verify the API key and return the state-ownership scope."""
     if not api_key or api_key != EXPECTED_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return "configured-api-key"
 
 
 # Create agent and app
 agent = Agent(name="my_agent", instructions="...", client=...)
 app = FastAPI()
 
-# Register endpoint WITH authentication
+# Register endpoint with authentication-backed authorization scoping
 add_agent_framework_fastapi_endpoint(
     app,
     agent,
     "/",
-    dependencies=[Depends(verify_api_key)],  # Authentication enforced here
+    authorization_scope_resolver=resolve_authorization_scope,
 )
 ```
 
 ### Other Authentication Options
 
-The `dependencies` parameter accepts any FastAPI dependency, enabling integration with:
+The authorization resolver is a normal FastAPI dependency, enabling integration with:
 
 - **OAuth 2.0 / OpenID Connect** - Use `fastapi.security.OAuth2PasswordBearer`
 - **JWT Tokens** - Validate tokens with libraries like `python-jose`
@@ -352,20 +458,25 @@ agent = ...
 snapshot_store = InMemoryAGUIThreadSnapshotStore(max_snapshots=500)
 
 
-def resolve_snapshot_scope(request):
-    # Local demo scope. Production apps should derive the scope from authenticated user or tenant context.
-    del request
-    return "local-demo"
-
-
 add_agent_framework_fastapi_endpoint(
     app,
     agent,
     "/",
     snapshot_store=snapshot_store,
-    snapshot_scope_resolver=resolve_snapshot_scope,
+    single_user=True,
 )
 ```
+
+For a shared deployment, replace `single_user=True` with the authenticated
+`authorization_scope_resolver` shown above.
+
+Configured stateless agent snapshot stores are updated after function/MCP tool-result batches and approval safe points,
+then written once more with the terminal run state. These boundaries capture completed model/tool rounds without
+persisting sibling text or reasoning whose stream finalizer may still reject it. Intermediate snapshots project only
+completed call/result groups and current approval controls; the terminal snapshot retains the complete finalized
+output. Service-session snapshots retain terminal-save cadence so replayable messages cannot advance without their
+matching provider continuation state. Workflow Thread Snapshots also keep their terminal-save cadence; workflow
+checkpointing remains the mechanism for incremental workflow runtime state.
 
 A frontend can then hydrate the latest stored snapshot for the scoped thread:
 
@@ -376,18 +487,79 @@ A frontend can then hydrate the latest stored snapshot for the scoped thread:
 }
 ```
 
-Endpoint configuration requires `snapshot_scope_resolver` whenever a snapshot store is configured, including when
-the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFrameworkWorkflow`. The resolver returns
-the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key. When using
-`AgentFrameworkWorkflow(workflow_factory=...)`, the same resolver also scopes the in-memory workflow cache even
-without a snapshot store; provide it in multi-user deployments so two users who submit the same `threadId` do not
-share a live `Workflow` instance.
+### Disconnect-safe runs
+
+By default, AG-UI execution remains attached to the SSE response: disconnecting the client cancels the response
+generator and can stop the run. Set `detached_runs=True` when a finite agent or workflow run must continue through
+snapshot, checkpoint, and approval-state finalization after the HTTP reader disconnects:
+
+```python
+add_agent_framework_fastapi_endpoint(
+    app,
+    agent,
+    "/",
+    snapshot_store=snapshot_store,
+    single_user=True,
+    detached_runs=True,
+    max_detached_runs=32,
+    detached_run_timeout_seconds=3600,
+)
+```
+
+Detached execution uses a bounded endpoint-owned producer queue. While a detached mutating request is active, another
+mutating request for the same `(Snapshot Scope, threadId)` returns HTTP 409; an empty snapshot Hydrate Request remains
+allowed, bypasses detached producer capacity, and returns the latest committed safe point. Equal Thread ids in
+different Snapshot Scopes remain independent.
+Each endpoint registration retains at most `max_detached_runs` producers (32 by default); requests beyond that limit
+receive HTTP 503. After a reader disconnects or never starts, `detached_run_timeout_seconds` cancels a stalled producer
+and releases its capacity (one hour by default).
+
+This option does not add resumable event replay. Events emitted while no client is attached are consumed and discarded,
+so a reconnecting client recovers from Thread Snapshots rather than resuming the original SSE position. Applications
+that require replay of every in-flight event must provide their own authenticated event log and resume route with
+retention and cross-replica semantics appropriate to their deployment.
+
+FastAPI dependencies and other request-scoped resources may be released after the disconnected response ends. Resolve
+authorization, Snapshot Scope, and other durable values before the run starts; detached tools and providers must not
+retain request-owned clients or sessions that are expected to close with the HTTP request.
+
+Endpoint registration requires `authorization_scope_resolver`, the compatible `snapshot_scope_resolver`, or an
+explicit `single_user=True` declaration. The authenticated resolver returns the application-defined scope used with
+the AG-UI Thread id for snapshot storage, internal `AgentSession.session_id` derivation, workflow ownership,
+detached-run admission, and approval state. Context providers and workflow instances therefore cannot merge
+server-side state for equal Thread ids in different scopes. The raw Thread id remains unchanged in AG-UI events and
+snapshot operations. `single_user=True` assigns one opaque scope per endpoint registration, including endpoints that
+share the same route path or backing objects in one process. That scope changes when the endpoint is registered again;
+use an explicit resolver for durable snapshots, checkpoints, or provider state that must survive process restarts.
+
+A workflow request that omits `threadId` is assigned a generated Thread id. It is reported in `RUN_STARTED`, keys the
+`workflow_factory` instance and Thread Snapshot, and owns that run's pending `request_info` interrupts. Send it back as
+`threadId` to continue the run; a continuation that omits it receives `WORKFLOW_RESUME_NOT_FOUND`. With
+`workflow_factory`, a request without `threadId` that carries a `resume` entry, a tool result, or an approval response
+is rejected the same way instead of starting a new run, so send `threadId` with every such request. A checkpoint
+created by such a run resumes with `checkpointId` and either the reported `threadId` or, as before, no `threadId`.
+
+Authenticate and authorize the current scope on every request, including hydration and approval resume, rather than
+trusting a scope supplied through Shared State or forwarded properties. A configured resolver must return a non-empty
+string. Returning `None`, an empty string, or another type fails the request with a generic HTTP 500 configuration
+error before accessing snapshots, approval state, or context providers. Resolver failures never fall back to
+single-user or unscoped operation. Valid scope strings are used exactly as returned, without trimming or normalization.
+Use endpoint authentication dependencies to reject unauthorized requests before scope resolution.
+
+Existing applications that need time to migrate provider records from raw Thread-id keys can temporarily wrap the
+agent with `AgentFrameworkAgent(..., legacy_session_id_from_thread_id=True)`. This deprecated compatibility option
+emits a `DeprecationWarning` and disables Snapshot Scope isolation for context-provider state. It is not safe for a
+shared multi-tenant deployment, even with a trusted resolver. Keep it disabled when establishing scope isolation.
+
+### Request state and snapshot authority
 
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
 values, are not passed through typed session restoration, and are excluded from private Session Continuation State.
-Keys owned by configured context providers or reserved for approval and message-injection middleware are not copied
-into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+Keys owned by configured context providers or reserved for approval, message-injection, and standalone FIDES security
+middleware are not copied into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+A custom FIDES `session_state_key` is protected when its middleware is visible on the agent or its client before the
+run; use `SecureAgentConfig` for middleware that a context provider injects later.
 
 When scoped snapshots are configured, each category has one State Authority:
 
@@ -429,9 +601,11 @@ encryption, integrity protection, access control, retention, audit, data residen
 custom stores remain source-compatible because `session_state` is optional, but they provide Session State Continuity
 only when they round-trip that field unchanged with the rest of the snapshot.
 
-The supported consistency model is one active run per `(Snapshot Scope, threadId)`. Concurrent writes to the same
-scoped thread remain last-writer-wins. Applications that require stronger consistency must serialize those runs using
-coordination appropriate to their deployment; a process-local lock does not provide distributed consistency.
+The supported consistency model is one active run per `(Snapshot Scope, threadId)`. With `detached_runs=True`, one
+registered endpoint enforces that rule in-process by rejecting concurrent mutations while allowing hydration.
+Coordination is not shared across endpoint registrations, workers, or replicas; applications that require distributed
+serialization must provide it using infrastructure appropriate to their deployment. Without detached execution,
+concurrent writes to the same scoped thread remain last-writer-wins.
 
 ## Architecture
 

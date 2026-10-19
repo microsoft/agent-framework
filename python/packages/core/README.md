@@ -22,8 +22,13 @@ pip install agent-framework-openai
 
 Supported Platforms:
 
-- Python: 3.10+
+- Python: 3.10–3.15
 - OS: Windows, macOS, Linux
+
+Python 3.10 remains supported and tested for this release, but it is deprecated
+because upstream Python 3.10 has reached end of life. New environments should
+use Python 3.11 or later. Removing Python 3.10 support will be handled in a
+future release rather than by this compatibility update.
 
 ## 1. Setup API Keys
 
@@ -167,6 +172,21 @@ asyncio.run(main())
 ```
 
 You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents).
+
+### MCP HTTP client ownership and cookies
+
+**Breaking change:** HTTP clients created by `MCPStreamableHTTPTool` no longer persist
+response cookies. This applies with or without a `header_provider`, including repeated
+calls within the same MCP session. Connection reuse, timeout and redirect defaults,
+and cleanup on close or reset are preserved. Explicit `Cookie` headers supplied through
+`static_headers` or a `header_provider` are still supported.
+
+Applications relying on cookie-based authentication, sessions, or load-balancer affinity
+must supply an `httpx.AsyncClient` through `http_client=`. Supplied clients retain their
+configuration and response-cookie handling and must be closed by the caller. Scope
+cookie-bearing clients and MCP tool sessions to one authenticated principal; do not
+share a user-specific cookie jar across users. Rejecting cookies does not partition
+MCP protocol sessions or other server-side state between principals.
 
 ## 5. Multi-Agent Orchestration
 

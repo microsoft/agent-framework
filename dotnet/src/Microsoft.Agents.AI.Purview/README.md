@@ -28,14 +28,15 @@ Add Purview when you need to:
 ## Quick Start
 
 ``` csharp
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Purview;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
-Uri endpoint = new Uri("..."); // The endpoint of Azure OpenAI instance.
+Uri endpoint = new Uri("https://your-resource.openai.azure.com/openai/v1/");
 string deploymentName = "..."; // The deployment name of your Azure OpenAI instance ex: gpt-4o-mini
 string purviewClientAppId = "..."; // The client id of your entra app registration. 
 
@@ -47,11 +48,11 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
         ClientId = purviewClientAppId
     });
 
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-    .GetResponsesClient(deploymentName)
-    .AsIChatClient()
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName)
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("My Sample App"))
     .Build();
@@ -81,6 +82,17 @@ The plugin requires the following Graph permissions:
 - ProtectionScopes.Compute.All : [userProtectionScopeContainer](https://learn.microsoft.com/en-us/graph/api/userprotectionscopecontainer-compute)
 - Content.Process.All : [processContent](https://learn.microsoft.com/en-us/graph/api/userdatasecurityandgovernance-processcontent)
 - ContentActivity.Write : [contentActivity](https://learn.microsoft.com/en-us/graph/api/activitiescontainer-post-contentactivities)
+
+The Entra app must be configured as a public client application with a localhost redirect URI so
+`InteractiveBrowserCredential` can complete the delegated user sign-in. These permissions require tenant
+administrator consent.
+
+The client ID alone is not enough for a live Purview policy test. The tenant must also:
+
+1. Have Microsoft Purview entitlement and consumptive billing enabled.
+2. Register the Entra app as an integrated AI app in **Purview > Settings > AI app and agent locations**.
+3. Configure a DLP or data collection policy that applies to the signed-in user and the app.
+4. Turn the policy on. A policy in test mode does not produce an enforced block.
 
 Authentication with user tokens is preferred. When the configured credential resolves to a user token, that token's user id is used for Purview policy evaluation. If authenticating with app tokens, the token does not contain an end-user principal, so the agent-framework caller will need to provide an entra user id for each `ChatMessage` sent to the agent/client. This user id can be set using the `SetUserId` extension method, or by setting the `"userId"` field of the `AdditionalProperties` dictionary.
 
@@ -179,12 +191,28 @@ var settings = new PurviewSettings("My Sample App")
 
 ### Selecting Agent vs Chat Middleware
 
+Both middlewares apply the same policy logic, but they are handed different content, so they do not evaluate the same thing. **Prefer the chat middleware for data loss prevention**; use the agent middleware when a single check at the run boundary is what you want.
+
+| | Agent middleware | Chat middleware |
+| --- | --- | --- |
+| Caller's input messages | evaluated | evaluated |
+| Context provider output (for example retrieval results or memory) | not evaluated | evaluated |
+| Conversation history replayed into the request | not evaluated | evaluated |
+| A model's tool call, before the tool executes | not evaluated | evaluated |
+| Tool results | evaluated at the end of the run | evaluated on the next request |
+| Final response | evaluated | evaluated |
+| How often it evaluates | once per run | once per model request |
+
+The agent middleware receives the messages passed to the agent. Content added while the run executes — context provider output, replayed history, and the function calls and results produced by `FunctionInvokingChatClient` — is assembled downstream of it, so it is visible only in the final response, after any tool has already run.
+
+The chat middleware receives the fully prepared request on every model round trip, provided it is composed **below** `FunctionInvokingChatClient` (see [Composition order](#composition-order)). A function call returned by the model is then evaluated before that function executes, and its result is evaluated on the following round trip.
+
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ``` csharp
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
     .GetChatClient(deploymentName)
     .AsAIAgent("You are a helpful assistant.")
     .AsBuilder()
@@ -195,17 +223,46 @@ AIAgent agent = new AzureOpenAIClient(
 Use the chat middleware when you attach directly to a chat client (e.g. minimal agent shell or custom orchestration):
 
 ``` csharp
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-    .GetResponsesClient(deploymentName)
-    .AsIChatClient()
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName)
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
     .Build();
 ```
 
-The policy logic is identical; the only difference is the hook point in the pipeline.
+Both middlewares can be attached at the same time. The chat middleware then evaluates each model round trip and the agent middleware evaluates the run boundary.
+
+### Composition order
+
+`WithPurview` on an `IChatClient` must end up **below** `FunctionInvokingChatClient`, otherwise the middleware sees only the run boundary and function calls execute before it evaluates them.
+
+``` csharp
+// Correct: the agent adds function invocation above the Purview-wrapped client.
+IChatClient client = chatClient
+    .AsBuilder()
+    .WithPurview(credential, settings)
+    .Build();
+AIAgent agent = client.AsAIAgent("You are a helpful assistant.");
+
+// Correct: the first Use is outermost, so function invocation stays above Purview.
+IChatClient client = chatClient
+    .AsBuilder()
+    .UseFunctionInvocation()
+    .WithPurview(credential, settings)
+    .Build();
+
+// Not recommended: Purview is outermost, so it evaluates only the completed run.
+IChatClient client = chatClient
+    .AsBuilder()
+    .WithPurview(credential, settings)
+    .UseFunctionInvocation()
+    .Build();
+```
+
+The last form is not corrected automatically. When a chat client is turned into an agent, the framework only adds a `FunctionInvokingChatClient` if the pipeline does not already expose one, and the Purview client delegates that lookup inward — so an existing instance is found and the ordering is preserved as written.
 
 ---
 
@@ -217,6 +274,34 @@ The policy logic is identical; the only difference is the hook point in the pipe
 5. If the content was blocked, the middleware returns a response containing the `BlockedResponseMessage`.
 
 The user id from the prompt message(s) is reused for the response evaluation so both evaluations map consistently to the same user.
+
+### Blocked content and conversation history
+
+Where Purview sits in the pipeline decides whether a blocked response can still be written
+to conversation history.
+
+**Chat-client level** (`WithPurview` on a `ChatClientBuilder`, or `PurviewChatClient`) —
+the response is evaluated and replaced inside `GetResponseAsync`, before the agent stores
+the turn, so the replacement is what becomes durable and the model's own content never
+reaches the history provider. This holds as long as Purview is composed below any chat
+client that stores history itself, which is the same ordering rule described above for
+function invocation.
+
+**Agent level** (`WithPurview` on an `AIAgentBuilder`, or `PurviewAgent`) — the agent
+stores the turn as part of the run, and Purview wraps the whole run, so the response is
+evaluated after the turn has already been written. A blocked response is replaced for the
+caller, but the original content can still be read back from history on a later turn. Use
+the chat-client level composition where history must not retain blocked content.
+
+**Service-managed history** — both of the above describe history the framework stores.
+Some chat clients instead keep the conversation on the service and return an id to
+continue from, for example a Responses-style API called with `store` enabled. There the
+service records the prompt and the response as part of the model call, before the response
+comes back to be evaluated, and the agent's session advances to that turn so the next run
+resumes from a conversation that still contains the blocked content. Purview still replaces
+what the caller receives, but the service's copy is outside the framework's reach and
+cannot be withdrawn. Where blocked content must not be retained, turn service-side storage
+off so the framework owns the conversation, and use a `ChatHistoryProvider`.
 
 There are several optimizations to speed up Purview calls. Protection scope lookups (the first step in evaluation) are cached to minimize network calls. When a lookup is not cached, the middleware will refresh it in a background worker so the foreground ProcessContent request does not have to wait.
 If the policies allow content to be processed offline, the middleware will add the process content request to a channel and run it in a background worker. Similarly, the middleware will run a background request if no scopes apply and the interaction only has to be logged in Audit. Payment Required responses from background scope lookups are cached at the tenant level so subsequent requests for the tenant short-circuit.
@@ -261,3 +346,52 @@ catch (PurviewException e)
     this._logger.LogError(e, "Purview middleware threw an exception.")
 }
 ```
+
+## Security Considerations
+
+### Identity is a trusted input
+
+Purview evaluates DLP policy **for a specific user**. The identity this integration resolves therefore
+decides *which* policy is applied, and it is resolved in this order:
+
+1. The user id from the configured `TokenCredential`'s token, when the credential resolves to a user.
+2. The `userId` argument passed to the processor.
+3. `ChatMessage.AdditionalProperties["userId"]`.
+4. `ChatMessage.AuthorName`, when it is a GUID.
+
+Only source 1 is verified. Sources 2-4 are supplied by the hosting application, so **a host must not
+populate them from data that has crossed a trust boundary**. If an end user, an upstream service or a
+model response can influence `AdditionalProperties["userId"]` or `AuthorName`, that party can select a
+different user's DLP policy - typically one with weaker rules - and evade enforcement. Where identity
+must come from a request, derive it from a validated token on the server, never from the request body.
+Prefer a user-delegated credential (source 1) whenever possible.
+
+`PurviewAppLocation` in `PurviewSettings` is trusted in the same way: it selects which policy locations
+apply and must be configured by the host, not by the caller.
+
+### Fail-closed behaviour
+
+Policy evaluation fails closed. If no user id can be resolved, or the tenant or app location cannot be
+determined, `PurviewRequestException` is thrown rather than letting content through unevaluated. Use
+`IgnoreExceptions` if you deliberately want availability over enforcement - but understand that it
+disables enforcement for every error, not just transient ones.
+
+### What is evaluated
+
+Every content item on a message is submitted for evaluation, not just its text: `DataContent` is sent
+as Purview binary content, and `FunctionCallContent`, `FunctionResultContent` and other structured
+content are serialized to text. Only `UsageContent` is skipped, because it carries token counts rather
+than user data. Text annotations such as citations, `ErrorContent.Details` and `DataContent.Name`
+are submitted as additional text entries.
+
+### Remote references are not dereferenced
+
+Purview classifies the content it is handed; a reference to content is not the content.
+
+Content that carries its own bytes is evaluated as bytes: `DataContent` is submitted as Purview binary
+content.
+
+A *remote* reference is not. A `UriContent`, a hosted file reference, or a link nested inside a
+`FunctionResultContent` is submitted as the reference itself, and the bytes it points at are never
+fetched or evaluated. A host that needs those bytes evaluated must resolve them and pass the resolved
+content through the middleware.

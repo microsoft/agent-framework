@@ -7,6 +7,9 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterable, Mapping, Sequence
+from contextlib import AsyncExitStack
+from http.cookiejar import CookieJar, DefaultCookiePolicy
+from types import TracebackType
 from typing import Any, cast
 
 import httpx
@@ -151,12 +154,22 @@ class AGUIHttpService:
 
         Args:
             endpoint: AG-UI server endpoint URL (e.g., "http://localhost:8888/")
-            http_client: Optional httpx AsyncClient. If None, creates a new one.
+            http_client: Optional httpx AsyncClient. If None, creates a client that does not
+                persist response cookies. Supplied clients retain their cookie behavior and
+                remain caller-owned; scope cookie-based authentication to a single authenticated
+                principal rather than sharing it across users.
             timeout: Request timeout in seconds (default: 60.0)
         """
         self.endpoint = endpoint.rstrip("/")
         self._owns_client = http_client is None
-        self.http_client = http_client or httpx.AsyncClient(timeout=timeout)
+        if http_client is not None:
+            self.http_client = http_client
+        else:
+            # An empty domain allowlist prevents response cookies from persisting across runs.
+            self.http_client = httpx.AsyncClient(
+                timeout=timeout,
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
 
     async def post_run(
         self,
@@ -227,12 +240,27 @@ class AGUIHttpService:
         )
 
         # Stream the response using SSE
-        async with self.http_client.stream(
-            "POST",
-            self.endpoint,
-            json=request_data,
-            headers={"Accept": "text/event-stream"},
-        ) as response:
+        async with AsyncExitStack() as stack:
+            stream_context = self.http_client.stream(
+                "POST",
+                self.endpoint,
+                json=request_data,
+                headers={"Accept": "text/event-stream"},
+            )
+            response = await stream_context.__aenter__()
+
+            async def exit_response(
+                exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+            ) -> bool | None:
+                try:
+                    return await stream_context.__aexit__(exc_type, exc, tb)
+                except Exception:
+                    if exc is None or isinstance(exc, GeneratorExit):
+                        raise
+                    logger.warning("HTTP response cleanup failed while handling an existing exception.", exc_info=True)
+                    return False
+
+            stack.push_async_exit(exit_response)
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
