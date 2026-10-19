@@ -12,8 +12,8 @@
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <PropertyGroup>
-    <!-- Shared source types such as DiagnosticIds are visible from Microsoft.Agents.AI.Hosting.A2A through
-         InternalsVisibleTo, so injecting them here as well would produce conflicting type definitions. -->
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
   </PropertyGroup>
 

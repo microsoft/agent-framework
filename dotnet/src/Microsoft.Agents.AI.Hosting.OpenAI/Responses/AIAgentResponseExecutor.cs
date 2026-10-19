@@ -19,7 +19,6 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
 {
     private readonly AIAgent? _agent;
     private readonly string _registrationKey;
-    private readonly string? _sessionStorageIdentity;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly OpenAIResponsesMapOptions _mapOptions;
 
@@ -27,8 +26,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         AIAgent agent,
         string registrationKey,
         IServiceScopeFactory scopeFactory,
-        OpenAIResponsesMapOptions? mapOptions = null,
-        string? sessionStorageIdentity = null)
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentException.ThrowIfNullOrEmpty(registrationKey);
@@ -36,7 +34,6 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
 
         this._agent = agent;
         this._registrationKey = registrationKey;
-        this._sessionStorageIdentity = sessionStorageIdentity;
         this._scopeFactory = scopeFactory;
         this._mapOptions = mapOptions ?? new OpenAIResponsesMapOptions();
     }
@@ -50,7 +47,6 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         ArgumentNullException.ThrowIfNull(scopeFactory);
 
         this._registrationKey = registrationKey;
-        this._sessionStorageIdentity = registrationKey;
         this._scopeFactory = scopeFactory;
         this._mapOptions = mapOptions ?? new OpenAIResponsesMapOptions();
     }
@@ -127,6 +123,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
             return agent;
         }
 
-        return new AIHostAgent(agent, sessionStore, this._sessionStorageIdentity);
+        string? sessionStorageIdentity = this._agent is null ? this._registrationKey : null;
+        return new AIHostAgent(agent, sessionStore, sessionStorageIdentity);
     }
 }

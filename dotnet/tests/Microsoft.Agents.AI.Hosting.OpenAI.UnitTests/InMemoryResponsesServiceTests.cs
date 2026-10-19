@@ -138,38 +138,6 @@ public sealed class InMemoryResponsesServiceTests
         };
     }
 
-    [Fact]
-    public async Task CreateResponseAsync_ReleasesExecutorAfterExecutionCompletesAsync()
-    {
-        // Arrange
-        using var service = new InMemoryResponsesService(
-            executor: null, new InMemoryStorageOptions(), conversationStorage: null, isolationKeyResolver: null);
-
-        // Act
-        (WeakReference executor, string responseId) = await CreateResponseWithCollectableExecutorAsync(service);
-
-        // Leave the completion stack so the finished execution state machine has released its locals.
-        await Task.Yield();
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        // Assert
-        Assert.False(executor.IsAlive);
-        Assert.NotNull(await service.GetResponseAsync(responseId));
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<(WeakReference Executor, string ResponseId)> CreateResponseWithCollectableExecutorAsync(
-        InMemoryResponsesService service)
-    {
-        var executor = new StubResponseExecutor();
-        Response response = await service.CreateResponseAsync(
-            new CreateResponse { Input = ResponseInput.FromText("hello") },
-            executor);
-        return (new WeakReference(executor), response.Id);
-    }
-
     private sealed class StubResponseExecutor : IResponseExecutor
     {
         public ValueTask<ResponseError?> ValidateRequestAsync(CreateResponse request, CancellationToken cancellationToken = default)
