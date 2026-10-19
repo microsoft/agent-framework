@@ -122,6 +122,30 @@ async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFr
     assert events[2].delta == "Hello, clean test!"
 
 
+@pytest.mark.parametrize(("reasoning_text", "expected_delta"), [(None, ""), ("", ""), ("Thinking...", "Thinking...")])
+async def test_reasoning_content_mapping_handles_missing_text(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+    caplog: pytest.LogCaptureFixture,
+    reasoning_text: str | None,
+    expected_delta: str,
+) -> None:
+    """Missing reasoning text must not emit an error or discard the following answer."""
+    update = create_test_agent_update([
+        Content.from_text_reasoning(text=reasoning_text),
+        Content.from_text(text="Final answer."),
+    ])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert all(event.type != "error" for event in events)
+    reasoning_events = [event for event in events if event.type == "response.reasoning_text.delta"]
+    assert len(reasoning_events) == 1
+    assert reasoning_events[0].delta == expected_delta
+    assert any(event.type == "response.output_text.delta" and event.delta == "Final answer." for event in events)
+    assert "Error converting agent update" not in caplog.text
+
+
 async def test_marked_refusal_text_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     content = Content.from_text(
         "I cannot help.",
