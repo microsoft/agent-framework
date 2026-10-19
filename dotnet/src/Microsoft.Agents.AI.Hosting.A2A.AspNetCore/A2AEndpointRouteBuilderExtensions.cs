@@ -6,6 +6,8 @@ using A2A;
 using A2A.AspNetCore;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.A2A;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.DiagnosticIds;
@@ -94,6 +96,56 @@ public static class A2AEndpointRouteBuilderExtensions
     }
 
     /// <summary>
+    /// Maps A2A HTTP+JSON endpoints that select the agent to serve for each request.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="path">The route path prefix for A2A endpoints.</param>
+    /// <param name="agentSelector">
+    /// A delegate invoked once per request that returns the agent to serve, or <see langword="null"/> when
+    /// no agent matches the request. The delegate can use route values, claims, headers, and
+    /// <see cref="HttpContext.RequestServices"/> to select or resolve the agent.
+    /// </param>
+    /// <param name="configureOptions">An optional callback to configure the <see cref="A2AServerRegistrationOptions"/> applied to every selected agent.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// <para>
+    /// When <paramref name="agentSelector"/> returns <see langword="null"/>, the endpoint responds with
+    /// <c>404 Not Found</c> before any session or task state is loaded. No <c>AddA2AServer</c> registration is required.
+    /// </para>
+    /// <para>
+    /// The selected agent's <see cref="AIAgent.Name"/> is its stable logical identity. It keys the agent's
+    /// <see cref="AgentSessionStore"/> and <see cref="ITaskStore"/> registrations, partitions persisted sessions, and
+    /// identifies the A2A task state shared by the requests that select it through this endpoint, so conversations
+    /// and tasks continue across requests even when the selector returns a new agent instance each time. The selected
+    /// agent must therefore have a non-empty name. The session store is resolved from
+    /// <see cref="HttpContext.RequestServices"/>, so the run cannot outlive the request: when the configured
+    /// <see cref="AgentRunMode"/> returns a task, non-streaming requests with <c>ReturnImmediately</c> enabled are
+    /// rejected with <see cref="A2AErrorCode.UnsupportedOperation"/>.
+    /// </para>
+    /// <para>
+    /// Selection is not an authorization boundary. See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/>
+    /// for endpoint authorization and caller isolation requirements.
+    /// </para>
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2AHttpJson(
+        this IEndpointRouteBuilder endpoints,
+        string path,
+        Func<HttpContext, AIAgent?> agentSelector,
+        Action<A2AServerRegistrationOptions>? configureOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(agentSelector);
+
+        var requestHandler = CreateSelectedAgentRequestHandler(endpoints, configureOptions);
+
+        IEndpointConventionBuilder endpoint = endpoints.MapHttpA2A(requestHandler, path);
+        AddAgentSelection(endpoint, requestHandler, agentSelector);
+        MarkFeatureUsed();
+        return endpoint;
+    }
+
+    /// <summary>
     /// Maps A2A JSON-RPC endpoints for the specified agent to the given path.
     /// An <see cref="A2AServer"/> for the agent must be registered first by calling
     /// <c>AddA2AServer</c> during service registration.
@@ -161,6 +213,75 @@ public static class A2AEndpointRouteBuilderExtensions
         IEndpointConventionBuilder endpoint = endpoints.MapA2A(a2aServer, path);
         MarkFeatureUsed();
         return endpoint;
+    }
+
+    /// <summary>
+    /// Maps A2A JSON-RPC endpoints that select the agent to serve for each request.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="path">The route path prefix for A2A endpoints.</param>
+    /// <param name="agentSelector">
+    /// A delegate invoked once per request that returns the agent to serve, or <see langword="null"/> when
+    /// no agent matches the request. The delegate can use route values, claims, headers, and
+    /// <see cref="HttpContext.RequestServices"/> to select or resolve the agent.
+    /// </param>
+    /// <param name="configureOptions">An optional callback to configure the <see cref="A2AServerRegistrationOptions"/> applied to every selected agent.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, Func{HttpContext, AIAgent}, Action{A2AServerRegistrationOptions})"/>
+    /// for selection, identity, and lifetime behavior, and <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/>
+    /// for endpoint authorization and caller isolation requirements, which also apply to this JSON-RPC binding.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2AJsonRpc(
+        this IEndpointRouteBuilder endpoints,
+        string path,
+        Func<HttpContext, AIAgent?> agentSelector,
+        Action<A2AServerRegistrationOptions>? configureOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(agentSelector);
+
+        var requestHandler = CreateSelectedAgentRequestHandler(endpoints, configureOptions);
+
+        IEndpointConventionBuilder endpoint = endpoints.MapA2A(requestHandler, path);
+        AddAgentSelection(endpoint, requestHandler, agentSelector);
+        MarkFeatureUsed();
+        return endpoint;
+    }
+
+    private static SelectedAgentA2ARequestHandler CreateSelectedAgentRequestHandler(
+        IEndpointRouteBuilder endpoints,
+        Action<A2AServerRegistrationOptions>? configureOptions)
+    {
+        A2AServerRegistrationOptions? options = null;
+        if (configureOptions is not null)
+        {
+            options = new A2AServerRegistrationOptions();
+            configureOptions(options);
+        }
+
+        return new SelectedAgentA2ARequestHandler(endpoints.ServiceProvider, options);
+    }
+
+    private static void AddAgentSelection(
+        IEndpointConventionBuilder endpoint,
+        SelectedAgentA2ARequestHandler requestHandler,
+        Func<HttpContext, AIAgent?> agentSelector)
+    {
+        // The A2A endpoints call the request handler without request context, so select the agent for the
+        // asynchronous flow of the request before the endpoint runs.
+        endpoint.AddEndpointFilter(async (invocationContext, next) =>
+        {
+            HttpContext httpContext = invocationContext.HttpContext;
+            if (agentSelector(httpContext) is not { } agent)
+            {
+                return Results.NotFound();
+            }
+
+            requestHandler.Select(agent, httpContext.RequestServices);
+            return await next(invocationContext).ConfigureAwait(false);
+        });
     }
 
     private static void MarkFeatureUsed()
