@@ -67,9 +67,26 @@ def _snapshot_evaluation_tool(tool: FunctionTool) -> FunctionTool:
     """Detach an evaluation declaration from the executable tool and its mutable schema."""
     from ._tools import FunctionTool
 
-    schema = deepcopy(tool.parameters())
-    json.dumps(schema, allow_nan=False)
+    schema = json.loads(json.dumps(tool.parameters(), allow_nan=False))
     return FunctionTool(name=tool.name, description=tool.description, input_model=schema)
+
+
+def _capture_evaluation_tools(captured: list[FunctionTool], tools: Any) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Retain exposed declarations, refreshing same-name schemas at each model call."""
+    from ._tools import FunctionTool, normalize_tools
+
+    indices = {tool.name: index for index, tool in enumerate(captured)}
+    for tool in normalize_tools(tools or []):
+        if not isinstance(tool, FunctionTool):
+            continue
+        snapshot = _snapshot_evaluation_tool(tool)
+        if tool.name in indices:
+            previous = captured[indices[tool.name]]
+            if previous.description != snapshot.description or previous.parameters() != snapshot.parameters():
+                captured[indices[tool.name]] = snapshot
+        else:
+            indices[tool.name] = len(captured)
+            captured.append(snapshot)
 
 
 # region Content Parsing Utilities
@@ -3685,23 +3702,15 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
     def _set_evaluation_tools(self, tools: Sequence[FunctionTool]) -> None:
         """Attach captured declarations and their versioned, schema-only serialized form."""
-        seen: set[str] = set()
-        self._evaluation_tools = []
+        self._evaluation_tools = list({tool.name: tool for tool in tools}.values())
         definitions: list[dict[str, Any]] = []
-        for tool in tools:
-            if tool.name in seen:
-                continue
-            seen.add(tool.name)
-            self._evaluation_tools.append(tool)
+        for tool in self._evaluation_tools:
             definitions.append({
                 "name": tool.name,
                 "description": tool.description,
                 "input_schema": deepcopy(tool.parameters()),
             })
-        if definitions:
-            self.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = {"version": 1, "tools": definitions}
-        else:
-            self.additional_properties.pop(_EVALUATION_TOOLS_METADATA_KEY, None)
+        self.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = {"version": 1, "tools": definitions}
 
     def _get_evaluation_tools(self) -> list[FunctionTool] | None:
         """Restore declaration-only tools from validated metadata when the runtime cache is absent."""

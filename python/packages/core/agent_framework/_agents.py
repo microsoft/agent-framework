@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
-from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import partial
@@ -28,9 +28,6 @@ from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._docstrings import apply_layered_docstring
 from ._middleware import (
     AgentMiddlewareLayer,
-    ChatContext,
-    ChatMiddleware,
-    ChatMiddlewareLayer,
     FunctionInvocationContext,
     MiddlewareTypes,
     _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
@@ -54,6 +51,7 @@ from ._sessions import (
 )
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
+    _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
@@ -63,7 +61,7 @@ from ._types import (
     ResponseStream,
     _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
-    _snapshot_evaluation_tool,  # pyright: ignore[reportPrivateUsage]
+    _capture_evaluation_tools,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
 )
@@ -284,23 +282,6 @@ class _RunContext(TypedDict):
     tokenizer: TokenizerProtocol | None
     client_kwargs: Mapping[str, Any]
     function_invocation_kwargs: Mapping[str, Any]
-
-
-class _EvaluationToolCaptureMiddleware(ChatMiddleware):
-    """Retain tools exposed on later function-loop iterations for evaluation."""
-
-    def __init__(self, tools: list[FunctionTool]) -> None:
-        self.tools = tools
-        self._seen = {tool.name for tool in tools}
-
-    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        from ._tools import FunctionTool
-
-        for tool in _normalize_tools((context.options or {}).get("tools")):
-            if isinstance(tool, FunctionTool) and tool.name not in self._seen:
-                self.tools.append(_snapshot_evaluation_tool(tool))
-                self._seen.add(tool.name)
-        await call_next()
 
 
 # region Agent Protocol
@@ -1473,9 +1454,21 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             with _run_identity_scope(run_identity):
                 await self._run_after_providers(session=session, context=session_context)
 
+        last_evaluation_tools: tuple[FunctionTool, ...] | None = None
+
         def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
-            """Eagerly propagate conversation_id to session as updates arrive."""
+            """Propagate continuation state and publish snapshots when exposed tools change."""
+            nonlocal last_evaluation_tools
             self._update_session_from_chat_response_update(context["session"], update)
+            tools = tuple(context["evaluation_tools"])
+            if tools != last_evaluation_tools:
+                snapshot = AgentResponse()
+                snapshot._set_evaluation_tools(tools)  # pyright: ignore[reportPrivateUsage]
+                update.additional_properties = {
+                    **(update.additional_properties or {}),
+                    **snapshot.additional_properties,
+                }
+                last_evaluation_tools = tools
             return update
 
         def _suppress_response_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -1506,7 +1499,26 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # carries this run's identity; nested runs re-stamp their own within theirs.
         stream = stream.with_pull_context_manager(partial(_run_identity_scope, run_identity))
 
-        return stream.with_transform_hook(_propagate_conversation_id).with_result_hook(_post_hook)
+        stream = stream.with_transform_hook(_propagate_conversation_id).with_result_hook(_post_hook)
+
+        async def _with_evaluation_metadata() -> AsyncIterable[AgentResponseUpdate]:
+            async with stream:
+                async for update in stream:
+                    yield update
+                response = await stream.get_final_response()
+                if tuple(context["evaluation_tools"]) != last_evaluation_tools:
+                    yield AgentResponseUpdate(
+                        additional_properties={
+                            _EVALUATION_TOOLS_METADATA_KEY: deepcopy(
+                                response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
+                            )
+                        }
+                    )
+
+        async def _finalize_with_metadata(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+            return await stream.get_final_response()
+
+        return ResponseStream(_with_evaluation_metadata(), finalizer=_finalize_with_metadata)
 
     def _finalize_response_updates(
         self,
@@ -1652,7 +1664,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         from ._tools import (
             _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
             _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
-            FunctionTool,
         )
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
@@ -1785,19 +1796,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 per_service_call_history_middleware,
             ]
 
-        evaluation_tools = [
-            _snapshot_evaluation_tool(tool)
-            for tool in _normalize_tools(co.get("tools"))
-            if isinstance(tool, FunctionTool)
-        ]
-        if isinstance(self.client, ChatMiddlewareLayer):
-            existing_middleware = cast(
-                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
-            )
-            effective_client_kwargs["middleware"] = [
-                *_as_middleware_list(existing_middleware),
-                _EvaluationToolCaptureMiddleware(evaluation_tools),
-            ]
+        evaluation_tools: list[FunctionTool] = []
+        _capture_evaluation_tools(evaluation_tools, co.get("tools"))
+        if isinstance(self.client, BaseChatClient):
+            effective_client_kwargs["_evaluation_tool_capture"] = partial(_capture_evaluation_tools, evaluation_tools)
 
         return {
             "session": active_session,
