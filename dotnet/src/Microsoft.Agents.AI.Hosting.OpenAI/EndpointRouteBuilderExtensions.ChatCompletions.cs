@@ -8,6 +8,8 @@ using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Models;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,13 +38,38 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="path">Custom route path for the chat completions endpoint.</param>
     /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
     /// <remarks>
+    /// Singleton registrations are resolved once when the endpoint is mapped. Scoped and transient registrations are
+    /// resolved from <see cref="HttpContext.RequestServices"/> for each request, so their configured DI lifetime is honored.
     /// See <see cref="MapOpenAIChatCompletions(IEndpointRouteBuilder, AIAgent, string, OpenAIChatCompletionsMapOptions)"/>
     /// for endpoint authorization and application-owned state requirements.
     /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path, OpenAIChatCompletionsMapOptions? mapOptions = null)
     {
-        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentBuilder.Name);
-        return MapOpenAIChatCompletions(endpoints, agent, path, mapOptions);
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(agentBuilder);
+
+        string agentName = agentBuilder.Name;
+        ValidateAgentName(agentName);
+        HostedAgentResolution.EnsureAgentRegistered(endpoints.ServiceProvider, agentName);
+
+        Func<HttpContext, AIAgent?> agentResolver;
+        if (agentBuilder.Lifetime == ServiceLifetime.Singleton)
+        {
+            var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+            agentResolver = _ => agent;
+        }
+        else
+        {
+            agentResolver = context => context.RequestServices.GetRequiredKeyedService<AIAgent>(agentName);
+        }
+
+        path ??= $"/{agentName}/v1/chat/completions";
+        return MapOpenAIChatCompletionsCore(
+            endpoints,
+            path,
+            agentName + "/CreateChatCompletion",
+            agentResolver,
+            mapOptions);
     }
 
     /// <summary>
@@ -84,12 +111,86 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         ValidateAgentName(agent.Name);
 
         path ??= $"/{agent.Name}/v1/chat/completions";
-        var group = endpoints.MapGroup(path);
-        var endpointAgentName = agent.Name ?? agent.Id;
+        return MapOpenAIChatCompletionsCore(endpoints, path, agent.Name + "/CreateChatCompletion", _ => agent, mapOptions);
+    }
 
-        group.MapPost("/", async ([FromBody] CreateChatCompletion request, CancellationToken cancellationToken)
-            => await AIAgentChatCompletionsProcessor.CreateChatCompletionAsync(agent, request, mapOptions, cancellationToken).ConfigureAwait(false))
-            .WithName(endpointAgentName + "/CreateChatCompletion");
+    /// <summary>
+    /// Maps an OpenAI ChatCompletions API endpoint that selects the <see cref="AIAgent"/> to invoke for each request.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoint to.</param>
+    /// <param name="path">The route path for the chat completions endpoint.</param>
+    /// <param name="agentSelector">
+    /// A delegate invoked once per request that returns the agent to invoke, or <see langword="null"/> when
+    /// no agent matches the request. The delegate can use route values, claims, headers, and
+    /// <see cref="HttpContext.RequestServices"/> to select or resolve the agent.
+    /// </param>
+    /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// When <paramref name="agentSelector"/> returns <see langword="null"/>, the endpoint responds with
+    /// <c>404 Not Found</c>. The selected agent must have a non-empty <see cref="AIAgent.Name"/>, which is its
+    /// stable logical identity. Selection is not an authorization boundary; see
+    /// <see cref="MapOpenAIChatCompletions(IEndpointRouteBuilder, AIAgent, string, OpenAIChatCompletionsMapOptions)"/>
+    /// for endpoint authorization and application-owned state requirements.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapOpenAIChatCompletions(
+        this IEndpointRouteBuilder endpoints,
+        [StringSyntax("Route")] string path,
+        Func<HttpContext, AIAgent?> agentSelector,
+        OpenAIChatCompletionsMapOptions? mapOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(agentSelector);
+
+        return MapOpenAIChatCompletionsCore(
+            endpoints,
+            path,
+            endpointName: null,
+            context =>
+            {
+                if (agentSelector(context) is not { } agent)
+                {
+                    return null;
+                }
+
+                _ = HostedAgentResolution.GetSelectedAgentName(agent);
+                return agent;
+            },
+            mapOptions);
+    }
+
+    private static RouteGroupBuilder MapOpenAIChatCompletionsCore(
+        IEndpointRouteBuilder endpoints,
+        string path,
+        string? endpointName,
+        Func<HttpContext, AIAgent?> agentResolver,
+        OpenAIChatCompletionsMapOptions? mapOptions)
+    {
+        var group = endpoints.MapGroup(path);
+
+        var endpoint = group.MapPost("/", async ([FromBody] CreateChatCompletion request, HttpContext context, CancellationToken cancellationToken) =>
+        {
+            if (agentResolver(context) is not { } agent)
+            {
+                return Results.NotFound(new ErrorResponse
+                {
+                    Error = new ErrorDetails
+                    {
+                        Message = "No agent matches the request.",
+                        Type = "invalid_request_error",
+                        Code = "agent_not_found"
+                    }
+                });
+            }
+
+            return await AIAgentChatCompletionsProcessor.CreateChatCompletionAsync(agent, request, mapOptions, cancellationToken).ConfigureAwait(false);
+        });
+
+        if (endpointName is not null)
+        {
+            endpoint.WithName(endpointName);
+        }
 
         MarkFeatureUsed();
         return group;
