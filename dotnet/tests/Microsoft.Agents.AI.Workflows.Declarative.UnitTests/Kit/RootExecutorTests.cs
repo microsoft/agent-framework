@@ -8,6 +8,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.PowerFx.Types;
@@ -17,6 +18,72 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Kit;
 
 public sealed class RootExecutorTests
 {
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task ResumeAsync_RestoresAllowlistedEnvironmentValuesAsync(bool reuseWorkflow, bool allowEnvironmentOnResume)
+    {
+        // Arrange
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["SETTING"] = "configured" })
+            .Build();
+        DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object)
+        {
+            Configuration = configuration,
+            AllowedEnvironmentVariables = ["SETTING"],
+        };
+        TestRootExecutor executor = new(options) { AssignedValue = "assigned", EnvironmentVariables = ["SETTING"] };
+        ReadValueExecutor reader = new(executor.Session) { Expression = "Env.SETTING" };
+        Workflow workflow = new WorkflowBuilder(executor).AddEdge(executor, reader).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        List<CheckpointInfo> savedCheckpoints = [];
+        await using (StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "first", checkpoints))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+                {
+                    savedCheckpoints.Add(checkpoint);
+                }
+            }
+        }
+        Assert.True(savedCheckpoints.Count >= 2);
+        Assert.Equal("configured", reader.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, reader.Sensitivity);
+
+        if (!reuseWorkflow)
+        {
+            options = new(options.AgentProvider)
+            {
+                Configuration = configuration,
+                AllowedEnvironmentVariables = allowEnvironmentOnResume ? ["SETTING"] : ["OTHER_SETTING"],
+            };
+            executor = new(options);
+            reader = new(executor.Session) { Expression = allowEnvironmentOnResume ? "Env.SETTING" : "Local.TestValue" };
+            workflow = new WorkflowBuilder(executor).AddEdge(executor, reader).Build();
+        }
+        reader.Value = null;
+
+        // Act
+        await using (StreamingRun run = await InProcessExecution.ResumeStreamingAsync(workflow, savedCheckpoints[^2], checkpoints))
+        {
+            await foreach (WorkflowEvent _ in run.WatchStreamAsync())
+            {
+                // Consume the resumed run to completion before inspecting its state.
+            }
+
+            // Assert
+            Assert.Equal(allowEnvironmentOnResume ? "configured" : "assigned", reader.Value);
+            Assert.Equal(allowEnvironmentOnResume ? SensitivityLevel.Sensitive : SensitivityLevel.None, reader.Sensitivity);
+            if (!allowEnvironmentOnResume)
+            {
+                Assert.IsType<BlankValue>(executor.Session.State.Get("SETTING", VariableScopeNames.Environment));
+                Assert.Equal(SensitivityLevel.None, executor.Session.State.GetSensitivity("SETTING", VariableScopeNames.Environment));
+            }
+        }
+    }
+
     [Fact]
     public async Task HandleAsync_RetryAfterStateWriteFailureReusesCreatedConversationAsync()
     {
@@ -75,6 +142,7 @@ public sealed class RootExecutorTests
         {
             await foreach (WorkflowEvent _ in run.WatchStreamAsync())
             {
+                // Consume the resumed run to completion before inspecting the result.
             }
         }
 
@@ -222,22 +290,34 @@ public sealed class RootExecutorTests
     {
         public string? AssignedValue { get; init; }
 
+        public string[] EnvironmentVariables { get; init; } = [];
+
         public ValueTask InitializeAsync(IWorkflowContext context, params string[] variableNames) =>
             this.InitializeEnvironmentAsync(context, variableNames);
 
-        protected override ValueTask ExecuteAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-            this.AssignedValue is null
-                ? default
-                : context.QueueStateUpdateAsync("TestValue", this.AssignedValue, VariableScopeNames.Local, cancellationToken);
+        protected override async ValueTask ExecuteAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            await this.InitializeEnvironmentAsync(context, this.EnvironmentVariables);
+            if (this.AssignedValue is not null)
+            {
+                await context.QueueStateUpdateAsync("TestValue", this.AssignedValue, VariableScopeNames.Local, cancellationToken);
+            }
+        }
     }
 
     private sealed class ReadValueExecutor(FormulaSession session) : ActionExecutor("read_value", session)
     {
         public string? Value { get; set; }
 
+        public string Expression { get; init; } = "Local.TestValue";
+
+        public SensitivityLevel Sensitivity { get; private set; }
+
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
         {
-            this.Value = await context.EvaluateValueAsync<string>("Local.TestValue", cancellationToken);
+            EvaluationResult<string?> result = await context.EvaluateValueWithSensitivityAsync<string>(this.Expression, cancellationToken);
+            this.Value = result.Value;
+            this.Sensitivity = result.Sensitivity;
             return this.Value;
         }
     }
