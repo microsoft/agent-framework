@@ -115,6 +115,9 @@ class RedisContextProvider(ContextProvider):
         self._token_escaper: TokenEscaper = TokenEscaper()
         self._index_initialized: bool = False
         self._schema_dict: dict[str, Any] | None = None
+        # Ownership rule matches RedisHistoryProvider: only the index we built
+        # ourselves is ours to close; an injected index stays the caller's.
+        self._owns_index: bool = redis_index is None
         index = redis_index or AsyncSearchIndex.from_dict(  # pyright: ignore[reportUnknownMemberType]
             self.schema_dict, redis_url=self.redis_url, validate_on_load=True
         )
@@ -440,8 +443,18 @@ class RedisContextProvider(ContextProvider):
         """Async context manager entry."""
         return self
 
+    async def aclose(self) -> None:
+        """Close the underlying Redis connection when this provider built the index.
+
+        An index injected via ``redis_index`` stays under the caller's control,
+        matching the ownership rule of ``RedisHistoryProvider``.
+        """
+        if self._owns_index and self.redis_index is not None:
+            await self.redis_index.disconnect()
+
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        """Async context manager exit."""
+        """Async context manager exit; closes an owned index's connections."""
+        await self.aclose()
 
 
 __all__ = ["RedisContextProvider"]

@@ -490,6 +490,32 @@ class TestRedisHistoryProviderClose:
         await borrowed.aclose()
 
 
+class TestRedisContextProviderClose:
+    """The context provider closes only the index it built itself, matching
+    the history provider's ownership rule."""
+
+    async def test_owned_index_is_disconnected(self, patch_index_from_dict: MagicMock, mock_index: AsyncMock):
+        provider = RedisContextProvider(source_id="ctx", user_id="u1")
+
+        await provider.aclose()
+
+        mock_index.disconnect.assert_awaited_once()
+
+    async def test_borrowed_index_is_not_disconnected(self):
+        borrowed = AsyncMock()
+        provider = RedisContextProvider(source_id="ctx", redis_index=borrowed)
+
+        await provider.aclose()
+
+        borrowed.disconnect.assert_not_awaited()
+
+    async def test_aexit_closes_owned_index(self, patch_index_from_dict: MagicMock, mock_index: AsyncMock):
+        async with RedisContextProvider(source_id="ctx", user_id="u1"):
+            pass
+
+        mock_index.disconnect.assert_awaited_once()
+
+
 class TestRedisHistoryProviderRedisKey:
     def test_scoped_key_is_deterministic_and_encodes_opaque_components(self, mock_redis_client: MagicMock):
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
