@@ -19,6 +19,11 @@ internal sealed class McpSkillsListResult
     /// Gets the skills listed by the server.
     /// </summary>
     public required IReadOnlyList<McpListedSkillEntry?> Skills { get; init; }
+
+    /// <summary>
+    /// Gets the opaque cursor to pass to the next request, or <see langword="null"/> when no more pages are available.
+    /// </summary>
+    public string? NextCursor { get; init; }
 }
 
 /// <summary>

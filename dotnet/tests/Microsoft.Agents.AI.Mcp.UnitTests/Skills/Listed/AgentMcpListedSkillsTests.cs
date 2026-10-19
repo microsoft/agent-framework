@@ -56,6 +56,349 @@ public sealed class AgentMcpListedSkillsTests
         Assert.NotNull(request["_meta"]![MetaKeys.ClientInfo]);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("opaque cursor:+/=\u00e9")]
+    public async Task GetSkillsAsync_PaginatedList_FollowsOpaqueCursorsAndEmptyPagesAsync(string firstCursor)
+    {
+        // Arrange
+        List<JsonNode?> requests = [];
+        List<string> reads = [];
+        await using var server = CreateServer((request, _) =>
+        {
+            requests.Add(request.Params?.DeepClone());
+            JsonObject result = requests.Count switch
+            {
+                1 => ListResult(Entry("skill://first/unit-converter/")),
+                2 => ListResult(),
+                _ => ListResult(Entry("skill://second/unit-converter/")),
+            };
+            if (requests.Count < 3)
+            {
+                result["nextCursor"] = requests.Count == 1 ? firstCursor : "last-page";
+            }
+
+            return ValueTask.FromResult<JsonNode?>(result);
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Checklist."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Equal(3, requests.Count);
+        Assert.Null(requests[0]!["cursor"]);
+        Assert.Equal(firstCursor, requests[1]!["cursor"]!.GetValue<string>());
+        Assert.Equal("last-page", requests[2]!["cursor"]!.GetValue<string>());
+        foreach (JsonNode? request in requests)
+        {
+            Assert.Equal(client.NegotiatedProtocolVersion, request!["_meta"]![MetaKeys.ProtocolVersion]!.GetValue<string>());
+            Assert.NotNull(request["_meta"]![MetaKeys.ClientCapabilities]);
+            Assert.NotNull(request["_meta"]![MetaKeys.ClientInfo]);
+        }
+
+        Assert.Equal(2, skills.Count);
+        Assert.Empty(reads);
+        Assert.NotNull(await skills[0].GetResourceAsync("references/checklist.md"));
+        Assert.NotNull(await skills[1].GetResourceAsync("references/checklist.md"));
+        Assert.Equal(
+            ["skill://first/unit-converter/references/checklist.md", "skill://second/unit-converter/references/checklist.md"],
+            reads);
+    }
+
+    [Theory]
+    [InlineData(null, 10, false)]
+    [InlineData(null, 10, true)]
+    [InlineData(2, 2, false)]
+    [InlineData(2, 2, true)]
+    [InlineData(11, 11, false)]
+    [InlineData(11, 11, true)]
+    public async Task GetSkillsAsync_PageLimit_IncludesEmptyPagesAndDoesNotSendExtraRequestAsync(int? limit, int expectedPages, bool exceedsLimit)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            JsonObject result = ListResult();
+            calls++;
+            if (exceedsLimit || calls < expectedPages)
+            {
+                result["nextCursor"] = $"page-{calls}";
+            }
+
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { ListedMaxPageCount = limit });
+
+        // Act & Assert
+        if (exceedsLimit)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Contains($"page count ({expectedPages})", exception.Message);
+        }
+        else
+        {
+            Assert.Empty(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        }
+
+        Assert.Equal(expectedPages, calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_RepeatedCursor_ThrowsAsync(bool cycle)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            JsonObject result = ListResult(Entry());
+            result["nextCursor"] = cycle && calls == 2 ? "b" : "a";
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.Contains("repeated pagination cursor", exception.Message);
+        Assert.Equal(cycle ? 3 : 2, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_CursorsDifferingOnlyByCase_AreDistinctAsync()
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            JsonObject result = ListResult();
+            calls++;
+            result["nextCursor"] = calls switch { 1 => "A", 2 => "a", _ => null };
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+        Assert.Equal(3, calls);
+    }
+
+    [Theory]
+    [InlineData("{}", typeof(JsonException))]
+    [InlineData("""{"resultType":"unknown","skills":[]}""", typeof(InvalidOperationException))]
+    [InlineData("""{"resultType":"complete","skills":[null]}""", typeof(InvalidOperationException))]
+    [InlineData("""{"resultType":"complete","skills":[],"nextCursor":42}""", typeof(JsonException))]
+    public async Task GetSkillsAsync_InvalidLaterPage_ThrowsInsteadOfReturningPartialCatalogAsync(string invalidPage, Type exceptionType)
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            if (++calls > 1)
+            {
+                return ValueTask.FromResult(JsonNode.Parse(invalidPage));
+            }
+
+            JsonObject result = ListResult(Entry());
+            result["nextCursor"] = "next";
+            return ValueTask.FromResult<JsonNode?>(result);
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(2, calls);
+        Assert.Empty(reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_LaterPageError_PropagatesWithoutReadingIndexAsync()
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            if (++calls > 1)
+            {
+                throw new McpProtocolException("Cannot list next page.", McpErrorCode.InternalError);
+            }
+
+            JsonObject result = ListResult(Entry());
+            result["nextCursor"] = "next";
+            return ValueTask.FromResult<JsonNode?>(result);
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<McpProtocolException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(2, calls);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(null, 99, false)]
+    [InlineData(null, 100, false)]
+    [InlineData(null, 101, true)]
+    [InlineData(2, 2, false)]
+    [InlineData(2, 3, true)]
+    [InlineData(101, 101, false)]
+    public async Task GetSkillsAsync_SkillLimit_CountsEntriesAcrossPagesIncludingDuplicatesAsync(int? limit, int count, bool exceedsLimit)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            JsonObject result = ListResult();
+            var entries = Assert.IsType<JsonArray>(result["skills"]);
+            for (int i = 0; i < (calls == 1 ? 1 : count - 1); i++)
+            {
+                entries.Add(Entry());
+            }
+
+            if (calls == 1)
+            {
+                result["nextCursor"] = "next";
+            }
+
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { ListedMaxSkillCount = limit });
+
+        // Act & Assert
+        if (exceedsLimit)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Contains($"skill count ({limit ?? 100})", exception.Message);
+        }
+        else
+        {
+            Assert.Equal(count, (await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())).Count);
+        }
+
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task DiscoverAsync_LargeUnknownFields_AreAcceptedAcrossPagesAsync(int pageCount)
+    {
+        // Arrange
+        string padding = new('x', 10 * 1024 * 1024 / pageCount);
+        var client = new Mock<McpClient>();
+        var responses = client.SetupSequence(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()));
+        for (int page = 0; page < pageCount; page++)
+        {
+            JsonObject result = ListResult(Entry());
+            result["unknown"] = padding;
+            if (page < pageCount - 1)
+            {
+                result["nextCursor"] = $"page-{page + 1}";
+            }
+
+            responses.ReturnsAsync(new JsonRpcResponse { Id = new RequestId(page + 1), Result = result });
+        }
+
+        var loader = new McpListedSkillsLoader(client.Object);
+
+        // Act
+        var skills = await loader.DiscoverAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Equal(pageCount, skills.Count);
+        client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(pageCount));
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_SkillLimit_RejectsExcessEntriesBeforeTypedDeserializationAsync()
+    {
+        // Arrange
+        var client = new Mock<McpClient>();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(Entry(), new JsonObject()) });
+        var loader = new McpListedSkillsLoader(client.Object, options: new() { ListedMaxSkillCount = 1 });
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
+
+        // Assert
+        Assert.Contains("skill count (1)", exception.Message);
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_LargeResourceManifest_HasNoSeparateResourceCountLimitAsync()
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        var resources = Assert.IsType<JsonArray>(entry["resources"]);
+        for (int i = 0; i < 101; i++)
+        {
+            resources.Add(Resource($"skill://unit-converter/file-{i}.txt"));
+        }
+
+        var client = new Mock<McpClient>();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(entry) });
+        var loader = new McpListedSkillsLoader(client.Object);
+
+        // Act
+        var skills = await loader.DiscoverAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Single(skills);
+    }
+
+    [Theory]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount), -1)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), -1)]
+    public void Constructor_InvalidDiscoveryLimit_Throws(string option, int limit)
+    {
+        // Arrange
+        var client = new Mock<McpClient>();
+        var options = new AgentMcpSkillsSourceOptions
+        {
+            ListedMaxPageCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount) ? limit : null,
+            ListedMaxSkillCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount) ? limit : null,
+        };
+
+        // Act
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => new AgentMcpSkillsSource(client.Object, options));
+
+        // Assert
+        Assert.Equal(option, exception.ParamName);
+    }
+
     [Fact]
     public async Task GetSkillsAsync_Refresh_KeepsPreviouslyReturnedManifestAsync()
     {
@@ -210,14 +553,24 @@ public sealed class AgentMcpListedSkillsTests
         Assert.Empty(reads);
     }
 
-    [Fact]
-    public async Task GetSkillsAsync_ListCancellation_PropagatesAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_ListCancellation_PropagatesAsync(bool laterPage)
     {
         // Arrange
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
         await using var server = CreateServer(async (_, token) =>
         {
+            if (++calls == 1 && laterPage)
+            {
+                JsonObject result = ListResult(Entry());
+                result["nextCursor"] = "next";
+                return result;
+            }
+
             started.SetResult();
             await release.Task.WaitAsync(token);
             return ListResult(Entry());
@@ -235,6 +588,7 @@ public sealed class AgentMcpListedSkillsTests
 
             // Assert
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(laterPage ? 2 : 1, calls);
         }
         finally
         {
@@ -768,7 +1122,7 @@ public sealed class AgentMcpListedSkillsTests
         JsonObject listResult = ListResult(entry);
         listResult["ttlMs"] = 300000;
         listResult["cacheScope"] = "public";
-        listResult["nextCursor"] = "next-page";
+        listResult["NextCursor"] = "ignored-case-variant";
         listResult["future-field"] = true;
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(listResult));
         await using var client = await server.CreateClientAsync();
