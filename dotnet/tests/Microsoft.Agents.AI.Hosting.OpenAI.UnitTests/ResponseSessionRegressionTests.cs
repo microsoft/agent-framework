@@ -476,6 +476,84 @@ public sealed class ResponseSessionRegressionTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AgentSelector_ResolvesSessionStoreFromRequestServicesAsync(bool stream)
+    {
+        // Arrange
+        TenantObservations observations = new();
+        WebApplicationBuilder builder = CreateBuilder(validateScopes: true);
+        builder.Services.AddScoped<TenantState>();
+        builder.Services.AddKeyedScoped<AgentSessionStore>(
+            TenantAgent.AgentName,
+            (services, _) => new TenantSessionStore(services.GetRequiredService<TenantState>(), observations));
+        builder.AddOpenAIResponses();
+
+        await using WebApplication app = builder.Build();
+        app.Use((context, next) =>
+        {
+            context.RequestServices.GetRequiredService<TenantState>().Tenant = context.Request.Headers["X-Tenant"].ToString();
+            return next(context);
+        });
+        app.MapOpenAIResponses(
+            "/v1/responses",
+            context => new TenantAgent(context.RequestServices.GetRequiredService<TenantState>(), observations));
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+        client.DefaultRequestHeaders.Add("X-Tenant", "contoso");
+
+        // Act
+        using HttpResponseMessage response = await PostJsonAsync(
+            client,
+            "/v1/responses",
+            $$"""{"input":"hello","stream":{{(stream ? "true" : "false")}}}""");
+        string responseBody = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.True(response.IsSuccessStatusCode, responseBody);
+        TenantState agentState = Assert.Single(observations.AgentStates);
+        Assert.Equal("contoso", agentState.Tenant);
+        Assert.NotEmpty(observations.StoreStates);
+        Assert.All(observations.StoreStates, storeState => Assert.Same(agentState, storeState));
+        Assert.Equal(["contoso", "contoso"], observations.StoreOperationTenants);
+    }
+
+    [Fact]
+    public async Task AgentSelector_BackgroundResponse_ResolvesSessionStoreFromOwnScopeAsync()
+    {
+        // Arrange
+        TenantObservations observations = new();
+        WebApplicationBuilder builder = CreateBuilder(validateScopes: true);
+        builder.Services.AddScoped<TenantState>();
+        builder.Services.AddKeyedScoped<AgentSessionStore>(
+            TenantAgent.AgentName,
+            (services, _) => new TenantSessionStore(services.GetRequiredService<TenantState>(), observations));
+        builder.AddOpenAIResponses();
+
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIResponses(
+            "/v1/responses",
+            context => new TenantAgent(context.RequestServices.GetRequiredService<TenantState>(), observations));
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+
+        // Act
+        using HttpResponseMessage response = await PostJsonAsync(client, "/v1/responses", """{"input":"hello","background":true}""");
+        string responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, responseBody);
+        using JsonDocument document = JsonDocument.Parse(responseBody);
+        await WaitForResponseCompletionAsync(client, "/v1/responses", document.RootElement.GetProperty("id").GetString()!);
+
+        // Assert
+        // The selector also runs for the polling requests, so the first selection is the one that created the response.
+        TenantState agentState = observations.AgentStates[0];
+        TenantState executionStoreState = observations.StoreStates[^1];
+        Assert.DoesNotContain(executionStoreState, observations.AgentStates);
+        Assert.NotSame(agentState, executionStoreState);
+        Assert.Equal(2, observations.StoreOperationTenants.Count);
+    }
+
     private static WebApplicationBuilder CreateBuilder(bool validateScopes = false)
     {
         var options = new WebApplicationOptions
@@ -779,6 +857,141 @@ public sealed class ResponseSessionRegressionTests
         {
             this.IsDisposed = true;
             this.Disposed.TrySetResult();
+        }
+    }
+
+    private sealed class TenantState
+    {
+        public string? Tenant { get; set; }
+    }
+
+    private sealed class TenantObservations
+    {
+        private readonly object _gate = new();
+        private readonly List<TenantState> _agentStates = [];
+        private readonly List<TenantState> _storeStates = [];
+        private readonly List<string?> _storeOperationTenants = [];
+
+        public IReadOnlyList<TenantState> AgentStates { get { lock (this._gate) { return [.. this._agentStates]; } } }
+
+        public IReadOnlyList<TenantState> StoreStates { get { lock (this._gate) { return [.. this._storeStates]; } } }
+
+        public IReadOnlyList<string?> StoreOperationTenants { get { lock (this._gate) { return [.. this._storeOperationTenants]; } } }
+
+        public void RecordAgent(TenantState state)
+        {
+            lock (this._gate)
+            {
+                this._agentStates.Add(state);
+            }
+        }
+
+        public void RecordStore(TenantState state)
+        {
+            lock (this._gate)
+            {
+                this._storeStates.Add(state);
+            }
+        }
+
+        public void RecordStoreOperation(TenantState state)
+        {
+            lock (this._gate)
+            {
+                this._storeOperationTenants.Add(state.Tenant);
+            }
+        }
+    }
+
+    private sealed class TenantSessionStore : AgentSessionStore
+    {
+        private readonly InMemoryAgentSessionStore _inner = new();
+        private readonly TenantState _tenant;
+        private readonly TenantObservations _observations;
+
+        public TenantSessionStore(TenantState tenant, TenantObservations observations)
+        {
+            this._tenant = tenant;
+            this._observations = observations;
+            observations.RecordStore(tenant);
+        }
+
+        public override ValueTask<AgentSession?> GetSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default)
+        {
+            this._observations.RecordStoreOperation(this._tenant);
+            return this._inner.GetSessionAsync(agent, key, cancellationToken);
+        }
+
+        public override ValueTask SaveSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            AgentSession session,
+            CancellationToken cancellationToken = default)
+        {
+            this._observations.RecordStoreOperation(this._tenant);
+            return this._inner.SaveSessionAsync(agent, key, session, cancellationToken);
+        }
+    }
+
+    private sealed class TenantAgent : AIAgent
+    {
+        public const string AgentName = "tenant-agent";
+
+        private readonly TenantState _tenant;
+
+        public TenantAgent(TenantState tenant, TenantObservations observations)
+        {
+            this._tenant = tenant;
+            observations.RecordAgent(tenant);
+        }
+
+        public override string Name => AgentName;
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TenantSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
+            AgentSession session,
+            JsonSerializerOptions? jsonSerializerOptions = null,
+            CancellationToken cancellationToken = default) =>
+            new(session.StateBag.Serialize());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
+            JsonElement serializedState,
+            JsonSerializerOptions? jsonSerializerOptions = null,
+            CancellationToken cancellationToken = default) =>
+            new(new TenantSession(AgentSessionStateBag.Deserialize(serializedState)));
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("This regression test uses streaming execution.");
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            yield return new AgentResponseUpdate(ChatRole.Assistant, $"Hello {this._tenant.Tenant}");
+        }
+
+        private sealed class TenantSession : AgentSession
+        {
+            public TenantSession()
+            {
+            }
+
+            public TenantSession(AgentSessionStateBag stateBag)
+                : base(stateBag)
+            {
+            }
         }
     }
 }

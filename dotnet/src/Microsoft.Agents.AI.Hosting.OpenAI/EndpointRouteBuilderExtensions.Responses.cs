@@ -143,9 +143,14 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// keyed <see cref="AgentSessionStore"/>, to partition persisted sessions, and to bind stored responses to the
     /// agent that created them, so a response can only be retrieved, canceled, or deleted through requests that select
     /// the same agent name. Conversations continue across requests even when the selector returns a new agent instance
-    /// each time. The selected agent must therefore have a non-empty name. Background responses keep running the
-    /// selected agent after the HTTP request completes, so agents used for background responses must not depend on
-    /// request-scoped services.
+    /// each time. The selected agent must therefore have a non-empty name.
+    /// </para>
+    /// <para>
+    /// The keyed <see cref="AgentSessionStore"/> is resolved from <see cref="HttpContext.RequestServices"/> for
+    /// validation and for responses that are not run in the background, so it shares the request-scoped dependencies of
+    /// an agent resolved from the same services. Background responses keep running the selected agent after the HTTP
+    /// request completes and resolve the session store from a separate service scope that they own, so agents used for
+    /// background responses must not depend on request-scoped services.
     /// </para>
     /// <para>
     /// Selection is not an authorization boundary. See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/>
@@ -176,7 +181,8 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
                 }
 
                 string agentName = HostedAgentResolution.GetSelectedAgentName(agent);
-                return (agentName, new AIAgentResponseExecutor(agent, agentName, scopeFactory, mapOptions, sessionStorageIdentity: agentName));
+                return (agentName, new AIAgentResponseExecutor(
+                    agent, agentName, scopeFactory, mapOptions, sessionStorageIdentity: agentName, requestServices: context.RequestServices));
             });
     }
 
