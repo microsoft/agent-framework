@@ -4675,7 +4675,7 @@ def test_mcp_tool_each_sampling_option_warns(sampling_option: dict[str, Any]):
     "connection",
     [
         {"mcp_client": Mock()},
-        {"session": Mock(spec=ClientSession)},
+        {"command": "unused", "session": Mock(spec=ClientSession)},
     ],
 )
 def test_mcp_tool_warns_when_sampling_options_are_ignored_for_caller_owned_connection(
@@ -4688,7 +4688,6 @@ def test_mcp_tool_warns_when_sampling_options_are_ignored_for_caller_owned_conne
     ):
         MCPStdioTool(
             name="test",
-            command="unused",
             client=AsyncMock(),
             sampling_approval_callback=_approve,
             sampling_max_tokens=512,
