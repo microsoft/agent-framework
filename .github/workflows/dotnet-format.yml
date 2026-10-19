@@ -45,7 +45,12 @@ jobs:
         shell: bash
         run: |
           git fetch origin "$GITHUB_BASE_REF"
-          diff=$(git diff --name-only --diff-filter=AM "origin/$GITHUB_BASE_REF..HEAD" | tr '\n' ' ')
+          diff=$(git diff --name-only --diff-filter=AM "origin/$GITHUB_BASE_REF..HEAD")
+          if [[ "$diff" == *[[:blank:]]* || "$diff" == *'"'* ]]; then
+            echo "Changed paths cannot be safely space-delimited; falling back to the whole solution." >&2
+            exit 1
+          fi
+          diff=$(printf '%s' "$diff" | tr '\n' ' ')
           echo "added_modified=$diff" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
