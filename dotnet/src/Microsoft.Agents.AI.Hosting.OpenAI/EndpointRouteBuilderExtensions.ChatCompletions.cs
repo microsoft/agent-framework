@@ -8,7 +8,6 @@ using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
-using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
@@ -173,15 +172,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         {
             if (agentResolver(context) is not { } agent)
             {
-                return Results.NotFound(new ErrorResponse
-                {
-                    Error = new ErrorDetails
-                    {
-                        Message = "No agent matches the request.",
-                        Type = "invalid_request_error",
-                        Code = "agent_not_found"
-                    }
-                });
+                return AIAgentChatCompletionsProcessor.CreateErrorResult(StatusCodes.Status404NotFound, "No agent matches the request.", "agent_not_found");
             }
 
             return await AIAgentChatCompletionsProcessor.CreateChatCompletionAsync(agent, request, mapOptions, cancellationToken).ConfigureAwait(false);

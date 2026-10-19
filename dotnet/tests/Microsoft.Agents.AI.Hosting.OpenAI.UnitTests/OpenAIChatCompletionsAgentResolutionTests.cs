@@ -4,10 +4,13 @@ using System;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Json;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -138,6 +141,49 @@ public sealed class OpenAIChatCompletionsAgentResolutionTests
     }
 
     [Fact]
+    public async Task MapOpenAIChatCompletions_WithAgentSelectorReturningNullAndReflectionDisabled_ReturnsNotFoundErrorAsync()
+    {
+        // Arrange
+        WebApplicationBuilder builder = CreateBuilder(disableReflectionSerialization: true);
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIChatCompletions("/v1/chat/completions", _ => null);
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+
+        // Act
+        using HttpResponseMessage response = await SendAsync(client, "/v1/chat/completions");
+        JsonElement error = await ReadErrorAsync(response);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("agent_not_found", error.GetProperty("code").GetString());
+        Assert.Equal("invalid_request_error", error.GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task MapOpenAIChatCompletions_WithUnsupportedRunOptionAndReflectionDisabled_ReturnsBadRequestErrorAsync()
+    {
+        // Arrange
+        WebApplicationBuilder builder = CreateBuilder(disableReflectionSerialization: true);
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIChatCompletions(
+            new ChatClientAgent(new TestHelpers.SimpleMockChatClient(), name: "assistant"),
+            "/v1/chat/completions",
+            new OpenAIChatCompletionsMapOptions { RunOptionsFactory = _ => throw new NotSupportedException("Unsupported setting.") });
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+
+        // Act
+        using HttpResponseMessage response = await SendAsync(client, "/v1/chat/completions");
+        JsonElement error = await ReadErrorAsync(response);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("unsupported_parameter", error.GetProperty("code").GetString());
+        Assert.Equal("Unsupported setting.", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public async Task MapOpenAIChatCompletions_WithAgentSelectorReturningUnnamedAgent_FailsRequestAsync()
     {
         // Arrange
@@ -172,12 +218,31 @@ public sealed class OpenAIChatCompletionsAgentResolutionTests
             ? context.RequestServices.GetKeyedService<AIAgent>(agentId)
             : null;
 
-    private static WebApplicationBuilder CreateBuilder()
+    private static WebApplicationBuilder CreateBuilder(bool disableReflectionSerialization = false)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = Environments.Development });
         builder.WebHost.UseTestServer();
         builder.AddOpenAIChatCompletions();
+        if (disableReflectionSerialization)
+        {
+            // With reflection-based serialization disabled, the resolver registered by AddOpenAIChatCompletions only
+            // provides the source-generated Chat Completions metadata. The test process has reflection enabled, which
+            // that resolver would fall back to, so register the source-generated metadata alone.
+            builder.Services.Configure<JsonOptions>(options =>
+            {
+                options.SerializerOptions.TypeInfoResolverChain.Clear();
+                options.SerializerOptions.TypeInfoResolverChain.Add(ChatCompletionsJsonContext.Default);
+            });
+        }
+
         return builder;
+    }
+
+    private static async Task<JsonElement> ReadErrorAsync(HttpResponseMessage response)
+    {
+        string responseBody = await response.Content.ReadAsStringAsync();
+        using JsonDocument document = JsonDocument.Parse(responseBody);
+        return document.RootElement.GetProperty("error").Clone();
     }
 
     private static async Task<string> PostAsync(HttpClient client, string path)
