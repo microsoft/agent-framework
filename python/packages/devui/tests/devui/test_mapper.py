@@ -1179,3 +1179,34 @@ async def test_superstep_completed_event(mapper: MessageMapper, test_request: Ag
     # superstep_completed event (type='superstep_completed') may not emit events (internal workflow signal)
     # Just ensure it doesn't crash
     assert isinstance(events, list)
+
+# =============================================================================
+# Reasoning Content Tests
+# =============================================================================
+
+
+async def test_map_reasoning_content_with_none_text(mapper: MessageMapper) -> None:
+    """Test that TextReasoningContent with None text falls back to empty string without raising validation error."""
+    from unittest.mock import MagicMock
+
+    context = {"item_id": "item-1", "output_index": 0, "content_index": 0, "sequence": 0}
+    content = MagicMock()
+    content.text = None
+
+    event = await mapper._map_reasoning_content(content, context)
+    assert event.type == "response.reasoning_text.delta"
+    assert event.delta == ""
+
+
+async def test_map_reasoning_content_with_valid_text(mapper: MessageMapper) -> None:
+    """Test that TextReasoningContent with valid text maps delta properly."""
+    from unittest.mock import MagicMock
+
+    context = {"item_id": "item-1", "output_index": 0, "content_index": 0, "sequence": 0}
+    content = MagicMock()
+    content.text = "Thinking through the steps..."
+
+    event = await mapper._map_reasoning_content(content, context)
+    assert event.type == "response.reasoning_text.delta"
+    assert event.delta == "Thinking through the steps..."
+
