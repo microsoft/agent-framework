@@ -3616,7 +3616,7 @@ class MCPStdioTool(MCPTool):
     def __init__(
         self,
         name: str,
-        command: str,
+        command: str | None = None,
         *,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
@@ -3648,13 +3648,18 @@ class MCPStdioTool(MCPTool):
         """Initialize the MCP stdio tool.
 
         Note:
-            The arguments are used to create a StdioServerParameters object,
-            which is then used to create a stdio client. See ``mcp.client.stdio.stdio_client``
+            Supply either ``command`` for a framework-owned high-level Client, or an already-entered
+            ``mcp_client`` for a caller-owned high-level Client. The deprecated ``session`` path
+            remains caller-owned and may continue to be combined with ``command`` for compatibility.
+
+            In framework-owned command mode, the arguments are used to create a
+            ``StdioServerParameters`` object and stdio client. See ``mcp.client.stdio.stdio_client``
             and ``mcp.client.stdio.stdio_server_parameters`` for more details.
 
         Args:
             name: The name of the tool.
-            command: The command to run the MCP server.
+            command: The command to run for framework-owned stdio Client construction. Mutually exclusive
+                with ``mcp_client``. May be omitted when supplying ``mcp_client`` or the deprecated ``session``.
 
         Keyword Args:
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
@@ -3675,9 +3680,10 @@ class MCPStdioTool(MCPTool):
             request_timeout: The default timeout in seconds for all requests.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
-                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
-                The supplied Client also owns its transport and authentication configuration, so it cannot be
-                combined with this wrapper's ``header_provider``.
+                with ``command`` and ``session``. ``request_timeout``, ``args``, ``env``, ``encoding``, and
+                additional stdio keyword arguments configure framework-owned process construction and cannot be
+                supplied with ``mcp_client``. Sampling options configured on this wrapper do not modify the
+                supplied Client.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
                 that session. Sampling options configured on this wrapper do not modify the supplied session.
@@ -3744,8 +3750,35 @@ class MCPStdioTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
-            kwargs: Any extra arguments to pass to the stdio client.
+            kwargs: Additional arguments for framework-owned ``StdioServerParameters`` construction.
         """
+        if mcp_client is not None and session is not None:
+            raise ValueError("`mcp_client` and `session` are mutually exclusive. If possible, prefer `mcp_client`.")
+        if mcp_client is not None and command is not None:
+            raise ValueError(
+                "`command` and `mcp_client` are mutually exclusive; configure the process on the supplied Client."
+            )
+        if mcp_client is None and session is None and command is None:
+            raise ValueError("`command` is required when neither `mcp_client` nor `session` supplies a connection.")
+        if mcp_client is not None:
+            conflicting_options = [
+                option
+                for option, is_configured in (
+                    ("request_timeout", request_timeout is not None),
+                    ("args", args is not None),
+                    ("env", env is not None),
+                    ("encoding", encoding is not None),
+                    ("kwargs", bool(kwargs)),
+                )
+                if is_configured
+            ]
+            if conflicting_options:
+                formatted_options = ", ".join(f"`{option}`" for option in conflicting_options)
+                raise ValueError(
+                    f"`mcp_client` cannot be combined with framework-owned stdio options: {formatted_options}. "
+                    "Configure these settings on the supplied Client instead."
+                )
+
         super().__init__(
             name=name,
             description=description,
@@ -3779,7 +3812,8 @@ class MCPStdioTool(MCPTool):
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
-        attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
+        if self.command is not None:
+            attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
         return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -3788,6 +3822,11 @@ class MCPStdioTool(MCPTool):
         Returns:
             An async context manager for the stdio client transport.
         """
+        if self.command is None:
+            raise RuntimeError(
+                "Internal invariant violated: MCPStdioTool requires `command` to create a framework-owned Client."
+            )
+
         args: dict[str, Any] = {
             "command": self.command,
             "args": self.args,

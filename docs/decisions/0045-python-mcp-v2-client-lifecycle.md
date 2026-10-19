@@ -82,14 +82,11 @@ For **caller-supplied** connections, the caller owns:
 - constructing and closing a **supplied** low-level `ClientSession`;
 - the transport, authentication, callbacks, and other configuration already captured by either supplied object.
 
-For `MCPStreamableHTTPTool`, the constructor makes that ownership boundary explicit:
-
-- `url` without `mcp_client` means Agent Framework constructs and owns the high-level Client and HTTP transport;
-- `mcp_client` without `url` means the caller owns endpoint and transport configuration plus the entered Client;
-- `url` and `mcp_client` are mutually exclusive;
-- HTTP construction options (`request_timeout`, `terminate_on_close`, `http_client`, `static_headers`, and
-  `header_provider`) are rejected with a caller-supplied Client rather than silently ignored;
-- the deprecated caller-owned `ClientSession` path retains its historical `url + session` compatibility.
+Transport-specific tool constructors enforce the same ownership boundary. A URL or command selects
+framework-owned Client construction; a supplied high-level `mcp.Client` selects caller-owned construction and
+lifecycle. Constructor combinations that mix those ownership modes or configure a transport the caller already
+owns raise `ValueError` instead of silently ignoring parameters. Temporarily retained legacy constructor and
+`ClientSession` combinations remain compatible and will be removed in vNext.
 
 The SDK `Client` owns:
 

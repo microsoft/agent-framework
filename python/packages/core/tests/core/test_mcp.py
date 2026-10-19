@@ -4386,7 +4386,6 @@ async def test_caller_owned_client_warns_when_legacy_catalog_refresh_is_caller_m
     sdk_client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
     tool = MCPStdioTool(
         name="test",
-        command="unused",
         mcp_client=sdk_client,
         load_prompts=False,
     )
@@ -8119,7 +8118,6 @@ async def test_mcp_tool_reuses_supplied_client(mode: str, expected_version: str)
         ):
             wrapper = MCPStdioTool(
                 name="test",
-                command="unused",
                 mcp_client=client,
                 load_prompts=False,
             )
@@ -8150,6 +8148,12 @@ async def test_mcp_tool_reuses_supplied_client(mode: str, expected_version: str)
 
 def test_mcp_transport_tools_preserve_supplied_client_ownership() -> None:
     client = Mock()
+    stdio_tool = MCPStdioTool(
+        name="stdio",
+        mcp_client=client,
+        load_tools=False,
+        load_prompts=False,
+    )
     http_tool = MCPStreamableHTTPTool(
         name="http",
         mcp_client=client,
@@ -8158,16 +8162,11 @@ def test_mcp_transport_tools_preserve_supplied_client_ownership() -> None:
     )
 
     tools = [
-        MCPStdioTool(
-            name="stdio",
-            command="unused",
-            mcp_client=client,
-            load_tools=False,
-            load_prompts=False,
-        ),
+        stdio_tool,
         http_tool,
     ]
 
+    assert stdio_tool.command is None
     assert http_tool.url is None
     for tool in tools:
         assert tool._connection is not None
@@ -8196,6 +8195,26 @@ def test_mcp_streamable_http_requires_connection_source() -> None:
         )
 
 
+def test_mcp_stdio_rejects_command_with_supplied_client() -> None:
+    with pytest.raises(ValueError, match=r"`command` and `mcp_client` are mutually exclusive"):
+        MCPStdioTool(
+            name="test",
+            command="python",
+            mcp_client=Mock(),
+            load_tools=False,
+            load_prompts=False,
+        )
+
+
+def test_mcp_stdio_requires_connection_source() -> None:
+    with pytest.raises(ValueError, match=r"`command` is required when neither `mcp_client` nor `session`"):
+        MCPStdioTool(
+            name="test",
+            load_tools=False,
+            load_prompts=False,
+        )
+
+
 def test_mcp_session_getter_warns_for_low_level_compatibility_path() -> None:
     session = Mock(spec=ClientSession)
     tool = MCPStdioTool(
@@ -8217,7 +8236,6 @@ def test_mcp_session_setter_rejects_client_backed_connection_without_mutating_st
     client = Mock()
     tool = MCPStdioTool(
         name="test",
-        command="unused",
         mcp_client=client,
         load_tools=False,
         load_prompts=False,
@@ -8350,16 +8368,113 @@ def test_mcp_streamable_http_get_mcp_client_requires_framework_owned_url() -> No
         tool.get_mcp_client()
 
 
-def test_mcp_tool_rejects_supplied_client_and_session() -> None:
-    with pytest.raises(ValueError, match="mutually exclusive"):
+@pytest.mark.parametrize(
+    ("option_name", "option_value"),
+    [
+        ("request_timeout", 30),
+        ("args", []),
+        ("env", {}),
+        ("encoding", ""),
+        ("kwargs", {"cwd": "."}),
+    ],
+)
+def test_mcp_stdio_rejects_framework_owned_options_with_supplied_client(
+    option_name: str,
+    option_value: Any,
+) -> None:
+    kwargs = option_value if option_name == "kwargs" else {option_name: option_value}
+
+    with pytest.raises(ValueError) as exc_info:
+        MCPStdioTool(
+            name="test",
+            mcp_client=Mock(),
+            load_tools=False,
+            load_prompts=False,
+            **kwargs,
+        )
+
+    message = str(exc_info.value)
+    assert "`mcp_client` cannot be combined with framework-owned stdio options" in message
+    assert f"`{option_name}`" in message
+
+
+def test_mcp_stdio_lists_all_framework_owned_options_with_supplied_client() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        MCPStdioTool(
+            name="test",
+            mcp_client=Mock(),
+            request_timeout=30,
+            args=[],
+            env={},
+            encoding="",
+            load_tools=False,
+            load_prompts=False,
+            cwd=".",
+        )
+
+    message = str(exc_info.value)
+    for option_name in ("request_timeout", "args", "env", "encoding", "kwargs"):
+        assert f"`{option_name}`" in message
+
+
+def test_mcp_stdio_preserves_command_with_supplied_session_compatibility() -> None:
+    session = Mock(spec=ClientSession)
+    tool = MCPStdioTool(
+        name="test",
+        command="python",
+        session=session,
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    assert tool.command == "python"
+    assert tool._connection is not None
+    assert tool._connection.client is None
+    assert tool._connection.session is session
+    assert tool._connection.is_framework_owned is False
+
+
+def test_mcp_stdio_allows_session_without_command() -> None:
+    session = Mock(spec=ClientSession)
+    tool = MCPStdioTool(
+        name="test",
+        session=session,
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    assert tool.command is None
+    assert tool._connection is not None
+    assert tool._connection.session is session
+
+
+def test_mcp_stdio_rejects_supplied_client_and_session_before_other_conflicts() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"`mcp_client` and `session` are mutually exclusive\. If possible, prefer `mcp_client`\.",
+    ):
         MCPStdioTool(
             name="test",
             command="unused",
             mcp_client=Mock(),
             session=Mock(spec=ClientSession),
+            request_timeout=30,
+            args=[],
             load_tools=False,
             load_prompts=False,
         )
+
+
+def test_mcp_stdio_get_mcp_client_requires_framework_owned_command() -> None:
+    tool = MCPStdioTool(
+        name="test",
+        mcp_client=Mock(),
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    with pytest.raises(RuntimeError, match=r"Internal invariant violated.*requires `command`"):
+        tool.get_mcp_client()
 
 
 async def test_mcp_tool_rejects_unentered_supplied_client() -> None:
@@ -8369,7 +8484,6 @@ async def test_mcp_tool_rejects_unentered_supplied_client() -> None:
     client = Client(Server("test-server"))
     wrapper = MCPStdioTool(
         name="test",
-        command="unused",
         mcp_client=client,
         load_tools=False,
         load_prompts=False,
@@ -8387,7 +8501,6 @@ async def test_mcp_tool_reset_preserves_supplied_client() -> None:
         session = client.session
         wrapper = MCPStdioTool(
             name="test",
-            command="unused",
             mcp_client=client,
             load_tools=False,
             load_prompts=False,
