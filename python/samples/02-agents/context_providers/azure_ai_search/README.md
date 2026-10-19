@@ -21,7 +21,7 @@ pip install agent-framework-azure-ai-search agent-framework-foundry
 
 ### Required Resources
 
-1. **Azure AI Search service** with a search index containing your documents
+1. **Azure AI Search service** with either an existing Knowledge Base (agentic mode) or a search index containing your documents (semantic mode or index-backed agentic setup)
    - [Create Azure AI Search service](https://learn.microsoft.com/azure/search/search-create-service-portal)
    - [Create and populate a search index](https://learn.microsoft.com/azure/search/search-what-is-an-index)
 
@@ -29,7 +29,7 @@ pip install agent-framework-azure-ai-search agent-framework-foundry
    - [Create Microsoft Foundry project](https://learn.microsoft.com/azure/ai-studio/how-to/create-projects)
    - Deploy a model (e.g., GPT-4o)
 
-3. **For Agentic mode only**: Azure OpenAI resource for Knowledge Base model calls
+3. **For index-backed agentic setup only**: Azure OpenAI resource for Knowledge Base model calls
    - [Create Azure OpenAI resource](https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource)
    - Note: This is separate from your Microsoft Foundry project endpoint
 
@@ -38,7 +38,7 @@ pip install agent-framework-azure-ai-search agent-framework-foundry
 Both examples support two authentication methods:
 
 - **API Key**: Set `AZURE_SEARCH_API_KEY` environment variable
-- **Entra ID (Managed Identity)**: Uses `DefaultAzureCredential` when API key is not provided
+- **Entra ID (Azure CLI)**: Uses `AzureCliCredential` when API key is not provided
 
 Run `az login` if using Entra ID authentication.
 
@@ -64,15 +64,17 @@ azure-search-documents`) — no code change.
 
 **Common (both modes):**
 - `AZURE_SEARCH_ENDPOINT`: Your Azure AI Search endpoint (e.g., `https://myservice.search.windows.net`)
-- `AZURE_SEARCH_INDEX_NAME`: Name of your search index
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: Model deployment name (e.g., `gpt-4o`, defaults to `gpt-4o`)
-- `AZURE_SEARCH_API_KEY`: _(Optional)_ Your search API key - if not provided, uses DefaultAzureCredential
+- `AZURE_SEARCH_API_KEY`: _(Optional)_ Your search API key - if not provided, uses AzureCliCredential
 
-**Agentic mode only:**
-- `AZURE_SEARCH_KNOWLEDGE_BASE_NAME`: Name of your Knowledge Base in Azure AI Search
-- `AZURE_OPENAI_RESOURCE_URL`: Your Azure OpenAI resource URL (e.g., `https://myresource.openai.azure.com`)
-  - **Important**: This is different from `FOUNDRY_PROJECT_ENDPOINT` - Knowledge Base needs the OpenAI endpoint for model calls
+**Semantic mode:**
+- `AZURE_SEARCH_INDEX_NAME`: Name of your search index
+
+**Agentic mode (choose one setup):**
+- Existing Knowledge Base: set `AZURE_SEARCH_KNOWLEDGE_BASE_NAME`.
+- Create a Knowledge Base from an index: set `AZURE_SEARCH_INDEX_NAME` and `AZURE_OPENAI_RESOURCE_URL`; the sample uses `FOUNDRY_MODEL` for the Knowledge Base model.
+  - **Important**: `AZURE_OPENAI_RESOURCE_URL` is different from `FOUNDRY_PROJECT_ENDPOINT`. It is needed only for the index-backed setup.
 
 ### Example .env file
 
@@ -86,11 +88,23 @@ FOUNDRY_MODEL=gpt-4o
 AZURE_SEARCH_API_KEY=your-search-key
 ```
 
-**For Agentic Mode (add these to semantic mode variables):**
+**For Agentic Mode with an existing Knowledge Base:**
 ```env
+AZURE_SEARCH_ENDPOINT=https://myservice.search.windows.net
 AZURE_SEARCH_KNOWLEDGE_BASE_NAME=my-knowledge-base
+FOUNDRY_PROJECT_ENDPOINT=https://<resource-name>.services.ai.azure.com/api/projects/<project-name>
+FOUNDRY_MODEL=gpt-4o
+# Optional - omit to use Entra ID
+AZURE_SEARCH_API_KEY=your-search-key
+```
+
+**For Agentic Mode that creates a Knowledge Base from an index:**
+Use the semantic mode variables and add:
+```env
 AZURE_OPENAI_RESOURCE_URL=https://myresource.openai.azure.com
 ```
+
+When constructing the provider directly, pass either `knowledge_base_name` or `index_name`, never both.
 
 ## Search Modes Comparison
 
@@ -101,7 +115,7 @@ AZURE_OPENAI_RESOURCE_URL=https://myresource.openai.azure.com
 | **Retrieval Strategy** | Hybrid search + semantic ranking | Multi-hop reasoning with Knowledge Base |
 | **Query Handling** | Direct search | Automatic query reformulation |
 | **Best For** | Simple queries, speed-critical apps | Complex queries, multi-document reasoning |
-| **Additional Setup** | None | Requires Knowledge Base + OpenAI resource |
+| **Additional Setup** | None | Existing Knowledge Base, or an index + OpenAI resource for Knowledge Base creation |
 
 ### When to Use Semantic Mode
 
@@ -145,7 +159,7 @@ AZURE_OPENAI_RESOURCE_URL=https://myresource.openai.azure.com
 from agent_framework import Agent
 from agent_framework.azure import AzureAISearchContextProvider
 from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 
 # Create search provider with semantic mode (default)
 search_provider = AzureAISearchContextProvider(
@@ -160,7 +174,7 @@ search_provider = AzureAISearchContextProvider(
 async with FoundryChatClient(
     project_endpoint=project_endpoint,
     model=model_deployment,
-    credential=DefaultAzureCredential(),
+    credential=AzureCliCredential(),
 ) as client:
     async with Agent(
         client=client,
@@ -174,14 +188,12 @@ async with FoundryChatClient(
 ```python
 from agent_framework.azure import AzureAISearchContextProvider
 
-# Create search provider with agentic mode
+# Connect to an existing Knowledge Base; no index-backed setup parameters are needed.
 search_provider = AzureAISearchContextProvider(
     endpoint=search_endpoint,
-    index_name=index_name,
     api_key=search_key,
-    mode="agentic",  # Enable agentic retrieval
+    mode="agentic",
     knowledge_base_name=knowledge_base_name,
-    azure_openai_resource_url=azure_openai_resource_url,
     top_k=5,
 )
 
@@ -211,10 +223,10 @@ async with Agent(
 4. **Run the examples**:
    ```bash
    # Semantic mode (fast, simple)
-   python azure_ai_with_search_context_semantic.py
+   python search_context_semantic.py
 
    # Agentic mode (intelligent, complex)
-   python azure_ai_with_search_context_agentic.py
+   python search_context_agentic.py
    ```
 
 ## Key Parameters
@@ -224,20 +236,20 @@ async with Agent(
 - `endpoint`: Azure AI Search service endpoint
 - `index_name`: Name of the search index
 - `api_key`: API key for authentication (optional, can use credential instead)
-- `credential`: Azure credential for Entra ID auth (e.g., `DefaultAzureCredential()`)
+- `credential`: Azure credential for Entra ID auth (e.g., `AzureCliCredential()`)
 - `mode`: Search mode - `"semantic"` (default) or `"agentic"`
-- `top_k`: Number of documents to retrieve (default: 3 for semantic, 5 for agentic)
+- `top_k`: Number of documents to retrieve (default: 5; the semantic sample explicitly uses 3)
 
 ### Semantic Mode Parameters
 
-- `semantic_configuration`: Name of semantic configuration in your index (optional)
-- `query_type`: Query type - `"semantic"` for semantic search (default)
+- `semantic_configuration_name`: Name of semantic configuration in your index (optional)
 
 ### Agentic Mode Parameters
 
-- `knowledge_base_name`: Name of your Knowledge Base (required)
-- `azure_openai_resource_url`: Azure OpenAI resource URL (required)
-- `max_search_queries`: Maximum number of search queries to generate (default: 3)
+- `knowledge_base_name`: Name of an existing Knowledge Base; omit `index_name` for this setup
+- `index_name`: Index used to create a Knowledge Base; omit `knowledge_base_name` for this setup
+- `azure_openai_resource_url`: Azure OpenAI resource URL, required for index-backed setup
+- `model`: Azure OpenAI model deployment name, required for index-backed setup
 
 ## Troubleshooting
 
@@ -252,9 +264,9 @@ async with Agent(
    - Check that the index exists and contains documents
 
 3. **Agentic mode errors**
-   - Ensure `AZURE_SEARCH_KNOWLEDGE_BASE_NAME` is correctly configured
-   - Verify `AZURE_OPENAI_RESOURCE_URL` points to your Azure OpenAI resource (not AI Foundry endpoint)
-   - Check that your OpenAI resource has the necessary model deployments
+   - Choose an existing Knowledge Base or index-backed setup, as described above
+   - For index-backed setup, verify `AZURE_OPENAI_RESOURCE_URL` points to your Azure OpenAI resource (not the Foundry project endpoint)
+   - For index-backed setup, check that your OpenAI resource has the necessary model deployments
 
 4. **No results returned**
    - Verify your index has documents with vector embeddings (for semantic/hybrid search)
@@ -263,7 +275,6 @@ async with Agent(
 
 5. **Slow responses in agentic mode**
    - This is expected - agentic mode trades speed for accuracy
-   - Reduce `max_search_queries` if needed
    - Consider semantic mode for speed-critical applications
 
 ## Performance Tips
