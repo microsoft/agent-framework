@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -16,21 +17,22 @@ namespace Microsoft.Agents.AI.Workflows;
 internal sealed class WorkflowHostAgent : AIAgent
 {
     private readonly Workflow _workflow;
-    private readonly string? _id;
+    private readonly WorkflowAgentOptions _options;
+    private readonly ChatHistoryProvider? _chatHistoryProvider;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
-    private readonly bool _includeExceptionDetails;
-    private readonly bool _includeWorkflowOutputsInResponse;
     private readonly Task<ProtocolDescriptor> _describeTask;
 
     private readonly ConcurrentDictionary<string, string> _assignedSessionIds = [];
 
-    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
+    public WorkflowHostAgent(Workflow workflow, WorkflowAgentOptions? options = null)
     {
         this._workflow = Throw.IfNull(workflow);
+        this._options = options?.Clone() ?? new();
+        this._chatHistoryProvider = this._options.ChatHistoryProvider;
 
-        this._executionEnvironment = executionEnvironment ?? (workflow.AllowConcurrent
-                                                              ? InProcessExecution.Concurrent
-                                                              : InProcessExecution.OffThread);
+        this._executionEnvironment = this._options.ExecutionEnvironment ?? (workflow.AllowConcurrent
+                                                                            ? InProcessExecution.Concurrent
+                                                                            : InProcessExecution.OffThread);
 
         if (!this._executionEnvironment.IsCheckpointingEnabled &&
              this._executionEnvironment is not InProcessExecutionEnvironment)
@@ -40,20 +42,13 @@ internal sealed class WorkflowHostAgent : AIAgent
             throw new InvalidOperationException("Cannot use a non-checkpointed execution environment. Implicit checkpointing is supported only for InProcess.");
         }
 
-        this._includeExceptionDetails = includeExceptionDetails;
-        this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
-
-        this._id = id;
-        this.Name = name;
-        this.Description = description;
-
         // Kick off the typecheck right away by starting the DescribeProtocol task.
         this._describeTask = this._workflow.DescribeProtocolAsync().AsTask();
     }
 
-    protected override string? IdCore => this._id;
-    public override string? Name { get; }
-    public override string? Description { get; }
+    protected override string? IdCore => this._options.Id;
+    public override string? Name => this._options.Name;
+    public override string? Description => this._options.Description;
 
     /// <summary>
     /// Reports whether this agent was built with an execution environment that already names a
@@ -69,7 +64,8 @@ internal sealed class WorkflowHostAgent : AIAgent
         return base.GetService(serviceType, serviceKey)
             ?? (serviceKey is null && serviceType == typeof(WorkflowAgentMetadata)
                 ? this._metadata ??= new WorkflowAgentMetadata(this.UsesOwnCheckpointStorage)
-                : null);
+                : null)
+            ?? this._chatHistoryProvider?.GetService(serviceType, serviceKey);
     }
 
     private WorkflowAgentMetadata? _metadata;
@@ -87,14 +83,10 @@ internal sealed class WorkflowHostAgent : AIAgent
             return this;
         }
 
-        return new WorkflowHostAgent(
-            this._workflow,
-            this._id,
-            this.Name,
-            this.Description,
-            inProcEnvironment.WithCheckpointing(checkpointManager),
-            this._includeExceptionDetails,
-            this._includeWorkflowOutputsInResponse);
+        WorkflowAgentOptions options = this._options.Clone();
+        options.ExecutionEnvironment = inProcEnvironment.WithCheckpointing(checkpointManager);
+
+        return new WorkflowHostAgent(this._workflow, options);
     }
 
     private string GenerateNewId()
@@ -116,7 +108,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     }
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
-        => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse));
+        => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._options.IncludeExceptionDetails, this._options.IncludeWorkflowOutputsInResponse));
 
     protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
@@ -131,9 +123,17 @@ internal sealed class WorkflowHostAgent : AIAgent
     }
 
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new WorkflowSession(this._workflow, serializedState, this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, jsonSerializerOptions));
+        => new(new WorkflowSession(this._workflow, serializedState, this._executionEnvironment, this._options.IncludeExceptionDetails, this._options.IncludeWorkflowOutputsInResponse, jsonSerializerOptions));
 
-    private async ValueTask<WorkflowSession> UpdateSessionAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Resolves the <see cref="WorkflowSession"/> for this run and computes the messages to send to the workflow.
+    /// </summary>
+    /// <returns>
+    /// The session, and the input messages for this run: the new messages when a custom <see cref="ChatHistoryProvider"/>
+    /// is configured, otherwise the messages after the bookmark of the default provider. The input messages are sent
+    /// to the workflow and then passed to the custom provider as request messages when the run completes or fails.
+    /// </returns>
+    private async ValueTask<(WorkflowSession Session, List<ChatMessage> InputMessages)> UpdateSessionAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, CancellationToken cancellationToken = default)
     {
         session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -142,10 +142,60 @@ internal sealed class WorkflowHostAgent : AIAgent
             throw new ArgumentException($"Incompatible session type: {session.GetType()} (expecting {typeof(WorkflowSession)})", nameof(session));
         }
 
-        // For workflow threads, messages are added directly via the internal AddMessages method
-        // The MessageStore methods are used for agent invocation scenarios
+        if (this._chatHistoryProvider is not null)
+        {
+            // The workflow keeps its own conversation state, so only the new messages are sent to it.
+            return (workflowSession, messages.ToList());
+        }
+
         workflowSession.ChatHistoryProvider.AddMessages(session, messages);
-        return workflowSession;
+        return (workflowSession, workflowSession.ChatHistoryProvider.GetFromBookmark(workflowSession).ToList());
+    }
+
+    private async ValueTask StoreChatHistoryAsync(WorkflowSession workflowSession, List<ChatMessage> inputMessages, AgentResponse response, CancellationToken cancellationToken)
+    {
+        if (this._chatHistoryProvider is not null)
+        {
+            ChatHistoryProvider.InvokedContext context = new(this, workflowSession, inputMessages, response.Messages);
+            await this._chatHistoryProvider.InvokedAsync(context, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
+        workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+    }
+
+    private async IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
+        WorkflowSession workflowSession,
+        List<ChatMessage> inputMessages,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        IAsyncEnumerator<AgentResponseUpdate> enumerator = workflowSession.InvokeStageAsync(inputMessages, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        try
+        {
+            while (true)
+            {
+                try
+                {
+                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        break;
+                    }
+                }
+                catch (Exception ex) when (this._chatHistoryProvider is not null)
+                {
+                    ChatHistoryProvider.InvokedContext context = new(this, workflowSession, inputMessages, ex);
+                    await this._chatHistoryProvider.InvokedAsync(context, cancellationToken).ConfigureAwait(false);
+                    throw;
+                }
+
+                yield return enumerator.Current;
+            }
+        }
+        finally
+        {
+            await enumerator.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     protected override async
@@ -157,19 +207,17 @@ internal sealed class WorkflowHostAgent : AIAgent
     {
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
-        WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
+        (WorkflowSession workflowSession, List<ChatMessage> inputMessages) = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
         ResponseMergeState mergeState = new();
 
-        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
-                                                                     .ConfigureAwait(false)
-                                                                     .WithCancellation(cancellationToken))
+        await foreach (AgentResponseUpdate update in this.InvokeStageAsync(workflowSession, inputMessages, cancellationToken)
+                                                         .ConfigureAwait(false))
         {
             mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
         }
 
         AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
-        workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
-        workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+        await this.StoreChatHistoryAsync(workflowSession, inputMessages, response, cancellationToken).ConfigureAwait(false);
 
         return response;
     }
@@ -183,20 +231,18 @@ internal sealed class WorkflowHostAgent : AIAgent
     {
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
-        WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
+        (WorkflowSession workflowSession, List<ChatMessage> inputMessages) = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
         ResponseMergeState mergeState = new();
 
-        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
-                                                                      .ConfigureAwait(false)
-                                                                      .WithCancellation(cancellationToken))
+        await foreach (AgentResponseUpdate update in this.InvokeStageAsync(workflowSession, inputMessages, cancellationToken)
+                                                         .ConfigureAwait(false))
         {
             mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
             yield return update;
         }
 
         AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
-        workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
-        workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+        await this.StoreChatHistoryAsync(workflowSession, inputMessages, response, cancellationToken).ConfigureAwait(false);
     }
 
     private sealed class ResponseMergeState

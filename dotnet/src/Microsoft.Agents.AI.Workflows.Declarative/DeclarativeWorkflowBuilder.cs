@@ -61,7 +61,7 @@ public static class DeclarativeWorkflowBuilder
     /// <see cref="ChatMessage"/>, <see cref="System.Collections.Generic.IEnumerable{T}"/> of
     /// <see cref="ChatMessage"/>, <see cref="string"/>, and <see cref="TurnToken"/>. This
     /// makes the workflow usable both for direct invocation and for hosting via
-    /// <see cref="WorkflowHostingExtensions.AsAIAgent(Workflow, string?, string?, string?, IWorkflowExecutionEnvironment?, bool, bool)"/>.
+    /// <see cref="WorkflowHostingExtensions.AsAIAgent(Workflow, string?, string?, string?, IWorkflowExecutionEnvironment?, bool, bool, ChatHistoryProvider?)"/>.
     /// </remarks>
     public static Workflow Build<TInput>(
         TextReader yamlReader,
