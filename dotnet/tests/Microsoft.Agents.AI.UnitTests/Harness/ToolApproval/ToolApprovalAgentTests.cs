@@ -3403,13 +3403,15 @@ public class ToolApprovalAgentTests
     }
 
     /// <summary>
-    /// Verify that the final streaming turn at the auto-approval cap rejects a later conflicting update.
+    /// Verify that the final streaming turn at the auto-approval cap invalidates every ID repeated by a later update.
     /// </summary>
     [Fact]
-    public async Task RunStreamingAsync_CappedUpdatesWithDifferentCallsUnderSameRequestId_ThrowsAsync()
+    public async Task RunStreamingAsync_CappedUpdatesWithMultipleDuplicateIds_InvalidatesAllAsync()
     {
         // Arrange
         var callCount = 0;
+        var firstA = new ToolApprovalRequestContent("id-a", new FunctionCallContent("call-a", "ToolA"));
+        var firstB = new ToolApprovalRequestContent("id-b", new FunctionCallContent("call-b", "ToolB"));
         var innerAgent = new Mock<AIAgent>();
         innerAgent
             .Protected()
@@ -3430,11 +3432,13 @@ public class ToolApprovalAgentTests
                 [
                     new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent>
                     {
-                        new ToolApprovalRequestContent("shared-id", new FunctionCallContent("shared-call", "BenignLookup")),
+                        firstA,
+                        firstB,
                     }),
                     new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent>
                     {
-                        new ToolApprovalRequestContent("shared-id", new FunctionCallContent("shared-call", "RunPrivilegedShell")),
+                        new ToolApprovalRequestContent("id-a", new FunctionCallContent("repeated-call-a", "DifferentToolA")),
+                        new ToolApprovalRequestContent("id-b", new FunctionCallContent("repeated-call-b", "DifferentToolB")),
                     }),
                 ]));
         var agent = new ToolApprovalAgent(innerAgent.Object, new ToolApprovalAgentOptions
@@ -3442,16 +3446,40 @@ public class ToolApprovalAgentTests
             AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
             MaxAutoApprovalIterations = 1,
         });
+        var session = new ChatClientAgentSession();
 
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             await foreach (var _ in agent.RunStreamingAsync(
                 [new ChatMessage(ChatRole.User, "Go")],
-                new ChatClientAgentSession()))
+                session))
             {
             }
         });
+
+        var nextA = new ToolApprovalRequestContent("next-a", new FunctionCallContent("next-call-a", "ToolA"));
+        var nextB = new ToolApprovalRequestContent("next-b", new FunctionCallContent("next-call-b", "ToolB"));
+        var followUpAgent = new ToolApprovalAgent(
+            CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, [nextA, nextB])])).Object);
+
+        var firstResponse = await followUpAgent.RunAsync(
+            [new ChatMessage(ChatRole.User,
+            [
+                firstA.CreateAlwaysApproveToolResponse(),
+                firstB.CreateAlwaysApproveToolResponse(),
+            ])],
+            session);
+
+        var secondResponse = await followUpAgent.RunAsync(
+            [new ChatMessage(ChatRole.User, [nextA.CreateResponse(approved: true)])],
+            session);
+
+        // Assert
+        Assert.Contains("id-a", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("id-b", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("next-a", firstResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single().RequestId);
+        Assert.Equal("next-b", secondResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single().RequestId);
     }
 
     #endregion

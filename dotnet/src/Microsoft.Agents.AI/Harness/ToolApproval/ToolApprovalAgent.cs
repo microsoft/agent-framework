@@ -503,6 +503,8 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             }
         }
 
+        HashSet<string>? duplicateRequestIds = null;
+
         foreach (var request in requests)
         {
             if (knownRequestIds.Add(request.RequestId))
@@ -510,16 +512,27 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                 continue;
             }
 
-            state.SurfacedApprovalRequests.Remove(request.RequestId);
-            state.QueuedApprovalRequests.RemoveAll(
-                queued => string.Equals(queued.RequestId, request.RequestId, StringComparison.Ordinal));
-            state.CollectedApprovalResponses.RemoveAll(
-                response => string.Equals(response.RequestId, request.RequestId, StringComparison.Ordinal));
-            this._sessionState.SaveState(session, state);
-
-            throw new InvalidOperationException(
-                $"Tool approval request ID '{request.RequestId}' was used more than once.");
+            (duplicateRequestIds ??= new(StringComparer.Ordinal)).Add(request.RequestId);
         }
+
+        if (duplicateRequestIds is null || duplicateRequestIds.Count == 0)
+        {
+            return;
+        }
+
+        foreach (string requestId in duplicateRequestIds)
+        {
+            state.SurfacedApprovalRequests.Remove(requestId);
+            state.QueuedApprovalRequests.RemoveAll(
+                queued => string.Equals(queued.RequestId, requestId, StringComparison.Ordinal));
+            state.CollectedApprovalResponses.RemoveAll(
+                response => string.Equals(response.RequestId, requestId, StringComparison.Ordinal));
+        }
+
+        this._sessionState.SaveState(session, state);
+
+        throw new InvalidOperationException(
+            $"Tool approval request IDs '{string.Join("', '", duplicateRequestIds.OrderBy(id => id, StringComparer.Ordinal))}' were used more than once.");
     }
 
     /// <summary>
