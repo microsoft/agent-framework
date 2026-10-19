@@ -90,6 +90,59 @@ public sealed class DefaultMcpToolHandlerTests
 
     #region HttpClientProvider Tests
 
+    [Theory]
+    [InlineData("\r", false, false)]
+    [InlineData("\n", false, false)]
+    [InlineData("\0", false, false)]
+    [InlineData("\r", true, false)]
+    [InlineData("\n", true, false)]
+    [InlineData("\0", true, false)]
+    [InlineData("\r", false, true)]
+    [InlineData("\n", false, true)]
+    [InlineData("\0", false, true)]
+    [InlineData("\r", true, true)]
+    [InlineData("\n", true, true)]
+    [InlineData("\0", true, true)]
+    public async Task InvokeToolAsync_WithInvalidHeader_ShouldRejectBeforeClientCreationAsync(
+        string invalidCharacter,
+        bool invalidName,
+        bool useProvider)
+    {
+        // Arrange
+        bool clientCreationAttempted = false;
+        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
+        {
+            clientCreationAttempted = true;
+            throw new InvalidOperationException("Client creation should not be reached.");
+        }
+
+        HttpMessageHandler CreateHandler()
+        {
+            clientCreationAttempted = true;
+            throw new InvalidOperationException("Client creation should not be reached.");
+        }
+
+        await using DefaultMcpToolHandler handler = new(useProvider ? ProviderAsync : null, CreateHandler);
+        Dictionary<string, string> headers = new()
+        {
+            [invalidName ? $"X-Test{invalidCharacter}" : "X-Test"] = invalidName ? "value" : $"value{invalidCharacter}"
+        };
+
+        // Act
+        async Task actAsync() => await handler.InvokeToolAsync(
+            serverUrl: "https://example.com/mcp",
+            serverLabel: null,
+            toolName: "testTool",
+            arguments: null,
+            headers: headers,
+            connectionName: null);
+
+        // Assert
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Equal("headers", exception.ParamName);
+        Assert.False(clientCreationAttempted);
+    }
+
     [Fact]
     public async Task InvokeToolAsync_WithHttpClientProvider_ShouldCallProviderAsync()
     {
