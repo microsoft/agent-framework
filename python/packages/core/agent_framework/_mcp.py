@@ -4159,10 +4159,10 @@ class MCPStreamableHTTPTool(MCPTool):
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
-        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
-        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
         if self.url is None:
             return attrs
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
+        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
         try:
             from httpx import URL
 

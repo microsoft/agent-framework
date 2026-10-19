@@ -476,12 +476,12 @@ def test_mcp_http_tool_http_default_port():
     assert attrs[OtelAttr.PORT] == 80
 
 
-def test_mcp_http_tool_without_url_omits_server_address_and_port():
-    """A caller-owned Client has HTTP transport attributes but no wrapper-owned URL attributes."""
+def test_mcp_http_tool_without_url_omits_transport_and_server_attributes():
+    """A caller-owned Client has no wrapper-observed transport or server attributes."""
     tool = MCPStreamableHTTPTool(name="test", mcp_client=Mock())
     attrs = tool._mcp_base_span_attributes()
-    assert attrs[OtelAttr.NETWORK_TRANSPORT] == "tcp"
-    assert attrs[OtelAttr.NETWORK_PROTOCOL_NAME] == "http"
+    assert OtelAttr.NETWORK_TRANSPORT not in attrs
+    assert OtelAttr.NETWORK_PROTOCOL_NAME not in attrs
     assert OtelAttr.ADDRESS not in attrs
     assert OtelAttr.PORT not in attrs
 
