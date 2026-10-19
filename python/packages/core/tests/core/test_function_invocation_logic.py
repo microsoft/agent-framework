@@ -13158,7 +13158,7 @@ async def test_duplicate_approval_id_reclassification_does_not_execute_without_s
             ],
         ),
     ]
-    options = {"tools": [guarded_tool, host_tool]}
+    options: ChatOptions = {"tools": [guarded_tool, host_tool]}
 
     try:
         if mode == "streaming":
@@ -13169,6 +13169,41 @@ async def test_duplicate_approval_id_reclassification_does_not_execute_without_s
             await chat_client_base.get_response(messages, options=options)
     except RuntimeError as exc:
         assert "mixed function-call batch" in str(exc)
+
+    assert executed == []
+
+
+async def test_completed_mixed_batch_with_stale_duplicate_approval_replays_without_session(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A duplicate answer that follows an already-closed request is inert and must not fail replay."""
+    from agent_framework import FunctionTool
+
+    guarded_tool, executed = _guarded_approval_fixture()
+    host_tool = FunctionTool(name="host_tool", func=None, description="caller handled")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"]))
+    ]
+
+    guarded_call = Content.from_function_call(call_id="c1", name="guarded_tool", arguments={"command": "ls"})
+    host_call = Content.from_function_call(call_id="c2", name="host_tool", arguments={})
+    host_call.user_input_request = True
+
+    def answer() -> Content:
+        return Content.from_function_approval_response(id="A", function_call=guarded_call, approved=True)
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_approval_request(id="A", function_call=guarded_call), host_call],
+        ),
+        Message(role="user", contents=[answer(), Content.from_function_result(call_id="c2", result="host")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="ran")]),
+        Message(role="user", contents=[answer()]),
+    ]
+    options: ChatOptions = {"tools": [guarded_tool, host_tool]}
+
+    await chat_client_base.get_response(messages, options=options)
 
     assert executed == []
 

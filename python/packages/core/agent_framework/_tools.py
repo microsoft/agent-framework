@@ -4160,6 +4160,8 @@ def _collect_approval_responses(
                 request = latest_requests_by_id.get(request_id) if request_id is not None else None
                 is_protected = protected_response_ids is not None and id(content) in protected_response_ids
                 if not is_protected and request is not None and id(request) in closed_request_occurrences:
+                    # Closed already, so it can never execute; mark it settled so replay stays inert.
+                    resolved_response_ids.add(id(content))
                     continue
                 approval_responses.append(content)
                 if content.id is not None:
