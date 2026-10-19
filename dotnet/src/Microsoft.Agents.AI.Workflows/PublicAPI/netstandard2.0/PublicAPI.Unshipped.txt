@@ -1,1 +1,3 @@
 ﻿#nullable enable
+const Microsoft.Agents.AI.Workflows.WorkflowAgentAdditionalProperties.ExecutorId = "executorId" -> string!
+Microsoft.Agents.AI.Workflows.WorkflowAgentAdditionalProperties
