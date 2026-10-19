@@ -402,15 +402,22 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
-    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
+    internal async Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
-        return Task.WhenAll(this._executors.Values.Select(InvokeCheckpointRestoredAsync));
+        Executor[] executors = await Task.WhenAll(this._executors.Values).ConfigureAwait(false);
+        // Shared state must finish restoring before any subclass post-load hook runs.
+        await Task.WhenAll(executors.Select(RestoreStateAsync)).ConfigureAwait(false);
+        await Task.WhenAll(executors.Select(InvokeCheckpointRestoredAsync)).ConfigureAwait(false);
 
-        async Task InvokeCheckpointRestoredAsync(Task<Executor> executorTask)
+        async Task RestoreStateAsync(Executor executor)
         {
-            Executor executor = await executorTask.ConfigureAwait(false);
+            await executor.RestoreCheckpointStateAsync(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
+        }
+
+        async Task InvokeCheckpointRestoredAsync(Executor executor)
+        {
             await executor.OnCheckpointRestoredAsync(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }

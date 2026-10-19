@@ -64,6 +64,7 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettable
         : base(id)
     {
         this._session = session;
+        this.RegisterCheckpointRestoringCallback(session.State.RestoreAsync);
     }
 
     /// <inheritdoc/>
@@ -71,10 +72,6 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettable
     {
         return default;
     }
-
-    /// <inheritdoc/>
-    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._session.State.RestoreAsync(context, cancellationToken);
 
     /// <inheritdoc/>
     [SendsMessage(typeof(ActionExecutorResult))]

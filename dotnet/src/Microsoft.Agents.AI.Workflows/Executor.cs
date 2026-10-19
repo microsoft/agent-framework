@@ -14,6 +14,7 @@ using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Agents.AI.Workflows.Reflection;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -198,6 +199,8 @@ public abstract class Executor : IIdentified
 
     internal bool IsCrossRunShareable { get; }
 
+    private List<Func<IWorkflowContext, CancellationToken, ValueTask>>? _checkpointRestoringCallbacks;
+
     /// <summary>
     /// Gets the configuration options for the executor.
     /// </summary>
@@ -345,6 +348,31 @@ public abstract class Executor : IIdentified
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
     protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
+
+    /// <summary>
+    /// Registers state restoration that runs before checkpoint post-load hooks.
+    /// </summary>
+    /// <remarks>
+    /// All registered callbacks across the workflow complete before any executor's
+    /// <see cref="OnCheckpointRestoredAsync"/> hook is invoked. Register callbacks during construction.
+    /// </remarks>
+    /// <param name="callback">The state restoration callback.</param>
+    protected void RegisterCheckpointRestoringCallback(Func<IWorkflowContext, CancellationToken, ValueTask> callback)
+    {
+        _ = Throw.IfNull(callback);
+        (this._checkpointRestoringCallbacks ??= []).Add(callback);
+    }
+
+    internal async ValueTask RestoreCheckpointStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        if (this._checkpointRestoringCallbacks is { } callbacks)
+        {
+            foreach (Func<IWorkflowContext, CancellationToken, ValueTask> callback in callbacks)
+            {
+                await callback(context, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.

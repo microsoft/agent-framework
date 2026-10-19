@@ -53,6 +53,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._state.InitializeSystem();
         this._state.CaptureInitialState();
         this.Session = new RootFormulaSession(this._state);
+        this.RegisterCheckpointRestoringCallback(this._state.RestoreAsync);
     }
 
     /// <inheritdoc/>
@@ -62,10 +63,6 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._generatedConversationId = null;
         return default;
     }
-
-    /// <inheritdoc/>
-    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._state.RestoreAsync(context, cancellationToken);
 
     /// <inheritdoc/>
     [SendsMessage(typeof(ActionExecutorResult))]

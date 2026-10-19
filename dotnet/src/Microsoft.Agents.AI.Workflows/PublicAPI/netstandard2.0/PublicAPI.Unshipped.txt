@@ -1,1 +1,2 @@
 ﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Executor.RegisterCheckpointRestoringCallback(System.Func<Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! callback) -> void

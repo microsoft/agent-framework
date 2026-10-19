@@ -19,6 +19,60 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Kit;
 public sealed class RootExecutorTests
 {
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ResumeAsync_RestoresActionWrittenValuesAsync(bool skipBaseCheckpointRestore, bool reuseWorkflow)
+    {
+        // Arrange
+        DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object);
+        TestRootExecutor executor = new(options) { AssignedValue = "root-value", SkipBaseCheckpointRestore = skipBaseCheckpointRestore };
+        WriteValueExecutor writer = new(executor.Session, skipBaseCheckpointRestore);
+        ReadValueExecutor reader = new(executor.Session) { SkipBaseCheckpointRestore = skipBaseCheckpointRestore };
+        Workflow workflow = new WorkflowBuilder(executor).AddEdge(executor, writer).AddEdge(writer, reader).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        List<CheckpointInfo> savedCheckpoints = [];
+        await using (StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "first", checkpoints))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+                {
+                    savedCheckpoints.Add(checkpoint);
+                }
+            }
+        }
+        Assert.True(savedCheckpoints.Count >= 3);
+        Assert.Equal("action-value", reader.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, reader.Sensitivity);
+
+        if (!reuseWorkflow)
+        {
+            executor = new(options) { SkipBaseCheckpointRestore = skipBaseCheckpointRestore };
+            writer = new(executor.Session, skipBaseCheckpointRestore);
+            reader = new(executor.Session) { SkipBaseCheckpointRestore = skipBaseCheckpointRestore };
+            workflow = new WorkflowBuilder(executor).AddEdge(executor, writer).AddEdge(writer, reader).Build();
+        }
+        reader.Value = null;
+
+        // Act
+        await using (StreamingRun run = await InProcessExecution.ResumeStreamingAsync(workflow, savedCheckpoints[^2], checkpoints))
+        {
+            await foreach (WorkflowEvent _ in run.WatchStreamAsync())
+            {
+                // Consume the resumed run before checking the downstream action.
+            }
+        }
+
+        // Assert
+        Assert.Equal("action-value", executor.RestoredValue);
+        Assert.Equal("action-value", reader.RestoredValue);
+        Assert.Equal("action-value", reader.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, reader.Sensitivity);
+    }
+
+    [Theory]
     [InlineData(true, true)]
     [InlineData(false, true)]
     [InlineData(false, false)]
@@ -290,10 +344,23 @@ public sealed class RootExecutorTests
     {
         public string? AssignedValue { get; init; }
 
+        public bool SkipBaseCheckpointRestore { get; init; }
+
+        public string? RestoredValue { get; private set; }
+
         public string[] EnvironmentVariables { get; init; } = [];
 
         public ValueTask InitializeAsync(IWorkflowContext context, params string[] variableNames) =>
             this.InitializeEnvironmentAsync(context, variableNames);
+
+        protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            if (!this.SkipBaseCheckpointRestore)
+            {
+                await base.OnCheckpointRestoredAsync(context, cancellationToken);
+            }
+            this.RestoredValue = this.Session.State.Get("TestValue", VariableScopeNames.Local).ToObject() as string;
+        }
 
         protected override async ValueTask ExecuteAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
@@ -305,13 +372,46 @@ public sealed class RootExecutorTests
         }
     }
 
-    private sealed class ReadValueExecutor(FormulaSession session) : ActionExecutor("read_value", session)
+    private sealed class WriteValueExecutor(FormulaSession session, bool skipBaseCheckpointRestore) : ActionExecutor("write_value", session)
     {
+        protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
+            skipBaseCheckpointRestore ? default : base.OnCheckpointRestoredAsync(context, cancellationToken);
+
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            await context.QueueStateUpdateWithSensitivityAsync(
+                "TestValue", new EvaluationResult<string>("action-value", SensitivityLevel.Sensitive), VariableScopeNames.Local, cancellationToken);
+            return null;
+        }
+    }
+
+    private sealed class ReadValueExecutor : ActionExecutor
+    {
+        private readonly FormulaSession _session;
+
+        public ReadValueExecutor(FormulaSession session) : base("read_value", session)
+        {
+            this._session = session;
+        }
+
         public string? Value { get; set; }
+
+        public bool SkipBaseCheckpointRestore { get; init; }
+
+        public string? RestoredValue { get; private set; }
 
         public string Expression { get; init; } = "Local.TestValue";
 
         public SensitivityLevel Sensitivity { get; private set; }
+
+        protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            if (!this.SkipBaseCheckpointRestore)
+            {
+                await base.OnCheckpointRestoredAsync(context, cancellationToken);
+            }
+            this.RestoredValue = this._session.State.Get("TestValue", VariableScopeNames.Local).ToObject() as string;
+        }
 
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
         {
