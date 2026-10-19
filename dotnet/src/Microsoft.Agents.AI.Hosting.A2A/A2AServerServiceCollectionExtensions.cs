@@ -227,7 +227,8 @@ public static class A2AServerServiceCollectionExtensions
             sessionStorageIdentity,
             options?.AgentRunMode ?? AgentRunMode.ReturnMessage);
 
-        return CreateA2AServer(serviceProvider, agentName, agentHandler, options);
+        var isolationKeyProvider = serviceProvider.GetService<AgentIsolationKeyProvider>();
+        return CreateA2AServer(serviceProvider, agentName, agentHandler, options, isolationKeyProvider, requireIsolationKey: isolationKeyProvider != null);
     }
 
     /// <summary>
@@ -237,17 +238,28 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="agentName">The name that keys the agent's hosted services.</param>
     /// <param name="agentHandler">The handler that executes A2A operations.</param>
     /// <param name="options">The optional registration options.</param>
+    /// <param name="isolationKeyProvider">
+    /// The provider that partitions the default task store, or <see langword="null"/> when tasks are not isolated.
+    /// </param>
+    /// <param name="requireIsolationKey">
+    /// <see langword="true"/> to reject task store operations for which <paramref name="isolationKeyProvider"/> returns no key.
+    /// </param>
     /// <returns>The created server.</returns>
-    internal static A2AServer CreateA2AServer(IServiceProvider serviceProvider, string agentName, IAgentHandler agentHandler, A2AServerRegistrationOptions? options)
+    internal static A2AServer CreateA2AServer(
+        IServiceProvider serviceProvider,
+        string agentName,
+        IAgentHandler agentHandler,
+        A2AServerRegistrationOptions? options,
+        AgentIsolationKeyProvider? isolationKeyProvider,
+        bool requireIsolationKey)
     {
-        var isolationKeyProvider = serviceProvider.GetService<AgentIsolationKeyProvider>();
         var loggerFactory = serviceProvider.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
         ITaskStore taskStore = serviceProvider.GetKeyedService<ITaskStore>(agentName) ?? new InMemoryTaskStore();
 
         // Wrap the task store with isolation key scoping, same as the session store.
         if (taskStore is not IsolationKeyScopedTaskStore)
         {
-            taskStore = new IsolationKeyScopedTaskStore(taskStore, isolationKeyProvider, strict: isolationKeyProvider != null);
+            taskStore = new IsolationKeyScopedTaskStore(taskStore, isolationKeyProvider, strict: requireIsolationKey);
         }
 
         return new A2AServer(

@@ -340,6 +340,46 @@ public sealed class A2ARequestScopedAgentTests
     }
 
     [Fact]
+    public async Task MapA2AHttpJson_WithAgentSelectorAndScopedIsolationKeyProvider_IsolatesTasksPerRequestAsync()
+    {
+        // Arrange
+        await using WebApplication app = await StartAsync(
+            services => services.AddScoped<AgentIsolationKeyProvider, RequestIsolationKeyProvider>(),
+            endpoints =>
+            {
+                endpoints.Use((context, next) =>
+                {
+                    var provider = (RequestIsolationKeyProvider)context.RequestServices.GetRequiredService<AgentIsolationKeyProvider>();
+                    provider.Key = context.Request.Headers["X-User"].ToString();
+                    return next(context);
+                });
+                endpoints.MapA2AHttpJson("/a2a", _ => new TurnCountingAgent("tasks"), options => options.AgentRunMode = AgentRunMode.ReturnTask);
+            });
+        using HttpClient aliceHttpClient = CreateUserHttpClient(app, "alice");
+        using HttpClient bobHttpClient = CreateUserHttpClient(app, "bob");
+        using A2AHttpJsonClient alice = new(new Uri(aliceHttpClient.BaseAddress!, "/a2a"), aliceHttpClient);
+        using A2AHttpJsonClient bob = new(new Uri(bobHttpClient.BaseAddress!, "/a2a"), bobHttpClient);
+
+        // Act
+        SendMessageResponse sent = await alice.SendMessageAsync(CreateRequest("ctx-1"));
+        List<StreamResponse> streamed = [];
+        await foreach (StreamResponse response in alice.SendStreamingMessageAsync(CreateRequest("ctx-2")))
+        {
+            streamed.Add(response);
+        }
+
+        string streamedTaskId = streamed.Select(response => response.Task?.Id ?? response.StatusUpdate?.TaskId).First(id => id is not null)!;
+        AgentTask sentTask = await alice.GetTaskAsync(new GetTaskRequest { Id = sent.Task!.Id });
+        AgentTask streamedTask = await alice.GetTaskAsync(new GetTaskRequest { Id = streamedTaskId });
+        A2AException otherUserError = await Assert.ThrowsAsync<A2AException>(() => bob.GetTaskAsync(new GetTaskRequest { Id = sent.Task.Id }));
+
+        // Assert
+        Assert.Equal(TaskState.Completed, sentTask.Status.State);
+        Assert.Equal(TaskState.Completed, streamedTask.Status.State);
+        Assert.Equal(A2AErrorCode.TaskNotFound, otherUserError.ErrorCode);
+    }
+
+    [Fact]
     public void MapA2AHttpJson_WithNullAgentSelector_ThrowsArgumentNullException()
     {
         // Arrange
@@ -391,6 +431,21 @@ public sealed class A2ARequestScopedAgentTests
         await foreach (StreamResponse _ in responses)
         {
         }
+    }
+
+    private static HttpClient CreateUserHttpClient(WebApplication app, string user)
+    {
+        HttpClient httpClient = app.GetTestClient();
+        httpClient.DefaultRequestHeaders.Add("X-User", user);
+        return httpClient;
+    }
+
+    [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
+    private sealed class RequestIsolationKeyProvider : AgentIsolationKeyProvider
+    {
+        public string? Key { get; set; }
+
+        public override ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default) => new(this.Key);
     }
 
     private sealed class DisconnectProbe

@@ -282,7 +282,17 @@ public static class A2AEndpointRouteBuilderExtensions
             }
 
             requestHandler.Select(agent, httpContext.RequestServices);
-            return await next(invocationContext).ConfigureAwait(false);
+            object? result = await next(invocationContext).ConfigureAwait(false);
+
+            // Streaming results enumerate the request handler when they execute, which would otherwise happen after
+            // this filter returns and outside the asynchronous flow that carries the selection.
+            if (result is IResult httpResult)
+            {
+                await httpResult.ExecuteAsync(httpContext).ConfigureAwait(false);
+                return Results.Empty;
+            }
+
+            return result;
         });
     }
 
