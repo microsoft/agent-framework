@@ -62,6 +62,10 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     }
 
     /// <inheritdoc/>
+    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
+        this._state.RestoreAsync(context, cancellationToken);
+
+    /// <inheritdoc/>
     [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {

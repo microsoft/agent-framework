@@ -17,6 +17,61 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Kit;
 public sealed class RootExecutorTests
 {
     [Fact]
+    public async Task ResumeAsync_RestoresFormulaValuesAfterDisposalAsync()
+    {
+        // Arrange
+        TestRootExecutor executor = new(new(new MockAgentProvider().Object)) { AssignedValue = "assigned" };
+        ReadValueExecutor reader = new(executor.Session);
+        Workflow workflow = new WorkflowBuilder(executor).AddEdge(executor, reader).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        List<CheckpointInfo> savedCheckpoints = [];
+        await using (StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "first", checkpoints))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+                {
+                    savedCheckpoints.Add(checkpoint);
+                }
+            }
+        }
+        Assert.True(savedCheckpoints.Count >= 2);
+        Assert.Equal("assigned", reader.Value);
+        reader.Value = null;
+
+        // Act
+        await using (StreamingRun run = await InProcessExecution.ResumeStreamingAsync(workflow, savedCheckpoints[^2], checkpoints))
+        {
+            await foreach (WorkflowEvent _ in run.WatchStreamAsync())
+            {
+            }
+        }
+
+        // Assert
+        Assert.Equal("assigned", reader.Value);
+    }
+
+    [Fact]
+    public async Task ResetAsync_RestoresNestedConversationIdAsync()
+    {
+        // Arrange
+        TestRootExecutor executor = new(new(new MockAgentProvider().Object));
+        await executor.HandleAsync("first", new Mock<IWorkflowContext>().Object, CancellationToken.None);
+        RecordValue activeConversation = Assert.IsAssignableFrom<RecordValue>(
+            executor.Session.State.Get(SystemScope.Names.Conversation, VariableScopeNames.System));
+        Assert.IsType<StringValue>(activeConversation.GetField("Id"));
+
+        // Act
+        await executor.ResetAsync();
+
+        // Assert
+        RecordValue initialConversation = Assert.IsAssignableFrom<RecordValue>(
+            executor.Session.State.Get(SystemScope.Names.Conversation, VariableScopeNames.System));
+        Assert.IsType<BlankValue>(initialConversation.GetField("Id"));
+        Assert.IsType<BlankValue>(executor.Session.State.Get(SystemScope.Names.ConversationId, VariableScopeNames.System));
+    }
+
+    [Fact]
     public async Task HandleAsync_WithoutResetReusesConversationAsync()
     {
         // Arrange
@@ -134,10 +189,25 @@ public sealed class RootExecutorTests
 
     private sealed class TestRootExecutor(DeclarativeWorkflowOptions options) : RootExecutor<string>("test_root", options, inputTransform: null)
     {
+        public string? AssignedValue { get; init; }
+
         public ValueTask InitializeAsync(IWorkflowContext context, params string[] variableNames) =>
             this.InitializeEnvironmentAsync(context, variableNames);
 
         protected override ValueTask ExecuteAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-            default;
+            this.AssignedValue is null
+                ? default
+                : context.QueueStateUpdateAsync("TestValue", this.AssignedValue, VariableScopeNames.Local, cancellationToken);
+    }
+
+    private sealed class ReadValueExecutor(FormulaSession session) : ActionExecutor("read_value", session)
+    {
+        public string? Value { get; set; }
+
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            this.Value = await context.EvaluateValueAsync<string>("Local.TestValue", cancellationToken);
+            return this.Value;
+        }
     }
 }

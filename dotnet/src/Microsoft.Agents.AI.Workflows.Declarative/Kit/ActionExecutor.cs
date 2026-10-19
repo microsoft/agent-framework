@@ -73,6 +73,10 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettable
     }
 
     /// <inheritdoc/>
+    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
+        this._session.State.RestoreAsync(context, cancellationToken);
+
+    /// <inheritdoc/>
     [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken)
     {
