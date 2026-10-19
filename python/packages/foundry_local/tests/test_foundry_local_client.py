@@ -30,6 +30,7 @@ from agent_framework import (
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from agent_framework.foundry import FoundryLocalChatOptions, FoundryLocalClient
+from agent_framework_openai import RawOpenAIChatCompletionClient
 from foundry_local_sdk import Configuration, DeviceType, IModel
 from foundry_local_sdk.catalog import CatalogType
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
@@ -1101,8 +1102,31 @@ async def test_foundry_local_invalid_decoder_metadata(
     assert not requests
 
 
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {"answer": {"type": "integer"}}},
+        {"properties": {"answer": {"type": "integer"}}},
+        {"$defs": {"Answer": {"type": "integer"}}, "$ref": "#/$defs/Answer"},
+    ],
+)
+def test_foundry_local_raw_schema_from_older_openai_adapter(
+    mock_foundry_local_manager: MagicMock, schema: dict[str, Any]
+) -> None:
+    client = FoundryLocalClient(model="test-model-id")
+    original_schema = deepcopy(schema)
+    # agent-framework-openai 1.6.0 passes raw schema dictionaries through unchanged.
+    with patch.object(RawOpenAIChatCompletionClient, "_prepare_options", return_value={"response_format": schema}):
+        prepared = client._prepare_options([], {"response_format": schema})
+    assert prepared["response_format"] == {"type": "json_schema", "json_schema": schema}
+    assert schema == original_schema
+
+
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("format_kind", ["pydantic", "schema", "native_schema", "json_object"])
+@pytest.mark.parametrize(
+    "format_kind",
+    ["pydantic", "schema", "schema_no_type", "schema_ref", "native_schema", "named_schema", "json_object"],
+)
 async def test_foundry_local_structured_responses(
     mock_foundry_local_manager: MagicMock, stream: bool, format_kind: str
 ) -> None:
@@ -1120,13 +1144,19 @@ async def test_foundry_local_structured_responses(
         "properties": {"answer": {"type": "integer"}},
         "required": ["answer"],
     }
+    if format_kind == "schema_no_type":
+        schema.pop("type")
+    elif format_kind == "schema_ref":
+        schema = {"$defs": {"Answer": schema}, "$ref": "#/$defs/Answer"}
     options: FoundryLocalChatOptions[Answer] = {
         "response_format": Answer
         if format_kind == "pydantic"
         else schema
-        if format_kind == "schema"
+        if format_kind in ("schema", "schema_no_type", "schema_ref")
         else {"type": "json_schema", "json_schema": schema}
         if format_kind == "native_schema"
+        else {"type": "json_schema", "json_schema": {"name": "Answer", "schema": schema, "strict": True}}
+        if format_kind == "named_schema"
         else {"type": "json_object"}
     }
     original_options = deepcopy(options)
@@ -1145,7 +1175,11 @@ async def test_foundry_local_structured_responses(
     if format_kind != "json_object":
         native_schema = payloads[0]["response_format"]["json_schema"]
         assert isinstance(native_schema, dict)
-        assert native_schema["type"] == "object"
+        if format_kind == "schema_ref":
+            assert native_schema["$ref"] == "#/$defs/Answer"
+            native_schema = native_schema["$defs"]["Answer"]
+        if format_kind != "schema_no_type":
+            assert native_schema["type"] == "object"
         assert native_schema["properties"]["answer"]["type"] == "integer"
     assert options == original_options
 
