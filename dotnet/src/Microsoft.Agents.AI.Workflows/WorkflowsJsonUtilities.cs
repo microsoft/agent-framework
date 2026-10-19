@@ -91,6 +91,7 @@ internal static partial class WorkflowsJsonUtilities
 
     // Message Types
     [JsonSerializable(typeof(ChatMessage))]
+    [JsonSerializable(typeof(AIAgentHostResponse))]
     [JsonSerializable(typeof(ExternalRequest))]
     [JsonSerializable(typeof(ExternalResponse))]
     [JsonSerializable(typeof(TurnToken))]
