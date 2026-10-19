@@ -77,6 +77,9 @@ public static class A2AEndpointRouteBuilderExtensions
     /// task isolation remains necessary without session persistence. For claims-based isolation, register
     /// <c>AddHttpContextAccessor()</c> and <c>UseClaimsBasedAgentIsolation(...)</c> from
     /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>, using a claim that uniquely identifies the caller.
+    /// The <see cref="AgentIsolationKeyProvider"/> is resolved from <see cref="HttpContext.RequestServices"/> once
+    /// per request, so it can be registered with any lifetime, and its key is reused by the operations that the
+    /// request continues in the background.
     /// Protect each enabled protocol binding, not just one of the HTTP+JSON and JSON-RPC endpoints.
     /// </remarks>
     public static IEndpointConventionBuilder MapA2AHttpJson(this IEndpointRouteBuilder endpoints, string agentName, string path)
@@ -91,6 +94,7 @@ public static class A2AEndpointRouteBuilderExtensions
                 $"Call services.AddA2AServer(\"{agentName}\") or agentBuilder.AddA2AServer() during service registration to register one.");
 
         IEndpointConventionBuilder endpoint = endpoints.MapHttpA2A(a2aServer, path);
+        AddRequestFlow(endpoint);
         MarkFeatureUsed();
         return endpoint;
     }
@@ -213,6 +217,7 @@ public static class A2AEndpointRouteBuilderExtensions
                 $"Call services.AddA2AServer(\"{agentName}\") or agentBuilder.AddA2AServer() during service registration to register one.");
 
         IEndpointConventionBuilder endpoint = endpoints.MapA2A(a2aServer, path);
+        AddRequestFlow(endpoint);
         MarkFeatureUsed();
         return endpoint;
     }
@@ -271,21 +276,45 @@ public static class A2AEndpointRouteBuilderExtensions
         SelectedAgentA2ARequestHandler requestHandler,
         Func<HttpContext, AIAgent?> agentSelector)
     {
-        // The A2A endpoints call the request handler without request context, so select the agent for the
+        AddRequestFlow(endpoint, httpContext =>
+        {
+            if (agentSelector(httpContext) is not { } agent)
+            {
+                return false;
+            }
+
+            requestHandler.Select(agent, httpContext.RequestServices);
+            return true;
+        });
+    }
+
+    /// <summary>
+    /// Runs the A2A endpoints in an asynchronous flow that carries the request's isolation key and, when
+    /// <paramref name="selectAgent"/> is specified, the agent selected for the request.
+    /// </summary>
+    /// <param name="endpoint">The A2A endpoints.</param>
+    /// <param name="selectAgent">
+    /// An optional delegate that selects the agent for the request, returning <see langword="false"/> when no agent matches.
+    /// </param>
+    private static void AddRequestFlow(IEndpointConventionBuilder endpoint, Func<HttpContext, bool>? selectAgent = null)
+    {
+        // The A2A endpoints call the request handler without request context, so record the request state for the
         // asynchronous flow of the request before the endpoint runs.
         endpoint.AddEndpointFilter(async (invocationContext, next) =>
         {
             HttpContext httpContext = invocationContext.HttpContext;
-            if (agentSelector(httpContext) is not { } agent)
+            if (selectAgent?.Invoke(httpContext) == false)
             {
                 return Results.NotFound();
             }
 
-            requestHandler.Select(agent, httpContext.RequestServices);
+            // A2A servers are shared by all requests, so resolve the key from the request services while they are
+            // alive. Operations that continue in the background reuse it.
+            A2ARequestIsolation.Current = await A2ARequestIsolation.ResolveAsync(httpContext.RequestServices, httpContext.RequestAborted).ConfigureAwait(false);
             object? result = await next(invocationContext).ConfigureAwait(false);
 
             // Streaming results enumerate the request handler when they execute, which would otherwise happen after
-            // this filter returns and outside the asynchronous flow that carries the selection.
+            // this filter returns and outside the asynchronous flow that carries the request state.
             if (result is IResult httpResult)
             {
                 await httpResult.ExecuteAsync(httpContext).ConfigureAwait(false);

@@ -220,15 +220,17 @@ public static class A2AServerServiceCollectionExtensions
     {
         // The server owns task state shared across requests, while the agent and its session services are
         // resolved for each operation so that scoped and transient registrations keep their lifetimes.
+        var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+        var isolationKeyProvider = new A2ARequestIsolationKeyProvider(scopeFactory);
         var agentHandler = new ScopedA2AAgentHandler(
-            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            scopeFactory,
             agentName,
             agent,
             sessionStorageIdentity,
+            isolationKeyProvider,
             options?.AgentRunMode ?? AgentRunMode.ReturnMessage);
 
-        var isolationKeyProvider = serviceProvider.GetService<AgentIsolationKeyProvider>();
-        return CreateA2AServer(serviceProvider, agentName, agentHandler, options, isolationKeyProvider, requireIsolationKey: isolationKeyProvider != null);
+        return CreateA2AServer(serviceProvider, agentName, agentHandler, isolationKeyProvider, options);
     }
 
     /// <summary>
@@ -237,29 +239,24 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="serviceProvider">The application service provider.</param>
     /// <param name="agentName">The name that keys the agent's hosted services.</param>
     /// <param name="agentHandler">The handler that executes A2A operations.</param>
+    /// <param name="isolationKeyProvider">The provider that supplies the isolation key of the current request.</param>
     /// <param name="options">The optional registration options.</param>
-    /// <param name="isolationKeyProvider">
-    /// The provider that partitions the default task store, or <see langword="null"/> when tasks are not isolated.
-    /// </param>
-    /// <param name="requireIsolationKey">
-    /// <see langword="true"/> to reject task store operations for which <paramref name="isolationKeyProvider"/> returns no key.
-    /// </param>
     /// <returns>The created server.</returns>
     internal static A2AServer CreateA2AServer(
         IServiceProvider serviceProvider,
         string agentName,
         IAgentHandler agentHandler,
-        A2AServerRegistrationOptions? options,
-        AgentIsolationKeyProvider? isolationKeyProvider,
-        bool requireIsolationKey)
+        A2ARequestIsolationKeyProvider isolationKeyProvider,
+        A2AServerRegistrationOptions? options)
     {
         var loggerFactory = serviceProvider.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
         ITaskStore taskStore = serviceProvider.GetKeyedService<ITaskStore>(agentName) ?? new InMemoryTaskStore();
 
-        // Wrap the task store with isolation key scoping, same as the session store.
+        // Wrap the task store with isolation key scoping, same as the session store. The provider enforces
+        // that a key is supplied when an AgentIsolationKeyProvider is registered.
         if (taskStore is not IsolationKeyScopedTaskStore)
         {
-            taskStore = new IsolationKeyScopedTaskStore(taskStore, isolationKeyProvider, strict: requireIsolationKey);
+            taskStore = new IsolationKeyScopedTaskStore(taskStore, isolationKeyProvider, strict: false);
         }
 
         return new A2AServer(
@@ -279,17 +276,23 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="sessionStorageIdentity">
     /// The stable logical identity that partitions persisted sessions, or <see langword="null"/> to use the agent instance identity.
     /// </param>
+    /// <param name="isolationKeyProvider">The provider that supplies the isolation key of the current request.</param>
     /// <returns>The hosting wrapper for <paramref name="agent"/>.</returns>
-    internal static AIHostAgent CreateHostAgent(IServiceProvider services, AIAgent agent, string agentName, string? sessionStorageIdentity)
+    internal static AIHostAgent CreateHostAgent(
+        IServiceProvider services,
+        AIAgent agent,
+        string agentName,
+        string? sessionStorageIdentity,
+        A2ARequestIsolationKeyProvider isolationKeyProvider)
     {
-        var isolationKeyProvider = services.GetService<AgentIsolationKeyProvider>();
         var agentSessionStore = services.GetKeyedService<AgentSessionStore>(agentName);
 
-        // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
+        // Ensure that we have an IsolationKeyScopedAgentSessionStore registered. The provider enforces that a key
+        // is supplied when an AgentIsolationKeyProvider is registered.
         if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
         {
             agentSessionStore ??= new NoopAgentSessionStore();
-            agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
+            agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = false });
         }
 
         return new AIHostAgent(agent, agentSessionStore, sessionStorageIdentity);

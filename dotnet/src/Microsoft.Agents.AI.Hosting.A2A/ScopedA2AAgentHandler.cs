@@ -25,6 +25,7 @@ internal sealed class ScopedA2AAgentHandler : IAgentHandler
     private readonly string _agentName;
     private readonly AIAgent? _agent;
     private readonly string? _sessionStorageIdentity;
+    private readonly A2ARequestIsolationKeyProvider _isolationKeyProvider;
     private readonly AgentRunMode _runMode;
 
     /// <summary>
@@ -36,13 +37,21 @@ internal sealed class ScopedA2AAgentHandler : IAgentHandler
     /// <param name="sessionStorageIdentity">
     /// The stable logical identity that partitions persisted sessions, or <see langword="null"/> to use the agent instance identity.
     /// </param>
+    /// <param name="isolationKeyProvider">The provider that supplies the isolation key of the request that performs each operation.</param>
     /// <param name="runMode">Controls which A2A artifact the agent response is returned as.</param>
-    public ScopedA2AAgentHandler(IServiceScopeFactory scopeFactory, string agentName, AIAgent? agent, string? sessionStorageIdentity, AgentRunMode runMode)
+    public ScopedA2AAgentHandler(
+        IServiceScopeFactory scopeFactory,
+        string agentName,
+        AIAgent? agent,
+        string? sessionStorageIdentity,
+        A2ARequestIsolationKeyProvider isolationKeyProvider,
+        AgentRunMode runMode)
     {
         this._scopeFactory = scopeFactory;
         this._agentName = agentName;
         this._agent = agent;
         this._sessionStorageIdentity = sessionStorageIdentity;
+        this._isolationKeyProvider = isolationKeyProvider;
         this._runMode = runMode;
     }
 
@@ -78,7 +87,7 @@ internal sealed class ScopedA2AAgentHandler : IAgentHandler
         }
 
         AIAgent agent = this._agent ?? services.GetRequiredKeyedService<AIAgent>(this._agentName);
-        AIHostAgent hostAgent = A2AServerServiceCollectionExtensions.CreateHostAgent(services, agent, this._agentName, this._sessionStorageIdentity);
+        AIHostAgent hostAgent = A2AServerServiceCollectionExtensions.CreateHostAgent(services, agent, this._agentName, this._sessionStorageIdentity, this._isolationKeyProvider);
         return new A2AAgentHandler(hostAgent, this._runMode);
     }
 }

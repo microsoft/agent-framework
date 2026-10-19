@@ -27,6 +27,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
     private readonly AsyncLocal<Selection?> _selection = new();
     private readonly ConcurrentDictionary<string, SelectedAgentServer> _servers = new(StringComparer.Ordinal);
     private readonly IServiceProvider _applicationServices;
+    private readonly A2ARequestIsolationKeyProvider _isolationKeyProvider;
     private readonly A2AServerRegistrationOptions? _options;
 
     /// <summary>
@@ -37,6 +38,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
     public SelectedAgentA2ARequestHandler(IServiceProvider applicationServices, A2AServerRegistrationOptions? options)
     {
         this._applicationServices = applicationServices;
+        this._isolationKeyProvider = new A2ARequestIsolationKeyProvider(applicationServices.GetRequiredService<IServiceScopeFactory>());
         this._options = options;
     }
 
@@ -44,7 +46,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
     /// Makes <paramref name="agent"/> the target of the A2A operations dispatched in the current asynchronous flow.
     /// </summary>
     /// <param name="agent">The agent selected for the request.</param>
-    /// <param name="requestServices">The request services that own the agent's session and isolation services.</param>
+    /// <param name="requestServices">The request services that own the agent's session services.</param>
     public void Select(AIAgent agent, IServiceProvider requestServices)
     {
         string agentName = HostedAgentResolution.GetSelectedAgentName(agent);
@@ -57,7 +59,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
             agent,
             agentName,
             requestServices,
-            requestServices.GetService<AgentIsolationKeyProvider>(),
+            this._isolationKeyProvider,
             server,
             this._options?.AgentRunMode ?? AgentRunMode.ReturnMessage);
     }
@@ -149,17 +151,15 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
         AIAgent agent,
         string agentName,
         IServiceProvider requestServices,
-        AgentIsolationKeyProvider? isolationKeyProvider,
+        A2ARequestIsolationKeyProvider isolationKeyProvider,
         SelectedAgentServer server,
         AgentRunMode runMode)
     {
         public A2AServer A2AServer => server.A2AServer;
 
-        public AgentIsolationKeyProvider? IsolationKeyProvider => isolationKeyProvider;
-
         public RequestBoundAgentHandler BindAgent(Message message)
         {
-            AIHostAgent hostAgent = A2AServerServiceCollectionExtensions.CreateHostAgent(requestServices, agent, agentName, sessionStorageIdentity: agentName);
+            AIHostAgent hostAgent = A2AServerServiceCollectionExtensions.CreateHostAgent(requestServices, agent, agentName, sessionStorageIdentity: agentName, isolationKeyProvider);
             RequestBoundAgentHandler handler = new(new A2AAgentHandler(hostAgent, runMode, allowReturnImmediately: false));
             server.Bind(message, handler);
             return handler;
@@ -225,15 +225,12 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
 
         public SelectedAgentServer(SelectedAgentA2ARequestHandler owner, string agentName)
         {
-            // The server is shared by every request that selects the agent name, so its task store must not capture
-            // request-scoped isolation services. Each operation uses the provider of the request that performs it.
             this.A2AServer = A2AServerServiceCollectionExtensions.CreateA2AServer(
                 owner._applicationServices,
                 agentName,
                 this,
-                owner._options,
-                new SelectedRequestIsolationKeyProvider(owner),
-                requireIsolationKey: false);
+                owner._isolationKeyProvider,
+                owner._options);
         }
 
         public A2AServer A2AServer { get; }
@@ -252,26 +249,5 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
 
         public Task CancelAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
             => A2AAgentHandler.CancelTaskAsync(context, eventQueue, cancellationToken);
-    }
-
-    /// <summary>
-    /// Supplies the isolation key of the request that performs the current operation.
-    /// </summary>
-    /// <remarks>
-    /// A key is required only when the request services provide an <see cref="AgentIsolationKeyProvider"/>, matching
-    /// the strict isolation applied to the session store.
-    /// </remarks>
-    private sealed class SelectedRequestIsolationKeyProvider(SelectedAgentA2ARequestHandler owner) : AgentIsolationKeyProvider
-    {
-        public override async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default)
-        {
-            if (owner.GetSelection().IsolationKeyProvider is not { } provider)
-            {
-                return null;
-            }
-
-            return await provider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("Agent isolation key is required but was not provided by the configured AgentIsolationKeyProvider.");
-        }
     }
 }

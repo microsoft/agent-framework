@@ -340,6 +340,48 @@ public sealed class A2ARequestScopedAgentTests
     }
 
     [Fact]
+    public async Task MapA2AHttpJson_WithRegisteredServerAndScopedIsolationKeyProvider_IsolatesTasksAndSessionsPerRequestAsync()
+    {
+        // Arrange
+        await using WebApplication app = await StartAsync(
+            services =>
+            {
+                services.AddScoped<AgentIsolationKeyProvider, RequestIsolationKeyProvider>();
+                services.AddAIAgent("assistant", (_, name) => new TurnCountingAgent(name), ServiceLifetime.Scoped)
+                    .WithInMemorySessionStore(withIsolation: false);
+                services.AddA2AServer("assistant", options => options.AgentRunMode = AgentRunMode.ReturnTask);
+            },
+            endpoints =>
+            {
+                UseRequestIsolationKeyFromHeader(endpoints);
+                endpoints.MapA2AHttpJson("assistant", "/a2a");
+            });
+        using HttpClient aliceHttpClient = CreateUserHttpClient(app, "alice");
+        using HttpClient bobHttpClient = CreateUserHttpClient(app, "bob");
+        using A2AHttpJsonClient alice = new(new Uri(aliceHttpClient.BaseAddress!, "/a2a"), aliceHttpClient);
+        using A2AHttpJsonClient bob = new(new Uri(bobHttpClient.BaseAddress!, "/a2a"), bobHttpClient);
+
+        // Act
+        SendMessageResponse aliceFirst = await alice.SendMessageAsync(CreateRequest("ctx-1"));
+        List<StreamResponse> aliceStreamed = [];
+        await foreach (StreamResponse response in alice.SendStreamingMessageAsync(CreateRequest("ctx-1")))
+        {
+            aliceStreamed.Add(response);
+        }
+
+        SendMessageResponse bobFirst = await bob.SendMessageAsync(CreateRequest("ctx-1"));
+        string aliceStreamedTaskId = aliceStreamed.Select(response => response.Task?.Id ?? response.StatusUpdate?.TaskId).First(id => id is not null)!;
+        AgentTask aliceStreamedTask = await alice.GetTaskAsync(new GetTaskRequest { Id = aliceStreamedTaskId });
+        A2AException otherUserError = await Assert.ThrowsAsync<A2AException>(() => bob.GetTaskAsync(new GetTaskRequest { Id = aliceFirst.Task!.Id }));
+
+        // Assert
+        Assert.Equal("assistant turn 1", GetArtifactText(aliceFirst.Task!));
+        Assert.Equal("assistant turn 2", GetArtifactText(aliceStreamedTask));
+        Assert.Equal("assistant turn 1", GetArtifactText(bobFirst.Task!));
+        Assert.Equal(A2AErrorCode.TaskNotFound, otherUserError.ErrorCode);
+    }
+
+    [Fact]
     public async Task MapA2AHttpJson_WithAgentSelectorAndScopedIsolationKeyProvider_IsolatesTasksPerRequestAsync()
     {
         // Arrange
@@ -347,12 +389,7 @@ public sealed class A2ARequestScopedAgentTests
             services => services.AddScoped<AgentIsolationKeyProvider, RequestIsolationKeyProvider>(),
             endpoints =>
             {
-                endpoints.Use((context, next) =>
-                {
-                    var provider = (RequestIsolationKeyProvider)context.RequestServices.GetRequiredService<AgentIsolationKeyProvider>();
-                    provider.Key = context.Request.Headers["X-User"].ToString();
-                    return next(context);
-                });
+                UseRequestIsolationKeyFromHeader(endpoints);
                 endpoints.MapA2AHttpJson("/a2a", _ => new TurnCountingAgent("tasks"), options => options.AgentRunMode = AgentRunMode.ReturnTask);
             });
         using HttpClient aliceHttpClient = CreateUserHttpClient(app, "alice");
@@ -439,6 +476,17 @@ public sealed class A2ARequestScopedAgentTests
         httpClient.DefaultRequestHeaders.Add("X-User", user);
         return httpClient;
     }
+
+    private static void UseRequestIsolationKeyFromHeader(WebApplication app) =>
+        app.Use((context, next) =>
+        {
+            var provider = (RequestIsolationKeyProvider)context.RequestServices.GetRequiredService<AgentIsolationKeyProvider>();
+            provider.Key = context.Request.Headers["X-User"].ToString();
+            return next(context);
+        });
+
+    private static string GetArtifactText(AgentTask task) =>
+        string.Concat(task.Artifacts!.SelectMany(artifact => artifact.Parts).Select(part => part.Text));
 
     [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
     private sealed class RequestIsolationKeyProvider : AgentIsolationKeyProvider
