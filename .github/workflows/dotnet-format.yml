@@ -43,9 +43,10 @@ jobs:
         id: changed-files
         if: github.event_name == 'pull_request'
         shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch origin "$GITHUB_BASE_REF"
-          diff=$(git diff --name-only --diff-filter=AM "origin/$GITHUB_BASE_REF..HEAD")
+          diff=$(git diff --name-only --diff-filter=AM "$BASE_SHA..HEAD")
           if [[ "$diff" == *[[:blank:]]* || "$diff" == *'"'* ]]; then
             echo "Changed paths cannot be safely space-delimited; falling back to the whole solution." >&2
             exit 1
