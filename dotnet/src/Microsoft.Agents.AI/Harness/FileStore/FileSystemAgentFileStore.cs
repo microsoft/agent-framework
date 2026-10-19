@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.FileSystemGlobbing;
@@ -168,52 +169,64 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         bool recursive = false,
         CancellationToken cancellationToken = default)
     {
-        string fullDir = this.ResolveSafeDirectoryPath(directory);
+        Regex regex = CreateSearchRegex(regexPattern);
+        using var timeout = new MultiStepOperationTimeout(SearchTimeout, cancellationToken);
 
-        if (!Directory.Exists(fullDir))
+        try
         {
-            return [];
-        }
+            string fullDir = this.ResolveSafeDirectoryPath(directory);
+            timeout.ThrowIfCancellationRequested();
 
-        var regex = new FileSearchRegexWithTimeout(regexPattern);
-        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
-        var results = new List<FileSearchResult>();
-
-        foreach (string filePath in EnumerateFiles(fullDir, recursive))
-        {
-            regex.ThrowIfExpired(cancellationToken);
-
-            // The file path relative to the search directory, using forward slashes.
-            string relativeName = GetRelativeStorePath(fullDir, filePath);
-
-            // Apply the optional glob filter on the relative path.
-            if (!StorePaths.MatchesGlob(relativeName, matcher))
+            if (!Directory.Exists(fullDir))
             {
-                continue;
+                timeout.ThrowIfCancellationRequested();
+                return [];
             }
 
-            // Read file content.
+            Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
+            var results = new List<FileSearchResult>();
+
+            foreach (string filePath in EnumerateFiles(fullDir, recursive, timeout.Token))
+            {
+                timeout.ThrowIfCancellationRequested();
+
+                // The file path relative to the search directory, using forward slashes.
+                string relativeName = GetRelativeStorePath(fullDir, filePath);
+
+                // Apply the optional glob filter on the relative path.
+                if (!StorePaths.MatchesGlob(relativeName, matcher))
+                {
+                    continue;
+                }
+
+                // Read file content.
 #if NET8_0_OR_GREATER
-            string fileContent = await File.ReadAllTextAsync(filePath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+                string fileContent = await timeout.RunStepAsync(
+                    token => File.ReadAllTextAsync(filePath, Encoding.UTF8, token)).ConfigureAwait(false);
 #else
-            string fileContent;
-            using (var reader = new StreamReader(filePath, Encoding.UTF8))
-            {
-                fileContent = await reader.ReadToEndAsync().ConfigureAwait(false);
-            }
+                string fileContent = await timeout.RunStepAsync(async _ =>
+                {
+                    using var reader = new StreamReader(filePath, Encoding.UTF8);
+                    return await reader.ReadToEndAsync().ConfigureAwait(false);
+                }).ConfigureAwait(false);
 #endif
 
-            // Number the lines through the base class's published primitive, so this store
-            // and the line editor cannot drift apart.
-            FileSearchResult? result = ScanContent(relativeName, fileContent, regex, cancellationToken);
-            if (result is not null)
-            {
-                results.Add(result);
+                // Number the lines through the base class's published primitive, so this store
+                // and the line editor cannot drift apart.
+                FileSearchResult? result = timeout.RunStep(token => ScanContent(relativeName, fileContent, regex, token));
+                if (result is not null)
+                {
+                    results.Add(result);
+                }
             }
-        }
 
-        regex.ThrowIfExpired(cancellationToken);
-        return results;
+            timeout.ThrowIfCancellationRequested();
+            return results;
+        }
+        catch (TimeoutException) when (timeout.Token.IsCancellationRequested)
+        {
+            throw CreateSearchTimeoutException(regexPattern);
+        }
     }
 
     /// <summary>
@@ -221,10 +234,16 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     /// <paramref name="recursive"/> is <see langword="true"/>), skipping symlinks/reparse points for both
     /// files and directories to prevent reading outside the root.
     /// </summary>
-    private static IEnumerable<string> EnumerateFiles(string directory, bool recursive)
+    private static IEnumerable<string> EnumerateFiles(
+        string directory,
+        bool recursive,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         foreach (string filePath in Directory.EnumerateFiles(directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Skip files that are symlinks/reparse points.
             if ((File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0)
             {
@@ -234,6 +253,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
             yield return filePath;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         if (!recursive)
         {
             yield break;
@@ -241,13 +261,15 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
 
         foreach (string subDir in Directory.EnumerateDirectories(directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Skip symlinked/reparse-point directories so recursion cannot escape the root.
             if ((File.GetAttributes(subDir) & FileAttributes.ReparsePoint) != 0)
             {
                 continue;
             }
 
-            foreach (string filePath in EnumerateFiles(subDir, recursive: true))
+            foreach (string filePath in EnumerateFiles(subDir, recursive: true, cancellationToken))
             {
                 yield return filePath;
             }

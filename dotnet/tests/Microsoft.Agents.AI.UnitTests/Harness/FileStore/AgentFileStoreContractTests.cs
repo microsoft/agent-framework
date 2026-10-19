@@ -84,6 +84,25 @@ public class AgentFileStoreContractTests
         }
     }
 
+    private sealed class DeadlineTokenStore : ContentOnlyStore
+    {
+        public bool DiscoveryTokenCanBeCanceled { get; private set; }
+
+        public bool ReadTokenCanBeCanceled { get; private set; }
+
+        protected override Task<IReadOnlyList<string>> FindMatchingFilesAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+        {
+            this.DiscoveryTokenCanBeCanceled = cancellationToken.CanBeCanceled;
+            return Task.FromResult<IReadOnlyList<string>>(["f.txt"]);
+        }
+
+        public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
+        {
+            this.ReadTokenCanBeCanceled = cancellationToken.CanBeCanceled;
+            return base.ReadAsync(path, cancellationToken);
+        }
+    }
+
     [Fact]
     public void SplitLines_PublishesTheEditorsRule()
     {
@@ -268,20 +287,19 @@ public class AgentFileStoreContractTests
     }
 
     [Fact]
-    public void BoundedSearch_ThrowsWhenTheWholeSearchBudgetExpires()
+    public async Task BaseSearch_PassesDeadlineTokenToDiscoveryAndReadAsync()
     {
         // Arrange
-        var elapsed = new Queue<TimeSpan>(
-        [
-            TimeSpan.Zero,
-            TimeSpan.FromSeconds(6),
-            TimeSpan.FromSeconds(11),
-        ]);
-        var regex = new FileSearchRegexWithTimeout(Needle, TimeSpan.FromSeconds(10), () => elapsed.Dequeue());
+        var store = new DeadlineTokenStore();
+        await store.WriteAsync("f.txt", Needle);
 
-        // Act + Assert
-        Assert.Throws<RegexMatchTimeoutException>(
-            () => AgentFileStore.ScanContent("f.txt", $"{Needle}\n{Needle}", regex, CancellationToken.None));
+        // Act
+        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle);
+
+        // Assert
+        Assert.Single(results);
+        Assert.True(store.DiscoveryTokenCanBeCanceled);
+        Assert.True(store.ReadTokenCanBeCanceled);
     }
 
     [Fact]
@@ -292,5 +310,24 @@ public class AgentFileStoreContractTests
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => AgentFileStore.ScanContent(null!, Needle, regex));
+    }
+
+    [Fact]
+    public void ScanContent_NullRegex_Throws()
+    {
+        // Act + Assert
+        Assert.Throws<ArgumentNullException>(() => AgentFileStore.ScanContent("f.txt", Needle, null!));
+    }
+
+    [Fact]
+    public void ScanContent_PreCancelledToken_Throws()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act + Assert
+        Assert.ThrowsAny<OperationCanceledException>(
+            () => AgentFileStore.ScanContent("f.txt", Needle, new Regex(Needle), cts.Token));
     }
 }

@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.FileSystemGlobbing;
@@ -105,53 +106,61 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     /// <inheritdoc />
     public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
-        // Normalize the directory prefix for path matching.
-        string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
-        if (prefix.Length > 0 && !prefix.EndsWith("/", StringComparison.Ordinal))
+        Regex regex = CreateSearchRegex(regexPattern);
+        using var timeout = new MultiStepOperationTimeout(SearchTimeout, cancellationToken);
+
+        try
         {
-            prefix += "/";
+            // Normalize the directory prefix for path matching.
+            string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
+            if (prefix.Length > 0 && !prefix.EndsWith("/", StringComparison.Ordinal))
+            {
+                prefix += "/";
+            }
+
+            Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
+            var results = new List<FileSearchResult>();
+
+            foreach (var kvp in this._files)
+            {
+                timeout.ThrowIfCancellationRequested();
+
+                // Only consider files within the target directory (by path prefix).
+                if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // The file path relative to the search directory.
+                string relativeName = kvp.Key.Substring(prefix.Length);
+
+                // When not recursive, exclude files in subdirectories (direct children only).
+                if (!recursive && relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
+                {
+                    continue;
+                }
+
+                // Apply the optional glob filter on the relative path.
+                if (!StorePaths.MatchesGlob(relativeName, matcher))
+                {
+                    continue;
+                }
+
+                // Number the lines through the base class's published primitive, so this store
+                // and the line editor cannot drift apart.
+                FileSearchResult? result = timeout.RunStep(token => ScanContent(relativeName, kvp.Value, regex, token));
+                if (result is not null)
+                {
+                    results.Add(result);
+                }
+            }
+
+            return Task.FromResult<IReadOnlyList<FileSearchResult>>(results);
         }
-
-        var regex = new FileSearchRegexWithTimeout(regexPattern);
-        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
-        var results = new List<FileSearchResult>();
-
-        foreach (var kvp in this._files)
+        catch (TimeoutException) when (timeout.Token.IsCancellationRequested)
         {
-            regex.ThrowIfExpired(cancellationToken);
-
-            // Only consider files within the target directory (by path prefix).
-            if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            // The file path relative to the search directory.
-            string relativeName = kvp.Key.Substring(prefix.Length);
-
-            // When not recursive, exclude files in subdirectories (direct children only).
-            if (!recursive && relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
-            {
-                continue;
-            }
-
-            // Apply the optional glob filter on the relative path.
-            if (!StorePaths.MatchesGlob(relativeName, matcher))
-            {
-                continue;
-            }
-
-            // Number the lines through the base class's published primitive, so this store
-            // and the line editor cannot drift apart.
-            FileSearchResult? result = ScanContent(relativeName, kvp.Value, regex, cancellationToken);
-            if (result is not null)
-            {
-                results.Add(result);
-            }
+            throw CreateSearchTimeoutException(regexPattern);
         }
-
-        regex.ThrowIfExpired(cancellationToken);
-        return Task.FromResult<IReadOnlyList<FileSearchResult>>(results);
     }
 
     /// <inheritdoc />
