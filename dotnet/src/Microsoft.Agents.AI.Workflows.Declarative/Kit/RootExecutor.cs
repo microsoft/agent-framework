@@ -26,7 +26,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     private readonly bool _allowProcessEnvironmentVariableFallback;
     private readonly FrozenSet<string> _allowedEnvironmentVariables;
 
-    private string? _conversationId;
+    private readonly string? _conversationId;
 
     /// <summary>
     /// Get the shared formula session to provide to workflow <see cref="ActionExecutor"/> instances.
@@ -50,12 +50,14 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._allowedEnvironmentVariables = (options.AllowedEnvironmentVariables ?? []).ToFrozenSet(StringComparer.Ordinal);
         this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
+        this._state.CaptureInitialState();
         this.Session = new RootFormulaSession(this._state);
     }
 
     /// <inheritdoc/>
     public ValueTask ResetAsync()
     {
+        this._state.Reset();
         return default;
     }
 
@@ -67,13 +69,18 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 
-        if (string.IsNullOrWhiteSpace(this._conversationId))
+        string? conversationId = declarativeContext.GetWorkflowConversation();
+        if (string.IsNullOrWhiteSpace(conversationId))
         {
-            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            conversationId = this._conversationId;
         }
-        await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+        }
+        await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
+        ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(conversationId, input, cancellationToken).ConfigureAwait(false);
 
         // Use the original input for System.LastMessage to ensure Text is preserved (the
         // service may strip text on round-trip), but substitute server-side media references
