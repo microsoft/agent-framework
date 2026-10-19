@@ -436,6 +436,23 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     assert data.role == "assistant"
 
 
+async def test_magentic_zero_max_round_count_is_coerced_to_one():
+    """`max_round_count` below 1 is coerced to 1 (base orchestrator contract), so
+    the run gets its one coordination round and reaches the manager's final
+    answer instead of terminating before any participant is invoked."""
+    manager = FakeManager(max_round_count=0)
+    wf = MagenticBuilder(
+        participants=[StubAgent(manager.next_speaker_name, "first round ran")], manager=manager
+    ).build()
+
+    events = await wf.run("zero round limit")
+    outputs = [ev for ev in events if ev.type == "output"]
+
+    assert len(outputs) == 1
+    assert isinstance(outputs[0].data, AgentResponse)
+    assert outputs[0].data.messages[-1].text == manager.FINAL_ANSWER
+
+
 async def test_magentic_checkpoint_resume_round_trip():
     storage = InMemoryCheckpointStorage()
 
