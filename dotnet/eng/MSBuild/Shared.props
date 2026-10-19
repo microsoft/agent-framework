@@ -38,6 +38,9 @@
   <ItemGroup Condition="'$(InjectSharedOriginPinning)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\OriginPinning\*.cs" LinkBase="Shared\OriginPinning" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedHostedAgents)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\HostedAgents\*.cs" LinkBase="Shared\HostedAgents" />
+  </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedHttpHeaderValidation)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Http\*.cs" LinkBase="Shared\Http" />
   </ItemGroup>
