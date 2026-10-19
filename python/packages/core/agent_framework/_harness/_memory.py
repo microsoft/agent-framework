@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import threading
+import uuid
 import weakref
 from abc import ABC, abstractmethod
 from base64 import b32decode
@@ -886,11 +887,38 @@ class MemoryFileStore(MemoryStore):
         return self._get_index_path(session, source_id=source_id).read_text(encoding="utf-8").strip()
 
     def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
-        """Return the maintenance state for the current owner."""
+        """Return the maintenance state for the current owner.
+
+        An unreadable state file (interrupted editor, partial external write)
+        must not fail every later turn's memory bookkeeping: quarantine it
+        next to the original, mirroring the session store's corrupt-snapshot
+        convention, and restart from a clean state.
+        """
         state_path = self._get_state_path(session, source_id=source_id)
         if not state_path.exists():
             return _default_state()
-        raw_state = self.loads(state_path.read_text(encoding="utf-8"))
+        try:
+            raw_state = self.loads(state_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            quarantine_path = state_path.with_name(f".{state_path.name}.{uuid.uuid4().hex}.corrupt")
+            try:
+                state_path.rename(quarantine_path)
+            except OSError as rename_error:
+                LOGGER.warning(
+                    "Memory state file %s is unreadable (%s) and could not be moved aside (%s); "
+                    "using a clean state.",
+                    state_path,
+                    exc,
+                    rename_error,
+                )
+            else:
+                LOGGER.warning(
+                    "Memory state file %s is unreadable (%s); moved aside to %s, using a clean state.",
+                    state_path,
+                    exc,
+                    quarantine_path,
+                )
+            return _default_state()
         if not isinstance(raw_state, dict):
             raise ValueError("Memory state file must contain a JSON object.")
         state = {**_default_state(), **cast(dict[str, Any], raw_state)}

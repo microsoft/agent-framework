@@ -271,6 +271,44 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
     ]
 
 
+def test_memory_file_store_quarantines_corrupt_state_file(tmp_path: Path) -> None:
+    """An unreadable state.json is moved aside and the store restarts clean.
+
+    Memory bookkeeping runs on every stored turn, so a corrupt state file
+    would otherwise raise out of every later turn. The corrupt file follows
+    the session store's quarantine convention and the next write recreates a
+    clean one.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store.write_state(
+        session,
+        {"sessions_since_consolidation": ["session-1"]},
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    state_path = store._get_state_path(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    state_path.write_text("{not json", encoding="utf-8")
+
+    assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
+        "last_consolidated_at": None,
+        "sessions_since_consolidation": [],
+    }
+    assert not state_path.exists()
+    quarantined = list(state_path.parent.glob(".state.json.*.corrupt"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text(encoding="utf-8") == "{not json"
+
+    store.write_state(
+        session,
+        {"sessions_since_consolidation": ["session-2"]},
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID)["sessions_since_consolidation"] == [
+        "session-2"
+    ]
+
+
 async def _write_transcript(store: MemoryFileStore, session: AgentSession, session_id: str, text: str) -> None:
     """Append a one-message transcript for ``session_id`` through the real write path."""
     provider = FileHistoryProvider(store.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID))
