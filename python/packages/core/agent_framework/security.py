@@ -4347,7 +4347,7 @@ def _map_mcp_annotations_to_labels(
     if annotations is None:
         return (default_integrity, ConfidentialityLabel.PUBLIC, False)
 
-    open_world: bool | None = getattr(annotations, "openWorldHint", None)
+    open_world: bool | None = getattr(annotations, "open_world_hint", None)
     integrity = default_integrity
     if open_world is True:
         integrity = IntegrityLabel.UNTRUSTED
@@ -4431,7 +4431,7 @@ async def apply_mcp_security_labels(
 
     Args:
         mcp_tool: A connected ``MCPTool`` instance (``MCPStdioTool``,
-            ``MCPStreamableHTTPTool``, ``MCPWebsocketTool``).
+            ``MCPStreamableHTTPTool``).
         default_integrity: Integrity label to assign when the server provides
             no annotations.  Defaults to ``UNTRUSTED`` (conservative).
         annotation_overrides: Optional per-tool-name overrides.  Keys are
@@ -4467,21 +4467,19 @@ async def apply_mcp_security_labels(
             "MCPTool is not connected. Call connect() or use 'async with' before applying security labels."
         )
 
-    session = getattr(mcp_tool, "session", None)
-    if session is None:
-        raise RuntimeError("MCPTool has no active session.")
+    connection = mcp_tool._require_connection()
 
     from mcp import types as mcp_types
 
     annotation_map: dict[str, Any] = {}
     params: mcp_types.PaginatedRequestParams | None = None
     while True:
-        tool_list = await session.list_tools(params=params)
+        tool_list = await connection.list_tools_page(params)
         for remote_tool in tool_list.tools:
             annotation_map[remote_tool.name] = remote_tool.annotations
-        if not tool_list.nextCursor:
+        if not tool_list.next_cursor:
             break
-        params = mcp_types.PaginatedRequestParams(cursor=tool_list.nextCursor)
+        params = mcp_types.PaginatedRequestParams(cursor=tool_list.next_cursor)
 
     loaded_functions = getattr(mcp_tool, "_functions", None)
     if not isinstance(loaded_functions, list):
@@ -4637,7 +4635,7 @@ class SecureMCPToolProxy:
 
     There are two ways to create a proxy:
 
-    1. **Wrap an existing MCPTool** (local binary, WebSocket, or HTTP)::
+    1. **Wrap an existing MCPTool** (local binary or Streamable HTTP)::
 
         async with SecureMCPToolProxy(
             MCPStdioTool(name="github", command="gh-mcp", args=["stdio"])

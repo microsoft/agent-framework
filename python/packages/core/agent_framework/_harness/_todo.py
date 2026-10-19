@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
@@ -15,6 +14,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._filesystem import (
+    _atomic_write_text,  # pyright: ignore[reportPrivateUsage]
     _is_literal_storage_key_segment_safe,  # pyright: ignore[reportPrivateUsage]
     _storage_key_segment,  # pyright: ignore[reportPrivateUsage]
 )
@@ -289,7 +289,11 @@ class TodoSessionStore(TodoStore):
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoFileStore(TodoStore):
-    """Store todo state in one JSON file per session and source ID."""
+    """Store todo state in one JSON file per session and source ID.
+
+    The storage directory must not be writable by untrusted users, because they could
+    replace the final todo files independently of this store's secure temporary writes.
+    """
 
     def __init__(
         self,
@@ -404,16 +408,7 @@ class TodoFileStore(TodoStore):
     @staticmethod
     def _save_state_sync(state_path: Path, payload: str) -> None:
         """Synchronous helper that atomically writes the JSON state file."""
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        # Write to a sibling temp file then atomically replace, so a crash mid-write cannot leave
-        # a truncated state file that breaks every subsequent tool call.
-        temp_path = state_path.with_name(f"{state_path.name}.tmp.{os.getpid()}")
-        try:
-            temp_path.write_text(payload, encoding="utf-8")
-            os.replace(temp_path, state_path)
-        finally:
-            if temp_path.exists():
-                temp_path.unlink(missing_ok=True)
+        _atomic_write_text(state_path, payload)
 
 
 class TodoProvider(ContextProvider):

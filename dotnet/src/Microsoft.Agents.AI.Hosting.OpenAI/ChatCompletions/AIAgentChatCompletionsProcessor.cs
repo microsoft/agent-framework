@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.ServerSentEvents;
@@ -79,14 +80,27 @@ internal static class AIAgentChatCompletionsProcessor
                 destination: response.Body,
                 itemFormatter: (sseItem, bufferWriter) =>
                 {
+                    var chunk = sseItem.Data;
+
+                    // A null payload is the end-of-stream sentinel from GetStreamingChunksAsync.
+                    // It is written through the formatter rather than appended to the response body
+                    // so that SseFormatter stays the single owner of the "data: " prefix and the
+                    // blank-line frame terminator; duplicating that framing here would let the two
+                    // representations drift apart.
+                    if (chunk is null)
+                    {
+                        bufferWriter.Write("[DONE]"u8);
+                        return;
+                    }
+
                     using var writer = new Utf8JsonWriter(bufferWriter);
-                    JsonSerializer.Serialize(writer, sseItem.Data, ChatCompletionsJsonContext.Default.ChatCompletionChunk);
+                    JsonSerializer.Serialize(writer, chunk, ChatCompletionsJsonContext.Default.ChatCompletionChunk);
                     writer.Flush();
                 },
                 cancellationToken);
         }
 
-        private async IAsyncEnumerable<SseItem<ChatCompletionChunk>> GetStreamingChunksAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        private async IAsyncEnumerable<SseItem<ChatCompletionChunk?>> GetStreamingChunksAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // The Unix timestamp (in seconds) of when the chat completion was created. Each chunk has the same timestamp.
             DateTimeOffset? createdAt = null;
@@ -167,6 +181,18 @@ internal static class AIAgentChatCompletionsProcessor
 
                 yield return new(chunk);
             }
+
+            // The OpenAI wire format ends a streaming chat completion with a literal
+            // "data: [DONE]" frame, and consumers that treat that sentinel -- rather than
+            // end-of-body -- as the completion signal cannot recognize the stream as finished
+            // without it. This repo ships one such consumer: SseResponseIdCapture in the DevUI
+            // Aspire integration matches "[DONE]"u8 explicitly.
+            //
+            // Emitted after the loop so it only follows a stream that ran to completion: if the
+            // agent throws, or the caller aborts the request, the exception propagates out of the
+            // enumerator above and no terminator is written. A client must never be able to read a
+            // truncated stream as a complete one.
+            yield return new(null);
         }
     }
 }

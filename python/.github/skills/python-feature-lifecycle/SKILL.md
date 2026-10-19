@@ -21,6 +21,10 @@ These are related, but they are **not the same thing**.
 - **Feature-stage decorators are only for exceptions** when a feature is behind the package's default stage.
 - Do **not** decorate every class or function just because the package is experimental or release candidate.
 
+This skill describes staged API behavior within a package. For creating or promoting a package, including sample
+placement, meta-package membership, versioning, and lazy-loading namespace decisions, follow the
+`python-package-management` skill.
+
 ### Important default
 
 If a package is still in **beta / experimental preview**, all public APIs in that package are experimental by default.

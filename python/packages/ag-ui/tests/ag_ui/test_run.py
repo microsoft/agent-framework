@@ -29,21 +29,26 @@ from agent_framework import (
     Content,
     Message,
     ResponseStream,
+    ToolApprovalRule,
+    ToolApprovalState,
 )
 from agent_framework.exceptions import AgentInvalidResponseException, ResponseInvalidatedException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
+    _TOOL_APPROVAL_STATE_FIELDS,
     _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
+    _carries_tool_approval_authority,
     _create_state_context_message,
     _filter_local_approval_responses_for_provider,
     _inject_state_context,
     _normalize_response_stream,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
+    _tool_approval_state_keys,
     run_agent_stream,
 )
 from agent_framework_ag_ui._approval_lifecycle import (
@@ -523,10 +528,11 @@ class TestCreateStateContextMessage:
         result = _create_state_context_message(state, schema)
 
         assert result is not None
-        assert result.role == "system"
+        assert result.role == "user"
         assert len(result.contents) == 1
         assert "Hello world" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         assert "Current state" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+        assert "untrusted data" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 class TestInjectStateContext:
@@ -571,8 +577,8 @@ class TestInjectStateContext:
         # System message first
         assert result[0].role == "system"
         assert "helpful" in result[0].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
-        # State context second
-        assert result[1].role == "system"
+        # State context second, without system-message authority
+        assert result[1].role == "user"
         assert "Current state" in result[1].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         # User message last
         assert result[2].role == "user"
@@ -592,6 +598,39 @@ def test_emit_text_basic():
     assert len(events) == 2  # TextMessageStartEvent + TextMessageContentEvent
     assert flow.message_id is not None
     assert flow.accumulated_text == "Hello world"
+
+
+async def test_client_a2ui_flag_without_backend_opt_in_does_not_import_optional_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client metadata alone cannot import or activate optional A2UI support."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "agent_framework_ag_ui._a2ui":
+            raise AssertionError("optional A2UI support must not be imported")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text("Done.")], role="assistant")])
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "runId": "run-no-a2ui",
+                "threadId": "thread-no-a2ui",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "forwardedProps": {"injectA2UITool": True},
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
+
+    assert events[-1].type == "RUN_FINISHED"
 
 
 def test_emit_text_skip_empty():
@@ -617,16 +656,32 @@ def test_emit_text_continues_existing_message():
 
 
 def test_emit_text_skips_duplicate_full_message_delta():
-    """Test _emit_text skips replayed full-message chunks on an open message."""
+    """Test _emit_text skips a replay of the full text after multi-chunk streaming."""
     flow = FlowState()
-    flow.message_id = "existing-id"
-    flow.accumulated_text = "Case complete."
+    _emit_text(Content.from_text("Case"), flow)
+    _emit_text(Content.from_text(" complete."), flow)
     content = Content.from_text("Case complete.")
 
     events = _emit_text(content, flow)
 
     assert events == []
     assert flow.accumulated_text == "Case complete."
+
+
+def test_emit_text_keeps_repeated_single_chunk_delta():
+    """A repeated token equal to the whole short text streams as a real delta (#9336)."""
+    flow = FlowState()
+    first = _emit_text(Content.from_text("2"), flow)
+    second = _emit_text(Content.from_text("2"), flow)
+    assert len(first) == 2  # message start + first delta
+    assert len(second) == 1
+    assert flow.accumulated_text == "22"
+
+    fresh_flow = FlowState()
+    _emit_text(Content.from_text("ha"), fresh_flow)
+    repeated = _emit_text(Content.from_text("ha"), fresh_flow)
+    assert len(repeated) == 1
+    assert fresh_flow.accumulated_text == "haha"
 
 
 def test_emit_text_skips_when_waiting_for_approval():
@@ -738,7 +793,12 @@ def test_emit_text_annotation_only_update_starts_a_message_without_an_empty_delt
 
 
 def test_emit_text_replay_emits_only_new_annotations() -> None:
-    """Suppress repeated text and citations without dropping final-only citations."""
+    """A one-chunk duplicate keeps its text and emits only new citation occurrences.
+
+    After a single streamed chunk a duplicate equal to the whole text is treated as a
+    genuine delta, matching the unannotated policy from issue #9336. The annotation
+    emission still reconciles occurrences, so a re-sent citation is not duplicated.
+    """
     flow = FlowState()
     first = Annotation(type="citation", url="https://example.com/first")
     second = Annotation(type="citation", url="https://example.com/second")
@@ -747,11 +807,15 @@ def test_emit_text_replay_emits_only_new_annotations() -> None:
     events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
     replay_events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
 
-    assert len(events) == 1
-    assert isinstance(events[0], CustomEvent)
-    assert events[0].value == {"messageId": flow.message_id, "annotations": [second]}
-    assert replay_events == []
-    assert flow.accumulated_text == "Answer"
+    text_events = [event for event in events if isinstance(event, TextMessageContentEvent)]
+    citation_events = [event for event in events if isinstance(event, CustomEvent)]
+    assert [event.delta for event in text_events] == ["Answer"]
+    assert [event.value["annotations"] for event in citation_events] == [[first, second]]
+    replay_text_events = [event for event in replay_events if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in replay_text_events] == ["Answer"]
+    replay_citation_events = [event for event in replay_events if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in replay_citation_events] == [[first, second]]
+    assert flow.accumulated_text == "AnswerAnswerAnswer"
 
 
 def test_emit_text_preserves_identical_annotation_occurrences() -> None:
@@ -766,7 +830,11 @@ def test_emit_text_preserves_identical_annotation_occurrences() -> None:
 
     assert len(first_events) == len(second_events) == 1
     assert all(isinstance(event, CustomEvent) for event in [*first_events, *second_events])
-    assert replay_events == []
+    # One prior text chunk: the duplicate streams as genuine text with its annotations.
+    replay_text_events = [event for event in replay_events if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in replay_text_events] == ["Answer"]
+    replay_citation_events = [event for event in replay_events if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in replay_citation_events] == [[annotation, annotation]]
 
 
 @pytest.mark.parametrize("suppression", ["skip_text", "waiting_for_approval"])
@@ -1595,8 +1663,9 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
         function_call=function_call,
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-server-rejection")
     store.set_tool_approval_state(
-        "thread-server-rejection",
+        approval_thread_id,
         {"collected_approval_responses": [response.to_dict()]},
     )
     agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")])
@@ -1617,12 +1686,12 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
 
     assert not [event for event in events if event.type == "RUN_ERROR"]
     occurrence = store.lifecycle.occurrence_for_alias(
-        thread_id="thread-server-rejection",
+        thread_id=approval_thread_id,
         interrupt_id="approval_rejected",
     )
     assert occurrence is not None
     assert occurrence.status is ApprovalStatus.REJECTED
-    assert store.lifecycle.pending_interrupt_ids(thread_id="thread-server-rejection") == set()
+    assert store.lifecycle.pending_interrupt_ids(thread_id=approval_thread_id) == set()
 
 
 def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
@@ -3725,6 +3794,164 @@ async def test_reserved_service_session_keys_protected_without_agent_declaration
     assert observed_state == [{"client_value": "available"}]
 
 
+def test_tool_approval_authority_is_recognized_by_shape_not_encoding() -> None:
+    """Any non-empty approval list is authority whatever its item encoding; inert shapes are not."""
+    authority_states: list[Any] = [
+        {"rules": [{"tool_name": "gated_tool"}]},
+        {"rules": [[["tool_name", "gated_tool"]]]},
+        {"rules": ["not-a-rule"]},
+        {"rules": [], "queued_approval_requests": [{}]},
+        {"queued_approval_requests": [{}]},
+        {"collected_approval_responses": [{}]},
+    ]
+    inert_states: list[Any] = [
+        None,
+        "text",
+        1,
+        [],
+        {},
+        {"rules": []},
+        {"rules": None},
+        {"rules": {"tool_name": "gated_tool"}},
+        {"rules": "gated_tool"},
+        {"unrelated": [1]},
+    ]
+
+    for authority in authority_states:
+        assert _carries_tool_approval_authority(authority), authority
+    for inert in inert_states:
+        assert not _carries_tool_approval_authority(inert), inert
+
+
+def test_tool_approval_state_keys_find_server_state_whatever_the_source_id() -> None:
+    """Server-held approval state, as a mapping or a ``ToolApprovalState`` object, is found under any ``source_id``."""
+    session_state = {
+        "custom_approvals": {"rules": []},
+        "queued_only": {"queued_approval_requests": []},
+        "state_object": ToolApprovalState(rules=[ToolApprovalRule(tool_name="gated_tool")]),
+        "empty_state_object": ToolApprovalState(),
+        "document": {"title": "synthetic"},
+        "text": "value",
+        "empty": {},
+    }
+
+    assert _tool_approval_state_keys(session_state) == {
+        "custom_approvals",
+        "queued_only",
+        "state_object",
+        "empty_state_object",
+    }
+
+
+def test_tool_approval_state_fields_match_tool_approval_state() -> None:
+    """The literal field names guarding client state track ``ToolApprovalState``, so a new field cannot slip by."""
+    assert set(_TOOL_APPROVAL_STATE_FIELDS) == set(ToolApprovalState().to_dict(exclude={"type"}))
+
+
+def test_standalone_fides_default_state_key_matches_core():
+    """AG-UI spells the default FIDES key literally, so it must stay identical to the key core's middleware uses."""
+    from agent_framework.security import (
+        _STANDALONE_SESSION_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY
+
+    assert _FIDES_SESSION_STATE_KEY == _STANDALONE_SESSION_STATE_KEY
+
+
+@pytest.mark.parametrize("location", ["agent", "bundle", "client", "client-tuple", "forwarding-wrapper"])
+def test_request_state_protected_keys_include_configured_standalone_fides_keys(location: str):
+    """Configured FIDES state keys stay server-owned wherever their middleware is visible before the run."""
+    from types import SimpleNamespace
+
+    from agent_framework import FunctionMiddleware, MiddlewareBundle
+    from agent_framework.security import LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class ForwardingMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    middleware = [
+        LabelTrackingFunctionMiddleware(session_state_key="label_state"),
+        PolicyEnforcementFunctionMiddleware(session_state_key="policy_state"),
+    ]
+    stub = StubAgent()
+    if location == "agent":
+        setattr(stub, "middleware", middleware)
+    elif location == "bundle":
+        setattr(stub, "middleware", [MiddlewareBundle(middleware)])
+    elif location == "client":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=middleware)
+    elif location == "client-tuple":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=tuple(middleware))
+    else:
+        setattr(stub, "middleware", [ForwardingMiddleware(item) for item in middleware])
+
+    assert {_FIDES_SESSION_STATE_KEY, "label_state", "policy_state"} <= _request_state_protected_keys(stub)
+
+
+def test_request_state_protected_keys_reserve_default_standalone_fides_key_without_discoverable_middleware():
+    """The default FIDES key stays server-owned for agents that expose no middleware or hide it behind a wrapper."""
+    from agent_framework import FunctionMiddleware
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class OpaqueMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+    wrapped = StubAgent()
+    setattr(wrapped, "middleware", [OpaqueMiddleware(LabelTrackingFunctionMiddleware())])
+
+    for agent in (StubAgent(), wrapped):
+        assert _FIDES_SESSION_STATE_KEY in _request_state_protected_keys(agent)
+
+
+def test_standalone_fides_state_is_not_a_provider_service_session_key():
+    """FIDES state is protected from request state but must keep persisting in private continuation.
+
+    Reserving it like a provider-owned key would also drop it from stateless Session Continuation State, silently
+    discarding the server's own context label.
+    """
+    from agent_framework import AgentSession
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import (
+        _FIDES_SESSION_STATE_KEY,
+        _provider_service_session_state_keys,
+        _serialize_session_continuation_state,
+    )
+
+    stub = StubAgent()
+    setattr(stub, "middleware", [LabelTrackingFunctionMiddleware(session_state_key="custom_state")])
+    expected = {_FIDES_SESSION_STATE_KEY: {"context_label": "default"}, "custom_state": {"context_label": "custom"}}
+    session = AgentSession()
+    session.state.update(expected)
+
+    assert not set(expected) & _provider_service_session_state_keys(stub)
+    assert (
+        _serialize_session_continuation_state(
+            session,
+            stub,
+            shared_state_keys=set(),
+            include_service_session_id=False,
+        )
+        == expected
+    )
+
+
 async def test_request_state_cannot_assign_service_session_id():
     """Chat history held by the provider is addressed by ``service_session_id``, never by client state.
 
@@ -3766,3 +3993,75 @@ async def test_request_state_cannot_assign_service_session_id():
         ]
 
         assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"
+
+
+def test_emit_text_keeps_repeated_annotated_single_chunk_delta() -> None:
+    """A genuine repeated token with NEW annotations is kept (#9336 review round).
+
+    An equal delta after one chunk is only a replay when its annotations re-send the
+    recorded ones. A second identical token carrying a fresh citation streams normally.
+    """
+    flow = FlowState()
+    first = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/a")]), flow
+    )
+    second = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/b")]), flow
+    )
+
+    assert flow.accumulated_text == "haha"
+    text_events = [event for event in [*first, *second] if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["ha", "ha"]
+    citation_events = [event for event in [*first, *second] if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 2
+
+
+def test_emit_text_suppresses_cumulative_annotated_replay_after_one_chunk() -> None:
+    """A one-chunk cumulative duplicate keeps its text and emits only the new citation.
+
+    Suppression of an equal duplicate needs more than one prior chunk; with one chunk
+    the policy matches the unannotated path and the text streams as a genuine delta.
+    """
+    flow = FlowState()
+    first_citation = Annotation(type="citation", url="https://example.com/first")
+    _emit_text(Content.from_text("Answer", annotations=[first_citation]), flow)
+
+    replay = _emit_text(
+        Content.from_text(
+            "Answer",
+            annotations=[
+                first_citation,
+                Annotation(type="citation", url="https://example.com/second"),
+            ],
+        ),
+        flow,
+    )
+
+    assert flow.accumulated_text == "AnswerAnswer"
+    text_events = [event for event in replay if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["Answer"]
+    citation_events = [event for event in replay if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 1
+    assert [a["url"] for a in citation_events[0].value["annotations"]] == [
+        "https://example.com/first",
+        "https://example.com/second",
+    ]
+
+    # A later multi-chunk message still suppresses full-text replays.
+    multi_flow = FlowState()
+    _emit_text(Content.from_text("Pre "), multi_flow)
+    _emit_text(Content.from_text("fix"), multi_flow)
+    replay_events = _emit_text(Content.from_text("Pre fix"), multi_flow)
+    assert replay_events == []
+    assert multi_flow.accumulated_text == "Pre fix"
+
+    # The exact case from the review: two genuine identical annotated tokens.
+    same_flow = FlowState()
+    same = Annotation(type="citation", url="https://example.com/same")
+    _emit_text(Content.from_text("ha", annotations=[same]), same_flow)
+    repeat = _emit_text(Content.from_text("ha", annotations=[same]), same_flow)
+    assert same_flow.accumulated_text == "haha"
+    text_events = [event for event in repeat if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["ha"]
+    repeat_citations = [event for event in repeat if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in repeat_citations] == [[same]]
