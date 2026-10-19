@@ -100,7 +100,7 @@ public abstract class AgentFileStore
     /// Implementers overriding this method must report <see cref="FileSearchMatch.LineNumber"/> as a
     /// 1-based coordinate into <see cref="SplitLines"/> of the same content <see cref="ReadAsync"/>
     /// returns, and should report <see cref="FileSearchMatch.Line"/> verbatim, terminator included.
-    /// <see cref="ScanContent"/> produces both correctly and is the recommended way to build results.
+    /// <see cref="ScanContent(string, string, Regex)"/> produces both correctly and is the recommended way to build results.
     /// </para>
     /// <para>
     /// Numbering against anything else — a different split rule, or content this store does not serve
@@ -111,15 +111,15 @@ public abstract class AgentFileStore
     /// </remarks>
     public virtual async Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
-        // Compile with a match timeout to guard against catastrophic backtracking (ReDoS).
-        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
+        var regex = new FileSearchRegexWithTimeout(regexPattern);
         IReadOnlyList<string> names = await this.FindMatchingFilesAsync(directory, regexPattern, globPattern, recursive, cancellationToken).ConfigureAwait(false);
+        regex.ThrowIfExpired(cancellationToken);
         Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
         var results = new List<FileSearchResult>();
 
         foreach (string name in names)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            regex.ThrowIfExpired(cancellationToken);
 
             // Re-apply the caller's scope: FindMatchingFilesAsync is explicitly allowed to
             // over-return, and must not be able to widen what the caller asked for.
@@ -136,13 +136,14 @@ public abstract class AgentFileStore
                 continue; // Deleted between enumeration and read.
             }
 
-            FileSearchResult? result = ScanContent(name, content, regex);
+            FileSearchResult? result = ScanContent(name, content, regex, cancellationToken);
             if (result is not null)
             {
                 results.Add(result);
             }
         }
 
+        regex.ThrowIfExpired(cancellationToken);
         return results;
     }
 
@@ -262,10 +263,16 @@ public abstract class AgentFileStore
     /// <param name="regex">A compiled pattern, normally from the same source string passed to <see cref="SearchAsync"/>.</param>
     /// <returns>The match metadata, or <see langword="null"/> when no line matches.</returns>
     public static FileSearchResult? ScanContent(string fileName, string content, Regex regex)
+        => ScanContent(fileName, content, (line, length) => regex.Match(line, 0, length));
+
+    internal static FileSearchResult? ScanContent(string fileName, string content, FileSearchRegexWithTimeout regex, CancellationToken cancellationToken)
+        => ScanContent(fileName, content, (line, length) => regex.Match(line, length, cancellationToken));
+
+    private static FileSearchResult? ScanContent(string fileName, string content, Func<string, int, Match> matchLine)
     {
         _ = Throw.IfNull(fileName);
         _ = Throw.IfNull(content);
-        _ = Throw.IfNull(regex);
+        _ = Throw.IfNull(matchLine);
 
         IReadOnlyList<string> lines = SplitLines(content);
         var matchingLines = new List<FileSearchMatch>();
@@ -275,7 +282,7 @@ public abstract class AgentFileStore
         for (int i = 0; i < lines.Count; i++)
         {
             // Match over the line's text only, without copying it out of the line.
-            Match match = regex.Match(lines[i], 0, FileEditor.LineContentLength(lines[i]));
+            Match match = matchLine(lines[i], FileEditor.LineContentLength(lines[i]));
             if (match.Success)
             {
                 matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i] });

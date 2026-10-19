@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.FileSystemGlobbing;
@@ -113,13 +112,14 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
             prefix += "/";
         }
 
-        // Compile the regex with a timeout to guard against catastrophic backtracking (ReDoS).
-        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
+        var regex = new FileSearchRegexWithTimeout(regexPattern);
         Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
         var results = new List<FileSearchResult>();
 
         foreach (var kvp in this._files)
         {
+            regex.ThrowIfExpired(cancellationToken);
+
             // Only consider files within the target directory (by path prefix).
             if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
@@ -143,13 +143,14 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
 
             // Number the lines through the base class's published primitive, so this store
             // and the line editor cannot drift apart.
-            FileSearchResult? result = ScanContent(relativeName, kvp.Value, regex);
+            FileSearchResult? result = ScanContent(relativeName, kvp.Value, regex, cancellationToken);
             if (result is not null)
             {
                 results.Add(result);
             }
         }
 
+        regex.ThrowIfExpired(cancellationToken);
         return Task.FromResult<IReadOnlyList<FileSearchResult>>(results);
     }
 

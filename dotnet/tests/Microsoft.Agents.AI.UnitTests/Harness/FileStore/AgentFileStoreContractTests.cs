@@ -75,6 +75,15 @@ public class AgentFileStoreContractTests
             => Task.FromResult<IReadOnlyList<string>>(this.Indexed.OrderBy(x => x, StringComparer.Ordinal).ToList());
     }
 
+    private sealed class CancelOnReadStore(CancellationTokenSource cancellationTokenSource) : ContentOnlyStore
+    {
+        public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
+        {
+            cancellationTokenSource.Cancel();
+            return Task.FromResult<string?>(Needle);
+        }
+    }
+
     [Fact]
     public void SplitLines_PublishesTheEditorsRule()
     {
@@ -243,6 +252,36 @@ public class AgentFileStoreContractTests
         // Assert — the walk must stop at once. Throwing alone proves nothing here, because
         // SearchAsync checks the token itself once FindMatchingFilesAsync has already returned.
         Assert.Equal(0, store.Listings);
+    }
+
+    [Fact]
+    public async Task BaseSearch_StopsScanningWhenReadCancelsAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var store = new CancelOnReadStore(cts);
+        await store.WriteAsync("f.txt", Needle);
+
+        // Act + Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => store.SearchAsync(string.Empty, Needle, cancellationToken: cts.Token));
+    }
+
+    [Fact]
+    public void BoundedSearch_ThrowsWhenTheWholeSearchBudgetExpires()
+    {
+        // Arrange
+        var elapsed = new Queue<TimeSpan>(
+        [
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(6),
+            TimeSpan.FromSeconds(11),
+        ]);
+        var regex = new FileSearchRegexWithTimeout(Needle, TimeSpan.FromSeconds(10), () => elapsed.Dequeue());
+
+        // Act + Assert
+        Assert.Throws<RegexMatchTimeoutException>(
+            () => AgentFileStore.ScanContent("f.txt", $"{Needle}\n{Needle}", regex, CancellationToken.None));
     }
 
     [Fact]
