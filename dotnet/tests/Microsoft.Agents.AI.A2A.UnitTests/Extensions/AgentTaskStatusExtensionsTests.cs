@@ -114,8 +114,8 @@ public sealed class AgentTaskStatusExtensionsTests
         var textPart = Part.FromText("Input request");
         textPart.Metadata = new()
         {
-            { "key1", System.Text.Json.JsonSerializer.SerializeToElement("value1") },
-            { "key2", System.Text.Json.JsonSerializer.SerializeToElement("value2") }
+            { "key1", JsonSerializer.SerializeToElement("value1") },
+            { "key2", JsonSerializer.SerializeToElement("value2") }
         };
         var status = new TaskStatus
         {
