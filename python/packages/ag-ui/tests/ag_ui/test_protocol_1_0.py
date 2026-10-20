@@ -5,6 +5,7 @@
 import json
 from typing import Any
 
+import httpx
 import pytest
 from ag_ui.core import (
     EventType,
@@ -15,8 +16,9 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import Content, Message
+from agent_framework import Agent, AgentResponseUpdate, Content, Message
 
+from agent_framework_ag_ui import AgentFrameworkAgent, AGUIChatClient
 from agent_framework_ag_ui._agent_run import _resolved_tool_result_snapshot_messages
 from agent_framework_ag_ui._event_converters import AGUIEventConverter
 from agent_framework_ag_ui._message_adapters import (
@@ -320,3 +322,103 @@ def test_approval_snapshot_rebuild_keeps_tool_result_media() -> None:
     assert rebuilt[("call-1", 1)][0]["content"] == [
         {"type": "image", "source": {"type": "url", "value": "https://example.com/chart.png", "mimeType": "image/png"}}
     ]
+
+
+def _relayed_tool_result(events: list[Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The TOOL_CALL_RESULT content parts of a run and the tool message of its final messages snapshot."""
+    result_event = next(event for event in events if isinstance(event, ToolCallResultEvent))
+    assert isinstance(result_event.content, list)
+    snapshot = next(event for event in reversed(events) if isinstance(event, MessagesSnapshotEvent))
+    tool_message = next(message for message in snapshot.messages if message.role == "tool")
+    return (
+        [part.model_dump(by_alias=True, exclude_none=True) for part in result_event.content],
+        tool_message.model_dump(by_alias=True, exclude_none=True),
+    )
+
+
+@requires_1_0
+async def test_agent_run_relays_tool_result_media() -> None:
+    """Media in a function result an agent yields reaches TOOL_CALL_RESULT and the messages snapshot as parts."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    agent = AgentFrameworkAgent(
+        agent=StubAgent(
+            updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call(call_id="call-1", name="chart", arguments="{}")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_result(
+                            call_id="call-1",
+                            result=[
+                                Content.from_text("chart:"),
+                                Content.from_uri(uri="https://example.com/chart.png", media_type="image/png"),
+                            ],
+                        )
+                    ],
+                    role="tool",
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant"),
+            ]
+        )
+    )
+    expected_parts = [
+        {"type": "text", "text": "chart:"},
+        {"type": "image", "source": {"type": "url", "value": "https://example.com/chart.png", "mimeType": "image/png"}},
+    ]
+
+    events = [
+        event
+        async for event in agent.run(
+            {"threadId": "t1", "runId": "r1", "messages": [{"role": "user", "content": "chart"}]}
+        )
+    ]
+
+    parts, tool_message = _relayed_tool_result(events)
+    assert parts == expected_parts
+    assert tool_message["content"] == expected_parts
+
+
+@requires_1_0
+async def test_agent_relays_tool_result_media_from_an_agui_server() -> None:
+    """Tool media an AGUIChatClient receives is relayed by AgentFrameworkAgent as content parts, not as text."""
+    image = {
+        "type": "image",
+        "source": {"type": "url", "value": "https://example.com/chart.png", "mimeType": "image/png"},
+    }
+    upstream_events = [
+        {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1", "protocolVersion": "1.0"},
+        {"type": "TOOL_CALL_START", "toolCallId": "call-1", "toolCallName": "chart"},
+        {"type": "TOOL_CALL_ARGS", "toolCallId": "call-1", "delta": "{}"},
+        {"type": "TOOL_CALL_END", "toolCallId": "call-1"},
+        {
+            "type": "TOOL_CALL_RESULT",
+            "messageId": "result-1",
+            "toolCallId": "call-1",
+            "content": [{"type": "text", "text": "chart:"}, image],
+        },
+        {"type": "TEXT_MESSAGE_START", "messageId": "msg_1", "role": "assistant"},
+        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+        {"type": "TEXT_MESSAGE_END", "messageId": "msg_1"},
+        {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+    ]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = "".join(f"data: {json.dumps(event)}\n\n" for event in upstream_events)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = AGUIChatClient(endpoint="https://agui.example.test/", http_client=http_client)
+        agent = AgentFrameworkAgent(agent=Agent(client=client, name="relay"))
+        events = [
+            event
+            async for event in agent.run(
+                {"threadId": "t1", "runId": "r1", "messages": [{"role": "user", "content": "chart"}]}
+            )
+        ]
+
+    parts, tool_message = _relayed_tool_result(events)
+    assert parts == [{"type": "text", "text": "chart:"}, image]
+    assert tool_message["content"] == [{"type": "text", "text": "chart:"}, image]

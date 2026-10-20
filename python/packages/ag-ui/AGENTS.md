@@ -39,7 +39,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   through `snapshot_messages_for_wire` when building a `MESSAGES_SNAPSHOT`, which rewrites them to the 1.0 shape when
   1.0 is installed (1.0 rejects `binary`).
 - A 1.0 `ContentPart[]` tool result becomes the function result's Content items, so media reaches chat clients with
-  rich function output; text-only results stay text.
+  rich function output; text-only results stay text. In the other direction, a function result holding media goes
+  out as content parts on `TOOL_CALL_RESULT` and in the snapshot tool message (`_function_result_to_agui_content`),
+  so `AgentFrameworkAgent` relays it intact; MCP results keep their Host-payload handling.
 - Interrupted runs complete with `RUN_FINISHED.outcome.type == "interrupt"` and canonical `outcome.interrupts`; do not document or add new flows that depend on the legacy top-level `RUN_FINISHED.interrupt` field.
 - `Interrupt` and `ResumeEntry` come from the `ag-ui-protocol` package (`ag_ui.core`), not from an Agent Framework-specific interrupt model.
 - Tool approval interrupts, including approvals surfaced through workflow `request_info`, advertise standard

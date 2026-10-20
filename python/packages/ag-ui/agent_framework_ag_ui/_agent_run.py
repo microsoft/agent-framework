@@ -98,6 +98,7 @@ from ._message_adapters import (
 from ._predictive_state import PredictiveStateHandler
 from ._tooling import collect_server_tools, merge_tools
 from ._run_common import (
+    _UNSET,
     _build_run_started_event,
     FlowState,
     _approval_interrupt_for_function_call,  # type: ignore
@@ -743,18 +744,26 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
             llm_str = _stringify_tool_result(raw)
             display_result = _extract_tool_result_display(resolved)
             has_host_payload, host_payload = _resolve_tool_result_host_payload(resolved, display_result)
-            ui_str = _resolve_ui_payload(llm_str, host_payload if has_host_payload else display_result)
+            ui_content: str | list[dict[str, Any]] = _resolve_ui_payload(
+                llm_str, host_payload if has_host_payload else display_result
+            )
             replay_properties: dict[str, Any] = {}
             if has_host_payload:
                 replay_properties = _mcp_host_history_fields(
                     host_payload,
                     _model_items_for_agui_replay(resolved, llm_str),
                 )
+            elif display_result is _UNSET:
+                # Media in the result goes out as content parts, as it does in the rebuilt snapshot message
+                # (_resolved_tool_result_snapshot_messages).
+                agui_content = _function_result_to_agui_content(resolved)
+                if isinstance(agui_content, list):
+                    ui_content = agui_content
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
                     tool_call_id=resolved.call_id,
-                    content=ui_str,
+                    content=ui_content,  # type: ignore[arg-type]
                     role="tool",
                     **replay_properties,
                 )
