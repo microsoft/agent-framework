@@ -999,9 +999,11 @@ async def test_tool_decorator_shared_state():
 async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter):
     """Test the tool invoke method with telemetry enabled."""
 
+    tool_description = "Sensitive telemetry tool description"
+
     @tool(
         name="telemetry_test_tool",
-        description="A test tool for telemetry",
+        description=tool_description,
     )
     def telemetry_test_tool(expression: str) -> str:
         """A function that echoes an expression for telemetry testing."""
@@ -1028,7 +1030,7 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == tool_description  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"expression": "(12345 + 67890) / 3"}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_RESULT] == expression  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
@@ -1037,11 +1039,16 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"
+    assert attributes[OtelAttr.TOOL_TYPE] == "function"
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert OtelAttr.TOOL_CALL_ID not in attributes
+    assert OtelAttr.TOOL_DESCRIPTION not in attributes
     assert OtelAttr.TOOL_ARGUMENTS not in attributes
     assert OtelAttr.TOOL_RESULT not in attributes
     assert expression not in attributes.values()
+    assert tool_description not in attributes.values()
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
@@ -1085,8 +1092,12 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"
+    assert attributes[OtelAttr.TOOL_TYPE] == "function"
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert OtelAttr.TOOL_CALL_ID not in attributes
+    assert OtelAttr.TOOL_DESCRIPTION not in attributes
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -1179,10 +1190,11 @@ async def test_tool_invoke_telemetry_with_exception(
 ) -> None:
     """Test the tool invoke method with telemetry when an exception occurs."""
     private_error_detail = "founder-secret-token"
+    tool_description = "Sensitive exception tool description"
 
     @tool(
         name="exception_test_tool",
-        description="A test tool that raises an exception",
+        description=tool_description,
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
@@ -1209,7 +1221,7 @@ async def test_tool_invoke_telemetry_with_exception(
     assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == tool_description  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     if enable_sensitive_data:
         assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     else:
@@ -1228,9 +1240,17 @@ async def test_tool_invoke_telemetry_with_exception(
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"
+    assert attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "exception_test_tool"
     assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    assert OtelAttr.TOOL_CALL_ID not in attributes
+    assert OtelAttr.TOOL_DESCRIPTION not in attributes
     assert OtelAttr.TOOL_ARGUMENTS not in attributes
     assert OtelAttr.TOOL_RESULT not in attributes
+    assert tool_description not in attributes.values()
+    assert private_error_detail not in attributes.values()
 
 
 async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):

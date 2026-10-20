@@ -1231,8 +1231,12 @@ class FunctionTool(SerializationMixin):
             return parsed
 
         span_attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        metric_attributes = dict(span_attributes)
-        metric_attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
+        metric_attributes = {
+            OtelAttr.OPERATION: span_attributes[OtelAttr.OPERATION],
+            OtelAttr.TOOL_NAME: span_attributes[OtelAttr.TOOL_NAME],
+            OtelAttr.TOOL_TYPE: span_attributes[OtelAttr.TOOL_TYPE],
+            OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
+        }
         # Filter out framework kwargs that are not JSON serializable.
         serializable_kwargs = {
             k: v
