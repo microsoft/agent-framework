@@ -637,6 +637,4 @@ async def test_run_stateless_sets_stdin_to_devnull() -> None:
 
     assert create_proc.await_args is not None
     kwargs = create_proc.await_args.kwargs
-    assert kwargs.get("stdin") == asyncio.subprocess.DEVNULL, (
-        f"Expected stdin=DEVNULL, got {kwargs.get('stdin')!r}"
-    )
+    assert kwargs.get("stdin") == asyncio.subprocess.DEVNULL, f"Expected stdin=DEVNULL, got {kwargs.get('stdin')!r}"
