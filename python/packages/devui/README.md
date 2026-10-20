@@ -199,17 +199,22 @@ response2 = client.responses.create(
 ### Voice Input and Audio Responses
 
 DevUI chat supports microphone input in browsers that allow recording from `localhost` or HTTPS pages. Use the
-microphone button to record audio, or upload a WAV or MP3 file.
+microphone button to start recording, then stop to preview or cancel. You can also hold the microphone button to
+record and release it to attach the recording. Recordings are converted to mono WAV, with defaults of 16 kHz,
+60 seconds, and 10 MB. The recording bar shows elapsed time and animated live microphone levels.
 
 DevUI sends the audio to the selected agent without transcribing it. The selected agent or model must be able to work
-with audio. Other uploaded audio formats are not supported.
+with audio. Uploaded files keep the existing attachment behavior and original format, including multiple audio
+files such as WAV, MP3, M4A, and OGG. Support for those formats depends on the selected agent.
 
-When an agent returns audio, DevUI renders playback controls in the chat. Users can play, scrub, download, and optionally
-auto-play agent audio responses from the audio settings.
+Recordings and agent audio share a waveform player with play/pause, seeking, and duration. Agent audio includes a
+download action. Audio returned by the conversation-history API or a resumed response uses the same controls.
+Playback uses the browser's audio element and does not depend on waveform decoding or downloading remote audio first.
 
-Audio settings are available from Settings → General. Users can click to record, hold the microphone button for
-push-to-talk, preview recordings before sending, and optionally enable auto-stop on silence. Browser options such as
-echo cancellation, noise suppression, and auto gain control may vary by browser and device.
+Settings > General > Audio options groups capture limits, sample rate, preview, and browser processing hints under
+Input. Auto-stop on silence optionally attaches click-to-record audio after a quiet pause and does not interrupt
+push-to-talk. Output provides optional agent-audio autoplay, which is disabled by default and remains subject to
+browser restrictions. Restored responses do not autoplay.
 
 ### OpenAI Proxy Mode
 

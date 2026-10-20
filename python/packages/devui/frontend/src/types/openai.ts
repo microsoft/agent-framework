@@ -101,6 +101,7 @@ export interface ResponseFailedEvent {
     id: string;
     status: "failed";
     error?: ResponseError;
+    output?: ResponseOutputItem[];
   };
   sequence_number?: number;
 }

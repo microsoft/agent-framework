@@ -5,19 +5,23 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import http.client
+import io
 import json
 import os
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from collections.abc import AsyncIterable, Awaitable, Generator
+import wave
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -688,6 +692,498 @@ async def _wait_for_expression(
         await asyncio.sleep(0.1)
 
     raise AssertionError(f"Timed out waiting for expression: {expression}")
+
+
+@pytest.fixture
+async def audio_browser(memory_regression_server: tuple[str, str]) -> AsyncGenerator[tuple[_CDPClient, str]]:
+    """Open the bundled chat UI with mocked microphone hardware and HTTP responses."""
+    browser_path = _find_browser_executable()
+    if browser_path is None:
+        pytest.skip("No Chromium-based browser found for DevUI audio tests")
+    base_url, entity_id = memory_regression_server
+    debug_port = _find_available_port()
+    with tempfile.TemporaryDirectory(prefix="devui-audio-browser-") as profile_dir:
+        process = _launch_browser_process(browser_path=browser_path, debug_port=debug_port, profile_dir=profile_dir)
+        try:
+            websocket_url = await _get_devtools_websocket_url(debug_port)
+            async with websocket_connect(websocket_url, max_size=None) as websocket:
+                client = _CDPClient(websocket)
+                target = await client.send("Target.createTarget", {"url": "about:blank"})
+                attached = await client.send("Target.attachToTarget", {"targetId": target["targetId"], "flatten": True})
+                session_id = attached["sessionId"]
+                await client.send("Page.enable", session_id=session_id)
+                await client.send(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    {
+                        "source": """
+                        localStorage.setItem("devui-storage", JSON.stringify({
+                          state: { audioInput: { enabled: true, autoPlayAgentAudio: false } }, version: 0,
+                        }));
+                        """
+                    },
+                    session_id=session_id,
+                )
+                await client.send("Page.navigate", {"url": f"{base_url}/?entity_id={entity_id}"}, session_id=session_id)
+                await _wait_for_expression(
+                    client,
+                    session_id=session_id,
+                    expression="""!!document.querySelector(
+                      'button[aria-label="Record audio"], button[aria-label^="Click to record"]'
+                    )""",
+                    timeout_s=30,
+                )
+                await client.evaluate(
+                    """
+                  window.audioProbe = { stopped: 0, urls: 0, revoked: 0, requests: [] };
+                  const probe = window.audioProbe;
+                  const NativeRecorder = window.MediaRecorder;
+                  const NativeContext = window.AudioContext;
+                  probe.useNative = async () => {
+                    window.MediaRecorder = NativeRecorder;
+                    window.AudioContext = NativeContext;
+                    const context = new NativeContext();
+                    const oscillator = context.createOscillator();
+                    const destination = context.createMediaStreamDestination();
+                    oscillator.frequency.value = 440;
+                    oscillator.connect(destination);
+                    oscillator.start();
+                    await context.resume();
+                    for (const track of destination.stream.getTracks()) {
+                      const stop = track.stop.bind(track);
+                      track.stop = () => { probe.stopped++; stop(); void context.close(); };
+                    }
+                    navigator.mediaDevices.getUserMedia = async () => destination.stream;
+                  };
+                  const stream = { getTracks: () => [{ stop: () => probe.stopped++ }] };
+                  navigator.mediaDevices.getUserMedia = () => probe.mode === "permission"
+                    ? new Promise(resolve => { probe.allow = () => resolve(stream); })
+                    : Promise.resolve(stream);
+                  window.MediaRecorder = class {
+                    static isTypeSupported() { return true; }
+                    constructor() {
+                      if (probe.mode === "constructor") throw new Error("Recorder unavailable");
+                      this.state = "inactive";
+                    }
+                    start() { this.state = "recording"; }
+                    stop() {
+                      this.state = "inactive";
+                      this.ondataavailable({ data: new Blob(["recorded audio"]) });
+                      this.onstop();
+                    }
+                  };
+                  window.AudioContext = class {
+                    createMediaStreamSource() { return { connect() {} }; }
+                    createAnalyser() {
+                      return { fftSize: 256, getByteTimeDomainData: data => data.fill(probe.quiet ? 128 : 180) };
+                    }
+                    decodeAudioData() {
+                      const audio = new AudioBuffer({ length: 16000, sampleRate: 16000, numberOfChannels: 1 });
+                      audio.getChannelData(0).fill(0.5);
+                      return probe.mode === "processing"
+                        ? new Promise(resolve => { probe.decode = () => resolve(audio); })
+                        : Promise.resolve(audio);
+                    }
+                    close() { return Promise.resolve(); }
+                  };
+                  const createURL = URL.createObjectURL.bind(URL);
+                  URL.createObjectURL = blob => { probe.urls++; return createURL(blob); };
+                  const revokeURL = URL.revokeObjectURL.bind(URL);
+                  URL.revokeObjectURL = url => { probe.revoked++; revokeURL(url); };
+                  const fetchOriginal = window.fetch.bind(window);
+                  window.fetch = (url, options) => {
+                    if (String(url).endsWith("/v1/responses") && options?.method === "POST") {
+                      probe.requests.push(JSON.parse(options.body));
+                      const audio = probe.requests.at(-1).input[0].content.find(c => c.type === "input_audio");
+                      const output = audio ? [{
+                        id: "audio-reply", type: "output_file", filename: "reply.wav",
+                        mime_type: "audio/wav", file_url: `data:audio/wav;base64,${audio.input_audio.data}`,
+                      }] : [];
+                      const event = { type: "response.completed", response: { id: "audio-test", output } };
+                      return Promise.resolve(new Response(`data: ${JSON.stringify(event)}\\n\\ndata: [DONE]\\n\\n`,
+                        { headers: { "Content-Type": "text/event-stream" } }));
+                    }
+                    return fetchOriginal(url, options);
+                  };
+                """,
+                    session_id=session_id,
+                )
+                yield client, session_id
+        finally:
+            _shutdown_browser_process(process, profile_dir=profile_dir)
+
+
+@pytest.mark.parametrize("scenario", ["constructor", "permission", "processing", "success", "native", "uploads"])
+async def test_audio_input_lifecycle_and_uploads(audio_browser: tuple[_CDPClient, str], scenario: str) -> None:
+    """Microphone failures/cancellation release resources, while recordings and generic uploads keep their contracts."""
+    client, session_id = audio_browser
+
+    async def evaluate(expression: str) -> Any:
+        return await client.evaluate(expression, session_id=session_id)
+
+    async def wait(expression: str) -> Any:
+        return await _wait_for_expression(client, session_id=session_id, expression=expression, timeout_s=10)
+
+    await evaluate(f"window.audioProbe.mode = {json.dumps(scenario)}")
+    if scenario == "native":
+        await client.send(
+            "Runtime.evaluate",
+            {"expression": "window.audioProbe.useNative()", "awaitPromise": True, "userGesture": True},
+            session_id=session_id,
+        )
+    if scenario == "uploads":
+        await evaluate("""
+          const transfer = new DataTransfer();
+          transfer.items.add(new File(["m4a"], "first.m4a", { type: "audio/mp4" }));
+          transfer.items.add(new File(["ogg"], "second.ogg", { type: "audio/ogg" }));
+          const input = document.querySelector('input[type="file"]');
+          input.files = transfer.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        """)
+        await wait('document.body.textContent.includes("second.ogg")')
+    else:
+        await evaluate("""
+          document.querySelector(
+            'button[aria-label="Record audio"], button[aria-label^="Click to record"]'
+          ).click()
+        """)
+        if scenario == "constructor":
+            await wait('document.querySelector(\'[role="alert"]\')?.textContent.includes("Recorder unavailable")')
+        elif scenario == "permission":
+            await wait('document.body.textContent.includes("Preparing microphone")')
+            await evaluate("""
+              const textarea = document.querySelector("textarea");
+              Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(textarea, "Wait");
+              textarea.dispatchEvent(new Event("input", { bubbles: true }));
+            """)
+            await wait('document.querySelector("textarea").value === "Wait"')
+            await evaluate("""
+              document.querySelector("textarea").dispatchEvent(new KeyboardEvent("keydown", {
+                key: "Enter", bubbles: true, cancelable: true,
+              }));
+              [...document.querySelectorAll("button")].find(b => b.textContent === "Cancel recording").click();
+              window.audioProbe.allow();
+            """)
+        else:
+            await wait("!!document.querySelector('button[aria-label=\"Stop recording\"]')")
+            if scenario == "native":
+                await wait('document.querySelector(\'[aria-label="Recording duration"]\')?.textContent === "0:01"')
+            presentation = await evaluate("""
+              (() => {
+                const stop = document.querySelector('button[aria-label="Stop recording"]');
+                const canvas = document.createElement("canvas");
+                const context = canvas.getContext("2d");
+                context.fillStyle = getComputedStyle(stop).backgroundColor;
+                context.fillRect(0, 0, 1, 1);
+                const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+                return { violet: red > green && blue > green,
+                  rounded: parseFloat(getComputedStyle(stop.parentElement).borderRadius) > 20 };
+              })()
+            """)
+            assert presentation == {"violet": True, "rounded": True}
+            await evaluate("document.querySelector('button[aria-label=\"Stop recording\"]').click()")
+            if scenario == "processing":
+                await wait('typeof window.audioProbe.decode === "function"')
+                await evaluate("""
+                  [...document.querySelectorAll("button")].find(b => b.textContent === "Cancel recording").click();
+                  window.audioProbe.decode();
+                """)
+            else:
+                await wait("!!document.querySelector('audio[aria-label=\"Voice recording preview\"]')")
+                assert await evaluate("!!document.querySelector('input[aria-label=\"Audio playback position\"]')")
+                assert await evaluate("!!document.querySelector('button[aria-label=\"Play recording preview\"]')")
+                header = await evaluate("""
+                  (async () => {
+                    const blob = await (await fetch(document.querySelector("audio").src)).arrayBuffer();
+                    const view = new DataView(blob);
+                    return [new TextDecoder().decode(blob.slice(0, 4)), view.getUint16(22, true),
+                      view.getUint32(24, true), view.getInt16(44, true)];
+                  })()
+                """)
+                assert header[:3] == ["RIFF", 1, 16000]
+                if scenario == "success":
+                    assert header[3] == 16383
+
+        await wait("window.audioProbe.stopped === 1")
+        if scenario not in {"success", "native"}:
+            await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            assert await evaluate("window.audioProbe.urls") == 0
+            assert await evaluate("window.audioProbe.requests.length") == 0
+            assert not await evaluate("!!document.querySelector('audio[aria-label=\"Voice recording preview\"]')")
+            return
+
+    await wait("!document.querySelector('button[aria-label=\"Send message\"]').disabled")
+    if scenario == "native":
+        await evaluate("""
+          window.AudioContext = class {
+            constructor() { throw new Error("Waveform decoding unavailable"); }
+          };
+        """)
+    await evaluate("document.querySelector('button[aria-label=\"Send message\"]').click()")
+    request = await wait("window.audioProbe.requests[0]")
+    content = request["input"][0]["content"]
+    assert [part["type"] for part in content] == (
+        ["input_file", "input_file"] if scenario == "uploads" else ["input_audio"]
+    )
+    if scenario == "uploads":
+        assert [part["filename"] for part in content] == ["first.m4a", "second.ogg"]
+    else:
+        assert content[0]["input_audio"]["format"] == "wav"
+        if scenario == "native":
+            wav_bytes = base64.b64decode(content[0]["input_audio"]["data"])
+            with wave.open(io.BytesIO(wav_bytes), "rb") as recording:
+                assert recording.getnchannels() == 1
+                assert recording.getframerate() == 16000
+                assert recording.getnframes() > 8000
+                samples = recording.readframes(recording.getnframes())
+            assert max(abs(sample[0]) for sample in struct.iter_unpack("<h", samples)) > 1000
+
+        await wait('document.body.textContent.includes("reply.wav")')
+        await wait("document.querySelector('audio[aria-label=\"reply.wav\"]')?.readyState >= 1")
+        assert await evaluate("!!document.querySelector('a[aria-label=\"Download audio\"]')")
+        player = "document.querySelector('audio[aria-label=\"reply.wav\"]').parentElement"
+        await client.send(
+            "Runtime.evaluate",
+            {
+                "expression": f"{player}.querySelector('button[aria-label=\"Play recording preview\"]').click()",
+                "userGesture": True,
+            },
+            session_id=session_id,
+        )
+        await wait(f"!!{player}.querySelector('button[aria-label=\"Pause recording preview\"]')")
+        await evaluate(f"{player}.querySelector('button[aria-label=\"Pause recording preview\"]').click()")
+        await evaluate(f"{player}.querySelector('input[aria-label=\"Audio playback position\"]').focus()")
+        await client.send(
+            "Input.dispatchKeyEvent",
+            {"type": "keyDown", "key": "End", "code": "End", "windowsVirtualKeyCode": 35},
+            session_id=session_id,
+        )
+        await wait("document.querySelector('audio[aria-label=\"reply.wav\"]').currentTime > 0")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+async def test_audio_preview_preserves_original_presentation(audio_browser: tuple[_CDPClient, str], theme: str) -> None:
+    """The original audio presentation stays readable before and after sending in both themes."""
+    client, session_id = audio_browser
+
+    async def assert_text_contrast() -> list[str]:
+        players = await client.evaluate(
+            """
+            (() => {
+              const context = document.createElement("canvas").getContext("2d");
+              const luminance = color => {
+                context.fillStyle = color;
+                context.fillRect(0, 0, 1, 1);
+                const channels = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3).map(value => {
+                  const component = value / 255;
+                  return component <= 0.04045 ? component / 12.92 : ((component + 0.055) / 1.055) ** 2.4;
+                });
+                return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+              };
+              return [...document.querySelectorAll("audio")].map(audio => {
+                const pill = audio.parentElement;
+                const background = luminance(getComputedStyle(pill).backgroundColor);
+                const texts = [...pill.querySelectorAll("div, span")]
+                  .filter(element => !element.children.length && element.textContent.trim());
+                return {
+                  label: audio.getAttribute("aria-label"),
+                  contrasts: texts.map(element => {
+                    const foreground = luminance(getComputedStyle(element).color);
+                    return (Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05);
+                  }),
+                };
+              });
+            })()
+            """,
+            session_id=session_id,
+        )
+        for player in players:
+            assert len(player["contrasts"]) == 2
+            assert min(player["contrasts"]) >= 4.5, f"Unreadable audio label/duration in {theme}: {player}"
+        return [player["label"] for player in players]
+
+    await client.send(
+        "Emulation.setDeviceMetricsOverride",
+        {"width": 1440, "height": 1000, "deviceScaleFactor": 1, "mobile": False},
+        session_id=session_id,
+    )
+    await client.evaluate(
+        f"""
+        document.documentElement.classList.toggle("dark", {str(theme == "dark").lower()});
+        document.querySelector('button[aria-label="Record audio"], button[aria-label^="Click to record"]').click();
+        """,
+        session_id=session_id,
+    )
+    await _wait_for_expression(
+        client,
+        session_id=session_id,
+        expression="!!document.querySelector('button[aria-label=\"Stop recording\"]')",
+        timeout_s=10,
+    )
+    animation = await client.evaluate(
+        """
+        (() => {
+          const bar = document.querySelector('button[aria-label="Stop recording"]').parentElement
+            .querySelector('[aria-hidden="true"] span');
+          return { name: getComputedStyle(bar).animationName, duration: getComputedStyle(bar).animationDuration };
+        })()
+        """,
+        session_id=session_id,
+    )
+    assert animation["name"] != "none"
+    assert animation["duration"] == "0.9s"
+    await client.evaluate(
+        "document.querySelector('button[aria-label=\"Stop recording\"]').click()", session_id=session_id
+    )
+    await _wait_for_expression(
+        client,
+        session_id=session_id,
+        expression="!!document.querySelector('audio[aria-label=\"Voice recording preview\"]')",
+        timeout_s=10,
+    )
+    presentation = await client.evaluate(
+        """
+        (() => {
+          const audio = document.querySelector('audio[aria-label="Voice recording preview"]');
+          const pill = audio.parentElement;
+          const container = pill.parentElement;
+          const bounds = pill.getBoundingClientRect();
+          const outer = container.getBoundingClientRect();
+          const bar = pill.querySelector('[aria-hidden="true"] span');
+          const scrubber = pill.querySelector('input[aria-label="Audio playback position"]');
+          const overlay = scrubber.parentElement.querySelector('[aria-hidden="true"]:last-of-type');
+          return {
+            label: pill.textContent,
+            width: bounds.width,
+            centered: Math.abs((bounds.left + bounds.right) / 2 - (outer.left + outer.right) / 2) < 1,
+            thinWaveform: parseFloat(getComputedStyle(bar).width) === 2,
+            widthTransition: getComputedStyle(pill).transitionProperty.includes("width"),
+            scrubberTransition: getComputedStyle(overlay).transitionProperty.includes("opacity"),
+          };
+        })()
+        """,
+        session_id=session_id,
+    )
+    assert "Voice recording · 31 KB · WAV" in presentation["label"]
+    assert presentation["width"] >= 420
+    assert presentation["centered"]
+    assert presentation["thinWaveform"]
+    assert presentation["widthTransition"]
+    assert presentation["scrubberTransition"]
+    assert await assert_text_contrast() == ["Voice recording preview"]
+    await client.evaluate(
+        "document.querySelector('button[aria-label=\"Send message\"]').click()", session_id=session_id
+    )
+    await _wait_for_expression(
+        client,
+        session_id=session_id,
+        expression="""document.querySelectorAll("audio").length === 2 &&
+          !!document.querySelector('audio[aria-label="reply.wav"]')""",
+        timeout_s=10,
+    )
+    assert await assert_text_contrast() == ["Voice message (WAV)", "reply.wav"]
+
+
+@pytest.mark.parametrize("scenario", ["hold", "silence", "permission"])
+async def test_audio_recording_gestures_and_settings(audio_browser: tuple[_CDPClient, str], scenario: str) -> None:
+    """Hold-to-record, silence detection, and capture/preview settings preserve their original behavior."""
+    client, session_id = audio_browser
+
+    async def evaluate(expression: str) -> Any:
+        return await client.evaluate(expression, session_id=session_id)
+
+    async def wait(expression: str) -> Any:
+        return await _wait_for_expression(client, session_id=session_id, expression=expression, timeout_s=10)
+
+    async def open_options() -> None:
+        await evaluate("document.querySelector('header svg.lucide-settings').closest('button').click()")
+        await wait('[...document.querySelectorAll("summary")].some(s => s.textContent.trim() === "Audio options")')
+        await evaluate("""
+          [...document.querySelectorAll("summary")].find(s => s.textContent.trim() === "Audio options").click()
+        """)
+
+    async def close_options() -> None:
+        for event in ("mousePressed", "mouseReleased"):
+            await client.send(
+                "Input.dispatchMouseEvent",
+                {"type": event, "x": 2, "y": 2, "button": "left", "clickCount": 1},
+                session_id=session_id,
+            )
+        await wait('!document.querySelector("#audio-sample-rate")')
+
+    await evaluate(f"window.audioProbe.mode = {json.dumps(scenario)}")
+    if scenario != "permission":
+        await open_options()
+        assert await evaluate('document.querySelector("#audio-sample-rate").value') == "16000"
+        await evaluate("""
+          document.querySelector('[aria-label="Auto-stop on silence"]').click();
+        """)
+        await wait('!!document.querySelector("#audio-silence-duration")')
+        await evaluate("""
+          for (const [id, value] of [
+            ["audio-silence-duration", "250"], ["audio-min-recording", "0"], ["audio-sample-rate", "8000"]
+          ]) {
+            const input = document.getElementById(id);
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          window.audioProbe.quiet = true;
+        """)
+        await close_options()
+
+    microphone = await evaluate("""
+      (() => {
+        const bounds = document.querySelector('button[aria-label^="Click to record"]').getBoundingClientRect();
+        return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      })()
+    """)
+    if scenario == "silence":
+        await evaluate("document.querySelector('button[aria-label^=\"Click to record\"]').click()")
+    else:
+        await client.send(
+            "Input.dispatchMouseEvent",
+            {"type": "mousePressed", **microphone, "button": "left", "buttons": 1, "clickCount": 1},
+            session_id=session_id,
+        )
+        if scenario == "permission":
+            await wait('document.body.textContent.includes("Preparing microphone")')
+        else:
+            await wait('document.querySelector(\'[aria-label="Recording duration"]\')?.textContent === "0:01"')
+        await client.send(
+            "Input.dispatchMouseEvent",
+            {"type": "mouseReleased", "x": 2, "y": 2, "button": "left", "clickCount": 1},
+            session_id=session_id,
+        )
+
+    if scenario == "permission":
+        await wait('!document.body.textContent.includes("Preparing microphone")')
+        await evaluate("window.audioProbe.allow()")
+        await wait("window.audioProbe.stopped === 1")
+        assert await evaluate("window.audioProbe.urls") == 0
+        assert await evaluate("window.audioProbe.requests.length") == 0
+        return
+
+    await wait("!!document.querySelector('audio[aria-label=\"Voice recording preview\"]')")
+    assert await evaluate("window.audioProbe.stopped") == 1
+    assert await evaluate("window.audioProbe.requests.length") == 0
+    sample_rate = await evaluate("""
+      (async () => {
+        const data = await (await fetch(document.querySelector('audio[aria-label="Voice recording preview"]').src))
+          .arrayBuffer();
+        return new DataView(data).getUint32(24, true);
+      })()
+    """)
+    assert sample_rate == 8000
+
+    await open_options()
+    await evaluate('document.querySelector("#audio-preview").click()')
+    await close_options()
+    preview = "document.querySelector('audio[aria-label=\"Voice recording preview\"]').parentElement"
+    assert not await evaluate(f"!!{preview}.querySelector('button[aria-label=\"Play recording preview\"]')")
+    assert not await evaluate(f"!!{preview}.querySelector('input[aria-label=\"Audio playback position\"]')")
+    await evaluate("document.querySelector('button[aria-label=\"Remove recording\"]').click()")
+    await wait("!document.querySelector('audio[aria-label=\"Voice recording preview\"]')")
+    assert await evaluate("window.audioProbe.revoked") == 1
+    assert await evaluate("document.querySelector('button[aria-label=\"Send message\"]').disabled")
 
 
 async def test_devui_streaming_renderer_memory_is_bounded(

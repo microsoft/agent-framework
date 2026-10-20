@@ -5,7 +5,6 @@
 import { useRef } from "react";
 import { Upload } from "lucide-react";
 import { Button } from "./button";
-import { SUPPORTED_INPUT_AUDIO_ACCEPT } from "@/hooks";
 
 interface FileUploadProps {
   onFilesSelected: (files: File[]) => void;
@@ -18,7 +17,7 @@ interface FileUploadProps {
 
 export function FileUpload({
   onFilesSelected,
-  accept = `image/*,.pdf,${SUPPORTED_INPUT_AUDIO_ACCEPT}`,
+  accept = "image/*,.pdf,audio/*,.wav,.mp3,.m4a,.ogg",
   multiple = true,
   maxSize = 50 * 1024 * 1024, // 50MB default for local dev tool
   disabled = false,
@@ -106,7 +105,7 @@ export function FileUpload({
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         className="shrink-0 transition-colors hover:bg-muted"
-        title="Upload files (images, PDFs, WAV/MP3 audio)"
+        title="Upload files (images, PDFs, audio)"
       >
         <Upload className="h-4 w-4" />
       </Button>

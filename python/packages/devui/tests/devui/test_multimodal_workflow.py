@@ -217,7 +217,7 @@ class TestMultimodalWorkflowInput:
             }
         ]
 
-        with pytest.raises(ValueError, match="Unsupported input_audio format"):
+        with pytest.raises(ValueError, match="Invalid input_audio"):
             executor._convert_input_to_chat_message(openai_input)
 
     def test_convert_openai_input_rejects_unsupported_only_content(self):

@@ -1,573 +1,300 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-export interface AudioRecorderOptions {
+interface AudioRecorderOptions {
   maxDurationSeconds: number;
   maxPayloadBytes: number;
   sampleRate: number;
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
+  autoStopOnSilence: boolean;
+  silenceThreshold: number;
+  silenceDurationMs: number;
+  minimumRecordingMs: number;
 }
+
+const MICROPHONE_WARMUP_MS = 600;
 
 export interface RecordedAudio {
   data: string;
-  format: SupportedAudioFormat;
+  format: "wav";
   blobUrl: string;
-  durationSeconds: number;
   sizeBytes: number;
-  waveformPeaks: number[];
-}
-
-export type SupportedAudioFormat = "wav" | "mp3";
-
-export interface AudioAnalysis {
   durationSeconds: number;
   waveformPeaks: number[];
 }
 
-export const SUPPORTED_INPUT_AUDIO_ACCEPT = "audio/wav,audio/x-wav,audio/mpeg,audio/mp3,.wav,.mp3";
-
-const MP3_MEDIA_TYPES = new Set(["audio/mp3", "audio/mpeg", "audio/x-mpeg", "audio/mpeg3", "audio/x-mpeg-3"]);
-const AUDIO_FILE_EXTENSION_PATTERN = /\.(aac|flac|m4a|mp3|ogg|wav)$/i;
-const MICROPHONE_WARMUP_MS = 600;
-const MAX_DURATION_TIMER_GRACE_MS = 250;
-
-function getAudioContextConstructor(): typeof AudioContext | undefined {
-  return window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+interface RecordingSession {
+  stream?: MediaStream;
+  recorder?: MediaRecorder;
+  timer?: number;
+  deadline?: number;
+  warmup?: number;
+  meterFrame?: number;
+  meterContext?: AudioContext;
 }
 
-function pickMimeType(): string | undefined {
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-    "audio/ogg;codecs=opus",
-  ];
-
-  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-}
-
-function writeString(view: DataView, offset: number, value: string): void {
-  for (let i = 0; i < value.length; i++) {
-    view.setUint8(offset + i, value.charCodeAt(i));
+function releaseSession(session: RecordingSession) {
+  window.clearInterval(session.timer);
+  window.clearTimeout(session.deadline);
+  window.clearTimeout(session.warmup);
+  if (session.meterFrame !== undefined) window.cancelAnimationFrame(session.meterFrame);
+  session.stream?.getTracks().forEach((track) => track.stop());
+  session.stream = undefined;
+  if (session.meterContext) {
+    void session.meterContext.close().catch((cause) => console.warn("Could not close microphone meter:", cause));
+    session.meterContext = undefined;
   }
+  if (session.recorder?.state === "recording") session.recorder.stop();
+}
+
+export function getAudioContextConstructor() {
+  return window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+}
+
+export function getWaveformPeaks(buffer: AudioBuffer): number[] {
+  const samples = buffer.getChannelData(0);
+  const count = Math.min(64, samples.length);
+  const peaks = Array.from({ length: count }, (_, index) => {
+    const start = Math.floor(index * samples.length / count);
+    const end = Math.floor((index + 1) * samples.length / count);
+    let peak = 0;
+    for (let sample = start; sample < end; sample++) peak = Math.max(peak, Math.abs(samples[sample]));
+    return peak;
+  });
+  const maximum = Math.max(...peaks, 0.01);
+  return peaks.map((peak) => peak / maximum);
 }
 
 function encodeWav(audioBuffer: AudioBuffer): Blob {
-  const channelData = audioBuffer.getChannelData(0);
-  const bytesPerSample = 2;
-  const blockAlign = bytesPerSample;
-  const byteRate = audioBuffer.sampleRate * blockAlign;
-  const dataSize = channelData.length * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  writeString(view, 0, "RIFF");
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(view, 8, "WAVE");
-  writeString(view, 12, "fmt ");
+  const samples = audioBuffer.getChannelData(0);
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
   view.setUint32(24, audioBuffer.sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
+  view.setUint32(28, audioBuffer.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
-  writeString(view, 36, "data");
-  view.setUint32(40, dataSize, true);
-
-  let offset = 44;
-  for (const sample of channelData) {
+  writeString(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, index) => {
     const clamped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
-    offset += bytesPerSample;
-  }
-
-  return new Blob([buffer], { type: "audio/wav" });
+    view.setInt16(44 + index * 2, clamped * (clamped < 0 ? 0x8000 : 0x7fff), true);
+  });
+  return new Blob([view], { type: "audio/wav" });
 }
 
-function createWaveformPeaks(audioBuffer: AudioBuffer, peakCount = 64): number[] {
-  const channelData = audioBuffer.getChannelData(0);
-  const samplesPerPeak = Math.max(1, Math.floor(channelData.length / peakCount));
-  const peaks: number[] = [];
-  let loudestPeak = 0;
-
-  for (let peakIndex = 0; peakIndex < peakCount; peakIndex++) {
-    const start = peakIndex * samplesPerPeak;
-    const end = Math.min(start + samplesPerPeak, channelData.length);
-    let peak = 0;
-
-    for (let sampleIndex = start; sampleIndex < end; sampleIndex++) {
-      peak = Math.max(peak, Math.abs(channelData[sampleIndex]));
-    }
-
-    peaks.push(peak);
-    loudestPeak = Math.max(loudestPeak, peak);
-  }
-
-  if (loudestPeak === 0) {
-    return peaks.map(() => 0.08);
-  }
-
-  return peaks.map((peak) => Math.max(0.08, peak / loudestPeak));
-}
-
-async function normalizeToWav(blob: Blob, sampleRate: number): Promise<{ blob: Blob; waveformPeaks: number[] }> {
+async function normalizeToWav(blob: Blob, sampleRate: number) {
   const AudioContextConstructor = getAudioContextConstructor();
-  if (!AudioContextConstructor) {
-    throw new Error("Audio recording requires AudioContext support in this browser.");
-  }
-
-  const audioContext = new AudioContextConstructor();
+  if (!AudioContextConstructor) throw new Error("This browser cannot convert microphone audio.");
+  const context = new AudioContextConstructor();
   try {
-    const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
-    const targetSampleRate = sampleRate || decoded.sampleRate;
-    const duration = decoded.duration;
-    const frameCount = Math.max(1, Math.ceil(duration * targetSampleRate));
-    const offlineContext = new OfflineAudioContext(1, frameCount, targetSampleRate);
-    const source = offlineContext.createBufferSource();
+    const decoded = await context.decodeAudioData(await blob.arrayBuffer());
+    const offline = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * sampleRate)), sampleRate);
+    const source = offline.createBufferSource();
     source.buffer = decoded;
-    source.connect(offlineContext.destination);
-    source.start(0);
-    const rendered = await offlineContext.startRendering();
+    source.connect(offline.destination);
+    source.start();
+    const rendered = await offline.startRendering();
     return {
-      blob: encodeWav(rendered),
-      waveformPeaks: createWaveformPeaks(rendered),
+      wav: encodeWav(rendered),
+      durationSeconds: rendered.duration,
+      waveformPeaks: getWaveformPeaks(rendered),
     };
   } finally {
-    await audioContext.close();
+    await context.close();
   }
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  const chunkSize = 0x8000;
   let binary = "";
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
-
   return btoa(binary);
 }
 
-export async function analyzeAudioBlob(blob: Blob): Promise<AudioAnalysis> {
-  const AudioContextConstructor = getAudioContextConstructor();
-  if (!AudioContextConstructor) {
-    throw new Error("Audio preview requires AudioContext support in this browser.");
-  }
-
-  const audioContext = new AudioContextConstructor();
-  try {
-    const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
-    return {
-      durationSeconds: decoded.duration,
-      waveformPeaks: createWaveformPeaks(decoded),
-    };
-  } finally {
-    await audioContext.close();
-  }
-}
-
-export function looksLikeAudioFile(file: File): boolean {
-  return file.type.startsWith("audio/") || AUDIO_FILE_EXTENSION_PATTERN.test(file.name);
-}
-
-export function getSupportedInputAudioFormat(file: File): SupportedAudioFormat | null {
-  const mediaType = file.type.split(";")[0].trim().toLowerCase();
-  const fileName = file.name.toLowerCase();
-
-  if (mediaType === "audio/wav" || mediaType === "audio/x-wav" || fileName.endsWith(".wav")) {
-    return "wav";
-  }
-
-  if (MP3_MEDIA_TYPES.has(mediaType) || fileName.endsWith(".mp3")) {
-    return "mp3";
-  }
-
-  return null;
-}
-
-export function createAudioBlobFromBase64(data: string, format: SupportedAudioFormat): { blob: Blob; data: string } {
-  const mediaType = format === "mp3" ? "audio/mpeg" : "audio/wav";
-  const normalizedData = data.startsWith("data:") ? data.split(",", 2)[1] ?? "" : data;
-  const binary = atob(normalizedData);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let index = 0; index < binary.length; index++) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return {
-    blob: new Blob([bytes], { type: mediaType }),
-    data: normalizedData,
-  };
-}
-
-export async function createRecordedAudioFromBlob(
-  blob: Blob,
-  format: SupportedAudioFormat,
-  durationSeconds?: number,
-  waveformPeaks?: number[]
-): Promise<RecordedAudio> {
-  const analysis =
-    durationSeconds !== undefined && waveformPeaks !== undefined
-      ? { durationSeconds, waveformPeaks }
-      : await analyzeAudioBlob(blob);
-
-  return {
-    data: await blobToBase64(blob),
-    format,
-    blobUrl: URL.createObjectURL(blob),
-    durationSeconds: analysis.durationSeconds,
-    sizeBytes: blob.size,
-    waveformPeaks: analysis.waveformPeaks,
-  };
-}
-
-export async function createRecordedAudioFromBase64(
-  data: string,
-  format: SupportedAudioFormat
-): Promise<RecordedAudio> {
-  const { blob, data: normalizedData } = createAudioBlobFromBase64(data, format);
-  const recording = await createRecordedAudioFromBlob(blob, format);
-  return {
-    ...recording,
-    data: normalizedData,
-  };
-}
-
-export function useAudioRecorder(options: AudioRecorderOptions, onRecordingComplete?: (recording: RecordedAudio) => void) {
-  const [isRecording, setIsRecording] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+export function useAudioRecorder(options: AudioRecorderOptions) {
+  const [stage, setStage] = useState<"idle" | "starting" | "recording" | "processing">("idle");
+  const [recording, setRecording] = useState<RecordedAudio | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [inputLevel, setInputLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const sessionRef = useRef<RecordingSession | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioMeterFrameRef = useRef<number | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const startedAtRef = useRef<number>(0);
-  const intervalRef = useRef<number | null>(null);
-  const warmupTimeoutRef = useRef<number | null>(null);
-  const maxDurationTimeoutRef = useRef<number | null>(null);
-  const cancelledRef = useRef(false);
-  const autoStoppingRef = useRef(false);
-  const stopRequestRef = useRef<{
-    resolve: (recording: RecordedAudio | null) => void;
-    reject: (error: unknown) => void;
-  } | null>(null);
-
-  const isSupported = useMemo(() => {
-    return Boolean(
-      window.isSecureContext &&
-        typeof navigator.mediaDevices?.getUserMedia === "function" &&
-        "MediaRecorder" in window &&
-        getAudioContextConstructor()
-    );
+  const clearRecording = useCallback(() => {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    previewUrlRef.current = null;
+    setRecording(null);
   }, []);
 
-  const clearTimer = useCallback(() => {
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  const stopInputMeter = useCallback(() => {
-    if (audioMeterFrameRef.current !== null) {
-      window.cancelAnimationFrame(audioMeterFrameRef.current);
-      audioMeterFrameRef.current = null;
-    }
-
-    const audioContext = audioContextRef.current;
-    audioContextRef.current = null;
-    if (audioContext) {
-      void audioContext.close();
-    }
+  const cancelRecording = useCallback(() => {
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    if (session) releaseSession(session);
     setInputLevel(0);
+    setStage("idle");
+    setError(null);
   }, []);
 
-  const startInputMeter = useCallback(
-    (stream: MediaStream) => {
-      stopInputMeter();
-      const AudioContextConstructor = getAudioContextConstructor();
-      if (!AudioContextConstructor) {
-        return;
-      }
-
-      try {
-        const audioContext = new AudioContextConstructor();
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.75;
-        const source = audioContext.createMediaStreamSource(stream);
-        const samples = new Uint8Array(analyser.fftSize);
-        source.connect(analyser);
-        audioContextRef.current = audioContext;
-
-        const updateInputLevel = () => {
-          analyser.getByteTimeDomainData(samples);
-          let sumSquares = 0;
-          for (const sample of samples) {
-            const centeredSample = (sample - 128) / 128;
-            sumSquares += centeredSample * centeredSample;
-          }
-
-          const rms = Math.sqrt(sumSquares / samples.length);
-          setInputLevel(Math.min(1, rms * 4));
-          audioMeterFrameRef.current = window.requestAnimationFrame(updateInputLevel);
-        };
-
-        void audioContext.resume();
-        updateInputLevel();
-      } catch {
-        stopInputMeter();
-      }
-    },
-    [stopInputMeter]
-  );
-
-  const releaseStream = useCallback(() => {
-    stopInputMeter();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-  }, [stopInputMeter]);
-
-  const clearWarmupTimer = useCallback(() => {
-    if (warmupTimeoutRef.current !== null) {
-      window.clearTimeout(warmupTimeoutRef.current);
-      warmupTimeoutRef.current = null;
-    }
+  useEffect(() => () => {
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    if (session) releaseSession(session);
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
   }, []);
 
-  const clearMaxDurationTimer = useCallback(() => {
-    if (maxDurationTimeoutRef.current !== null) {
-      window.clearTimeout(maxDurationTimeoutRef.current);
-      maxDurationTimeoutRef.current = null;
-    }
-  }, []);
-
-  const resetRecordingState = useCallback(() => {
-    clearTimer();
-    clearWarmupTimer();
-    clearMaxDurationTimer();
-    stopInputMeter();
-    setIsRecording(false);
-    setIsStarting(false);
-    setRecordingSeconds(0);
-  }, [clearMaxDurationTimer, clearTimer, clearWarmupTimer, stopInputMeter]);
-
-  const finalizeStoppedRecording = useCallback(
-    async (recorder: MediaRecorder): Promise<RecordedAudio | null> => {
-      clearTimer();
-      clearWarmupTimer();
-      clearMaxDurationTimer();
-      setIsRecording(false);
-      setIsStarting(false);
-      setIsProcessing(true);
-      releaseStream();
-
-      try {
-        if (cancelledRef.current) {
-          return null;
-        }
-
-        const durationSeconds = (Date.now() - startedAtRef.current) / 1000;
-        const allowedDurationSeconds = options.maxDurationSeconds + MAX_DURATION_TIMER_GRACE_MS / 1000;
-        if (!autoStoppingRef.current && durationSeconds > allowedDurationSeconds) {
-          throw new Error(`Recording is longer than the ${options.maxDurationSeconds}s limit.`);
-        }
-
-        const sourceBlob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        if (sourceBlob.size === 0) {
-          throw new Error("No audio was captured.");
-        }
-
-        const { blob: wavBlob, waveformPeaks } = await normalizeToWav(sourceBlob, options.sampleRate);
-        if (wavBlob.size > options.maxPayloadBytes) {
-          throw new Error(
-            `Recording is too large (${Math.ceil(wavBlob.size / 1024 / 1024)} MB). ` +
-              `Limit is ${Math.ceil(options.maxPayloadBytes / 1024 / 1024)} MB.`
-          );
-        }
-
-        return createRecordedAudioFromBlob(
-          wavBlob,
-          "wav",
-          Math.min(durationSeconds, options.maxDurationSeconds),
-          waveformPeaks
-        );
-      } catch (processingError) {
-        const message = processingError instanceof Error ? processingError.message : "Failed to process audio.";
-        setError(message);
-        throw processingError;
-      } finally {
-        setIsProcessing(false);
-        chunksRef.current = [];
-        mediaRecorderRef.current = null;
-        autoStoppingRef.current = false;
-      }
-    },
-    [
-      clearMaxDurationTimer,
-      clearTimer,
-      clearWarmupTimer,
-      options.maxDurationSeconds,
-      options.maxPayloadBytes,
-      options.sampleRate,
-      releaseStream,
-    ]
-  );
-
-  const startRecording = useCallback(async () => {
-    if (!isSupported) {
-      setError("Microphone input requires a supported browser and a secure context (localhost or HTTPS).");
+  const stopRecording = useCallback(() => {
+    const session = sessionRef.current;
+    if (session && !session.recorder) {
+      cancelRecording();
       return;
     }
+    if (session?.recorder?.state !== "recording") return;
+    setStage("processing");
+    setInputLevel(0);
+    releaseSession(session);
+  }, [cancelRecording]);
 
+  const startRecording = useCallback(async (autoStopOnSilence = options.autoStopOnSilence) => {
+    if (sessionRef.current) return;
+    const session: RecordingSession = {};
+    sessionRef.current = session;
+    clearRecording();
     setError(null);
-    setIsStarting(true);
-    chunksRef.current = [];
-    cancelledRef.current = false;
-    autoStoppingRef.current = false;
-    stopRequestRef.current = null;
+    setRecordingSeconds(0);
+    setInputLevel(0);
+    setStage("starting");
+
+    const fail = (cause: unknown) => {
+      if (sessionRef.current !== session) return;
+      cancelRecording();
+      setError(cause instanceof Error ? cause.message : "Microphone recording failed.");
+    };
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      session.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
+          sampleRate: options.sampleRate,
           echoCancellation: options.echoCancellation,
           noiseSuppression: options.noiseSuppression,
           autoGainControl: options.autoGainControl,
-          sampleRate: options.sampleRate,
         },
       });
-      if (cancelledRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        setIsStarting(false);
+      if (sessionRef.current !== session) {
+        releaseSession(session);
         return;
       }
-
-      const mimeType = pickMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
+        .find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(session.stream, mimeType ? { mimeType } : undefined);
+      session.recorder = recorder;
+      const chunks: Blob[] = [];
+      let size = 0;
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
+        if (sessionRef.current !== session) return;
+        size += event.data.size;
+        if (size > options.maxPayloadBytes) {
+          fail(new Error(`Recording exceeds the ${Math.round(options.maxPayloadBytes / 1024 / 1024)} MB limit.`));
+        } else {
+          chunks.push(event.data);
         }
       };
-
-      recorder.onstart = () => {
-        startedAtRef.current = Date.now();
-        setRecordingSeconds(0);
-        warmupTimeoutRef.current = window.setTimeout(() => {
-          if (cancelledRef.current) {
-            return;
+      recorder.onerror = () => fail(new Error("Microphone recording failed. Please try again."));
+      recorder.onstop = async () => {
+        releaseSession(session);
+        if (sessionRef.current !== session) return;
+        setStage("processing");
+        try {
+          const { wav, durationSeconds, waveformPeaks } = await normalizeToWav(
+            new Blob(chunks, { type: recorder.mimeType }), options.sampleRate
+          );
+          if (wav.size > options.maxPayloadBytes) {
+            throw new Error(`Recording exceeds the ${Math.round(options.maxPayloadBytes / 1024 / 1024)} MB limit.`);
           }
-
-          setIsRecording(true);
-          setIsStarting(false);
-
-          intervalRef.current = window.setInterval(() => {
-            setRecordingSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
-          }, 250);
-        }, MICROPHONE_WARMUP_MS);
-
-        maxDurationTimeoutRef.current = window.setTimeout(() => {
-          const activeRecorder = mediaRecorderRef.current;
-          if (!activeRecorder || activeRecorder.state === "inactive") {
-            return;
-          }
-
-          autoStoppingRef.current = true;
-          activeRecorder.stop();
-        }, Math.max(1, options.maxDurationSeconds) * 1000);
+          const data = await blobToBase64(wav);
+          // Permission, decoding, and encoding can finish after cancellation or unmount.
+          if (sessionRef.current !== session) return;
+          const blobUrl = URL.createObjectURL(wav);
+          previewUrlRef.current = blobUrl;
+          setRecording({ data, format: "wav", blobUrl, sizeBytes: wav.size, durationSeconds, waveformPeaks });
+          sessionRef.current = null;
+          setStage("idle");
+        } catch (cause) {
+          fail(cause);
+        }
       };
-
-      recorder.onstop = () => {
-        const stopRequest = stopRequestRef.current;
-        const wasAutoStopping = autoStoppingRef.current;
-        stopRequestRef.current = null;
-
-        finalizeStoppedRecording(recorder)
-          .then((recording) => {
-            if (recording && wasAutoStopping) {
-              onRecordingComplete?.(recording);
-            }
-            stopRequest?.resolve(recording);
-          })
-          .catch((error) => {
-            stopRequest?.reject(error);
-          });
-      };
-
-      streamRef.current = stream;
-      mediaRecorderRef.current = recorder;
-      startInputMeter(stream);
-
-      recorder.start();
-    } catch (recordingError) {
-      releaseStream();
-      setIsRecording(false);
-      setIsStarting(false);
-      setError(recordingError instanceof Error ? recordingError.message : "Microphone permission was denied.");
-    }
-  }, [finalizeStoppedRecording, isSupported, onRecordingComplete, options, releaseStream, startInputMeter]);
-
-  const stopRecording = useCallback(async (): Promise<RecordedAudio | null> => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
-      setIsStarting(false);
-      return null;
-    }
-
-    setIsStarting(false);
-    clearWarmupTimer();
-
-    return new Promise((resolve, reject) => {
-      if (stopRequestRef.current) {
-        resolve(null);
-        return;
+      const AudioContextConstructor = getAudioContextConstructor();
+      if (!AudioContextConstructor) throw new Error("This browser cannot meter microphone audio.");
+      const meterContext = new AudioContextConstructor();
+      session.meterContext = meterContext;
+      const analyser = meterContext.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.75;
+      meterContext.createMediaStreamSource(session.stream).connect(analyser);
+      if (meterContext.state === "suspended") {
+        void meterContext.resume().catch((cause) => console.warn("Could not resume microphone meter:", cause));
       }
-
-      stopRequestRef.current = { resolve, reject };
-
-      recorder.stop();
-    });
-  }, [clearWarmupTimer]);
-
-  const cancelRecording = useCallback(() => {
-    cancelledRef.current = true;
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
+      const levels = new Uint8Array(analyser.fftSize);
+      recorder.start(250);
+      const started = Date.now();
+      let silenceStartedAt: number | null = null;
+      const updateInputLevel = () => {
+        if (sessionRef.current !== session) return;
+        analyser.getByteTimeDomainData(levels);
+        let sumSquares = 0;
+        for (const sample of levels) sumSquares += ((sample - 128) / 128) ** 2;
+        const level = Math.min(1, Math.sqrt(sumSquares / levels.length) * 4);
+        setInputLevel(level);
+        const now = Date.now();
+        if (autoStopOnSilence && now - started >= Math.max(MICROPHONE_WARMUP_MS, options.minimumRecordingMs)) {
+          silenceStartedAt = level <= options.silenceThreshold ? silenceStartedAt ?? now : null;
+          if (silenceStartedAt !== null && now - silenceStartedAt >= options.silenceDurationMs) {
+            stopRecording();
+            return;
+          }
+        }
+        session.meterFrame = window.requestAnimationFrame(updateInputLevel);
+      };
+      session.meterFrame = window.requestAnimationFrame(updateInputLevel);
+      session.warmup = window.setTimeout(() => {
+        if (sessionRef.current === session) setStage("recording");
+      }, MICROPHONE_WARMUP_MS);
+      session.timer = window.setInterval(() => {
+        setRecordingSeconds(Math.floor((Date.now() - started) / 1000));
+      }, 250);
+      session.deadline = window.setTimeout(stopRecording, options.maxDurationSeconds * 1000);
+    } catch (cause) {
+      fail(cause);
     }
-    releaseStream();
-    resetRecordingState();
-    chunksRef.current = [];
-  }, [releaseStream, resetRecordingState]);
-
-  useEffect(() => {
-    return () => {
-      cancelRecording();
-    };
-  }, [cancelRecording]);
+  }, [cancelRecording, clearRecording, options, stopRecording]);
 
   return {
-    isSupported,
-    isRecording,
-    isStarting,
-    isProcessing,
+    isSupported: typeof window !== "undefined" && window.isSecureContext &&
+      Boolean(typeof navigator.mediaDevices?.getUserMedia === "function" && window.MediaRecorder &&
+        getAudioContextConstructor() && window.OfflineAudioContext),
+    isStarting: stage === "starting",
+    isRecording: stage === "recording",
+    isProcessing: stage === "processing",
+    recording,
     recordingSeconds,
     inputLevel,
     error,
     startRecording,
     stopRecording,
     cancelRecording,
+    clearRecording,
   };
 }

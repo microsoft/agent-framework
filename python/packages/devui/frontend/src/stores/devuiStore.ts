@@ -705,6 +705,16 @@ export const useDevUIStore = create<DevUIStore>()(
       }),
       {
         name: "devui-storage",
+        merge: (persistedState, currentState) => {
+          const restored = {
+            ...currentState,
+            ...(persistedState && typeof persistedState === "object" ? persistedState : {}),
+          };
+          return {
+            ...restored,
+            audioInput: { ...DEFAULT_AUDIO_INPUT, ...restored.audioInput },
+          };
+        },
         // Only persist UI preferences, not runtime state
         partialize: (state) => ({
           showDebugPanel: state.showDebugPanel,

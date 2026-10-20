@@ -340,31 +340,24 @@ async def test_add_and_list_items_preserves_all_supported_message_parts():
     assert listed_scan_file.file_id == "file_scan"
 
 
-@pytest.mark.asyncio
-async def test_add_and_list_items_preserves_input_audio_parts():
-    """Conversation storage keeps microphone audio as input_audio across round trips."""
-
-    def item_content(item: object) -> list[object]:
-        if isinstance(item, dict):
-            return cast(list[object], item["content"])
-        model_dump = getattr(item, "model_dump", None)
-        assert callable(model_dump)
-        dump = cast(dict[str, object], model_dump())
-        return cast(list[object], dump["content"])
-
+@pytest.mark.parametrize("role", ["user", "assistant"])
+@pytest.mark.parametrize(("audio_format", "media_type"), [("wav", "audio/wav"), ("mp3", "audio/mpeg")])
+async def test_audio_history_preserves_message_models(role, audio_format, media_type):
+    """Audio remains playable through the existing file-shaped conversation contract."""
     store = InMemoryConversationStore()
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
     request_items = [
         {
-            "role": "user",
+            "role": role,
             "content": [
+                {"type": "input_text", "text": "Audio message"},
                 {
                     "type": "input_audio",
                     "input_audio": {
                         "data": "UklGRg==",
-                        "format": "wav",
+                        "format": audio_format,
                     },
-                }
+                },
             ],
         },
     ]
@@ -372,17 +365,39 @@ async def test_add_and_list_items_preserves_input_audio_parts():
     created_items = await store.add_items(conversation.id, items=request_items)
     listed_items, has_more = await store.list_items(conversation.id)
 
-    expected_audio_content = {
-        "type": "input_audio",
-        "input_audio": {
-            "data": "UklGRg==",
-            "format": "wav",
-        },
-    }
-
     assert has_more is False
-    assert item_content(created_items[0])[0] == expected_audio_content
-    assert item_content(listed_items[0])[0] == expected_audio_content
+    for item in [created_items[0], listed_items[0]]:
+        assert isinstance(item, OpenAIMessage)
+        assert item.id
+        assert item.role == role
+        assert item.content[0].type == "text"
+        audio = item.content[1]
+        assert isinstance(audio, ResponseInputFile)
+        assert audio.file_url == f"data:{media_type};base64,UklGRg=="
+        assert item.model_dump()["content"][1]["type"] == "input_file"
+
+
+async def test_conversation_rejects_invalid_audio_alongside_text():
+    """A malformed known audio part must not silently disappear from a mixed message."""
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation()
+
+    with pytest.raises(ValueError, match="input_audio"):
+        await store.add_items(
+            conversation.id,
+            items=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Listen"},
+                        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "webm"}},
+                    ],
+                }
+            ],
+        )
+
+    items, _ = await store.list_items(conversation.id)
+    assert items == []
 
 
 @pytest.mark.asyncio

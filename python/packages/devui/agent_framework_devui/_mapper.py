@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-# pyright: reportUnnecessaryTypeIgnoreComment=false
 
 """Agent Framework message mapper implementation."""
 
@@ -18,7 +17,6 @@ from uuid import uuid4
 from agent_framework import Content, Message, UsageDetails, add_usage_details, get_namespaced_value
 from openai.types.responses import (
     Response,
-    ResponseCompletedEvent,
     ResponseContentPartAddedEvent,
     ResponseCreatedEvent,
     ResponseError,
@@ -34,6 +32,7 @@ from .models import (
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
+    ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
@@ -53,6 +52,7 @@ from .models import (
     ResponseUsage,
     ResponseWorkflowEventComplete,
 )
+from .models._openai_custom import MediaResponse, MediaResponseEvent
 
 logger = logging.getLogger(__name__)
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
@@ -483,7 +483,8 @@ class MessageMapper:
 
             usage = _response_usage(usage_data) if usage_data is not None else None
 
-            return OpenAIResponse.model_construct(
+            response_type = MediaResponse if custom_output_items else OpenAIResponse
+            return response_type(
                 id=context["response_id"],
                 object="response",
                 created_at=datetime.now().timestamp(),
@@ -510,7 +511,7 @@ class MessageMapper:
 
     async def finalize_stream(
         self, events: Sequence[Any], request: AgentFrameworkRequest
-    ) -> ResponseCompletedEvent | ResponseFailedEvent:
+    ) -> ResponseCompletedEvent | ResponseFailedEvent | MediaResponseEvent:
         """Create the single terminal event for a mapped response stream."""
         final_response = await self.aggregate_to_response(events, request)
 
@@ -522,6 +523,13 @@ class MessageMapper:
             if isinstance(sequence_number, int):
                 last_sequence_number = sequence_number
                 break
+
+        if isinstance(final_response, MediaResponse):
+            return MediaResponseEvent(
+                type="response.failed" if final_response.status == "failed" else "response.completed",
+                response=final_response,
+                sequence_number=last_sequence_number + 1,
+            )
 
         if final_response.status == "failed":
             return ResponseFailedEvent(
@@ -1639,9 +1647,7 @@ class MessageMapper:
         - Unknown/debugging content → ResponseTraceEventComplete (fallback)
         """
         mime_type = (
-            getattr(content, "media_type", None)
-            or getattr(content, "mime_type", None)
-            or "application/octet-stream"
+            getattr(content, "media_type", None) or getattr(content, "mime_type", None) or "application/octet-stream"
         )
         item_id = f"item_{uuid.uuid4().hex[:16]}"
 
@@ -1676,7 +1682,7 @@ class MessageMapper:
 
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputImage(  # type: ignore[arg-type]
+                item=ResponseOutputImage(
                     id=item_id,
                     type="output_image",
                     image_url=image_url,
@@ -1709,7 +1715,7 @@ class MessageMapper:
             # Prefer URI
             if uri_value:
                 file_url = uri_value
-                file_data = uri_value.split(",", 1)[1] if uri_value.startswith("data:") and "," in uri_value else None
+                file_data = None
             elif data_value:
                 # Convert bytes to base64
                 import base64
@@ -1733,7 +1739,7 @@ class MessageMapper:
 
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputFile(  # type: ignore[arg-type]
+                item=ResponseOutputFile(
                     id=item_id,
                     type="output_file",
                     filename=filename,
@@ -1763,7 +1769,7 @@ class MessageMapper:
 
         return CustomResponseOutputItemAddedEvent(
             type="response.output_item.added",
-            item=ResponseOutputData(  # type: ignore[arg-type]
+            item=ResponseOutputData(
                 id=item_id,
                 type="output_data",
                 data=data_str,
@@ -1803,7 +1809,7 @@ class MessageMapper:
         if mime_type.startswith("image/"):
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputImage(  # type: ignore[arg-type]
+                item=ResponseOutputImage(
                     id=item_id,
                     type="output_image",
                     image_url=uri,
@@ -1832,7 +1838,7 @@ class MessageMapper:
 
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputFile(  # type: ignore[arg-type]
+                item=ResponseOutputFile(
                     id=item_id,
                     type="output_file",
                     filename=filename,
@@ -1986,7 +1992,7 @@ class MessageMapper:
         self, error_message: str, request: AgentFrameworkRequest, response_id: str
     ) -> OpenAIResponse:
         """Create error response."""
-        return OpenAIResponse.model_construct(
+        return OpenAIResponse(
             id=response_id,
             object="response",
             created_at=datetime.now().timestamp(),

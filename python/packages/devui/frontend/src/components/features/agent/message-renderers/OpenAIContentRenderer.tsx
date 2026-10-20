@@ -10,23 +10,13 @@ import {
   Code,
   ChevronDown,
   ChevronRight,
-  Music,
   Check,
   X,
   Clock,
 } from "lucide-react";
-import type { MessageContent, MessageInputFile, MessageOutputFile } from "@/types/openai";
+import type { MessageContent } from "@/types/openai";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { AudioMessagePreview } from "@/components/ui/audio-message-preview";
-import {
-  analyzeAudioBlob,
-  createAudioBlobFromBase64,
-  createRecordedAudioFromBase64,
-  createRecordedAudioFromBlob,
-  type AudioAnalysis,
-  type RecordedAudio,
-  type SupportedAudioFormat,
-} from "@/hooks";
 import { useDevUIStore } from "@/stores/devuiStore";
 
 interface ContentRendererProps {
@@ -34,46 +24,6 @@ interface ContentRendererProps {
   className?: string;
   isStreaming?: boolean;
   autoPlayAudio?: boolean;
-}
-
-const AUDIO_PREVIEW_CACHE_LIMIT = 25;
-const audioPreviewCache = new Map<string, Promise<AudioAnalysis & { blob: Blob }>>();
-
-function getAudioPreviewCacheKey(data: string, format: "wav" | "mp3"): string {
-  let hash = 0;
-  for (let index = 0; index < data.length; index++) {
-    hash = (hash * 31 + data.charCodeAt(index)) | 0;
-  }
-  return `${format}:${data.length}:${hash}`;
-}
-
-function getCachedAudioPreview(data: string, format: "wav" | "mp3"): Promise<AudioAnalysis & { blob: Blob }> {
-  const cacheKey = getAudioPreviewCacheKey(data, format);
-  const cachedPreview = audioPreviewCache.get(cacheKey);
-  if (cachedPreview) {
-    return cachedPreview;
-  }
-
-  const preview = (async () => {
-    const { blob } = createAudioBlobFromBase64(data, format);
-    return {
-      blob,
-      ...(await analyzeAudioBlob(blob)),
-    };
-  })().catch((error) => {
-    audioPreviewCache.delete(cacheKey);
-    throw error;
-  });
-
-  audioPreviewCache.set(cacheKey, preview);
-  if (audioPreviewCache.size > AUDIO_PREVIEW_CACHE_LIMIT) {
-    const oldestKey = audioPreviewCache.keys().next().value;
-    if (oldestKey) {
-      audioPreviewCache.delete(oldestKey);
-    }
-  }
-
-  return preview;
 }
 
 // Text content renderer
@@ -208,36 +158,33 @@ function isAudioFilename(filename?: string): boolean {
   return Boolean(filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/));
 }
 
-function NativeAudioFileRenderer({
+function AudioFileRenderer({
   sourceUrl,
-  mimeType,
   filename,
   className,
   autoPlay,
 }: {
   sourceUrl: string;
-  mimeType?: string;
   filename?: string;
   className?: string;
   autoPlay?: boolean;
 }) {
   return (
-    <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <Music className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">{filename || "Audio file"}</span>
-      </div>
-      <audio controls autoPlay={autoPlay} className="w-full">
-        <source src={sourceUrl} type={mimeType} />
-        Your browser does not support audio playback.
-      </audio>
-    </div>
+    <AudioMessagePreview
+      audio={{ blobUrl: sourceUrl }}
+      label={filename || "Audio file"}
+      minWidth={360}
+      downloadFilename={filename || "audio"}
+      className={`my-2 ${className || ""}`}
+      autoPlay={autoPlay}
+    />
   );
 }
 
 // File content renderer (handles both input and output files)
 function FileContentRenderer({ content, className, autoPlayAudio }: ContentRendererProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const autoPlayAgentAudio = useDevUIStore((state) => state.audioInput.autoPlayAgentAudio);
 
   // Determine file properties (must be before hooks for conditional logic)
   const isFileContent = content.type === "input_file" || content.type === "output_file";
@@ -330,24 +277,13 @@ function FileContentRenderer({ content, className, autoPlayAudio }: ContentRende
 
   // For audio files
   if (isAudioFile && fileUrl) {
-    if (content.type === "output_file") {
-      return (
-        <OutputAudioFileRenderer
-          content={content as MessageOutputFile}
-          className={className}
-          autoPlay={autoPlayAudio}
-        />
-      );
-    }
-
-    const inputFile = content as MessageInputFile;
-    const sourceUrl = inputFile.file_url || fileDataSourceUrl(inputFile.file_data, mimeType) || fileUrl;
+    const sourceUrl = content.file_url || fileDataSourceUrl(content.file_data, mimeType) || fileUrl;
     return (
-      <NativeAudioFileRenderer
+      <AudioFileRenderer
         sourceUrl={sourceUrl}
-        mimeType={mimeType}
         filename={filename}
         className={className}
+        autoPlay={content.type === "output_file" && Boolean(autoPlayAudio && autoPlayAgentAudio)}
       />
     );
   }
@@ -375,215 +311,15 @@ function FileContentRenderer({ content, className, autoPlayAudio }: ContentRende
   );
 }
 
-function getOutputAudioFormat(content: MessageOutputFile): SupportedAudioFormat | null {
-  const mimeType = content.mime_type?.split(";")[0].trim().toLowerCase();
-  const filename = content.filename.toLowerCase();
-
-  if (mimeType === "audio/wav" || mimeType === "audio/x-wav" || filename.endsWith(".wav")) {
-    return "wav";
-  }
-  if (
-    mimeType === "audio/mpeg" ||
-    mimeType === "audio/mp3" ||
-    mimeType === "audio/x-mpeg" ||
-    filename.endsWith(".mp3")
-  ) {
-    return "mp3";
-  }
-
-  return null;
-}
-
-function audioSourceUrl(content: MessageOutputFile): string | undefined {
-  if (content.file_data) {
-    return fileDataSourceUrl(content.file_data, content.mime_type || "audio/mpeg");
-  }
-  if (content.file_url) {
-    return content.file_url;
-  }
-  return undefined;
-}
-
-function OutputAudioFileRenderer({
-  content,
-  className,
-  autoPlay,
-}: {
-  content: MessageOutputFile;
-  className?: string;
-  autoPlay?: boolean;
-}) {
-  const [audioPreview, setAudioPreview] = useState<RecordedAudio | null>(null);
-  const [previewError, setPreviewError] = useState(false);
-  const autoPlayAgentAudio = useDevUIStore((state) => state.audioInput.autoPlayAgentAudio);
-  const format = getOutputAudioFormat(content);
-  const sourceUrl = audioSourceUrl(content);
-  const label = `${content.filename || "Voice message"}${format ? ` (${format.toUpperCase()})` : ""}`;
-
-  useEffect(() => {
-    if (!format || !sourceUrl) {
-      setAudioPreview(null);
-      setPreviewError(true);
-      return;
-    }
-
-    let isCancelled = false;
-    let activePreview: RecordedAudio | null = null;
-
-    setAudioPreview(null);
-    setPreviewError(false);
-
-    const preparePreview = async () => {
-      const inlineAudioData = fileDataSourceUrl(content.file_data, content.mime_type);
-      if (inlineAudioData || sourceUrl.startsWith("data:")) {
-        return createRecordedAudioFromBase64(inlineAudioData || sourceUrl, format);
-      }
-
-      const response = await fetch(sourceUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to load audio output: ${response.status}`);
-      }
-      return createRecordedAudioFromBlob(await response.blob(), format);
-    };
-
-    preparePreview()
-      .then((preview) => {
-        if (isCancelled) {
-          URL.revokeObjectURL(preview.blobUrl);
-          return;
-        }
-        activePreview = preview;
-        setAudioPreview(preview);
-      })
-      .catch((error) => {
-        console.error("Failed to prepare output audio preview:", error);
-        if (!isCancelled) {
-          setPreviewError(true);
-        }
-      });
-
-    return () => {
-      isCancelled = true;
-      if (activePreview) {
-        URL.revokeObjectURL(activePreview.blobUrl);
-      }
-    };
-  }, [content.file_data, content.mime_type, format, sourceUrl]);
-
-  const isPreparingPreview = Boolean(format && sourceUrl && !previewError && !audioPreview);
-
-  if (audioPreview && !previewError) {
-    return (
-      <AudioMessagePreview
-        audio={audioPreview}
-        label={label}
-        previewBeforeSend
-        autoPlay={Boolean(autoPlay && autoPlayAgentAudio)}
-        downloadFilename={content.filename}
-        maxWidth={460}
-        minWidth={320}
-        className={`my-2 bg-card text-card-foreground ${className || ""}`}
-      />
-    );
-  }
-
-  if (isPreparingPreview) {
-    return (
-      <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
-        <div className="flex items-center gap-2">
-          <Music className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">{label}</span>
-          <span className="text-xs text-muted-foreground">Preparing audio preview...</span>
-        </div>
-      </div>
-    );
-  }
-
-  return sourceUrl ? (
-    <NativeAudioFileRenderer
-      sourceUrl={sourceUrl}
-      mimeType={content.mime_type}
-      filename={label}
-      className={className}
-      autoPlay={Boolean(autoPlay && autoPlayAgentAudio)}
-    />
-  ) : null;
-}
-
 function AudioContentRenderer({ content, className }: ContentRendererProps) {
-  const [audioPreview, setAudioPreview] = useState<RecordedAudio | null>(null);
-  const [previewError, setPreviewError] = useState(false);
-  const isAudioContent = content.type === "input_audio";
-  const data = isAudioContent ? content.input_audio.data : "";
-  const format = isAudioContent ? content.input_audio.format : "wav";
+  if (content.type !== "input_audio") return null;
+  const { data, format } = content.input_audio;
   const mimeType = format === "mp3" ? "audio/mpeg" : "audio/wav";
   const audioUrl = data.startsWith("data:") ? data : `data:${mimeType};base64,${data}`;
   const label = `Voice message (${format.toUpperCase()})`;
 
-  useEffect(() => {
-    if (!isAudioContent) {
-      return;
-    }
-
-    let isCancelled = false;
-    let blobUrl: string | null = null;
-
-    setAudioPreview(null);
-    setPreviewError(false);
-    getCachedAudioPreview(data, format)
-      .then((preview) => {
-        if (isCancelled) {
-          return;
-        }
-        blobUrl = URL.createObjectURL(preview.blob);
-        setAudioPreview({
-          data: data.startsWith("data:") ? data.split(",", 2)[1] ?? "" : data,
-          format,
-          blobUrl,
-          durationSeconds: preview.durationSeconds,
-          sizeBytes: preview.blob.size,
-          waveformPeaks: preview.waveformPeaks,
-        });
-      })
-      .catch((error) => {
-        console.error("Failed to prepare audio preview:", error);
-        if (!isCancelled) {
-          setPreviewError(true);
-        }
-      });
-
-    return () => {
-      isCancelled = true;
-      if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
-      }
-    };
-  }, [data, format, isAudioContent]);
-
-  if (!isAudioContent) return null;
-
-  if (audioPreview && !previewError) {
-    return (
-      <AudioMessagePreview
-        audio={audioPreview}
-        label={label}
-        previewBeforeSend
-        className={`my-2 bg-card text-card-foreground ${className || ""}`}
-      />
-    );
-  }
-
   return (
-    <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <Music className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">{label}</span>
-      </div>
-      <audio controls className="w-full">
-        <source src={audioUrl} type={mimeType} />
-        Your browser does not support audio playback.
-      </audio>
-    </div>
+    <AudioFileRenderer sourceUrl={audioUrl} filename={label} className={className} />
   );
 }
 

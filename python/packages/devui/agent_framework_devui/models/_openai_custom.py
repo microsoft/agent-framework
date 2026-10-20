@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from openai.types.responses import Response, ResponseOutputItem
 from pydantic import BaseModel, ConfigDict
 
 # Custom Agent Framework OpenAI event types for structured data
@@ -56,8 +57,8 @@ class ExecutorActionItem(BaseModel):
 class CustomResponseOutputItemAddedEvent(BaseModel):
     """Custom version of ResponseOutputItemAddedEvent that accepts any item type.
 
-    This allows us to emit executor action items while maintaining the same
-    event structure as OpenAI's standard.
+    This supports executor actions and media output items while maintaining
+    the same event structure as OpenAI's standard.
     """
 
     type: Literal["response.output_item.added"] = "response.output_item.added"
@@ -274,6 +275,21 @@ class ResponseOutputData(BaseModel):
     """Optional description of the data."""
 
 
+class MediaResponse(Response):
+    """Responses envelope with validated DevUI media output extensions."""
+
+    # The SDK's output union excludes the media items already supported by DevUI.
+    output: list[ResponseOutputItem | ResponseOutputImage | ResponseOutputFile | ResponseOutputData]  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class MediaResponseEvent(BaseModel):
+    """Terminal event retaining the media response's extended serialization schema."""
+
+    type: Literal["response.completed", "response.failed"]
+    sequence_number: int
+    response: MediaResponse
+
+
 # Agent Framework extension fields
 class AgentFrameworkExtraBody(BaseModel):
     """Agent Framework specific routing fields for OpenAI requests."""
@@ -401,8 +417,6 @@ class MetaResponse(BaseModel):
 # Export all custom types
 __all__ = [
     "AgentFrameworkRequest",
-    "CustomResponseOutputItemAddedEvent",
-    "CustomResponseOutputItemDoneEvent",
     "MetaResponse",
     "OpenAIError",
     "ResponseFunctionResultComplete",

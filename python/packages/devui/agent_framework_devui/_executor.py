@@ -11,12 +11,7 @@ from typing import Any, cast
 
 from agent_framework import Content, SupportsAgentRun, Workflow
 
-from ._audio import (
-    input_audio_data_uri,
-    input_audio_format_for_error,
-    media_type_for_input_audio_format,
-    parse_input_audio_param,
-)
+from ._audio import input_audio_to_content
 from ._conversations import ConversationStore, InMemoryConversationStore
 from ._discovery import EntityDiscovery
 from ._mapper import MessageMapper
@@ -758,24 +753,10 @@ class AgentFrameworkExecutor:
                                         )
 
                                 elif content_type == "input_audio":
-                                    audio_content = parse_input_audio_param(content_dict)
-                                    if audio_content is not None:
-                                        audio_input_param = audio_content["input_audio"]
-                                        audio_data = audio_input_param["data"]
-                                        audio_format = audio_input_param["format"]
-                                        media_type = media_type_for_input_audio_format(audio_format)
-                                        if media_type is None:
-                                            raise InputConversionError(
-                                                f"Unsupported input_audio format: {audio_format!r}"
-                                            )
-
-                                        data_uri = input_audio_data_uri(audio_data, media_type)
-                                        contents.append(Content.from_uri(uri=data_uri, media_type=media_type))
-                                    else:
-                                        audio_format = input_audio_format_for_error(content_dict)
-                                        raise InputConversionError(
-                                            f"Unsupported input_audio format: {audio_format!r}"
-                                        )
+                                    try:
+                                        contents.append(input_audio_to_content(content_dict))
+                                    except ValueError as exc:
+                                        raise InputConversionError(str(exc)) from exc
 
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response with server-side validation
