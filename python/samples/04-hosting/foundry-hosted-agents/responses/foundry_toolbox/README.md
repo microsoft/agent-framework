@@ -142,7 +142,7 @@ Native code-interpreter file citations are a separate tracked behavior
 
 #### Initialize the agent project
 
-These `azd` steps initialize and run the separate [foundry-samples deployment project](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox), not the framework source in this directory. Its `azure.yaml` manages the connections, toolbox, and hosted agent together; the manual `toolbox.yaml` setup above is for this directory's example.
+These `azd` steps initialize and run the separate [foundry-samples deployment project](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox), not the framework source in this directory.
 
 No cloning required. Create a new folder and initialize from the manifest:
 
@@ -152,9 +152,9 @@ mkdir my-toolbox-agent && cd my-toolbox-agent
 azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/azure.yaml --src .
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow. `--src .` keeps the generated project in the current directory; run the remaining commands there.
+Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow.
 
-#### Configure the toolbox dependencies
+#### Create the toolbox with `azd ai`
 
 > [!TIP]
 > If you use GitHub Copilot for Azure to scaffold a hosted agent that consumes this toolbox, the following skill references describe the same endpoint contract (env var, headers, MCP protocol, citation patterns, and troubleshooting) that the agent must implement:
@@ -162,24 +162,28 @@ Follow the prompts to configure your Foundry project and model deployment. If yo
 > - [Toolbox overview](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/toolbox/toolbox.md) — toolbox concept, API shape and schema, versions, endpoints, and MCP protocol.
 > - [Use toolbox in a hosted agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md) — endpoint resolution, env-var contract, payload shape, code integration patterns, and tracing.
 
-The initialized `azure.yaml` declares `ghmcppat`, `langmcpconn`, `foundrymcpconn`, and the `agent-tools` toolbox. If initialization did not collect the external dependency values, set them before deployment:
+The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. The initialized `azure.yaml` declares the toolbox and its connections; `azd up` below creates them. If initialization did not collect the external dependency values, set them before deployment:
 
 ```bash
 azd env set GITHUB_MCP_PAT "<your-GitHub-MCP-PAT>"
 azd env set AZURE_LANGUAGE_MCP_ENDPOINT "https://<language-service>.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview"
 ```
 
-#### Provision and deploy
+The first version becomes the default automatically. Use `azd ai toolbox list`, `azd ai toolbox show agent-tools`, and `azd ai toolbox version list agent-tools` to inspect, and `azd ai toolbox delete agent-tools --force` to remove it.
+
+To stage incremental changes safely, use `azd ai toolbox connection add/remove` and `azd ai toolbox skill add/list/remove`; each creates a new toolbox version that carries forward existing connections and skills but **doesn't** change the default. Promote a version with `azd ai toolbox publish agent-tools <version>` when you're ready to make it active.
+
+The initialized project's `azure.yaml` maps `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`, the toolbox's versioned MCP endpoint, to the agent's `TOOLBOX_ENDPOINT`; no manual endpoint copy is needed.
+
+#### Provision Azure resources (if needed)
+
+Run this even with an existing Foundry project to create the connections and toolbox before running the agent:
 
 ```bash
 azd up
 ```
 
-This deploys the connections and toolbox before the agent. The agent's `TOOLBOX_ENDPOINT` maps to `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`, the versioned MCP endpoint produced by the toolbox deployment; do not create a separate toolbox or manually copy its endpoint for this project.
-
 #### Run the agent locally
-
-Run `azd up` first: local execution does not provision the connections or toolbox.
 
 ```bash
 azd ai agent run
@@ -195,9 +199,9 @@ In a separate terminal, from the project directory:
 azd ai agent invoke --local "What tools do you have?"
 ```
 
-#### Deploy changes to Foundry
+#### Deploy to Foundry
 
-After changing tools, connections, or agent code, redeploy all services:
+Once tested locally, deploy to Microsoft Foundry:
 
 ```bash
 azd deploy --all
