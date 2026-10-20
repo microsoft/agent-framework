@@ -138,7 +138,7 @@ Native code-interpreter file citations are a separate tracked behavior
    ```bash
    azd auth login
    ```
-4. Prepare a GitHub MCP Personal Access Token (PAT) and the MCP endpoint of an existing Azure Language resource before initialization; the CLI may prompt for these values. Keep the PAT out of source control. The project's managed identity needs access to the Azure Language resource, and the calling user needs access for the Foundry MCP connection.
+4. Prepare a GitHub MCP Personal Access Token (PAT) and the MCP endpoint of an existing Azure Language resource before initialization. The CLI may prompt for these values. Keep the PAT out of source control. The project's managed identity needs access to the Azure Language resource, and the calling user needs access for the Foundry MCP connection.
 
 #### Initialize the agent project
 
@@ -160,7 +160,7 @@ Follow the prompts to configure your Foundry project and model deployment. If yo
 > - [Toolbox overview](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/toolbox/toolbox.md) — toolbox concept, API shape and schema, versions, endpoints, and MCP protocol.
 > - [Use toolbox in a hosted agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md) — endpoint resolution, env-var contract, payload shape, code integration patterns, and tracing.
 
-The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. The initialized `azure.yaml` declares the toolbox and its connections; `azd up` below creates them. If initialization did not collect the external dependency values, set them before deployment:
+The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. The initialized `azure.yaml` declares the toolbox and its connections. `azd up` below creates them. If initialization did not collect the external dependency values, set them before deployment:
 
 ```bash
 azd env set GITHUB_MCP_PAT "<your-GitHub-MCP-PAT>"
@@ -171,7 +171,7 @@ The first version becomes the default automatically. Use `azd ai toolbox list`, 
 
 To stage incremental changes safely, use `azd ai toolbox connection add/remove` and `azd ai toolbox skill add/list/remove`; each creates a new toolbox version that carries forward existing connections and skills but **doesn't** change the default. Promote a version with `azd ai toolbox publish agent-tools <version>` when you're ready to make it active.
 
-The initialized project's `azure.yaml` maps `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`, the toolbox's versioned MCP endpoint, to the agent's `TOOLBOX_ENDPOINT`; no manual endpoint copy is needed.
+The initialized project's `azure.yaml` maps `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`, the toolbox's versioned MCP endpoint, to the agent's `TOOLBOX_ENDPOINT`. No manual endpoint copy is needed.
 
 #### Provision Azure resources (if needed)
 
