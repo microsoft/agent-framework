@@ -34,6 +34,18 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// but not the full extension.
     /// </para>
     /// <para>
+    /// Skills discovered through <c>skills/list</c> are cached according to server-provided TTLs.
+    /// When any page expires, the skills are refreshed on the next request.
+    /// To honor these TTLs, disable any additional caching layers around this source,
+    /// including the builder's cache by calling <see cref="AgentSkillsProviderBuilder.DisableCaching"/>.
+    /// </para>
+    /// <code>
+    /// var provider = new AgentSkillsProviderBuilder()
+    ///     .UseMcpSkills(client)
+    ///     .DisableCaching()
+    ///     .Build();
+    /// </code>
+    /// <para>
     /// Index-based discovery and archive-distributed skills are compatibility features and will be deprecated
     /// in a future release.
     /// </para>

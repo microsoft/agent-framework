@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// <summary>
 /// Tests discovery and content access for skills returned by <c>skills/list</c>.
 /// </summary>
-public sealed class AgentMcpListedSkillsTests
+public sealed partial class AgentMcpListedSkillsTests
 {
     private const string SkillUri = "skill://unit-converter/SKILL.md";
     private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
@@ -328,7 +328,7 @@ public sealed class AgentMcpListedSkillsTests
             responses.ReturnsAsync(new JsonRpcResponse { Id = new RequestId(page + 1), Result = result });
         }
 
-        var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpListedSkillsLoader(client.Object);
 
         // Act
         var skills = await loader.DiscoverAsync(CancellationToken.None);
@@ -345,7 +345,7 @@ public sealed class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(Entry(), new JsonObject()) });
-        var loader = new McpListedSkillsLoader(client.Object, options: new() { ListedMaxSkillCount = 1 });
+        using var loader = new McpListedSkillsLoader(client.Object, options: new() { ListedMaxSkillCount = 1 });
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
@@ -368,7 +368,7 @@ public sealed class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(entry) });
-        var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpListedSkillsLoader(client.Object);
 
         // Act
         var skills = await loader.DiscoverAsync(CancellationToken.None);
@@ -458,7 +458,7 @@ public sealed class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = null });
-        var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpListedSkillsLoader(client.Object);
 
         // Act
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
@@ -1043,7 +1043,7 @@ public sealed class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = result });
-        var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpListedSkillsLoader(client.Object);
 
         // Act
         var skills = await loader.DiscoverAsync(CancellationToken.None);

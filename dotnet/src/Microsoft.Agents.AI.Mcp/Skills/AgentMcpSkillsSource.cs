@@ -41,6 +41,12 @@ namespace Microsoft.Agents.AI;
 /// These checks do not limit incoming messages before the supplied client receives and parses them.
 /// </para>
 /// <para>
+/// Skills discovered through <c>skills/list</c> are cached according to server-provided TTLs.
+/// When any page expires, the skills are refreshed on the next request.
+/// To honor these TTLs, disable any additional caching layers around this source,
+/// including the builder's cache by calling <see cref="AgentSkillsProviderBuilder.DisableCaching"/>.
+/// </para>
+/// <para>
 /// <c>skill://index.json</c> is used only when the server does not declare the Skills extension.
 /// It lists <c>skill-md</c> entries pointing to individual <c>SKILL.md</c> resources and <c>archive</c>
 /// entries pointing to archives containing skill files. Entries with unsupported types are skipped.
@@ -201,6 +207,8 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     {
         if (disposing)
         {
+            this._listedSkillsLoader.Dispose();
+
             foreach (var loader in this._loaders.Values)
             {
                 (loader as IDisposable)?.Dispose();
