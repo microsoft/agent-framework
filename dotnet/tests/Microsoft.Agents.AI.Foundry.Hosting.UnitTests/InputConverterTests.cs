@@ -958,7 +958,7 @@ public class InputConverterTests
         Assert.Equal("call_history", fcc.CallId);
         Assert.Equal("delete_file", fcc.Name);
         Assert.NotNull(fcc.Arguments);
-        Assert.Equal("/tmp/x", ((System.Text.Json.JsonElement)fcc.Arguments!["path"]!).GetString());
+        Assert.Equal("/tmp/x", ((JsonElement)fcc.Arguments!["path"]!).GetString());
     }
 
     [Fact]
