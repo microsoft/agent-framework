@@ -293,7 +293,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         }
 
         // Act
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DefaultMcpToolHandler.DrainCleanupAsync(
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => McpClientLifetime.DrainCleanupAsync(
             [CancelledCleanupAsync(), SuccessfulCleanupAsync()],
             [firstDisposed.Task, secondDisposed.Task]));
 
@@ -1204,7 +1204,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Mock<IAsyncDisposable> transport = new();
         transport.Setup(t => t.DisposeAsync()).Returns(new ValueTask(Task.FromException(
             new InvalidOperationException("transport cleanup failed"))));
-        DefaultMcpToolHandler.ClientConnection connection = new(client.Object, transport.Object);
+        McpClientConnection connection = new(client.Object, transport.Object);
         using CleanupTraceListener listener = new();
         Trace.Listeners.Add(listener);
         try
