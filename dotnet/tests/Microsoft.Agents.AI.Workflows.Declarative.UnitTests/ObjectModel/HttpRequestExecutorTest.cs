@@ -443,6 +443,27 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
+    public async Task HttpRequestRejectsSensitiveTimeoutAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Timeout", FormulaValue.New(1500), sensitivity: SensitivityLevel.Sensitive);
+        HttpRequestAction.Builder builder = this.CreateModel(
+            nameof(HttpRequestRejectsSensitiveTimeoutAsync), TestUrl, HttpMethodType.Get).ToBuilder();
+        builder.RequestTimeoutInMilliseconds = IntExpression.Expression("Local.Timeout").ToBuilder();
+        MockHttpRequestHandler handler = new(HttpRequestResult("{}"));
+        HttpRequestExecutor action = new(AssignParent<HttpRequestAction>(builder), handler.Object, this._agentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("timeout", exception.Message);
+        handler.VerifyNotSent();
+    }
+
+    [Fact]
     public async Task HttpRequestAddsResponseToConversationAsync()
     {
         // Arrange

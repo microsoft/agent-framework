@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 import os
 import uuid
 from collections.abc import AsyncIterable
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,9 +19,15 @@ from agent_framework import (
     chat_middleware,
     tool,
 )
-from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException, SettingNotFoundError
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidRequestException,
+    ContentError,
+    SettingNotFoundError,
+)
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
+from ollama._types import Image as OllamaImage
 from ollama._types import Message as OllamaMessage
 from openai import AsyncStream
 from pydantic import BaseModel
@@ -187,6 +195,12 @@ def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
     assert ollama_chat_client.client is test_client
     assert ollama_chat_client.model == ollama_unit_test_env["OLLAMA_MODEL"]
     assert isinstance(ollama_chat_client, BaseChatClient)
+
+
+def test_service_url(ollama_unit_test_env: dict[str, str]) -> None:
+    ollama_chat_client = OllamaChatClient(host="http://ollama.example:9999")
+
+    assert ollama_chat_client.service_url().rstrip("/") == "http://ollama.example:9999"
 
 
 @pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL"]], indirect=True)
@@ -468,6 +482,10 @@ async def test_cmc_streaming_maps_done_reason_and_usage(
     chat_history.append(Message(contents=["hello world"], role="user"))
 
     ollama_client = OllamaChatClient()
+    update = ollama_client._parse_streaming_response_from_ollama(response)
+    assert next(content for content in update.contents if content.type == "text").merge_mode == "append"
+    assert next(content for content in update.contents if content.type == "usage").merge_mode == "replace"
+
     result = ollama_client.get_response(messages=chat_history, stream=True)
     async for _ in result:
         pass
@@ -619,18 +637,98 @@ async def test_cmc_with_data_content_type(
     chat_history: list[Message],
     mock_chat_completion_response: OllamaChatResponse,
 ) -> None:
+    image_bytes = b"\x89PNG\r\n\x1a\n"
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
         Message(
-            contents=[Content.from_uri(uri="data:image/png;base64,xyz", media_type="image/png")],
+            contents=[
+                Content.from_uri(
+                    uri=f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}",
+                    media_type="image/png",
+                )
+            ],
             role="user",
         )
     )
 
     ollama_client = OllamaChatClient()
 
-    result = await ollama_client.get_response(messages=chat_history)
+    with (
+        patch.object(Path, "exists", side_effect=AssertionError("Path.exists must not be called")) as path_exists,
+        patch.object(
+            Path, "read_bytes", side_effect=AssertionError("Path.read_bytes must not be called")
+        ) as read_bytes,
+    ):
+        result = await ollama_client.get_response(messages=chat_history)
+        sent_image = mock_chat.call_args.kwargs["messages"][0].images[0]
+        assert isinstance(sent_image, OllamaImage)
+        assert sent_image.value == image_bytes
+        assert sent_image.model_dump() == base64.b64encode(image_bytes).decode()
+
     assert result.text == "test"
+    path_exists.assert_not_called()
+    read_bytes.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "data:image/png,/tmp/image.png",
+        "data:image/png;base64,/tmp/image.png",
+        r"data:image/png;base64,C:\temp\image.png",
+        r"data:image/png;base64,\\server\share\image.png",
+        "data:image/png;base64,../image.png",
+        "data:image/png;base64,",
+        "data:text/plain;base64,aGVsbG8=",
+    ],
+)
+def test_cmc_rejects_invalid_image_data_uri(
+    uri: str,
+    ollama_unit_test_env: dict[str, str],
+) -> None:
+    message = Message(
+        contents=[Content.from_uri(uri=uri, media_type="image/png")],
+        role="user",
+    )
+    ollama_client = OllamaChatClient()
+
+    with pytest.raises(ChatClientInvalidRequestException):
+        ollama_client._format_user_message(message)
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_treats_base64_shaped_path_as_inline_bytes(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    payload = "////tmpx"
+    expected_bytes = base64.b64decode(payload, validate=True)
+    mock_chat.return_value = mock_chat_completion_response
+    chat_history.append(
+        Message(
+            contents=[Content.from_uri(uri=f"data:image/png;base64,{payload}", media_type="image/png")],
+            role="user",
+        )
+    )
+
+    ollama_client = OllamaChatClient()
+
+    with (
+        patch.object(Path, "exists", side_effect=AssertionError("Path.exists must not be called")) as path_exists,
+        patch.object(
+            Path, "read_bytes", side_effect=AssertionError("Path.read_bytes must not be called")
+        ) as read_bytes,
+    ):
+        await ollama_client.get_response(messages=chat_history)
+        sent_image = mock_chat.call_args.kwargs["messages"][0].images[0]
+        assert isinstance(sent_image, OllamaImage)
+        assert sent_image.value == expected_bytes
+        assert sent_image.model_dump() == payload
+
+    path_exists.assert_not_called()
+    read_bytes.assert_not_called()
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
@@ -908,6 +1006,80 @@ def test_prepare_options_single_stop_string_becomes_list(ollama_unit_test_env: d
     request = client._prepare_options(messages, {"stop": "END"})
 
     assert request["options"]["stop"] == ["END"]
+
+
+@pytest.mark.parametrize("tool_choice", ["none", {"mode": "none"}])
+def test_prepare_options_tool_choice_none_omits_tools(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
+    """Ollama has no tool_choice parameter, so "none" is honored by not offering the tools."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {"tools": [hello_world], "tool_choice": tool_choice})
+
+    assert "tools" not in request
+    assert "tool_choice" not in request
+
+
+@pytest.mark.parametrize("tool_choice", [None, "auto", {"mode": "auto"}])
+def test_prepare_options_auto_tool_choice_keeps_tools(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
+    """No tool_choice or "auto" sends the tools to Ollama."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {"tools": [hello_world], "tool_choice": tool_choice})
+
+    assert request["tools"] == [hello_world.to_json_schema_spec()]
+    assert "tool_choice" not in request
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_function_invocation_limit_final_request_omits_tools(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_tool_call: OllamaChatResponse,
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """After the function invocation limit, the final request must not offer tools to Ollama."""
+    mock_chat.side_effect = [mock_chat_completion_tool_call, mock_chat_completion_response]
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    ollama_client.function_invocation_configuration["max_iterations"] = 1
+    result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
+
+    assert mock_chat.call_count == 2
+    assert "tools" in mock_chat.call_args_list[0].kwargs
+    assert "tools" not in mock_chat.call_args_list[1].kwargs
+    assert result.text == "test"
+
+
+def test_prepare_options_invalid_tool_choice_raises(ollama_unit_test_env: dict[str, str]) -> None:
+    """An invalid tool_choice is rejected instead of being silently ignored."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    with pytest.raises(ContentError):
+        client._prepare_options(messages, {"tools": [hello_world], "tool_choice": "bogus"})
+
+
+@pytest.mark.parametrize(
+    "tool_choice",
+    [
+        "required",
+        {"mode": "required"},
+        {"mode": "required", "required_function_name": "hello_world"},
+        {"mode": "auto", "allowed_tools": ["hello_world"]},
+        {"mode": "required", "allowed_tools": ["hello_world"]},
+    ],
+)
+def test_prepare_options_unsupported_tool_choice_raises(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
+    """Ollama can't enforce "required" or "allowed_tools", so they raise instead of acting like "auto"."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    with pytest.raises(ChatClientInvalidRequestException):
+        client._prepare_options(messages, {"tools": [hello_world], "tool_choice": tool_choice})
 
 
 async def test_cmc_streaming_closes_sdk_stream_when_consumer_stops_early(ollama_unit_test_env: dict[str, str]) -> None:

@@ -4,7 +4,7 @@ description = "DuckDB vector stores for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a261002"
+version = "1.0.0a261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -57,5 +57,5 @@ help = "Run DuckDB connector unit tests."
 cmd = 'pytest -m "not integration" --cov=agent_framework_duckdb --cov-report=term-missing:skip-covered tests'
 
 [build-system]
-requires = ["flit-core>=3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

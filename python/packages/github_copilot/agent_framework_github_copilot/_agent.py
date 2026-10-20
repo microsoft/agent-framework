@@ -1147,7 +1147,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 if data.delta_content:
                     update = AgentResponseUpdate(
                         role="assistant",
-                        contents=[Content.from_text(data.delta_content)],
+                        contents=[Content.from_text(data.delta_content, merge_mode="append")],
                         response_id=data.message_id,
                         message_id=data.message_id,
                         raw_representation=event,
@@ -1165,7 +1165,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 model = event.data.model or None
                 if usage_details or finish_reason or model:
                     update = AgentResponseUpdate(
-                        contents=[Content.from_usage(usage_details, raw_representation=event.data)]
+                        contents=[
+                            Content.from_usage(
+                                usage_details,
+                                merge_mode="replace",
+                                raw_representation=event.data,
+                            )
+                        ]
                         if usage_details
                         else None,
                         finish_reason=cast(Any, finish_reason),
@@ -1181,6 +1187,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     call_id=tool_call_id,
                     name=tool_name,
                     arguments=arguments,
+                    hosted=True,
+                    merge_mode="replace",
                     raw_representation=event.data,
                 )
                 update = AgentResponseUpdate(

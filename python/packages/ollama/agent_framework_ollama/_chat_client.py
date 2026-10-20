@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import sys
@@ -15,7 +17,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, Literal, TypedDict
 
 from agent_framework import (
     BaseChatClient,
@@ -32,6 +34,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    validate_tool_mode,
 )
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
@@ -44,6 +47,7 @@ from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
+from ollama._types import Image as OllamaImage
 from ollama._types import Message as OllamaMessage
 from pydantic import BaseModel
 
@@ -97,7 +101,8 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
             (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
-        tool_choice: Ollama only supports auto tool choice.
+        tool_choice: Only ``auto`` and ``none`` are supported (``none`` omits the tools).
+            ``required`` and ``allowed_tools`` raise ``ChatClientInvalidRequestException``.
         allow_multiple_tool_calls: Not configurable.
         user: Not supported.
         store: Not supported.
@@ -216,9 +221,6 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
     """For thinking models: whether the model should think before responding."""
 
     # ChatOptions fields not supported in Ollama
-    tool_choice: None  # type: ignore[misc]
-    """Not supported. Ollama only supports auto tool choice."""
-
     allow_multiple_tool_calls: None  # type: ignore[misc]
     """Not supported. Not configurable in Ollama."""
 
@@ -349,6 +351,15 @@ class OllamaChatClient(
         self.middleware = list(self.chat_middleware)
 
     @override
+    def service_url(self) -> str:
+        """Get the URL of the Ollama service.
+
+        Returns:
+            The Ollama server URL, used for the ``server.address`` telemetry attribute.
+        """
+        return self.host
+
+    @override
     def _inner_get_response(
         self,
         *,
@@ -414,7 +425,7 @@ class OllamaChatClient(
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Keys to exclude from processing
-        exclude_keys = {"instructions", "tool_choice"}
+        exclude_keys = {"instructions", "tool_choice", "tools"}
 
         # Build run_options and model_options separately
         run_options: dict[str, Any] = {}
@@ -460,8 +471,21 @@ class OllamaChatClient(
             run_options["model"] = self.model
 
         # tools
+        # Ollama has no tool_choice parameter. Only "auto" (send the tools) and "none" (don't send them)
+        # can be honored, so anything else is rejected instead of silently behaving like "auto".
+        tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode is not None:
+            if tool_mode.get("mode") == "required":
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice mode 'required'. Use 'auto' or 'none'."
+                )
+            if "allowed_tools" in tool_mode:
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice 'allowed_tools'. Pass only the tools you want to allow."
+                )
         tools = options.get("tools")
-        if tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        tools_disabled = tool_mode is not None and tool_mode.get("mode") == "none"
+        if tools is not None and not tools_disabled and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options
@@ -512,9 +536,31 @@ class OllamaChatClient(
                 raise ChatClientInvalidRequestException(
                     "Only image data content is supported for user messages in Ollama."
                 )
-            # Ollama expects base64 strings without prefix
-            user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
+            user_message["images"] = [OllamaImage(value=self._decode_image_data_uri(c)) for c in data_contents]
         return [user_message]
+
+    @staticmethod
+    def _decode_image_data_uri(content: Content) -> bytes:
+        uri = content.uri
+        if not uri or not uri.startswith("data:") or "," not in uri:
+            raise ChatClientInvalidRequestException("Ollama image content must be a base64-encoded data:image URI.")
+
+        metadata, payload = uri.split(",", 1)
+        metadata_parts = metadata[5:].split(";")
+        parameters = metadata_parts[1:]
+        if (
+            not metadata_parts[0].lower().startswith("image/")
+            or not parameters
+            or parameters[-1] != "base64"
+            or any(not parameter or "=" not in parameter for parameter in parameters[:-1])
+            or not payload
+        ):
+            raise ChatClientInvalidRequestException("Ollama image content must be a base64-encoded data:image URI.")
+
+        try:
+            return base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ChatClientInvalidRequestException("Ollama image content contains invalid base64 data.") from exc
 
     def _format_assistant_message(self, message: Message) -> list[OllamaMessage]:
         text_content = message.text
@@ -566,14 +612,32 @@ class OllamaChatClient(
                 messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=tool_name))
         return messages
 
-    def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
+    def _parse_contents_from_ollama(
+        self,
+        response: OllamaChatResponse,
+        *,
+        streaming: bool = False,
+    ) -> list[Content]:
         contents: list[Content] = []
         if response.message.thinking:
-            contents.append(Content.from_text_reasoning(text=response.message.thinking))
+            contents.append(
+                Content.from_text_reasoning(
+                    text=response.message.thinking,
+                    merge_mode="append" if streaming else None,
+                )
+            )
         if response.message.content:
-            contents.append(Content.from_text(text=response.message.content))
+            contents.append(
+                Content.from_text(
+                    text=response.message.content,
+                    merge_mode="append" if streaming else None,
+                )
+            )
         if response.message.tool_calls:
-            tool_calls = self._parse_tool_calls_from_ollama(response.message.tool_calls)
+            tool_calls = self._parse_tool_calls_from_ollama(
+                response.message.tool_calls,
+                merge_mode="replace" if streaming else None,
+            )
             contents.extend(tool_calls)
         return contents
 
@@ -583,7 +647,7 @@ class OllamaChatClient(
         return FinishReason(response.done_reason) if response.done_reason else None
 
     def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
-        contents = self._parse_contents_from_ollama(response)
+        contents = self._parse_contents_from_ollama(response, streaming=True)
         finish_reason = None
         if response.done:
             usage_details = UsageDetails(
@@ -600,7 +664,7 @@ class OllamaChatClient(
                 }
             )
             if usage_details:
-                contents.append(Content.from_usage(usage_details, raw_representation=response))
+                contents.append(Content.from_usage(usage_details, merge_mode="replace", raw_representation=response))
             finish_reason = self._get_finish_reason_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
@@ -641,7 +705,12 @@ class OllamaChatClient(
             response_format=response_format,
         )
 
-    def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:
+    def _parse_tool_calls_from_ollama(
+        self,
+        tool_calls: Sequence[OllamaMessage.ToolCall],
+        *,
+        merge_mode: Literal["append", "replace"] | None = None,
+    ) -> list[Content]:
         resp: list[Content] = []
         for tool in tool_calls:
             name = tool.function.name
@@ -653,6 +722,7 @@ class OllamaChatClient(
                 call_id=unique_call_id,
                 name=name,
                 arguments=args,
+                merge_mode=merge_mode,
                 raw_representation=tool.function,
             )
             resp.append(fcc)
