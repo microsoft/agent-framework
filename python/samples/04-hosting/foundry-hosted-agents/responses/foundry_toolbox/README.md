@@ -142,8 +142,6 @@ Native code-interpreter file citations are a separate tracked behavior
 
 #### Initialize the agent project
 
-These `azd` steps initialize and run the separate [foundry-samples deployment project](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox), not the framework source in this directory.
-
 No cloning required. Create a new folder and initialize from the manifest:
 
 ```bash
