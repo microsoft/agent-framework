@@ -185,25 +185,13 @@ azd provision
 
 On the Azure Language resource, grant **Cognitive Services Language Owner** to the Foundry **project's system-assigned managed identity**, not the parent Foundry account identity or your own user identity. An administrator may need to perform this assignment. See the [managed-identity authorization guide](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-microsoft-entra.md#step-2--authorize-the-identity) for identity lookup and role assignment instructions. Allow time for the assignment to propagate before invoking the agent.
 
-#### Deploy to Foundry
+#### Run the agent locally
 
-Deploy all services together so that the connections and toolbox are deployed before the agent:
+Before running locally, deploy the connections, toolbox, and agent:
 
 ```bash
 azd deploy --all
 ```
-
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
-
-#### Invoke the deployed agent
-
-```bash
-azd ai agent invoke "What tools do you have?"
-```
-
-#### Run the agent locally
-
-Complete provisioning, managed-identity authorization, and deployment above first. Local execution does not create the connections or toolbox.
 
 ```bash
 azd ai agent run
@@ -217,6 +205,22 @@ In a separate terminal, from the project directory:
 
 ```bash
 azd ai agent invoke --local "What tools do you have?"
+```
+
+#### Deploy to Foundry
+
+Once tested locally, deploy to Microsoft Foundry:
+
+```bash
+azd deploy --all
+```
+
+For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+#### Invoke the deployed agent
+
+```bash
+azd ai agent invoke "What tools do you have?"
 ```
 
 ### Option 2: VS Code (Foundry Toolkit)
