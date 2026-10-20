@@ -43,6 +43,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// Skills discovered through <c>skills/list</c> are cached according to server-provided TTLs.
 /// When any page expires, the skills are refreshed on the next request.
+/// If any page has no TTL, the skill list is requested from the server on every call.
 /// To honor these TTLs, disable any additional caching layers around this source,
 /// including the builder's cache by calling <see cref="AgentSkillsProviderBuilder.DisableCaching"/>.
 /// </para>
@@ -112,7 +113,7 @@ namespace Microsoft.Agents.AI;
 /// or hosting environment.
 /// </para>
 /// </remarks>
-internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
+public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 {
     /// <summary>
     /// Discovery document URI for the index compatibility path.

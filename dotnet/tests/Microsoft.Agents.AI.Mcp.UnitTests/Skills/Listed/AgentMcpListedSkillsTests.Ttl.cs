@@ -691,6 +691,44 @@ public sealed partial class AgentMcpListedSkillsTests
         Assert.Empty(reads);
     }
 
+    [Theory]
+    [InlineData(60000L, 1)]
+    [InlineData(0L, 2)]
+    [InlineData(null, 2)]
+    public async Task AgentSkillsProvider_MixedSources_CachesDecoratedSourceAndHonorsMcpTtlAsync(long? ttl, int expectedCalls)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            return ValueTask.FromResult<JsonNode?>(TtlListResult(ttl, Entry()));
+        });
+        await using var client = await server.CreateClientAsync();
+        var otherSource = new Mock<AgentSkillsSource>();
+        otherSource.Setup(source => source.GetSkillsAsync(It.IsAny<AgentSkillsSourceContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new AgentInlineSkill("local-skill", "A local skill.", "Local instructions.")]);
+        var source = new AggregatingAgentSkillsSource(
+        [
+            new CachingAgentSkillsSource(otherSource.Object),
+            new AgentMcpSkillsSource(client),
+        ]);
+        using var provider = new AgentSkillsProvider(source, ownsSource: true);
+        var context = new AIContextProvider.InvokingContext(TestAgentSkillsSourceContextFactory.Create().Agent, session: null, new AIContext());
+
+        // Act
+        var first = await provider.InvokingAsync(context, CancellationToken.None);
+        var second = await provider.InvokingAsync(context, CancellationToken.None);
+
+        // Assert
+        Assert.Contains("local-skill", first.Instructions);
+        Assert.Contains("unit-converter", first.Instructions);
+        Assert.Contains("local-skill", second.Instructions);
+        Assert.Contains("unit-converter", second.Instructions);
+        Assert.Equal(expectedCalls, calls);
+        otherSource.Verify(source => source.GetSkillsAsync(It.IsAny<AgentSkillsSourceContext>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static JsonObject TtlListResult(long? ttl, params JsonNode?[] entries)
     {
         JsonObject result = ListResult(entries);

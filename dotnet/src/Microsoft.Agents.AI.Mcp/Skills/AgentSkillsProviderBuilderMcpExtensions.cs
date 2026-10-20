@@ -36,14 +36,31 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// <para>
     /// Skills discovered through <c>skills/list</c> are cached according to server-provided TTLs.
     /// When any page expires, the skills are refreshed on the next request.
-    /// To honor these TTLs, disable any additional caching layers around this source,
-    /// including the builder's cache by calling <see cref="AgentSkillsProviderBuilder.DisableCaching"/>.
+    /// If any page has no TTL, the skill list is requested from the server on every call.
+    /// Call <see cref="AgentSkillsProviderBuilder.DisableCaching"/> to disable the builder's cache
+    /// and let the MCP source manage caching using the server's TTLs.
+    /// Other caching layers around this source must also be disabled to honor these TTLs.
     /// </para>
     /// <code>
     /// var provider = new AgentSkillsProviderBuilder()
     ///     .UseMcpSkills(client)
     ///     .DisableCaching()
     ///     .Build();
+    /// </code>
+    /// <para>
+    /// For mixed sources with different caching requirements, wrap only sources that need caching in
+    /// <see cref="CachingAgentSkillsSource"/>. Combine them with <see cref="AgentMcpSkillsSource"/> using
+    /// <see cref="AggregatingAgentSkillsSource"/> and pass the result directly to <see cref="AgentSkillsProvider"/>.
+    /// This lets each source use its own caching policy.
+    /// </para>
+    /// <code>
+    /// var source = new AggregatingAgentSkillsSource(
+    /// [
+    ///     new CachingAgentSkillsSource(otherSource),
+    ///     new AgentMcpSkillsSource(client),
+    /// ]);
+    ///
+    /// using var provider = new AgentSkillsProvider(source, ownsSource: true);
     /// </code>
     /// <para>
     /// Index-based discovery and archive-distributed skills are compatibility features and will be deprecated
