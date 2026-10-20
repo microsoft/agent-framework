@@ -174,6 +174,7 @@ function AudioFileRenderer({
       audio={{ blobUrl: sourceUrl }}
       label={filename || "Audio file"}
       minWidth={360}
+      align="start"
       downloadFilename={filename || "audio"}
       className={`my-2 ${className || ""}`}
       autoPlay={autoPlay}

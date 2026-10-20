@@ -104,6 +104,7 @@ export function AudioMessagePreview({
   downloadFilename,
   maxWidth = 760,
   minWidth = 420,
+  align = "center",
   className = "",
 }: {
   audio: AudioPreviewData;
@@ -115,6 +116,7 @@ export function AudioMessagePreview({
   downloadFilename?: string;
   maxWidth?: number;
   minWidth?: number;
+  align?: "start" | "center";
   className?: string;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -184,7 +186,7 @@ export function AudioMessagePreview({
   return (
     <div className={`max-w-full ${className}`}>
       <div
-        className="mx-auto max-w-full overflow-hidden rounded-full border bg-background text-foreground px-3 py-2 shadow-sm transition-[width]"
+        className={`${align === "center" ? "mx-auto" : "me-auto"} max-w-full overflow-hidden rounded-full border bg-background text-foreground px-3 py-2 shadow-sm transition-[width]`}
         style={{ width: `min(100%, ${previewWidth}px)` }}
       >
         <audio

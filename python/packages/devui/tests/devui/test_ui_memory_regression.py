@@ -794,12 +794,27 @@ async def audio_browser(memory_regression_server: tuple[str, str]) -> AsyncGener
                     if (String(url).endsWith("/v1/responses") && options?.method === "POST") {
                       probe.requests.push(JSON.parse(options.body));
                       const audio = probe.requests.at(-1).input[0].content.find(c => c.type === "input_audio");
-                      const output = audio ? [{
-                        id: "audio-reply", type: "output_file", filename: "reply.wav",
-                        mime_type: "audio/wav", file_url: `data:audio/wav;base64,${audio.input_audio.data}`,
-                      }] : [];
+                      const output = audio ? [
+                        {
+                          id: "audio-reply-text", type: "message", role: "assistant", status: "completed",
+                          content: [{
+                            type: "output_text", annotations: [],
+                            text: "This is a spoken response with accompanying text " +
+                              "that should share the same left edge as its audio player.",
+                          }],
+                        },
+                        {
+                          id: "audio-reply", type: "output_file", filename: "reply.wav",
+                          mime_type: "audio/wav", file_url: `data:audio/wav;base64,${audio.input_audio.data}`,
+                        },
+                      ] : [];
                       const event = { type: "response.completed", response: { id: "audio-test", output } };
-                      return Promise.resolve(new Response(`data: ${JSON.stringify(event)}\\n\\ndata: [DONE]\\n\\n`,
+                      const events = audio ? [{
+                        type: "response.output_text.delta", item_id: "audio-reply-text",
+                        output_index: 0, content_index: 0, sequence_number: 1, delta: output[0].content[0].text,
+                      }, event] : [event];
+                      const body = events.map(value => `data: ${JSON.stringify(value)}\\n\\n`).join("");
+                      return Promise.resolve(new Response(`${body}data: [DONE]\\n\\n`,
                         { headers: { "Content-Type": "text/event-stream" } }));
                     }
                     return fetchOriginal(url, options);
@@ -1077,10 +1092,30 @@ async def test_audio_preview_preserves_original_presentation(audio_browser: tupl
         client,
         session_id=session_id,
         expression="""document.querySelectorAll("audio").length === 2 &&
-          !!document.querySelector('audio[aria-label="reply.wav"]')""",
+          !!document.querySelector('audio[aria-label="reply.wav"]') &&
+          [...document.querySelectorAll("p")].some(element =>
+            element.textContent.startsWith("This is a spoken response"))""",
         timeout_s=10,
     )
     assert await assert_text_contrast() == ["Voice message (WAV)", "reply.wav"]
+    alignment = await client.evaluate(
+        """
+        (() => {
+          const text = [...document.querySelectorAll("p")]
+            .find(element => element.textContent.startsWith("This is a spoken response"));
+          const player = document.querySelector('audio[aria-label="reply.wav"]').parentElement;
+          return {
+            textLeft: text.getBoundingClientRect().left,
+            audioLeft: player.getBoundingClientRect().left,
+            textWidth: text.getBoundingClientRect().width,
+            audioWidth: player.getBoundingClientRect().width,
+          };
+        })()
+        """,
+        session_id=session_id,
+    )
+    assert abs(alignment["audioLeft"] - alignment["textLeft"]) < 1
+    assert alignment["audioWidth"] < alignment["textWidth"]
 
 
 @pytest.mark.parametrize("scenario", ["hold", "silence", "permission"])
