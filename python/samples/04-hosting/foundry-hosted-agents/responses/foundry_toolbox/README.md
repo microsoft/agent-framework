@@ -126,7 +126,7 @@ Native code-interpreter file citations are a separate tracked behavior
 
 #### Prerequisites
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.32.0 or later)
+1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.34.2 or later)
 2. Install the unified Foundry CLI extension bundle (provides `azd ai agent`, `connection`, `inspector`, `project`, `routine`, `skill`, and `toolbox`):
    ```bash
    # If you previously installed individual extensions, uninstall them first:
@@ -134,6 +134,7 @@ Native code-interpreter file citations are a separate tracked behavior
    #   azd ext uninstall azure.ai.toolboxes
    azd ext install microsoft.foundry
    ```
+   Requires `azure.ai.agents` 1.0.0-beta.19 or later for `-t`.
 3. Authenticate:
    ```bash
    azd auth login
@@ -147,10 +148,10 @@ No cloning required. Create a new folder and initialize from the manifest:
 ```bash
 mkdir my-toolbox-agent && cd my-toolbox-agent
 
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/azure.yaml
+azd ai agent init -t https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/azure.yaml
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow.
+Follow the prompts to configure your Foundry project. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow.
 
 Run every subsequent command from the initialized project directory containing `azure.yaml`. If initialization reports a different output directory, change to that directory first.
 
@@ -287,9 +288,10 @@ portal **Agent Playground** (signed-in user) and by `azd ai agent invoke` (the d
 so the tools operate as that user and only act on resources the user can already access. The Foundry MCP
 server requires no extra license — just access to the Foundry project.
 
-Because the tool acts as a specific user, running the agent **locally** (`python main.py`) or calling the
-endpoint with a raw token uses whatever identity that token represents (`az login` user locally, the
-agent's managed identity when hosted). If that identity has no access to the target resources, the tool
+This tool requires a delegated Microsoft Entra user context. Service-principal or managed-identity
+credentials alone do not satisfy that requirement, even if that identity has access to the target resources.
+The hosted agent can still use managed identity for its own service access when the platform forwards
+the calling user's context. If the calling user has no access to the target resources, the tool
 returns an authorization error even though it is discovered and called correctly.
 
 > Some other Entra pass-through MCP servers add their **own** entitlement checks on top of the token. For
