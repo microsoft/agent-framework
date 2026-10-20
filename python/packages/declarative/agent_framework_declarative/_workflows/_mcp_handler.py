@@ -27,6 +27,7 @@ must trust the MCP server they invoke.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -36,7 +37,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
-import httpx
+import httpx2 as httpx
 
 if TYPE_CHECKING:
     from agent_framework import Content
@@ -345,10 +346,10 @@ class DefaultMCPToolHandler:
             # Be defensive about MCP errors that may bubble up without being
             # wrapped in ToolExecutionException by custom parsers.
             try:
-                from mcp.shared.exceptions import McpError
+                from mcp.shared.exceptions import MCPError
             except ImportError:  # pragma: no cover - mcp is a hard dep but stay defensive
                 raise
-            if isinstance(exc, McpError):
+            if isinstance(exc, MCPError):
                 message = str(exc) or type(exc).__name__
                 return MCPToolResult(
                     outputs=[Content.from_text(f"Error: {message}")],
@@ -369,7 +370,7 @@ class DefaultMCPToolHandler:
     async def _invoke_list_tools(entry: _CacheEntry) -> MCPToolResult:
         """Handle the reserved :attr:`LIST_TOOLS_TOOL_NAME` invocation.
 
-        Pages through ``session.list_tools()`` (mirroring the pagination loop
+        Pages through the normalized MCP connection (mirroring the pagination loop
         in :meth:`agent_framework.MCPTool.load_tools`) and serialises the
         full catalog as a single ``TextContent`` containing JSON of shape
         ``{"tools": [{name, description, inputSchema, outputSchema}, ...]}``.
@@ -383,8 +384,16 @@ class DefaultMCPToolHandler:
         """
         from agent_framework import Content
 
-        session = getattr(entry.tool, "session", None)
-        if session is None:
+        require_connection: Any = getattr(entry.tool, "_require_connection", None)
+        connection: Any | None = None
+        session: Any | None = None
+        if callable(require_connection):
+            with contextlib.suppress(RuntimeError):
+                connection = require_connection()
+        else:
+            session = getattr(entry.tool, "session", None)
+
+        if connection is None and session is None:
             message = "MCP session is not connected; cannot list tools."
             return MCPToolResult(
                 outputs=[Content.from_text(f"Error: {message}")],
@@ -398,9 +407,14 @@ class DefaultMCPToolHandler:
         collected: list[Any] = []
         params: mcp_types.PaginatedRequestParams | None = None
         while True:
-            tool_list = await session.list_tools(params=params)
+            if connection is not None:
+                tool_list = await connection.list_tools_page(params)
+            elif session is not None:
+                tool_list = await session.list_tools(params=params)
+            else:  # pragma: no cover - guarded before entering the loop
+                raise RuntimeError("MCP connection became unavailable while listing tools.")
             collected.extend(tool_list.tools)
-            next_cursor = getattr(tool_list, "nextCursor", None)
+            next_cursor = getattr(tool_list, "next_cursor", getattr(tool_list, "nextCursor", None))
             if not next_cursor:
                 break
             params = mcp_types.PaginatedRequestParams(cursor=next_cursor)
@@ -410,8 +424,8 @@ class DefaultMCPToolHandler:
                 {
                     "name": tool.name,
                     "description": tool.description,
-                    "inputSchema": tool.inputSchema,
-                    "outputSchema": tool.outputSchema,
+                    "inputSchema": getattr(tool, "input_schema", getattr(tool, "inputSchema", None)),
+                    "outputSchema": getattr(tool, "output_schema", getattr(tool, "outputSchema", None)),
                 }
                 for tool in collected
             ],

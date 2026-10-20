@@ -105,6 +105,7 @@ class SequentialBuilder:
         chain_only_agent_responses: bool = False,
         output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
         intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
+        ensure_trailing_user_turn: bool = False,
     ) -> None:
         """Initialize the SequentialBuilder.
 
@@ -120,6 +121,11 @@ class SequentialBuilder:
             intermediate_output_from: Optional participant names or instances whose ``yield_output`` calls
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
+            ensure_trailing_user_turn: If True, whenever a participant would be run with a
+                conversation ending on an assistant message (e.g. chaining into the next agent),
+                a synthetic user continuation message is appended first. Some chat-completions
+                providers return empty text when the prompt ends on ``assistant``. Defaults to
+                False to preserve existing behavior.
         """
         self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: list[SupportsAgentRun | Executor] = []
@@ -129,6 +135,7 @@ class SequentialBuilder:
         self._request_info_filter: set[str] | None = None
         self._output_from = _coalesce_output_from(output_from=output_from)
         self._intermediate_output_from = _coerce_intermediate_output_from(intermediate_output_from)
+        self._ensure_trailing_user_turn: bool = ensure_trailing_user_turn
 
         self._set_participants(participants)
 
@@ -223,10 +230,17 @@ class SequentialBuilder:
                             p,
                             context_mode=context_mode,
                             allow_direct_output=(idx == last_idx),
+                            ensure_trailing_user_turn=self._ensure_trailing_user_turn,
                         )
                     )
                 else:
-                    executors.append(AgentExecutor(p, context_mode=context_mode))
+                    executors.append(
+                        AgentExecutor(
+                            p,
+                            context_mode=context_mode,
+                            ensure_trailing_user_turn=self._ensure_trailing_user_turn,
+                        )
+                    )
             else:
                 raise TypeError(f"Participants must be SupportsAgentRun or Executor instances. Got {type(p).__name__}.")
 

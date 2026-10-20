@@ -12,8 +12,7 @@ from typing import Any
 
 import ag_ui.core as _agui_core
 from agent_framework import AgentResponseUpdate, ChatResponseUpdate, Content, FunctionTool
-from agent_framework import _mcp as _core_mcp  # pyright: ignore[reportPrivateUsage]
-from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+from agent_framework._serialization import make_json_safe
 
 _AGUI_PROTOCOL_VERSION: str | None = getattr(_agui_core, "PROTOCOL_VERSION", None)
 """The AG-UI protocol version the installed ``ag-ui-protocol`` speaks, or ``None`` before 1.0.
@@ -28,7 +27,7 @@ def _mcp_tool_result_host_payload_key(core_mcp: Any) -> str:
     return getattr(core_mcp, "_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY", "_mcp_tool_result_host_payload")
 
 
-_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = _mcp_tool_result_host_payload_key(_core_mcp)
+_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = _mcp_tool_result_host_payload_key(None)
 _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY = "_agentFrameworkModelContent"
 _AGUI_MCP_TOOL_RESULT_KEY = "_agentFrameworkMcpResult"
 _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY = "_agentFrameworkHostPayload"

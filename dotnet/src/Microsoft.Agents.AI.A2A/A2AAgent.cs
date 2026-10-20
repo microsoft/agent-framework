@@ -374,6 +374,13 @@ public sealed class A2AAgent : AIAgent
     {
         var a2aMessage = messages.ToA2AMessage();
 
+        if (a2aMessage.Parts.Count == 0)
+        {
+            throw new ArgumentException(
+                "The provided messages contain no content that can be sent to the remote agent.",
+                nameof(messages));
+        }
+
         // Linking the message to the existing conversation, if any.
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
         a2aMessage.ContextId = typedSession.ContextId;
@@ -488,7 +495,7 @@ public sealed class A2AAgent : AIAgent
             MessageId = statusUpdateEvent.Status.Message?.MessageId,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
-            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
+            Contents = statusUpdateEvent.Status.ToChatMessage()?.Contents,
         };
     }
 

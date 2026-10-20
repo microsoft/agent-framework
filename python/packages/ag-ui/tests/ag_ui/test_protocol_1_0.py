@@ -317,6 +317,6 @@ def test_approval_snapshot_rebuild_keeps_tool_result_media() -> None:
     """Rebuilding tool messages for an approval snapshot keeps an earlier result's media as content parts."""
     rebuilt = _resolved_tool_result_snapshot_messages([Message(role="tool", contents=[_image_result("call-1")])])
 
-    assert rebuilt["call-1"]["content"] == [
+    assert rebuilt[("call-1", 1)][0]["content"] == [
         {"type": "image", "source": {"type": "url", "value": "https://example.com/chart.png", "mimeType": "image/png"}}
     ]

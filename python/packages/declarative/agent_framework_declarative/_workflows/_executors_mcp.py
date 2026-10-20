@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 from agent_framework import (
     Content,
     Message,
@@ -503,10 +503,10 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             )
         except Exception as exc:
             try:
-                from mcp.shared.exceptions import McpError
+                from mcp.shared.exceptions import MCPError
             except ImportError:  # pragma: no cover - mcp is a hard dep
                 raise
-            if isinstance(exc, McpError):
+            if isinstance(exc, MCPError):
                 message = str(exc) or type(exc).__name__
                 return MCPToolResult(
                     outputs=[Content.from_text(f"Error: {message}")],

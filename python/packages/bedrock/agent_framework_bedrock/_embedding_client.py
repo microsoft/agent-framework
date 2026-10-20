@@ -85,8 +85,9 @@ class RawBedrockEmbeddingClient(
         model: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
             Can also be set via environment variable BEDROCK_EMBEDDING_MODEL.
         region: AWS region. Will try to load from BEDROCK_REGION env var,
-            if not set, the regular Boto3 configuration/loading applies
-            (which may include other env vars, config files, or instance metadata).
+            if not set, the region of ``boto3_session`` is used, or without a session
+            the regular Boto3 configuration/loading applies (which may include other
+            env vars, config files, or instance metadata). Falls back to us-east-1.
         access_key: AWS access key for manual credential injection.
         secret_key: AWS secret key paired with access_key.
         session_token: AWS session token for temporary credentials.
@@ -138,10 +139,10 @@ class RawBedrockEmbeddingClient(
                 if session_token := settings.get("session_token"):
                     session_kwargs["aws_session_token"] = session_token.get_secret_value()
                 boto3_session = Boto3Session(**session_kwargs)
-            region_name = boto3_session.region_name
+            resolved_region = settings.get("region") or boto3_session.region_name or DEFAULT_REGION
             self._bedrock_client = boto3_session.client(
                 "bedrock-runtime",
-                region_name=region_name or resolved_region,
+                region_name=resolved_region,
                 config=BotoConfig(user_agent_extra=get_user_agent()),
             )
 
@@ -239,8 +240,9 @@ class BedrockEmbeddingClient(
     Keyword Args:
         model: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
             Can also be set via environment variable BEDROCK_EMBEDDING_MODEL.
-        region: AWS region. Defaults to "us-east-1".
-            Can also be set via environment variable BEDROCK_REGION.
+        region: AWS region. Can also be set via environment variable BEDROCK_REGION.
+            If not set, the region of ``boto3_session`` is used, or without a session
+            the regular Boto3 configuration. Defaults to "us-east-1".
         access_key: AWS access key for manual credential injection.
         secret_key: AWS secret key paired with access_key.
         session_token: AWS session token for temporary credentials.
