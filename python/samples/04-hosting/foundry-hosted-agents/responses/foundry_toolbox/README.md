@@ -147,10 +147,12 @@ No cloning required. Create a new folder and initialize from the manifest:
 ```bash
 mkdir my-toolbox-agent && cd my-toolbox-agent
 
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/azure.yaml --src .
+azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/azure.yaml
 ```
 
 Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow.
+
+Run every subsequent command from the initialized project directory containing `azure.yaml`. If initialization reports a different output directory, change to that directory first.
 
 #### Create the toolbox with `azd ai`
 
@@ -160,7 +162,7 @@ Follow the prompts to configure your Foundry project and model deployment. If yo
 > - [Toolbox overview](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/toolbox/toolbox.md) — toolbox concept, API shape and schema, versions, endpoints, and MCP protocol.
 > - [Use toolbox in a hosted agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md) — endpoint resolution, env-var contract, payload shape, code integration patterns, and tracing.
 
-The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. The initialized `azure.yaml` declares the toolbox and its connections. `azd up` below creates them. If initialization did not collect the external dependency values, set them before deployment:
+The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. The initialized `azure.yaml` declares the toolbox and its connections. `azd deploy --all` below creates them. If you entered the correct dependency values during initialization, skip these commands. Use them only to correct or replace those values:
 
 ```bash
 azd env set GITHUB_MCP_PAT "<your-GitHub-MCP-PAT>"
@@ -175,13 +177,33 @@ The initialized project's `azure.yaml` maps `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`, 
 
 #### Provision Azure resources (if needed)
 
-Run this even with an existing Foundry project to create the connections and toolbox before running the agent:
+Provision before deploying so that the project's managed identity exists and can be authorized:
 
 ```bash
-azd up
+azd provision
+```
+
+On the Azure Language resource, grant **Cognitive Services Language Owner** to the Foundry **project's system-assigned managed identity**, not the parent Foundry account identity or your own user identity. An administrator may need to perform this assignment. See the [managed-identity authorization guide](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-microsoft-entra.md#step-2--authorize-the-identity) for identity lookup and role assignment instructions. Allow time for the assignment to propagate before invoking the agent.
+
+#### Deploy to Foundry
+
+Deploy all services together so that the connections and toolbox are deployed before the agent:
+
+```bash
+azd deploy --all
+```
+
+For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+#### Invoke the deployed agent
+
+```bash
+azd ai agent invoke "What tools do you have?"
 ```
 
 #### Run the agent locally
+
+Complete provisioning, managed-identity authorization, and deployment above first. Local execution does not create the connections or toolbox.
 
 ```bash
 azd ai agent run
@@ -195,22 +217,6 @@ In a separate terminal, from the project directory:
 
 ```bash
 azd ai agent invoke --local "What tools do you have?"
-```
-
-#### Deploy to Foundry
-
-Once tested locally, deploy to Microsoft Foundry:
-
-```bash
-azd deploy --all
-```
-
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
-
-#### Invoke the deployed agent
-
-```bash
-azd ai agent invoke "What tools do you have?"
 ```
 
 ### Option 2: VS Code (Foundry Toolkit)
