@@ -173,6 +173,13 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <see cref="HttpContext.RequestServices"/> for each request.
     /// </para>
     /// <para>
+    /// The agent's <see cref="AIAgent.Name"/> is its stable logical identity: it keys the session store and partitions
+    /// persisted sessions, as it does for the named, hosted, and selector mappings. The same agent exposed through
+    /// several mappings therefore continues the same conversations for a given thread ID, and so does any agent
+    /// instance with the same name that uses the same session store. Agents that must not share persisted sessions must
+    /// have different names. Sessions of an agent without a name are partitioned by its instance identity.
+    /// </para>
+    /// <para>
     /// <strong>Trust model.</strong> The AG-UI <c>RunAgentInput.ThreadId</c> arrives
     /// from the wire and is treated as a chain-resume identifier, not as an authorization
     /// token. Multi-user hosts must register an <see cref="AgentIsolationKeyProvider"/> that
@@ -208,8 +215,11 @@ public static class AGUIEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(aiAgent);
 
+        // A named agent is identified by its name, like the named, hosted, and selector mappings, so the same agent
+        // exposed through several mappings continues the same conversations. Unnamed agents keep their instance identity.
+        string? sessionStorageIdentity = string.IsNullOrWhiteSpace(aiAgent.Name) ? null : aiAgent.Name;
         return MapAGUIServerCore(endpoints, pattern, context =>
-            CreateHostAgent(context.RequestServices, aiAgent, aiAgent.Name, sessionStorageIdentity: null));
+            CreateHostAgent(context.RequestServices, aiAgent, aiAgent.Name, sessionStorageIdentity));
     }
 
     private static IEndpointConventionBuilder MapAGUIServerCore(

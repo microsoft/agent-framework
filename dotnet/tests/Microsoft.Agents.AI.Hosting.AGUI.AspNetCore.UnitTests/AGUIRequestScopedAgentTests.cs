@@ -153,6 +153,77 @@ public sealed class AGUIRequestScopedAgentTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task MapAGUIServer_WithSameAgentMappedByNameAndInstance_SharesConversationAsync()
+    {
+        // Arrange
+        TurnCountingAgent agent = new("assistant");
+        await this.StartAsync(
+            services => services.AddAIAgent("assistant", (_, _) => agent).WithInMemorySessionStore(withIsolation: false),
+            app =>
+            {
+                app.MapAGUIServer(agentName: "assistant", pattern: "/chat");
+                app.MapAGUIServer(pattern: "/chat-alias", aiAgent: agent);
+            });
+
+        // Act
+        string namedResponse = await this.PostRunAsync("/chat", "thread-1");
+        string instanceResponse = await this.PostRunAsync("/chat-alias", "thread-1");
+        string namedAgainResponse = await this.PostRunAsync("/chat", "thread-1");
+
+        // Assert
+        Assert.Contains("assistant turn 1", namedResponse);
+        Assert.Contains("assistant turn 2", instanceResponse);
+        Assert.Contains("assistant turn 3", namedAgainResponse);
+    }
+
+    [Fact]
+    public async Task MapAGUIServer_WithAgentInstances_PartitionsSessionsByNameAsync()
+    {
+        // Arrange
+        await this.StartAsync(
+            services => services.AddKeyedSingleton<AgentSessionStore>(KeyedService.AnyKey, new InMemoryAgentSessionStore()),
+            app =>
+            {
+                app.MapAGUIServer("/first", new TurnCountingAgent("assistant"));
+                app.MapAGUIServer("/second", new TurnCountingAgent("assistant"));
+                app.MapAGUIServer("/other", new TurnCountingAgent("other"));
+            });
+
+        // Act
+        string firstResponse = await this.PostRunAsync("/first", "thread-1");
+        string sameNameResponse = await this.PostRunAsync("/second", "thread-1");
+        string otherNameResponse = await this.PostRunAsync("/other", "thread-1");
+
+        // Assert
+        Assert.Contains("assistant turn 1", firstResponse);
+        Assert.Contains("assistant turn 2", sameNameResponse);
+        Assert.Contains("other turn 1", otherNameResponse);
+    }
+
+    [Fact]
+    public async Task MapAGUIServer_WithUnnamedAgentInstances_PartitionsSessionsByInstanceAsync()
+    {
+        // Arrange
+        TurnCountingAgent agent = new(name: null);
+        await this.StartAsync(
+            services => services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore()),
+            app =>
+            {
+                app.MapAGUIServer("/first", agent);
+                app.MapAGUIServer("/second", new TurnCountingAgent(name: null));
+            });
+
+        // Act
+        await this.PostRunAsync("/first", "thread-1");
+        string sameInstanceResponse = await this.PostRunAsync("/first", "thread-1");
+        string otherInstanceResponse = await this.PostRunAsync("/second", "thread-1");
+
+        // Assert
+        Assert.Contains(" turn 2", sameInstanceResponse);
+        Assert.Contains(" turn 1", otherInstanceResponse);
+    }
+
+    [Fact]
     public async Task MapAGUIServer_WithUnregisteredAgentName_ThrowsAtMapTimeAsync()
     {
         // Arrange
