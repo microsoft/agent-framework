@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import pickle
+from copy import deepcopy
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
 
 from agent_framework import AgentEvalConverter as ExportedAgentEvalConverter
 from agent_framework._agents import Agent, SupportsAgentRun
@@ -519,6 +521,54 @@ class TestToEvalItem:
             ],
         }
         assert "not-in-snapshot" not in response.to_json()
+
+    async def test_deepcopy_preserves_snapshots_without_copying_telemetry(
+        self, chat_client_base: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        meter_provider = MeterProvider(shutdown_on_exit=False)
+        monkeypatch.setattr("agent_framework._tools.get_meter", lambda: meter_provider.get_meter("evaluation-test"))
+        monkeypatch.setattr("agent_framework.observability.OBSERVABILITY_SETTINGS.enable_instrumentation", True)
+        try:
+            tool = FunctionTool(
+                name="weather",
+                description="Get the weather",
+                input_model={"type": "object", "properties": {"city": {"type": "string"}}},
+                func=lambda city: city,
+            )
+            response = await Agent(client=chat_client_base, tools=[tool]).run("Weather?")
+            cached_tools = response._evaluation_tools
+            assert cached_tools is not None
+            copied_tool = deepcopy(tool)
+            assert copied_tool.func is tool.func
+            assert copied_tool._invocation_duration_histogram is tool._invocation_duration_histogram
+
+            copied = deepcopy(response)
+
+            assert copied._evaluation_tools is not None
+            assert copied._evaluation_tools is not cached_tools
+            assert copied._evaluation_tools[0] is not cached_tools[0]
+            assert (
+                copied._evaluation_tools[0]._invocation_duration_histogram
+                is cached_tools[0]._invocation_duration_histogram
+            )
+            assert response._evaluation_tools is cached_tools
+            assert (
+                copied.additional_properties["agent_framework.evaluation"]
+                == (response.additional_properties["agent_framework.evaluation"])
+            )
+            item = _to_eval_item(query="Weather?", response=copied)
+            assert item.tools is not None
+            assert len(item.tools) == 1
+            assert item.tools[0].name == tool.name
+            assert item.tools[0].description == tool.description
+            assert item.tools[0].parameters() == tool.parameters()
+            assert item.tools[0].declaration_only
+            item.tools[0].parameters()["properties"]["city"]["type"] = "number"
+            copied.additional_properties["agent_framework.evaluation"]["tools"].clear()
+            assert cached_tools[0].parameters()["properties"]["city"]["type"] == "string"
+            assert len(response.additional_properties["agent_framework.evaluation"]["tools"]) == 1
+        finally:
+            meter_provider.shutdown()
 
     @pytest.mark.parametrize(
         "metadata",
