@@ -2,6 +2,12 @@
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that uses **Foundry Toolbox** for tool discovery, hosted on Microsoft Foundry using the **Responses protocol**. Foundry Toolbox is a managed tool registry in Microsoft Foundry that lets you define tools centrally and share them across agents.
 
+## Deploy a hosted agent
+
+For the runnable deployment quickstart, follow the [Foundry Toolbox hosted-agent sample in foundry-samples](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox). That sample maintains the prerequisites, project initialization, connections, toolbox provisioning, deployment, and invocation instructions together with its `azure.yaml`.
+
+This directory is an Agent Framework integration example for understanding and developing the framework code locally. It is not a second deployment quickstart. Follow the deployment sample in its own project directory with its own source and configuration; do not use its manifest to deploy the code in this directory.
+
 ## Creating a Foundry Toolbox
 
 You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/toolboxes/sample_toolboxes_crud.py).
@@ -49,49 +55,15 @@ Use the `resource` value (`https://mcp.ai.azure.com`) as the audience.
 
 > For connector-backed MCP servers (for example Microsoft 365 / WorkIQ servers such as Outlook Mail), the audience is instead published in the Foundry Tools Catalog. Look it up with the helper scripts in [`scripts/`](scripts/): run `./scripts/list-foundry-connectors.ps1 -ConnectorName <name>` (or `./scripts/list-foundry-connectors.sh -n <name>`) and read `AzureActiveDirectoryResourceId` (equivalently `resourceUri`) under `properties.x-ms-connection-parameters`. Run the script with no connector name to list every connector with its name, title, and auth type.
 
-### Creating Connections
+### Project connections
 
-Before creating the toolbox, create project connections for any tools that require authentication. The connection defines the authentication details and credentials for the tool, and the toolbox references the connection to authenticate tool invocations at runtime. The following connections are needed for this sample (used in `toolbox.yaml`):
-
-For `ghmcppat`, run the following command to create a PAT-based connection to the GitHub MCP server:
-
-```powershell
-azd ai connection create ghmcppat --kind remote-tool --target https://api.githubcopilot.com/mcp --auth-type custom-keys --custom-key "Authorization=Bearer <github_pat>" -p https://<account>.services.ai.azure.com/api/projects/<project>
-```
-
-For `ghmcpoauth`, create an OAuth2-based connection to the GitHub MCP server:
-
-```powershell
-azd ai connection create ghmcpoauth --kind remote-tool --target https://api.githubcopilot.com/mcp --auth-type oauth2 --connector-name foundrygithubmcp -p https://<account>.services.ai.azure.com/api/projects/<project>
-```
-
-> This sample uses `ghmcppat` by default, but you can switch to `ghmcpoauth` in the `toolbox.yaml` file.
-
-For `langmcpconn`, create an agent-identity-based connection to the Azure Language MCP server:
-
-```powershell
-azd ai connection create langmcpconn --kind remote-tool --target https://<language-service>.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview --auth-type project-managed-identity --audience https://cognitiveservices.azure.com/ -p https://<account>.services.ai.azure.com/api/projects/<project>
-```
-
-For `foundrymcpconn`, create an Entra pass-through connection to the Microsoft Foundry MCP server:
-
-```powershell
-azd ai connection create foundrymcpconn --kind remote-tool --target https://mcp.ai.azure.com --auth-type user-entra-token --audience https://mcp.ai.azure.com -p https://<account>.services.ai.azure.com/api/projects/<project>
-```
-
-### Creating the toolbox
-
-You create the toolbox once from `toolbox.yaml`, then copy the versioned MCP endpoint it prints into the `TOOLBOX_ENDPOINT` environment variable. The agent connects to that endpoint at runtime.
-
-```powershell
-azd ai toolbox create agent-tools --from-file ./toolbox.yaml --project-endpoint https://<account>.services.ai.azure.com/api/projects/<project>
-```
+The bundled `toolbox.yaml` references project connections named `ghmcppat` (or `ghmcpoauth` for OAuth2), `langmcpconn`, and `foundrymcpconn`. These connections hold the authentication configuration for the corresponding tools; they must exist in the project hosting that toolbox. See the [Foundry toolbox documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox) for toolbox and connection setup. For an end-to-end deployment, use the separate [foundry-samples quickstart](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox) and its configuration rather than combining the two projects.
 
 ## How it works
 
 ### Model Integration
 
-The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It connects to the toolbox's MCP endpoint via `MCPStreamableHTTPTool`, which discovers and invokes the toolbox's tools over MCP at runtime. The agent resolves the endpoint from the `TOOLBOX_ENDPOINT` environment variable. If that variable isn't set, it builds the unversioned (default-version) endpoint from `FOUNDRY_PROJECT_ENDPOINT` and `TOOLBOX_NAME`.
+The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It connects to the toolbox's MCP endpoint via `FoundryToolbox`, which discovers and invokes the toolbox's tools over MCP at runtime. Set `TOOLBOX_ENDPOINT` to the toolbox's versioned MCP endpoint for local development.
 
 See [main.py](main.py) for the full implementation.
 
@@ -120,137 +92,31 @@ connections, project roles and consent are separate setup, not offline coverage.
 Native code-interpreter file citations are a separate tracked behavior
 (microsoft/agent-framework#7916), not implemented by this lifecycle change.
 
-## Running the agent
+## Local framework development
 
-### Option 1: Azure Developer CLI (`azd`)
+Use the current workspace environment described in the [Python development setup](../../../../../DEV_SETUP.md) and the [local hosting guide](../../README.md#running-the-agent-host-locally). The sample's [inline script metadata](main.py) lists its dependencies. Use workspace packages when developing the current hosting APIs; older published packages might not contain them.
 
-#### Prerequisites
+Before running locally, you need an existing Foundry project, a model deployment, and a toolbox with its required project connections and permissions. Local execution does not provision these resources. Copy [`.env.example`](.env.example) to `.env` in this sample directory and set:
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later)
-2. Install the unified Foundry CLI extension bundle (provides `azd ai agent`, `connection`, `inspector`, `project`, `routine`, `skill`, and `toolbox`):
-   ```bash
-   # If you previously installed individual extensions, uninstall them first:
-   #   azd ext uninstall azure.ai.agents
-   #   azd ext uninstall azure.ai.toolboxes
-   azd ext install microsoft.foundry
-   ```
-3. Authenticate:
-   ```bash
-   azd auth login
-   ```
+| Variable | Value |
+| --- | --- |
+| `FOUNDRY_PROJECT_ENDPOINT` | The project endpoint, such as `https://your-account.services.ai.azure.com/api/projects/your-project`. |
+| `FOUNDRY_MODEL` | The model deployment name in that project. |
+| `TOOLBOX_ENDPOINT` | The versioned MCP endpoint of the toolbox you want to use. |
 
-#### Initialize the agent project
+Authenticate with `az login`. From the repository's `python` directory, run the local source using the configured workspace environment:
 
-No cloning required. Create a new folder and initialize from the manifest:
-
-```bash
-mkdir my-toolbox-agent && cd my-toolbox-agent
-
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/agent.manifest.yaml
+```powershell
+uv run --no-sync python samples\04-hosting\foundry-hosted-agents\responses\foundry_toolbox\main.py
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow.
+The agent host starts on `http://localhost:8088`. Send a Responses request from another terminal:
 
-#### Create the toolbox with `azd ai`
-
-> [!TIP]
-> If you use GitHub Copilot for Azure to scaffold a hosted agent that consumes this toolbox, the following skill references describe the same endpoint contract (env var, headers, MCP protocol, citation patterns, and troubleshooting) that the agent must implement:
->
-> - [Toolbox overview](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/toolbox/toolbox.md) — toolbox concept, API shape and schema, versions, endpoints, and MCP protocol.
-> - [Use toolbox in a hosted agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md) — endpoint resolution, env-var contract, payload shape, code integration patterns, and tracing.
-
-The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. Create the toolbox once from the bundled [`toolbox.yaml`](toolbox.yaml):
-
-```bash
-azd ai toolbox create agent-tools --from-file ./toolbox.yaml --project-endpoint https://<account>.services.ai.azure.com/api/projects/<project>
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8088/responses -ContentType "application/json" -Body '{"input": "What tools do you have?", "store": false}'
 ```
 
-The first version becomes the default automatically. Use `azd ai toolbox list`, `azd ai toolbox show agent-tools`, and `azd ai toolbox version list agent-tools` to inspect, and `azd ai toolbox delete agent-tools --force` to remove it.
-
-To stage incremental changes safely, use `azd ai toolbox connection add/remove` and `azd ai toolbox skill add/list/remove`; each creates a new toolbox version that carries forward existing connections and skills but **doesn't** change the default. Promote a version with `azd ai toolbox publish agent-tools <version>` when you're ready to make it active.
-
-`azd ai toolbox create` prints the toolbox's versioned MCP endpoint. Copy that endpoint and store it in your `azd` environment so the agent connects to it:
-
-```bash
-azd env set TOOLBOX_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/agent-tools/versions/1/mcp?api-version=v1"
-```
-
-#### Provision Azure resources (if needed)
-
-If you don't already have a Foundry project and model deployment:
-
-```bash
-azd provision
-```
-
-#### Run the agent locally
-
-```bash
-azd ai agent run
-```
-
-The agent host will start on `http://localhost:8088`.
-
-#### Invoke the local agent
-
-In a separate terminal, from the project directory:
-
-```bash
-azd ai agent invoke --local "What tools do you have?"
-```
-
-#### Deploy to Foundry
-
-Once tested locally, deploy to Microsoft Foundry:
-
-```bash
-azd deploy
-```
-
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
-
-#### Invoke the deployed agent
-
-```bash
-azd ai agent invoke "What tools do you have?"
-```
-
-### Option 2: VS Code (Foundry Toolkit)
-
-#### Prerequisites
-
-1. **VS Code** with the **[Foundry Toolkit](https://learn.microsoft.com/en-us/azure/foundry/how-to/develop/get-started-projects-vs-code)** extension installed.
-2. Sign in to Azure in VS Code.
-3. The `agent-tools` toolbox must exist in your Foundry project. Create it from the bundled [`toolbox.yaml`](toolbox.yaml) (`azd ai toolbox create agent-tools --from-file ./toolbox.yaml`) or in the Foundry portal before you run the agent.
-
-#### Create the project
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create Hosted Agent**.
-2. Select this sample from the gallery. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically.
-3. Complete the **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one).
-
-#### Run and debug the agent
-
-Press **F5** to start the agent in debug mode. The agent host will start on `http://localhost:8088`.
-
-#### Test with Agent Inspector
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-2. The Inspector connects to the running agent. Send messages to chat and view streamed responses.
-
-#### Deploy to Foundry
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate settings.
-2. If prompted, complete **Foundry Project Setup** to select subscription and project.
-3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
-4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
-5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
-
-### Creating a Foundry Toolbox
-
-You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/toolboxes/sample_toolboxes_crud.py).
-
-You can also create a Foundry Toolbox in the Foundry portal. Read more about it [in the Foundry toolbox documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox).
+The agent discovers the configured toolbox's tools and answers using the selected model. A local run uses your Azure CLI identity; it does not reproduce hosted caller identity or validate hosted deployment. See the authentication boundaries above and below.
 
 ## Troubleshooting
 
@@ -292,7 +158,7 @@ returns an authorization error even though it is discovered and called correctly
 
 ## Next steps
 
-- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
+- [Foundry Toolbox deployment quickstart](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox) — runnable project with deployment instructions and configuration
 - [Tool catalog](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/tool-catalog) — browse available tools to extend your agent (Bing Search, Azure AI Search, file search, code interpreter, and more)
 - [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
 - [Basic agent](../basic/) — minimal agent with no tools
