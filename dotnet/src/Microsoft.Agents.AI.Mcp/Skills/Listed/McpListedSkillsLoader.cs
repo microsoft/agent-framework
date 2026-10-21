@@ -38,9 +38,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
     private readonly TimeProvider _timeProvider;
-    private readonly SemaphoreSlim _discoveryGate = new(1, 1);
-    private volatile CachedSkills? _cachedSkills;
-    private bool _disposed;
+    private readonly McpListedSkillsCache _cache;
 
     /// <summary>
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
@@ -62,6 +60,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
+        this._cache = new McpListedSkillsCache(this._timeProvider);
     }
 
     /// <summary>
@@ -75,47 +74,12 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
     /// <exception cref="McpException">The MCP request fails.</exception>
     /// <exception cref="OperationCanceledException">Discovery is canceled.</exception>
     /// <exception cref="ObjectDisposedException">The loader has been disposed.</exception>
-    public async Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
+    public Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(this._disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // Reuse the catalog only while every page is fresh.
-        if (this.GetCachedSkills() is { } cached)
-        {
-            return cached;
-        }
-
-        // Allow only one caller to discover or refresh the catalog at a time.
-        await this._discoveryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Another caller may have refreshed the cache while this caller waited.
-            cached = this.GetCachedSkills();
-            if (cached is not null)
-            {
-                return cached;
-            }
-
-            // Refresh all pages from the beginning.
-            var (skills, pageLifetimes) = await this.DiscoverCoreAsync(cancellationToken).ConfigureAwait(false);
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            this.CacheSkills(skills, pageLifetimes);
-
-            return skills;
-        }
-        finally
-        {
-            this._discoveryGate.Release();
-        }
+        return this._cache.GetOrCreateAsync(this.DiscoverCoreAsync, cancellationToken);
     }
 
-    private async Task<(List<AgentSkill> Skills, List<PageLifetime> PageLifetimes)> DiscoverCoreAsync(CancellationToken cancellationToken)
+    private async Task<McpListedSkillsDiscoveryResult> DiscoverCoreAsync(CancellationToken cancellationToken)
     {
         var (skillEntries, pageLifetimes) = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
 
@@ -131,13 +95,13 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
             skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
         }
 
-        return (skills, pageLifetimes);
+        return new McpListedSkillsDiscoveryResult(skills, pageLifetimes);
     }
 
-    private async Task<(List<McpListedSkillEntry> Entries, List<PageLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
+    private async Task<(List<McpListedSkillEntry> Entries, List<McpListedSkillsPageLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
     {
         List<McpListedSkillEntry> skillEntries = [];
-        List<PageLifetime> pageLifetimes = [];
+        List<McpListedSkillsPageLifetime> pageLifetimes = [];
         HashSet<string> cursors = new(StringComparer.Ordinal);
         string? cursor = null;
         int pageCount = 0;
@@ -191,7 +155,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
                 pageTimeToLive = TimeSpan.Zero;
             }
 
-            pageLifetimes.Add(new PageLifetime(receivedTimestamp, pageTimeToLive));
+            pageLifetimes.Add(new McpListedSkillsPageLifetime(receivedTimestamp, pageTimeToLive));
 
             cursor = result.NextCursor;
             if (cursor is not null && !cursors.Add(cursor))
@@ -213,41 +177,6 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
         while (cursor is not null);
 
         return (skillEntries, pageLifetimes);
-    }
-
-    /// <summary>
-    /// Gets the cached skills, or <see langword="null"/> if the cache is absent or expired.
-    /// </summary>
-    private List<AgentSkill>? GetCachedSkills()
-    {
-        if (this._cachedSkills is not { } cached)
-        {
-            return null;
-        }
-
-        long now = this._timeProvider.GetTimestamp();
-
-        // Check every page against the same timestamp. Any expired page makes the catalog stale.
-        foreach (PageLifetime page in cached.PageLifetimes)
-        {
-            if (this._timeProvider.GetElapsedTime(page.ReceivedTimestamp, now) >= page.TimeToLive)
-            {
-                return null;
-            }
-        }
-
-        return cached.Skills;
-    }
-
-    /// <summary>
-    /// Caches the discovered skills together with their page lifetimes.
-    /// </summary>
-    /// <param name="skills">The complete list of discovered and validated skills.</param>
-    /// <param name="pageLifetimes">The receipt timestamp and TTL of each discovery page.</param>
-    private void CacheSkills(List<AgentSkill> skills, List<PageLifetime> pageLifetimes)
-    {
-        // Publish the complete catalog and page lifetimes together only after discovery and validation succeed.
-        this._cachedSkills = new CachedSkills(skills, pageLifetimes);
     }
 
     private static AgentSkillFrontmatter CreateFrontmatter(McpListedSkillEntry entry)
@@ -360,17 +289,9 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
     [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ResourceDigestRegex();
 
-    private sealed record CachedSkills(List<AgentSkill> Skills, List<PageLifetime> PageLifetimes);
-
-    private sealed record PageLifetime(long ReceivedTimestamp, TimeSpan TimeToLive);
-
     /// <inheritdoc/>
     public void Dispose()
     {
-        if (!this._disposed)
-        {
-            this._disposed = true;
-            this._discoveryGate.Dispose();
-        }
+        this._cache.Dispose();
     }
 }
