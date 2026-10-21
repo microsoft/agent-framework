@@ -99,6 +99,26 @@ async def failing_step(x: int) -> int:
     raise ValueError(f"step failed with {x}")
 
 
+class NestedStepError(Exception):
+    """Raised by a nested step whose failure the workflow's own code handles."""
+
+
+@step
+async def nested_boom_step() -> int:
+    raise NestedStepError("boom")
+
+
+@step
+async def gather_failing_step() -> int:
+    (value,) = await asyncio.gather(nested_boom_step())
+    return value
+
+
+@step
+async def ask_for_review_step(name: str, ctx: RunContext) -> int:
+    return await ctx.request_info(f"{name}?", int, request_id=name)
+
+
 # ---------------------------------------------------------------------------
 # Basic execution
 # ---------------------------------------------------------------------------
@@ -455,6 +475,33 @@ class TestHITL:
         events = result.get_request_info_events()
         assert len(events) == 1
         assert events[0].request_id  # should be a non-empty uuid string
+
+    async def test_nested_handled_step_failure_does_not_replace_sibling_pause(self):
+        """A handled step failure must not replace a sibling branch's pending request.
+
+        A step that runs as a task inside another step fails inside the inner
+        concurrency boundary, so the direct waiter keeps carrying the exception
+        even after the surrounding branch caught it. That branch then completes
+        normally, so the workflow must keep the pending request instead of
+        re-raising the failure the workflow's own code already handled.
+        """
+
+        async def left() -> int:
+            try:
+                return await gather_failing_step()
+            except NestedStepError:
+                return -1
+
+        @built_workflow
+        async def flow(x: int) -> list:
+            return list(await asyncio.gather(left(), ask_for_review_step("review")))
+
+        result = await flow.run(0)
+        pending = result.get_request_info_events()
+        assert [event.request_id for event in pending] == ["review"]
+
+        result = await flow.run(responses={event.request_id: 1 for event in pending})
+        assert result.get_outputs() == [[-1, 1]]
 
 
 # ---------------------------------------------------------------------------

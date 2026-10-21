@@ -1008,6 +1008,34 @@ class RunContext:
             return False
         return waiter.exception() is None
 
+    def _failure_was_handled_by_awaiter(self, task: asyncio.Future[Any]) -> bool:
+        """Return whether the code awaiting this task's boundary caught the failure.
+
+        A step that runs as a task inside another step fails inside the inner
+        concurrency boundary, so the boundary's waiter keeps the exception even
+        after the awaiting code caught it. The waiter failing with that same
+        exception shows the failure reached the awaiting code, and that task
+        completing without raising it shows the code handled it.
+        """
+        waiter = self._pause_boundary_waiters.get(task)
+        if waiter is None or not waiter.done() or waiter.cancelled():
+            return False
+        error = task.exception()
+        if error is None:
+            return False
+        try:
+            delivered = waiter.exception()
+        except Exception:
+            return False
+        if delivered is not error:
+            # The waiter failed for another reason, a pause interruption for
+            # example, so this failure never reached the awaiting code.
+            return False
+        awaiter = self._workflow_task_parents.get(task)
+        if awaiter is None or not awaiter.done() or awaiter.cancelled():
+            return False
+        return awaiter.exception() is None
+
     def _pause_root_waiter_was_handled(self) -> bool:
         waiter = self._pause_root_waiter
         if waiter is None or not waiter.done() or waiter.cancelled():
@@ -1153,6 +1181,9 @@ class RunContext:
                         raise
                 if task in self._pause_failure_boundaries:
                     if self._pause_boundary_was_handled(task):
+                        inspected_tasks.add(task)
+                        continue
+                    if self._failure_was_handled_by_awaiter(task):
                         inspected_tasks.add(task)
                         continue
                 else:
