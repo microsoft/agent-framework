@@ -286,7 +286,7 @@ def _annotations_to_output_text(
     annotations: Sequence[FrameworkAnnotation] | None,
 ) -> list[ResponsesAnnotation]:
     """Convert framework citations into Responses output-text annotations."""
-    if not annotations or isinstance(annotations, (str, bytes)):
+    if not annotations or not isinstance(annotations, Sequence) or isinstance(annotations, (str, bytes)):
         return []
 
     output_annotations: list[ResponsesAnnotation] = []

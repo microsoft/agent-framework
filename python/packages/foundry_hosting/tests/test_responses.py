@@ -430,6 +430,18 @@ def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
     assert _annotations_to_output_text(cast(Any, "not-an-annotation-sequence")) == []
 
 
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        pytest.param(42, id="integer"),
+        pytest.param(True, id="boolean"),
+        pytest.param(object(), id="object"),
+    ],
+)
+def test_framework_annotations_ignore_non_sequence_inputs(annotations: Any) -> None:
+    assert _annotations_to_output_text(annotations) == []
+
+
 def test_framework_annotations_ignore_unsupported_or_incomplete_values() -> None:
     annotations = [
         Annotation(type="citation", url="https://example.com/no-span"),
