@@ -58,6 +58,9 @@ internal sealed class JsonWireSerializedValue(JsonMarshaller serializer, JsonEle
 
     public override int GetHashCode()
     {
-        return this.Data.GetHashCode();
+        // JsonElement does not provide a structural hash code. ValueKind is necessarily equal
+        // whenever DeepEquals returns true, preserving the equality contract without recursively
+        // reimplementing JsonElement.DeepEquals semantics.
+        return this.Data.ValueKind.GetHashCode();
     }
 }
