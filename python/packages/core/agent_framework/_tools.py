@@ -5236,18 +5236,24 @@ async def _resolve_approval_responses(
             # Dropping responses changes which calls in the batch are still awaiting an answer, so the batch
             # is reclassified. Reclassification reorders the transcript and can change which responses are
             # settled, so repeat until nothing more is dropped; each pass removes at least one response.
+            settled_response_ids: set[int] = set()
+            _collect_approval_responses(
+                prepared_messages,
+                non_approval_result_ids=host_result_ids,
+                settled_response_ids=settled_response_ids,
+            )
+
             dropped_any = False
-            while True:
-                settled_response_ids: set[int] = set()
+            while _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
+                dropped_any = True
+                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+
+                settled_response_ids = set()
                 _collect_approval_responses(
                     prepared_messages,
                     non_approval_result_ids=host_result_ids,
                     settled_response_ids=settled_response_ids,
                 )
-                if not _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
-                    break
-                dropped_any = True
-                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
             if dropped_any:
                 logger.warning(
                     "Ignored one or more local tool-approval responses because this run has no authoritative "
