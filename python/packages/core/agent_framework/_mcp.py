@@ -2279,23 +2279,34 @@ class MCPTool:
         self._supports_prompts = getattr(capabilities, "prompts", None) is not None
         self._supports_logging = getattr(capabilities, "logging", None) is not None
 
-    def _caller_owned_connection_loss_error(
+    async def _recover_connection_after_loss(
         self,
         *,
         operation: str,
         inner_exception: Exception,
-    ) -> ToolExecutionException | None:
-        """Return an actionable error when Agent Framework cannot recreate the active connection."""
+        load_configured: bool,
+    ) -> None:
+        """Recreate a framework-owned connection or fail clearly for a caller-owned connection."""
         connection = self._require_connection()
-        if connection.is_framework_owned:
-            return None
+        if not connection.is_framework_owned:
+            connection_type = "Client" if connection.client is not None else "ClientSession"
+            raise _mcp_tool_execution_exception(
+                f"MCP connection was lost during {operation}. The active {connection_type} is caller-owned and cannot "
+                "be recreated by Agent Framework. Create a replacement connection and MCP tool instance.",
+                inner_exception=inner_exception,
+            ) from inner_exception
 
-        connection_type = "Client" if connection.client is not None else "ClientSession"
-        return _mcp_tool_execution_exception(
-            f"MCP connection was lost during {operation}. The active {connection_type} is caller-owned and cannot "
-            "be recreated by Agent Framework. Create a replacement connection and MCP tool instance.",
-            inner_exception=inner_exception,
-        )
+        logger.info("MCP connection was lost during %s. Reconnecting...", operation)
+        try:
+            if load_configured:
+                await self.connect(reset=True)
+            else:
+                await self._reconnect_without_loading()
+        except Exception as reconnect_ex:
+            raise _mcp_tool_execution_exception(
+                f"Failed to reconnect to MCP server after {operation}.",
+                inner_exception=reconnect_ex,
+            ) from reconnect_ex
 
     async def _reconnect_without_loading(self) -> None:
         if self._is_lifecycle_owner_task():
@@ -2921,20 +2932,11 @@ class MCPTool:
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
-                        caller_owned_error = self._caller_owned_connection_loss_error(
+                        await self._recover_connection_after_loss(
                             operation="prompt discovery",
                             inner_exception=cl_ex,
+                            load_configured=False,
                         )
-                        if caller_owned_error is not None:
-                            raise caller_owned_error from cl_ex
-                        logger.info("MCP connection closed unexpectedly while loading prompts. Reconnecting...")
-                        try:
-                            await self._reconnect_without_loading()
-                        except Exception as reconn_ex:
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
                         continue
                     _log_mcp_exception(
                         logging.ERROR,
@@ -3073,20 +3075,11 @@ class MCPTool:
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
-                        caller_owned_error = self._caller_owned_connection_loss_error(
+                        await self._recover_connection_after_loss(
                             operation="tool discovery",
                             inner_exception=cl_ex,
+                            load_configured=False,
                         )
-                        if caller_owned_error is not None:
-                            raise caller_owned_error from cl_ex
-                        logger.info("MCP connection closed unexpectedly while loading tools. Reconnecting...")
-                        try:
-                            await self._reconnect_without_loading()
-                        except Exception as reconn_ex:
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
                         continue
                     _log_mcp_exception(
                         logging.ERROR,
@@ -3276,35 +3269,17 @@ class MCPTool:
                 self._ping_available = False
                 logger.debug("Skipping future MCP pings because the server does not support ping.")
                 return
-            caller_owned_error = self._caller_owned_connection_loss_error(
+            await self._recover_connection_after_loss(
                 operation="connection liveness check",
                 inner_exception=mcp_exc,
+                load_configured=False,
             )
-            if caller_owned_error is not None:
-                raise caller_owned_error from mcp_exc
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self._reconnect_without_loading()
-            except Exception as ex:
-                raise _mcp_tool_execution_exception(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
         except Exception as connection_ex:
-            caller_owned_error = self._caller_owned_connection_loss_error(
+            await self._recover_connection_after_loss(
                 operation="connection liveness check",
                 inner_exception=connection_ex,
+                load_configured=False,
             )
-            if caller_owned_error is not None:
-                raise caller_owned_error from connection_ex
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self._reconnect_without_loading()
-            except Exception as ex:
-                raise _mcp_tool_execution_exception(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
@@ -3418,26 +3393,17 @@ class MCPTool:
                     raise _mcp_tool_execution_exception(error_message, inner_exception=call_ex) from call_ex
 
                 if attempt == 0:
-                    caller_owned_error = self._caller_owned_connection_loss_error(
-                        operation=f"tool call '{tool_name}'",
-                        inner_exception=call_ex,
-                    )
-                    if caller_owned_error is not None:
-                        if span.is_recording():
-                            set_mcp_span_error(span, type(caller_owned_error).__name__, str(caller_owned_error))
-                        raise caller_owned_error from call_ex
-                    # First attempt failed, try reconnecting.
-                    logger.info("MCP connection closed or terminated unexpectedly. Reconnecting...")
                     try:
-                        await self.connect(reset=True)
-                        continue
-                    except Exception as reconn_ex:
+                        await self._recover_connection_after_loss(
+                            operation="tool call",
+                            inner_exception=call_ex,
+                            load_configured=True,
+                        )
+                    except ToolExecutionException as recovery_error:
                         if span.is_recording():
-                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                        raise _mcp_tool_execution_exception(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
+                            set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
+                        raise
+                    continue
 
                 # Second attempt also failed, give up.
                 _log_mcp_exception(
@@ -3558,38 +3524,29 @@ class MCPTool:
                     return parser(prompt_result)
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
-                        caller_owned_error = self._caller_owned_connection_loss_error(
-                            operation=f"prompt call '{prompt_name}'",
-                            inner_exception=cl_ex,
-                        )
-                        if caller_owned_error is not None:
-                            set_mcp_span_error(span, type(caller_owned_error).__name__, str(caller_owned_error))
-                            raise caller_owned_error from cl_ex
-                        # First attempt failed, try reconnecting
-                        logger.info("MCP connection closed unexpectedly. Reconnecting...")
                         try:
-                            await self.connect(reset=True)
-                            continue  # Retry the operation
-                        except Exception as reconn_ex:
-                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
-                    else:
-                        # Second attempt also failed, give up
-                        _log_mcp_exception(
-                            logging.ERROR,
-                            cl_ex,
-                            "MCP connection closed unexpectedly after reconnection: %s",
-                            cl_ex,
-                            redacted_message="MCP prompt call connection closed after reconnection",
-                        )
-                        set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
-                        raise _mcp_tool_execution_exception(
-                            f"Failed to call prompt '{prompt_name}' - connection lost.",
-                            inner_exception=cl_ex,
-                        ) from cl_ex
+                            await self._recover_connection_after_loss(
+                                operation="prompt call",
+                                inner_exception=cl_ex,
+                                load_configured=True,
+                            )
+                        except ToolExecutionException as recovery_error:
+                            set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
+                            raise
+                        continue
+                    # Second attempt also failed, give up
+                    _log_mcp_exception(
+                        logging.ERROR,
+                        cl_ex,
+                        "MCP connection closed unexpectedly after reconnection: %s",
+                        cl_ex,
+                        redacted_message="MCP prompt call connection closed after reconnection",
+                    )
+                    set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
+                    raise _mcp_tool_execution_exception(
+                        f"Failed to call prompt '{prompt_name}' - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
                 except MCPError as mcp_exc:
                     error_message = mcp_exc.error.message
                     set_mcp_span_error(span, type(mcp_exc).__name__, error_message)

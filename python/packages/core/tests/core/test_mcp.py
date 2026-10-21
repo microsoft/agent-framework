@@ -8668,7 +8668,7 @@ async def test_ensure_connected_wraps_reconnect_failure() -> None:
 
     with (
         patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=RuntimeError("still closed"))),
-        pytest.raises(ToolExecutionException, match="Failed to establish MCP connection"),
+        pytest.raises(ToolExecutionException, match="Failed to reconnect to MCP server"),
     ):
         await tool._ensure_connected()
 
