@@ -81,7 +81,16 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, sessionId, [], cancellationToken)
                                              .ConfigureAwait(false);
 
-        return await runHandle.EnqueueAndStreamAsync(input, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await runHandle.EnqueueAndStreamAsync(input, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The caller never receives this run, so end it here to release the workflow.
+            await runHandle.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     [MemberNotNull(nameof(CheckpointManager))]
@@ -142,11 +151,20 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, sessionId, descriptor.Accepts, cancellationToken)
                                              .ConfigureAwait(false);
 
-        await runHandle.EnqueueMessageAsync(input, cancellationToken).ConfigureAwait(false);
-
-        if (descriptor.IsChatProtocol() && input is not TurnToken)
+        try
         {
-            await runHandle.EnqueueMessageAsync(new TurnToken(emitEvents: true), cancellationToken).ConfigureAwait(false);
+            await runHandle.EnqueueMessageAsync(input, cancellationToken).ConfigureAwait(false);
+
+            if (descriptor.IsChatProtocol() && input is not TurnToken)
+            {
+                await runHandle.EnqueueMessageAsync(new TurnToken(emitEvents: true), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // The caller never receives this run, so end it here to release the workflow.
+            await runHandle.DisposeAsync().ConfigureAwait(false);
+            throw;
         }
 
         return runHandle;
