@@ -1014,14 +1014,24 @@ class RunContext:
         A step that runs as a task inside another step fails inside the inner
         concurrency boundary, so the boundary's waiter keeps the exception even
         after the awaiting code caught it. The waiter failing with that same
-        exception shows the failure reached the awaiting code, and that task
+        exception shows the failure reached the boundary, and that task
         completing without raising it shows the code handled it.
+
+        The failure also has to have been delivered: a future's exception is
+        retrieved exactly when the awaiting code receives it, and retrieving it
+        clears the future's traceback flag. A waiter that still carries the
+        flag means nobody received the failure, because the awaiting code was
+        cancelled before it could resume, or because the boundary was never
+        awaited at all.
         """
         waiter = self._pause_boundary_waiters.get(task)
         if waiter is None or not waiter.done() or waiter.cancelled():
             return False
         error = task.exception()
         if error is None:
+            return False
+        if getattr(waiter, "_log_traceback", False):
+            # Nobody retrieved the waiter's exception, so it was never delivered.
             return False
         try:
             delivered = waiter.exception()
@@ -1033,6 +1043,13 @@ class RunContext:
             return False
         awaiter = self._workflow_task_parents.get(task)
         if awaiter is None or not awaiter.done() or awaiter.cancelled():
+            return False
+        cancelling = getattr(awaiter, "cancelling", None)
+        cancelling_count = cast(Callable[[], int], cancelling)() if callable(cancelling) else 0
+        if cancelling_count > 0:
+            # The awaiting task was cancelled, so it may never have received
+            # the failure. Cancelling a waiter clears its traceback flag, so the
+            # flag alone cannot rule that out.
             return False
         return awaiter.exception() is None
 
@@ -1180,10 +1197,12 @@ class RunContext:
                             continue
                         raise
                 if task in self._pause_failure_boundaries:
-                    if self._pause_boundary_was_handled(task):
+                    # The delivery check reads the waiter's traceback flag, so it
+                    # has to run before anything retrieves the waiter's exception.
+                    if self._failure_was_handled_by_awaiter(task):
                         inspected_tasks.add(task)
                         continue
-                    if self._failure_was_handled_by_awaiter(task):
+                    if self._pause_boundary_was_handled(task):
                         inspected_tasks.add(task)
                         continue
                 else:

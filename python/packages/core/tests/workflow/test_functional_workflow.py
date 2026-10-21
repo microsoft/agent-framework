@@ -8,6 +8,7 @@ import asyncio
 import gc
 import json
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -117,6 +118,45 @@ async def gather_failing_step() -> int:
 @step
 async def ask_for_review_step(name: str, ctx: RunContext) -> int:
     return await ctx.request_info(f"{name}?", int, request_id=name)
+
+
+@step
+async def detached_gather_step(ctx: RunContext) -> str:
+    """Start a gather with a failing child and a pausing child, and never await it."""
+
+    async def failing() -> int:
+        raise NestedStepError("boom")
+
+    async def pausing() -> int:
+        return await ctx.request_info("review?", int, request_id="review")
+
+    asyncio.gather(failing(), pausing())
+    return "detached"
+
+
+@step
+async def cancelled_awaiter_step(ctx: RunContext) -> int:
+    """Get cancelled after the gather finished but before it can deliver its failure."""
+
+    async def failing() -> int:
+        raise NestedStepError("boom")
+
+    async def pausing() -> int:
+        return await ctx.request_info("review?", int, request_id="review")
+
+    async def helper() -> int:
+        task = asyncio.current_task()
+        gather = asyncio.gather(failing(), pausing())
+        if task is not None:
+            # Registered before the await, so it runs before the task resumes with
+            # the gather and the gather's exception is never retrieved.
+            gather.add_done_callback(lambda _: task.cancel())
+        try:
+            return await gather
+        except asyncio.CancelledError:
+            return -1
+
+    return await asyncio.create_task(helper())
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +515,37 @@ class TestHITL:
         events = result.get_request_info_events()
         assert len(events) == 1
         assert events[0].request_id  # should be a non-empty uuid string
+
+    async def test_a_gather_nobody_awaited_still_surfaces_its_failure(self):
+        """A failure nobody received must not be taken for a handled one.
+
+        The gather that holds the failing child is never awaited, so nothing
+        ever received the exception, and the task that created it finishes
+        normally. The workflow still has to report the failure.
+        """
+
+        @built_workflow
+        async def flow(x: int) -> str:
+            return await detached_gather_step()
+
+        with pytest.raises(NestedStepError):
+            await flow.run(0)
+
+    @pytest.mark.skipif(sys.version_info < (3, 11), reason="needs Task.cancelling()")
+    async def test_a_cancellation_before_the_failure_is_delivered_still_surfaces_it(self):
+        """A cancellation that interrupts the delivery must not hide the failure.
+
+        The awaiting task is cancelled after the gather finished but before it
+        resumes, so it never receives the gather's exception and only sees the
+        cancellation. The failure was never handled and has to surface.
+        """
+
+        @built_workflow
+        async def flow(x: int) -> int:
+            return await cancelled_awaiter_step()
+
+        with pytest.raises(NestedStepError):
+            await flow.run(0)
 
     async def test_nested_handled_step_failure_does_not_replace_sibling_pause(self):
         """A handled step failure must not replace a sibling branch's pending request.
