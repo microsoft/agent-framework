@@ -25,6 +25,7 @@ Prerequisites:
 - A Microsoft Foundry project with a toolbox configured
 - FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL environment variables set
 - Azure CLI authentication (``az login``)
+- azure-ai-projects >= 2.4.0 for toolbox tool search
 
 The helper publishes a version with tool search enabled and connects to that exact
 version. The model initially sees tool_search and call_tool, then discovers the
@@ -44,7 +45,15 @@ def create_sample_toolbox(name: str) -> str:
     created version identifier without deleting existing versions.
     """
     from azure.ai.projects import AIProjectClient
-    from azure.ai.projects.models import MCPToolboxTool, ToolboxTool, ToolSearchToolboxTool
+    from azure.ai.projects.models import MCPToolboxTool, ToolboxTool
+
+    try:
+        from azure.ai.projects.models import ToolSearchToolboxTool
+    except ImportError as exc:
+        raise ImportError(
+            "This sample requires azure-ai-projects>=2.4.0 for toolbox tool search. "
+            "Upgrade with: pip install --upgrade 'azure-ai-projects>=2.4.0'"
+        ) from exc
 
     with (
         AzureCliCredential() as credential,
