@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -10,6 +11,62 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// </summary>
 public sealed class AgentMcpListedSkillsSerializationTests
 {
+    [Theory]
+    [InlineData("null", null)]
+    [InlineData("0", 0L)]
+    [InlineData("300000", 300000L)]
+    [InlineData("-1", -1L)]
+    public void Deserialize_TimeToLive_PreservesMilliseconds(string ttl, long? expectedMilliseconds)
+    {
+        // Arrange
+        JsonObject node = new()
+        {
+            ["resultType"] = "complete",
+            ["skills"] = new JsonArray(),
+            ["ttlMs"] = JsonNode.Parse(ttl),
+        };
+
+        // Act
+        var result = node.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(expectedMilliseconds is { } ms ? TimeSpan.FromMilliseconds(ms) : null, result.TimeToLive);
+    }
+
+    [Fact]
+    public void Deserialize_MissingTimeToLive_PreservesAbsence()
+    {
+        // Arrange
+        const string Json = """{"resultType":"complete","skills":[]}""";
+
+        // Act
+        var result = JsonSerializer.Deserialize(Json, McpListedSkillsJsonContext.Default.McpSkillsListResult);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Null(result.TimeToLive);
+    }
+
+    [Theory]
+    [InlineData("\"1000\"")]
+    [InlineData("true")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    public void Deserialize_InvalidTimeToLive_Throws(string ttl)
+    {
+        // Arrange
+        JsonObject node = new()
+        {
+            ["resultType"] = "complete",
+            ["skills"] = new JsonArray(),
+            ["ttlMs"] = JsonNode.Parse(ttl),
+        };
+
+        // Act & Assert
+        Assert.Throws<JsonException>(() => node.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult));
+    }
+
     [Theory]
     [InlineData("[]")]
     [InlineData("true")]

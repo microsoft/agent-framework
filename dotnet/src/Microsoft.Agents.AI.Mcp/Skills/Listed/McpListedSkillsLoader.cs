@@ -24,18 +24,21 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Instructions and resources are fetched later, when requested.
 /// </remarks>
-internal sealed partial class McpListedSkillsLoader
+internal sealed partial class McpListedSkillsLoader : IDisposable
 {
     private const string CompleteResultType = "complete";
 
     private const int DefaultMaxPageCount = 10;
     private const int DefaultMaxSkillCount = 100;
 
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The MCP client is supplied and owned by the caller, who is responsible for disposing it.")]
     private readonly McpClient _client;
     private readonly ILogger _logger;
     private readonly long _maxResourceSizeBytes;
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
+    private readonly TimeProvider _timeProvider;
+    private readonly McpListedSkillsCache _cache;
 
     /// <summary>
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
@@ -43,18 +46,21 @@ internal sealed partial class McpListedSkillsLoader
     /// <param name="client">The MCP client used to discover skills and fetch their content.</param>
     /// <param name="logger">Optional logger for frontmatter parsing diagnostics.</param>
     /// <param name="options">Optional discovery limits and size limit for listed resources.</param>
+    /// <param name="timeProvider">Optional clock for checking page freshness.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
-    public McpListedSkillsLoader(McpClient client, ILogger? logger = null, AgentMcpSkillsSourceOptions? options = null)
+    public McpListedSkillsLoader(McpClient client, ILogger? logger = null, AgentMcpSkillsSourceOptions? options = null, TimeProvider? timeProvider = null)
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
         this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpListedSkill.DefaultMaxResourceSizeBytes;
         this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
+        this._timeProvider = timeProvider ?? TimeProvider.System;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
+        this._cache = new McpListedSkillsCache(this._timeProvider);
     }
 
     /// <summary>
@@ -67,11 +73,16 @@ internal sealed partial class McpListedSkillsLoader
     /// invalid skill metadata or resource manifests, a repeated pagination cursor, or a configured limit is exceeded.</exception>
     /// <exception cref="McpException">The MCP request fails.</exception>
     /// <exception cref="OperationCanceledException">Discovery is canceled.</exception>
-    public async Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
+    /// <exception cref="ObjectDisposedException">The loader has been disposed.</exception>
+    public Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        return this._cache.GetOrCreateAsync(this.DiscoverCoreAsync, cancellationToken);
+    }
 
-        List<McpListedSkillEntry> skillEntries = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
+    private async Task<McpListedSkillsDiscoveryResult> DiscoverCoreAsync(CancellationToken cancellationToken)
+    {
+        var (skillEntries, pageLifetimes) = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
+
         List<AgentSkill> skills = [];
 
         foreach (McpListedSkillEntry entry in skillEntries)
@@ -84,14 +95,13 @@ internal sealed partial class McpListedSkillsLoader
             skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-
-        return skills;
+        return new McpListedSkillsDiscoveryResult(skills, pageLifetimes);
     }
 
-    private async Task<List<McpListedSkillEntry>> ListSkillEntriesAsync(CancellationToken cancellationToken)
+    private async Task<(List<McpListedSkillEntry> Entries, List<McpListedSkillsPageLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
     {
         List<McpListedSkillEntry> skillEntries = [];
+        List<McpListedSkillsPageLifetime> pageLifetimes = [];
         HashSet<string> cursors = new(StringComparer.Ordinal);
         string? cursor = null;
         int pageCount = 0;
@@ -117,6 +127,7 @@ internal sealed partial class McpListedSkillsLoader
                 Params = parameters,
             }, cancellationToken).ConfigureAwait(false);
 
+            long receivedTimestamp = this._timeProvider.GetTimestamp();
             pageCount++;
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -138,6 +149,14 @@ internal sealed partial class McpListedSkillsLoader
                 throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
             }
 
+            TimeSpan pageTimeToLive = result.TimeToLive.GetValueOrDefault();
+            if (pageTimeToLive < TimeSpan.Zero)
+            {
+                pageTimeToLive = TimeSpan.Zero;
+            }
+
+            pageLifetimes.Add(new McpListedSkillsPageLifetime(receivedTimestamp, pageTimeToLive));
+
             cursor = result.NextCursor;
             if (cursor is not null && !cursors.Add(cursor))
             {
@@ -157,7 +176,7 @@ internal sealed partial class McpListedSkillsLoader
         }
         while (cursor is not null);
 
-        return skillEntries;
+        return (skillEntries, pageLifetimes);
     }
 
     private static AgentSkillFrontmatter CreateFrontmatter(McpListedSkillEntry entry)
@@ -269,4 +288,10 @@ internal sealed partial class McpListedSkillsLoader
 
     [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ResourceDigestRegex();
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        this._cache.Dispose();
+    }
 }

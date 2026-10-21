@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI;
 
@@ -24,6 +26,13 @@ internal sealed class McpSkillsListResult
     /// Gets the opaque cursor to pass to the next request, or <see langword="null"/> when no more pages are available.
     /// </summary>
     public string? NextCursor { get; init; }
+
+    /// <summary>
+    /// Gets the server's freshness hint for this page. Missing or nonpositive values are immediately stale.
+    /// </summary>
+    [JsonPropertyName("ttlMs")]
+    [JsonConverter(typeof(TimeSpanMillisecondsConverter))]
+    public TimeSpan? TimeToLive { get; init; }
 }
 
 /// <summary>
