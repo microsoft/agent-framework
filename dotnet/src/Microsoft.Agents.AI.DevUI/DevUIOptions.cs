@@ -13,10 +13,11 @@ namespace Microsoft.Agents.AI.DevUI;
 /// system instructions, tool definitions, model identifiers, and workflow
 /// structure. By default, DevUI requires a loopback peer and loopback Host,
 /// and rejects cross-site state-changing browser requests. Hosts that
-/// intentionally expose DevUI on a non-loopback interface must opt in via
-/// <see cref="AllowRemoteAccess"/> and should also configure
-/// <see cref="AuthToken"/> or <see cref="ConfigureEndpoints"/> to attach an
-/// authorization policy.
+/// intentionally expose DevUI directly on a non-loopback interface must opt in
+/// via <see cref="AllowRemoteAccess"/>. The built-in local checks are not a
+/// production or public reverse-proxy authentication boundary. Reverse-proxied
+/// exposure requires host-owned authentication and network policy, normally
+/// together with <see cref="AllowRemoteAccess"/> set to <see langword="true"/>.
 /// </para>
 /// </remarks>
 public sealed class DevUIOptions
@@ -39,15 +40,21 @@ public sealed class DevUIOptions
     /// These checks apply to the DevUI endpoints and the standard
     /// <c>/v1/responses</c> and <c>/v1/conversations</c> paths. Enable only
     /// when the host is responsible for its own network and browser-request
-    /// protections.
+    /// protections. In particular, these checks do not authenticate the
+    /// original caller when a reverse proxy makes the connection appear local.
+    /// Public or production reverse-proxy exposure requires host-owned
+    /// authentication and network policy, normally with this option set to
+    /// <see langword="true"/>.
     /// </remarks>
     public bool AllowRemoteAccess { get; set; }
 
     /// <summary>
-    /// Gets or sets a shared bearer token required on every DevUI request and
-    /// the standard <c>/v1/responses</c> and <c>/v1/conversations</c> paths.
-    /// When <see langword="null"/> or empty, the value of the
-    /// <c>DEVUI_AUTH_TOKEN</c> environment variable is used instead.
+    /// Gets or sets a shared bearer token required on the UI and entity
+    /// endpoints mapped by <c>MapDevUI()</c>. The token is not automatically
+    /// imposed on separately mapped standard <c>/v1/responses</c> or
+    /// <c>/v1/conversations</c> routes. When <see langword="null"/> or empty,
+    /// the value of the <c>DEVUI_AUTH_TOKEN</c> environment variable is used
+    /// instead.
     /// </summary>
     /// <remarks>
     /// When a token is configured, requests must include the header

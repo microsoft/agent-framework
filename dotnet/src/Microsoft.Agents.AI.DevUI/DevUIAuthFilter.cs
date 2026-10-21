@@ -24,7 +24,8 @@ internal sealed class DevUIAuthFilter : IEndpointFilter
 
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        var failure = this._validator.Validate(context.HttpContext);
+        var failure = this._validator.ValidateLocalRequest(context.HttpContext)
+            ?? this._validator.ValidateToken(context.HttpContext);
         return failure ?? await next(context).ConfigureAwait(false);
     }
 }

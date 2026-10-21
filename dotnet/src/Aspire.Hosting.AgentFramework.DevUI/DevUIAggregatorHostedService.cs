@@ -60,13 +60,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         DevUIResource resource,
         ILogger logger,
         IConfiguration? configuration = null,
-        AspireDashboardConnection? dashboardConnectionOverride = null)
+        AspireDashboardConnection? dashboardConnectionOverride = null,
+        bool loadFrontendResources = true)
     {
         this._resource = resource;
         this._logger = logger;
         this._configuration = configuration;
         this._dashboardConnectionOverride = dashboardConnectionOverride;
-        this._frontendResources = LoadFrontendResources(logger);
+        this._frontendResources = loadFrontendResources ? LoadFrontendResources(logger) : null;
     }
 
     /// <summary>
@@ -955,7 +956,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
         foreach (var header in context.Request.Headers)
         {
-            if (IsHopByHopHeader(header.Key))
+            if (IsHopByHopHeader(header.Key) || IsBrowserProvenanceHeader(header.Key))
             {
                 continue;
             }
@@ -1185,6 +1186,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             || headerName.Equals("Keep-Alive", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("Host", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsBrowserProvenanceHeader(string headerName)
+        => headerName.Equals("Origin", StringComparison.OrdinalIgnoreCase)
+            || headerName.StartsWith("Sec-Fetch-", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Validates that constructing a proxy target URI from <paramref name="backendUrl"/> and

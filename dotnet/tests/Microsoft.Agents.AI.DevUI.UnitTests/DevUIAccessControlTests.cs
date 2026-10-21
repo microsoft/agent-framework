@@ -334,9 +334,33 @@ public class DevUIAccessControlTests
     }
 
     [Theory]
+    [InlineData("/devui/")]
+    [InlineData("/v1/entities")]
+    public async Task DevUIRoute_WithConfiguredToken_RequiresBearerHeaderAsync(string path)
+    {
+        // Arrange
+        var builder = NewBuilder();
+        builder.Services.AddDevUI(options =>
+        {
+            options.AllowRemoteAccess = true;
+            options.AuthToken = "secret-token";
+        });
+        using var app = builder.Build();
+        app.MapDevUI();
+        await app.StartAsync();
+
+        // Act
+        var response = await app.GetTestClient().GetAsync(new Uri(path, UriKind.Relative));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("Bearer", response.Headers.WwwAuthenticate.ToString());
+    }
+
+    [Theory]
     [InlineData("/v1/responses")]
     [InlineData("/v1/conversations")]
-    public async Task StandardBackendRoute_WithConfiguredToken_RequiresBearerHeaderAsync(string path)
+    public async Task StandardBackendRoute_WithConfiguredToken_DoesNotRequireBearerHeaderAsync(string path)
     {
         // Arrange
         var builder = NewBuilder();
@@ -355,12 +379,12 @@ public class DevUIAccessControlTests
             content: null);
 
         // Assert
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Equal("Bearer", response.Headers.WwwAuthenticate.ToString());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(response.Headers.WwwAuthenticate);
     }
 
     [Fact]
-    public async Task StandardResponsesRoute_WithRemoteAccess_SkipsLocalChecksButEnforcesTokenAsync()
+    public async Task StandardResponsesRoute_WithRemoteAccess_SkipsDevUIAccessChecksAsync()
     {
         // Arrange
         var builder = NewBuilder(IPAddress.Parse("192.0.2.1"));
@@ -374,7 +398,6 @@ public class DevUIAccessControlTests
         await app.StartAsync();
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/responses", UriKind.Relative));
         request.Headers.Host = "remote.example";
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "secret-token");
         request.Headers.TryAddWithoutValidation("Origin", "https://attacker.example");
         request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "cross-site");
 
@@ -383,6 +406,111 @@ public class DevUIAccessControlTests
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task StandardResponsesPreflight_WithConfiguredToken_ReachesHandlerAsync()
+    {
+        // Arrange
+        var builder = NewBuilder(IPAddress.Loopback);
+        builder.Services.AddDevUI(options => options.AuthToken = "secret-token");
+        using var app = builder.Build();
+        app.MapMethods("/v1/responses", [HttpMethods.Options], () => Results.NoContent());
+        await app.StartAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Options, new Uri("/v1/responses", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("Origin", "https://frontend.example");
+        request.Headers.TryAddWithoutValidation("Access-Control-Request-Method", "POST");
+
+        // Act
+        var response = await app.GetTestClient().SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Empty(response.Headers.WwwAuthenticate);
+    }
+
+    [Fact]
+    public async Task PathBaseStandardResponsesDescendantRoute_WithForeignHost_ReturnsForbiddenBeforeHandlerAsync()
+    {
+        // Arrange
+        var handlerInvoked = false;
+        var builder = NewBuilder(IPAddress.Loopback);
+        builder.Services.AddDevUI();
+        using var app = builder.Build();
+        app.UsePathBase("/agent");
+        app.MapPost("/v1/responses/response-id", () =>
+        {
+            handlerInvoked = true;
+            return Results.Ok();
+        });
+        await app.StartAsync();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri("/agent/v1/responses/response-id", UriKind.Relative));
+        request.Headers.Host = "attacker.example";
+
+        // Act
+        var response = await app.GetTestClient().SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.False(handlerInvoked);
+    }
+
+    [Fact]
+    public async Task PathBaseStandardConversationsRoute_WithLoopbackHost_ReachesHandlerAsync()
+    {
+        // Arrange
+        var handlerInvoked = false;
+        var builder = NewBuilder(IPAddress.Loopback);
+        builder.Services.AddDevUI();
+        using var app = builder.Build();
+        app.UsePathBase("/agent");
+        app.MapGet("/v1/conversations", () =>
+        {
+            handlerInvoked = true;
+            return Results.Ok();
+        });
+        await app.StartAsync();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            new Uri("/agent/v1/conversations", UriKind.Relative));
+        request.Headers.Host = "localhost";
+
+        // Act
+        var response = await app.GetTestClient().SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(handlerInvoked);
+    }
+
+    [Fact]
+    public async Task PathBaseSimilarResponsesRoute_WithForeignHost_ReachesHandlerAsync()
+    {
+        // Arrange
+        var handlerInvoked = false;
+        var builder = NewBuilder(IPAddress.Loopback);
+        builder.Services.AddDevUI();
+        using var app = builder.Build();
+        app.UsePathBase("/agent");
+        app.MapPost("/v1/responses-other", () =>
+        {
+            handlerInvoked = true;
+            return Results.Ok();
+        });
+        await app.StartAsync();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri("/agent/v1/responses-other", UriKind.Relative));
+        request.Headers.Host = "attacker.example";
+
+        // Act
+        var response = await app.GetTestClient().SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(handlerInvoked);
     }
 
     [Fact]

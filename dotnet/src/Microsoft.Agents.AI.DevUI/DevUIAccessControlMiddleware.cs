@@ -7,8 +7,8 @@ namespace Microsoft.Agents.AI.DevUI;
 /// </summary>
 internal sealed class DevUIAccessControlMiddleware
 {
-    private static readonly PathString ResponsesPath = new("/v1/responses");
-    private static readonly PathString ConversationsPath = new("/v1/conversations");
+    private static readonly PathString s_responsesPath = new("/v1/responses");
+    private static readonly PathString s_conversationsPath = new("/v1/conversations");
 
     private readonly RequestDelegate _next;
 
@@ -30,9 +30,10 @@ internal sealed class DevUIAccessControlMiddleware
     /// <returns>A task that represents processing the request.</returns>
     public async Task InvokeAsync(HttpContext context, DevUIRequestValidator validator)
     {
-        if (IsProtectedPath(context.Request.Path))
+        var requestPath = context.Request.PathBase.Add(context.Request.Path);
+        if (IsProtectedPath(requestPath))
         {
-            var failure = validator.Validate(context);
+            var failure = validator.ValidateLocalRequest(context);
             if (failure is not null)
             {
                 await failure.ExecuteAsync(context).ConfigureAwait(false);
@@ -44,5 +45,29 @@ internal sealed class DevUIAccessControlMiddleware
     }
 
     private static bool IsProtectedPath(PathString path)
-        => path.StartsWithSegments(ResponsesPath) || path.StartsWithSegments(ConversationsPath);
+        => ContainsPathSegment(path, s_responsesPath) || ContainsPathSegment(path, s_conversationsPath);
+
+    private static bool ContainsPathSegment(PathString path, PathString routePath)
+    {
+        var pathValue = path.Value;
+        var routeValue = routePath.Value;
+        if (pathValue is null || routeValue is null)
+        {
+            return false;
+        }
+
+        var matchIndex = pathValue.IndexOf(routeValue, StringComparison.OrdinalIgnoreCase);
+        while (matchIndex >= 0)
+        {
+            var matchEnd = matchIndex + routeValue.Length;
+            if (matchEnd == pathValue.Length || pathValue[matchEnd] == '/')
+            {
+                return true;
+            }
+
+            matchIndex = pathValue.IndexOf(routeValue, matchEnd, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
 }

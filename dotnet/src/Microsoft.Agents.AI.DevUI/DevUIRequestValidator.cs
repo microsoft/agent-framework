@@ -48,11 +48,11 @@ internal sealed class DevUIRequestValidator
     public bool TokenRequired => this._expectedTokenBytes is { Length: > 0 };
 
     /// <summary>
-    /// Validates a DevUI request against the configured access policy.
+    /// Validates that a request satisfies the configured local access policy.
     /// </summary>
     /// <param name="context">The HTTP context to validate.</param>
     /// <returns>An error result when validation fails; otherwise, <see langword="null"/>.</returns>
-    public IResult? Validate(HttpContext context)
+    public IResult? ValidateLocalRequest(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
 
@@ -75,6 +75,18 @@ internal sealed class DevUIRequestValidator
                 return AccessDenied("DevUI rejected a cross-site browser request.");
             }
         }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Validates that a request includes the optional configured DevUI bearer token.
+    /// </summary>
+    /// <param name="context">The HTTP context to validate.</param>
+    /// <returns>An error result when validation fails; otherwise, <see langword="null"/>.</returns>
+    public IResult? ValidateToken(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
 
         if (this._expectedTokenBytes is { Length: > 0 } expected && !TokenIsValid(context.Request, expected))
         {

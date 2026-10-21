@@ -10,7 +10,9 @@ The aggregator binds only to loopback and includes limited browser-request prote
 `Origin` or `Sec-Fetch-Site: cross-site` are rejected. Non-browser clients that send neither header continue to work.
 These checks reduce local DNS-rebinding and cross-site request risks, but they do not provide authentication,
 authorization, multi-user isolation, or protection for the backend services. Use the aggregator only for local,
-trusted development.
+trusted development. After validating the incoming browser request, the aggregator does not forward browser
+provenance headers such as `Origin` or `Sec-Fetch-*` on its server-to-server backend hop; application credentials
+such as `Authorization` are forwarded.
 
 ## Getting started
 
