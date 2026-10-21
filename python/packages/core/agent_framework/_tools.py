@@ -2164,6 +2164,30 @@ def _finalize_function_result(
     return function_result
 
 
+def _parse_function_call_arguments(function_call: Content, tool_name: str) -> dict[str, Any]:
+    """Return the arguments of a function call, rejecting a payload that is not a JSON object.
+
+    `Content.parse_arguments()` wraps a payload that is not a JSON object under a
+    single "raw" key. That is the right answer for a caller that wants to see
+    what the model sent, but not for a function call: the tool would run with an
+    argument it never declared, and the model would not learn that its call was
+    malformed. Such a call is answered like a missing required argument, so the
+    model can retry it.
+    """
+    arguments = function_call.arguments
+    if isinstance(arguments, str) and arguments.strip():
+        try:
+            decoded = json.loads(arguments)
+        except (json.JSONDecodeError, TypeError):
+            decoded = None
+        if not isinstance(decoded, dict):
+            raise _FunctionArgumentValidationError(
+                f"Invalid arguments for '{tool_name}': arguments are not a JSON object",
+                redacted_message=f"Invalid arguments for '{tool_name}'.",
+            )
+    return dict(function_call.parse_arguments() or {})
+
+
 async def _auto_invoke_function(
     function_call_content: Content,
     custom_args: dict[str, Any] | None = None,
@@ -2239,7 +2263,10 @@ async def _auto_invoke_function(
         approval_response = function_call_content
         function_call_content = approved_function_call
 
-    parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
+    try:
+        parsed_args = _parse_function_call_arguments(function_call_content, tool.name)
+    except _FunctionArgumentValidationError as exc:
+        return _function_argument_validation_error_result(function_call_content, exc, config)
 
     # Filter out internal framework kwargs before passing to tools.
     # conversation_id is an internal tracking ID that should not be forwarded to tools.

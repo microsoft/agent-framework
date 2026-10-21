@@ -431,6 +431,72 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
         await search.invoke(arguments={})
 
 
+@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]", '"text"'])
+async def test_function_call_arguments_that_are_not_a_json_object_are_answered_with_an_error(
+    arguments: str,
+) -> None:
+    """A payload that is not a JSON object is not arguments, and must not be called as one.
+
+    Wrapping it under "raw" would call the tool with an argument it never
+    declared, and the model would not learn that its call was malformed.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments=arguments),
+        ],
+        tools=[account_tool],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+async def test_function_call_with_object_arguments_still_runs_the_tool() -> None:
+    """A well-formed call is unaffected by the guard."""
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments='{"limit": 5}'),
+        ],
+        tools=[account_tool],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == [{"limit": 5}]
+    assert result_groups[0][0].result == "ok"
+
+
 async def test_invoke_preserves_explicit_null_argument():
     """A required nullable argument the model sets to null must reach the function.
 
