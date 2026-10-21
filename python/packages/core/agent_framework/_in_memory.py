@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import msgspec
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from ._telemetry import FeatureIndex, mark_feature_used
 from ._vector_filters import (
     Filter,
     FilterExpression,
+    FilterGroup,
+    Param,
     validate_filter,
 )
 from ._vectors import (
@@ -34,6 +37,7 @@ from ._vectors import (
     Vector,
     VectorStoreCollectionDefinition,
     _evaluate_filter,  # pyright: ignore[reportPrivateUsage]
+    _msgspec_enc_hook,  # pyright: ignore[reportPrivateUsage]
     _validate_vector_dimensions,  # pyright: ignore[reportPrivateUsage]
 )
 from .exceptions import IntegrationException
@@ -150,6 +154,42 @@ def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFun
     if not math.isfinite(score):
         raise ValueError(f"Distance function '{distance_function}' produced a non-finite score.")
     return score
+
+
+def _to_stored_filter_value(value: Any) -> Any:
+    """Return a filter operand in the builtin form records are stored in.
+
+    In-memory records are stored through the shared serializer, so a native
+    scalar such as a datetime is held as its serialized value. An operand is
+    normalized the same way, so that the comparison sees one representation on
+    both sides.
+    """
+    if isinstance(value, Param):
+        return value
+    try:
+        return msgspec.to_builtins(
+            value,
+            str_keys=True,
+            builtin_types=(bytes, bytearray),
+            enc_hook=_msgspec_enc_hook,
+        )
+    except (TypeError, ValueError):
+        return value
+
+
+def _normalize_in_memory_filter(expression: FilterExpression) -> FilterExpression:
+    """Return the filter with its operand values in the stored representation."""
+    if isinstance(expression, Filter):
+        value = expression.value
+        if isinstance(value, Filter | FilterGroup):
+            normalized: Any = _normalize_in_memory_filter(value)
+        else:
+            normalized = _to_stored_filter_value(value)
+        return Filter(expression.field_name, expression.operator, normalized)
+    return FilterGroup(
+        expression.operator,
+        tuple(_normalize_in_memory_filter(item) for item in expression.filters),
+    )
 
 
 def _validate_in_memory_filter_value(value: Any) -> None:
@@ -307,6 +347,7 @@ class InMemoryCollection(
         records = list(self._state.records.values())
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
+            filter = _normalize_in_memory_filter(filter)
             records = [record for record in records if _evaluate_filter(filter, record, self.definition)]
         if order_by:
             for field_name, ascending in reversed(tuple(order_by.items())):
@@ -362,6 +403,7 @@ class InMemoryCollection(
         _validate_vector_dimensions(query_vector, vector_field)
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
+            filter = _normalize_in_memory_filter(filter)
 
         distance_function = vector_field.distance_function or "DEFAULT"
         if distance_function == "DEFAULT":

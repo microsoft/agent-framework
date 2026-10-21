@@ -8,7 +8,10 @@ import math
 import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Annotated, Any, cast
+from uuid import UUID
 
 import pytest
 
@@ -866,3 +869,114 @@ def test_in_memory_filter_implementation_does_not_compile_or_evaluate_source() -
 def test_in_memory_and_filter_apis_are_experimental() -> None:
     for api in (Filter, FilterGroup, Param, InMemoryCollection, InMemoryStore):
         assert getattr(api, "__feature_stage__", None) == "experimental"
+
+
+@vectorstoremodel(collection_name="scalar_filter_records")
+@dataclass
+class ScalarFilterRecord:
+    id: Annotated[str, VectorStoreField("key")]
+    created: Annotated[datetime, VectorStoreField("data")]
+    day: Annotated[date, VectorStoreField("data")]
+    token: Annotated[UUID, VectorStoreField("data")]
+    amount: Annotated[Decimal, VectorStoreField("data")]
+    span: Annotated[timedelta, VectorStoreField("data")]
+    label: Annotated[str, VectorStoreField("data")]
+    count: Annotated[int, VectorStoreField("data")]
+    flag: Annotated[bool, VectorStoreField("data")]
+    vector: Annotated[list[float] | None, VectorStoreField("vector", dimensions=2)] = None
+
+
+_SCALAR_FILTER_RECORD = ScalarFilterRecord(
+    "one",
+    datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc),
+    date(2026, 10, 16),
+    UUID("00000000-0000-0000-0000-000000000001"),
+    Decimal("1.5"),
+    timedelta(hours=2),
+    "featured",
+    5,
+    True,
+    [1.0, 0.0],
+)
+
+
+async def _scalar_filter_collection() -> InMemoryCollection[str, ScalarFilterRecord]:
+    collection = InMemoryCollection(ScalarFilterRecord)
+    await collection.ensure_collection_exists()
+    await collection.upsert([_SCALAR_FILTER_RECORD], generate_vectors=False)
+    return collection
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("created", datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc)),
+        ("day", date(2026, 10, 16)),
+        ("token", UUID("00000000-0000-0000-0000-000000000001")),
+        ("amount", Decimal("1.5")),
+        ("span", timedelta(hours=2)),
+    ],
+)
+async def test_in_memory_filter_matches_a_native_scalar_against_the_stored_value(
+    field_name: str,
+    value: Any,
+) -> None:
+    """A native scalar filter must match the record it was stored from.
+
+    The stored value is the serialized form of the field, so the operand has to
+    be compared in the same representation.
+    """
+    collection = await _scalar_filter_collection()
+
+    matched = await collection.get(filter=Filter(field_name, "eq", value))
+
+    assert [record.id for record in matched] == ["one"]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("label", "featured"),
+        ("count", 5),
+        ("flag", True),
+    ],
+)
+async def test_in_memory_filter_still_matches_the_scalars_it_stored_unchanged(
+    field_name: str,
+    value: Any,
+) -> None:
+    """The controls the issue lists as working must keep working."""
+    collection = await _scalar_filter_collection()
+
+    matched = await collection.get(filter=Filter(field_name, "eq", value))
+
+    assert [record.id for record in matched] == ["one"]
+
+
+async def test_in_memory_vector_search_matches_a_native_scalar_filter() -> None:
+    """The search path compares the operands the same way as the get path."""
+    collection = await _scalar_filter_collection()
+    value = datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc)
+
+    results = await collection.search(vector=[1.0, 0.0], filter=Filter("created", "eq", value), top=10)
+
+    assert [result["record"].id async for result in results] == ["one"]
+
+
+async def test_in_memory_ordered_filter_compares_a_native_scalar() -> None:
+    """An ordered comparison on a native scalar must compare, not raise."""
+    collection = await _scalar_filter_collection()
+    value = datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc)
+
+    matched = await collection.get(filter=Filter("created", "gte", value))
+
+    assert [record.id for record in matched] == ["one"]
+
+
+async def test_in_memory_filter_does_not_match_a_different_native_scalar() -> None:
+    """A different value must still not match."""
+    collection = await _scalar_filter_collection()
+
+    matched = await collection.get(filter=Filter("created", "eq", datetime(2025, 1, 1, tzinfo=timezone.utc)))
+
+    assert matched == []
