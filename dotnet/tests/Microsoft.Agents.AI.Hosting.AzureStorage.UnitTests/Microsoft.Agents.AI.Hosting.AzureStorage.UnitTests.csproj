@@ -1,5 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <InjectSharedUnitTestCode>true</InjectSharedUnitTestCode>
+  </PropertyGroup>
+
   <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <PackageReference Include="AGUI.Abstractions" />
     <PackageReference Include="AGUI.Client" />
@@ -9,10 +13,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.AzureStorage\Microsoft.Agents.AI.Hosting.AzureStorage.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Include="..\Microsoft.Agents.AI.Hosting.UnitTests\CapturingLoggerFactory.cs" LinkBase="TestUtilities" />
   </ItemGroup>
 
   <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">

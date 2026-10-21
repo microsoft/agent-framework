@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
-using Microsoft.Agents.AI.Hosting.UnitTests;
 using Microsoft.Extensions.Logging;
+using Shared.UnitTests;
 #if NET8_0_OR_GREATER
 using Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
 #endif
