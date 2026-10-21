@@ -5426,6 +5426,25 @@ async def test_connect_preserves_request_timeout_over_24_hours() -> None:
             assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
 
 
+async def test_connect_revalidates_request_timeout_cleared_after_construction() -> None:
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+        request_timeout=60,
+    )
+    tool.request_timeout = 0
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        with pytest.raises(ValueError, match="request_timeout must be positive or None."):
+            await tool.connect()
+
+        assert mock_client_class.call_count == 0
+
+
 async def test_connect_retains_and_close_clears_sdk_client() -> None:
     """Test a framework-owned Client and its session share one lifecycle."""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
