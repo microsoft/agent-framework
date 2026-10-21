@@ -33,6 +33,7 @@ def _make_connected_mcp_tool(
     """Create an MCPTool with a mocked session, ready for testing."""
     tool = MCPTool(name=name)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = AsyncMock()
+    tool._require_connection().is_framework_owned = True
     tool.is_connected = True
     tool._supports_tools = supports_tools
     tool._supports_prompts = supports_prompts

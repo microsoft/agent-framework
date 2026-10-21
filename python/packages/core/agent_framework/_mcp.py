@@ -2287,11 +2287,11 @@ class MCPTool:
         load_configured: bool,
     ) -> None:
         """Recreate a framework-owned connection or fail clearly for a caller-owned connection."""
-        connection = self._require_connection()
-        if not connection.is_framework_owned:
+        connection = self._connection
+        if connection is not None and not connection.is_framework_owned:
             connection_type = "Client" if connection.client is not None else "ClientSession"
             raise _mcp_tool_execution_exception(
-                f"MCP connection was lost during {operation}. The active {connection_type} is caller-owned and cannot "
+                f"MCP connection lost during {operation}. The active {connection_type} is caller-owned and cannot "
                 "be recreated by Agent Framework. Create a replacement connection and MCP tool instance.",
                 inner_exception=inner_exception,
             ) from inner_exception
@@ -2307,6 +2307,15 @@ class MCPTool:
                 f"Failed to reconnect to MCP server after {operation}.",
                 inner_exception=reconnect_ex,
             ) from reconnect_ex
+
+    def _is_connection_loss(self, exception: Exception) -> bool:
+        """Return whether an exception proves that the active MCP connection ended."""
+        from anyio import ClosedResourceError
+        from mcp import MCPError
+
+        return isinstance(exception, ClosedResourceError) or (
+            isinstance(exception, MCPError) and "session terminated" in exception.error.message.lower()
+        )
 
     async def _reconnect_without_loading(self) -> None:
         if self._is_lifecycle_owner_task():
@@ -3257,6 +3266,7 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
+        from anyio import ClosedResourceError
         from mcp import MCPError
 
         if not self._ping_available:
@@ -3269,17 +3279,36 @@ class MCPTool:
                 self._ping_available = False
                 logger.debug("Skipping future MCP pings because the server does not support ping.")
                 return
-            await self._recover_connection_after_loss(
-                operation="connection liveness check",
+            if self._is_connection_loss(mcp_exc) or self._connection is None or self._connection.is_framework_owned:
+                await self._recover_connection_after_loss(
+                    operation="connection liveness check",
+                    inner_exception=mcp_exc,
+                    load_configured=False,
+                )
+                return
+            raise _mcp_tool_execution_exception(
+                "MCP connection liveness check failed.",
                 inner_exception=mcp_exc,
-                load_configured=False,
-            )
-        except Exception as connection_ex:
+            ) from mcp_exc
+        except ClosedResourceError as connection_ex:
             await self._recover_connection_after_loss(
                 operation="connection liveness check",
                 inner_exception=connection_ex,
                 load_configured=False,
             )
+        except Exception as connection_ex:
+            connection = self._connection
+            if connection is None or connection.is_framework_owned:
+                await self._recover_connection_after_loss(
+                    operation="connection liveness check",
+                    inner_exception=connection_ex,
+                    load_configured=False,
+                )
+                return
+            raise _mcp_tool_execution_exception(
+                "MCP connection liveness check failed.",
+                inner_exception=connection_ex,
+            ) from connection_ex
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
@@ -3382,11 +3411,7 @@ class MCPTool:
                     set_mcp_span_error(span, type(tool_ex).__name__, str(tool_ex))
                 raise
             except (ClosedResourceError, MCPError) as call_ex:
-                is_session_terminated = (
-                    isinstance(call_ex, MCPError) and "session terminated" in call_ex.error.message.lower()
-                )
-                is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
-                if not is_connection_lost:
+                if not self._is_connection_loss(call_ex):
                     error_message = call_ex.error.message if isinstance(call_ex, MCPError) else str(call_ex)
                     if span.is_recording():
                         set_mcp_span_error(span, type(call_ex).__name__, error_message)

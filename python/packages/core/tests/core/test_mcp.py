@@ -8311,10 +8311,11 @@ async def test_mcp_tool_reset_preserves_supplied_client() -> None:
 
 
 def _caller_owned_mcp_tool(connection_type: str) -> tuple[MCPStdioTool, Any]:
-    client = _mock_sdk_client()
+    protocol_version = "2026-07-28" if connection_type == "modern_client" else "2025-11-25"
+    client = _mock_sdk_client(protocol_version=protocol_version)
     session = client.session
 
-    if connection_type == "client":
+    if connection_type != "session":
         return (
             MCPStdioTool(
                 name="test",
@@ -8338,7 +8339,7 @@ def _caller_owned_mcp_tool(connection_type: str) -> tuple[MCPStdioTool, Any]:
     )
 
 
-@pytest.mark.parametrize("connection_type", ["client", "session"])
+@pytest.mark.parametrize("connection_type", ["legacy_client", "modern_client", "session"])
 @pytest.mark.parametrize(
     ("operation_name", "load_method", "capability_attribute"),
     [
@@ -8375,7 +8376,7 @@ async def test_caller_owned_connection_loss_during_liveness_check_does_not_recon
 ) -> None:
     from anyio import ClosedResourceError
 
-    tool, connection = _caller_owned_mcp_tool(connection_type)
+    tool, connection = _caller_owned_mcp_tool("legacy_client" if connection_type == "client" else connection_type)
     connection.send_ping = AsyncMock(side_effect=ClosedResourceError())
     tool._ping_available = True
 
@@ -8389,7 +8390,34 @@ async def test_caller_owned_connection_loss_during_liveness_check_does_not_recon
     reconnect.assert_not_awaited()
 
 
-@pytest.mark.parametrize("connection_type", ["client", "session"])
+@pytest.mark.parametrize("failure", [MCPError(-32000, "server busy"), RuntimeError("temporary failure")])
+async def test_ambiguous_caller_owned_liveness_failure_does_not_require_replacement(
+    failure: Exception,
+) -> None:
+    tool, connection = _caller_owned_mcp_tool("legacy_client")
+    connection.send_ping = AsyncMock(side_effect=failure)
+    tool._ping_available = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as reconnect,
+        pytest.raises(ToolExecutionException, match=r"liveness check failed"),
+    ):
+        await tool._ensure_connected()
+
+    connection.send_ping.assert_awaited_once()
+    reconnect.assert_not_awaited()
+
+
+async def test_modern_caller_owned_liveness_check_does_not_ping() -> None:
+    tool, connection = _caller_owned_mcp_tool("modern_client")
+    connection.send_ping = AsyncMock()
+
+    await tool._ensure_connected()
+
+    connection.send_ping.assert_not_awaited()
+
+
+@pytest.mark.parametrize("connection_type", ["legacy_client", "modern_client", "session"])
 async def test_caller_owned_connection_loss_during_tool_call_does_not_reconnect(
     connection_type: str,
 ) -> None:
@@ -8408,7 +8436,7 @@ async def test_caller_owned_connection_loss_during_tool_call_does_not_reconnect(
     reconnect.assert_not_awaited()
 
 
-@pytest.mark.parametrize("connection_type", ["client", "session"])
+@pytest.mark.parametrize("connection_type", ["legacy_client", "modern_client", "session"])
 async def test_caller_owned_connection_loss_during_prompt_call_does_not_reconnect(
     connection_type: str,
 ) -> None:
@@ -8425,6 +8453,27 @@ async def test_caller_owned_connection_loss_during_prompt_call_does_not_reconnec
 
     connection.get_prompt.assert_awaited_once()
     reconnect.assert_not_awaited()
+
+
+async def test_framework_owned_discovery_reconnects_before_connect_and_after_close() -> None:
+    tool = MCPTool(name="test", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tools_session = Mock(spec=ClientSession)
+    tools_session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    prompts_session = Mock(spec=ClientSession)
+    prompts_session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+    replacement_sessions = iter([tools_session, prompts_session])
+
+    async def reconnect() -> None:
+        _set_framework_owned_session(tool, next(replacement_sessions))
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_tools()
+        await tool.close()
+        await tool.load_prompts()
+
+    assert mock_reconnect.await_count == 2
+    tools_session.list_tools.assert_awaited_once()
+    prompts_session.list_prompts.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
