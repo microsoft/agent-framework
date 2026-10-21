@@ -3,7 +3,7 @@
 This package provides a web interface for testing and debugging AI agents during development.
 
 > [!WARNING]
-> DevUI is intended for development only. Its endpoints surface agent system instructions, tool definitions, model identifiers, and workflow structure. Do not expose DevUI to untrusted callers. By default, DevUI rejects any request whose remote endpoint is not a loopback address; see [Security](#security) below for the available options.
+> DevUI is intended for development only. Its endpoints surface agent system instructions, tool definitions, model identifiers, and workflow structure. Do not expose DevUI to untrusted callers. By default, DevUI requires a loopback network peer and loopback Host, and rejects cross-site state-changing browser requests; see [Security](#security) below for the available options.
 
 ## Installation
 
@@ -90,21 +90,29 @@ available for continuation.
 
 ## Security
 
-DevUI exposes `/v1/entities` and `/v1/entities/{id}/info`, which return agent metadata including the system prompt (`ChatClientAgent.Instructions`). To prevent accidental disclosure, the DevUI route group is wrapped in a small endpoint filter that:
+DevUI exposes `/v1/entities` and `/v1/entities/{id}/info`, which return agent metadata including the system prompt (`ChatClientAgent.Instructions`). `AddDevUI()` also automatically applies the same access checks to the standard `/v1/responses` and `/v1/conversations` paths and their descendants, regardless of where those endpoints are mapped in the application.
 
-- Rejects requests from any non-loopback `RemoteIpAddress` with HTTP 403 by default.
-- Optionally requires a shared bearer token on every request.
+In the default local mode, DevUI:
+
+- Requires a loopback `RemoteIpAddress`.
+- Requires the `Host` header to be `localhost` or a loopback IPv4 or IPv6 address.
+- Rejects state-changing requests when `Origin` is invalid or does not match the request origin.
+- Rejects state-changing requests with `Sec-Fetch-Site: cross-site`.
+- Allows non-browser clients that send neither `Origin` nor `Sec-Fetch-Site`.
+- Optionally requires a shared bearer token.
+
+Local-access and browser-request failures return HTTP 403. Missing or invalid configured tokens return HTTP 401 with `WWW-Authenticate: Bearer`. The `/meta` endpoint remains unauthenticated so the frontend can discover whether a token is required.
 
 Configure via `DevUIOptions`:
 
 ```csharp
 builder.AddDevUI(options =>
 {
-    // Allow non-loopback callers. Set this only when the host fronts DevUI with
-    // its own authentication or network policy.
+    // Skip the built-in peer, Host, and browser-origin restrictions. Set this
+    // only when the host supplies its own network and browser-request policy.
     options.AllowRemoteAccess = true;
 
-    // Optional: require Authorization: Bearer <token> on every request.
+    // Optional: require a bearer token on DevUI and standard backend requests.
     // Falls back to the DEVUI_AUTH_TOKEN environment variable when null.
     options.AuthToken = builder.Configuration["DevUI:AuthToken"];
 
@@ -113,6 +121,6 @@ builder.AddDevUI(options =>
 });
 ```
 
-The bundled bearer-token check uses constant-time comparison and is intended as a convenience for development scenarios. Production hosts should prefer a real ASP.NET Core authentication scheme via `ConfigureEndpoints`.
+`AllowRemoteAccess=true` skips the built-in peer, Host, and browser-origin restrictions, but it does not skip a configured bearer token. The bundled token check uses constant-time comparison and is intended as a convenience for development scenarios.
 
-The DevUI route filter is not a substitute for authorization and caller isolation on separately mapped OpenAI Responses/Conversations endpoints. Protect each backend route group independently, and supply credentials compatible with that configuration. A shared DevUI token is not a per-user identity. See the [shared hosting guide](../../samples/04-hosting/README.md#development-tools).
+Automatic backend protection is intentionally limited to the standard `/v1/responses` and `/v1/conversations` paths and their descendants. Custom OpenAI endpoint paths are not detected or protected. `ConfigureEndpoints` applies only to endpoints mapped by `MapDevUI()`; attach host-supplied authorization directly to separately mapped backend endpoints when needed. A shared DevUI token is not a per-user identity. See the [shared hosting guide](../../samples/04-hosting/README.md#development-tools).
