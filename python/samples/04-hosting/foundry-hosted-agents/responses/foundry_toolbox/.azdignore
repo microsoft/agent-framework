@@ -1,5 +1,3 @@
-azure.yaml
-.env.example
 .env
 .azure
 .venv

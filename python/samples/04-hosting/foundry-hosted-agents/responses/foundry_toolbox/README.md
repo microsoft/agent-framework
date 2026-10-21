@@ -85,8 +85,9 @@ and Language endpoint.
 2. **Azure Language resource**: obtain its
    [Language MCP endpoint](https://learn.microsoft.com/en-us/azure/ai-services/language-service/concepts/foundry-tools-agents#azure-language-mcp-server-preview).
    The Foundry project's managed identity needs **Cognitive Services Language Owner** on this resource.
-   Arrange permission to make that role assignment now; if init creates the project, assign the role
-   after init and before deployment or local testing.
+   Arrange permission to make that role assignment. For an existing project, assign the role after init
+   and before `azd up`. For a new project, the identity exists only after `azd provision`; see
+   [Provision and deploy dependencies and agent](#provision-and-deploy-dependencies-and-agent).
 3. **Foundry access**: the account you use with azd needs access to the selected Foundry project.
    The Foundry MCP connection forwards the calling user's Entra token and does not grant additional access.
 4. **Azure Developer CLI (`azd`)**: [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
@@ -126,12 +127,16 @@ For a new deployment, the template declares `gpt-4.1`.
 Initialization places `azure.yaml`, `main.py`, `requirements.txt`, and the `.azure` environment in
 `my-toolbox-agent`. The agent's `project: .` keeps its source in that same root. Run all commands below
 from this root; there is no generated `src/<agent-name>` directory. Do not initialize again after success.
-For a repository checkout, work from this sample directory and use the CLI's local-code setup
-(`azd ai agent init --src .`) rather than adopting a second manifest over the existing `azure.yaml`.
+For a repository checkout, work from this sample directory and run `azd ai agent init .`. Accept reuse
+of the existing configuration rather than adopting a second manifest over the existing `azure.yaml`.
 
-After init, confirm the project managed identity has **Cognitive Services Language Owner** on the
-Language resource before deploying. See the
+The project managed identity needs **Cognitive Services Language Owner** on the Language resource. See the
 [identity authorization guide](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-microsoft-entra.md#step-2--authorize-the-identity).
+When you grant it depends on your project:
+
+- **Existing Foundry project:** grant the role after init and before `azd up`.
+- **New Foundry project:** init only writes configuration, and provisioning creates the project and its
+  identity. Run `azd provision`, grant the role, and then run `azd deploy --all` instead of `azd up`.
 
 #### Configure external inputs
 
@@ -155,7 +160,8 @@ references describe the endpoint, authentication, and platform-header contract:
 azd up
 ```
 
-This provisions the project/model as needed and deploys connections, toolbox, and agent in dependency
+For a new Foundry project, run `azd provision`, grant the Language role to the new project identity, and
+then run `azd deploy --all` instead of `azd up`. Otherwise `azd up` provisions the project/model as needed and deploys connections, toolbox, and agent in dependency
 order. `azd provision` alone does not deploy the connections or toolbox. The versioned toolbox output
 is mapped into the agent automatically; do not replace it with an unversioned endpoint or a
 self-assignment. To inspect the deployed toolbox and endpoint:
