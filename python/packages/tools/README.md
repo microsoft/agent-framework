@@ -172,6 +172,19 @@ To expose a host directory, pass `host_workdir="/path"` (mounted
 read-only by default; `mount_readonly=False` to allow writes). Swap the
 container runtime with `docker_binary="podman"`.
 
+Applications that must pass additional Docker options can use
+`unsafe_extra_run_args`. These trusted setup options are appended verbatim
+and must come only from developer-controlled configuration. Never use values
+from users, model output, or other untrusted sources. These options can weaken
+or completely remove isolation. Review every option carefully. In particular,
+avoid `--privileged`, `--network=host`, host-path volume mounts, and added
+capabilities unless the application explicitly requires and secures them.
+
+Arbitrary Docker configuration is trusted application setup. The
+model-facing function accepts only a shell command and cannot choose Docker
+options, but the restrictive profile is effective only when the complete
+application configuration preserves it.
+
 ## Sandbox tiers at a glance
 
 | Use case | Tool | Sandbox |

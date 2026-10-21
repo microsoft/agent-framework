@@ -47,7 +47,7 @@ def enable_a2ui(
     """Wrap ``inner_agent`` with full A2UI support.
 
     Returns an :class:`A2UIAgent` — the ``generate_a2ui`` streaming loop, which also
-    prepends the forwarded component catalog + guidelines as a system message. The result
+    adds the forwarded component catalog + guidelines as untrusted user data. The result
     is a drop-in ``SupportsAgentRun`` to hand to ``AgentFrameworkAgent`` /
     ``add_agent_framework_fastapi_endpoint``.
 
@@ -80,13 +80,12 @@ def plan_a2ui_injection(
     """Decide whether to auto-inject A2UI for this run (Strands-parity contract).
 
     CopilotKit's runtime composes ``forwardedProps``; the AG-UI a2ui-middleware sets
-    ``injectA2UITool`` there. When true (or a string naming the injected render tool to
-    drop), the framework auto-wraps the agent with :func:`enable_a2ui`; when false/unset
-    the developer wires A2UI themselves. Rules:
+    ``injectA2UITool`` there. The backend must first opt in with
+    ``config["inject_a2ui_tool"]``; the request flag can then enable, disable, or name the
+    injected render tool for that run. Rules:
 
-    1. Off unless ``forwardedProps.injectA2UITool`` is truthy OR a backend
-       ``config["inject_a2ui_tool"]`` override is — nullish fallback, so an explicit
-       runtime ``false`` beats a backend opt-in.
+    1. Off unless the backend enables ``config["inject_a2ui_tool"]``. An explicit runtime
+       ``false`` still disables injection for that request.
     2. USER PREVAILS — never double-inject when ``generate_a2ui`` is already wired, or
        when the agent is already A2UI-wrapped.
     3. The render sub-agent client is inferred from the planner agent's ``.client``; if
@@ -101,9 +100,11 @@ def plan_a2ui_injection(
     log = log or logger
     config = config or {}
 
-    flag: Any = read_inject_a2ui_flag(forwarded_props)
-    if flag is None:
-        flag = config.get("inject_a2ui_tool")
+    runtime_flag: Any = read_inject_a2ui_flag(forwarded_props)
+    backend_flag: Any = config.get("inject_a2ui_tool")
+    if runtime_flag is False or not backend_flag:
+        return None
+    flag = runtime_flag if runtime_flag is not None else backend_flag
     if not flag:
         return None
 

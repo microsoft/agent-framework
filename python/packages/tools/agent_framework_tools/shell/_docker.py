@@ -78,151 +78,12 @@ DEFAULT_MEMORY = "512m"
 DEFAULT_PIDS_LIMIT = 256
 DEFAULT_WORKDIR = "/workspace"
 
-# Docker run flags that would silently dismantle the isolation defaults
-# (--cap-drop ALL, --security-opt no-new-privileges, --network none,
-# --read-only root, pids/memory caps) if spliced in via ``extra_run_args``.
-# These are rejected at construction time so the failure surfaces loudly
-# rather than as a silently-unsandboxed container at runtime.
-_BLOCKED_EXTRA_RUN_FLAGS: tuple[str, ...] = (
-    "--privileged",
-    "--cap-add",
-    "--security-opt",
-    "--network",
-    "--net",
-    "--volume",
-    "-v",
-    "--mount",
-    "--device",
-    "--device-cgroup-rule",
-    "--pid",
-    "--ipc",
-    "--userns",
-    "--user",
-    "-u",
-    "--cgroupns",
-    "--add-host",
-    "--gpus",
-    "--read-only",
-    "--tmpfs",
-    "--memory",
-    "-m",
-    "--memory-swap",
-    "--pids-limit",
-)
 
-# ``docker run`` long options that take no value. Everything else is assumed to
-# consume the following token when its value is not attached with "=", so a
-# detached value that happens to start with a dash ("--env-file -vars.env") is
-# not mistaken for an option. Booleans are the smaller and more stable half of
-# the flag table, and assuming an unknown flag takes a value keeps the
-# validator from rejecting configurations that docker accepts.
-_VALUELESS_LONG_FLAGS: frozenset[str] = frozenset({
-    "--detach",
-    "--disable-content-trust",
-    "--help",
-    "--init",
-    "--interactive",
-    "--no-healthcheck",
-    "--oom-kill-disable",
-    "--privileged",
-    "--publish-all",
-    "--quiet",
-    "--read-only",
-    "--rm",
-    "--sig-proxy",
-    "--tty",
-    "--use-api-socket",
-})
-
-# ``docker run`` short options, split by whether they consume a value. Docker's
-# flag parser lets boolean shorthands be clustered ("-it") and lets a
-# value-taking shorthand carry its value attached to it, so "-v/:/host:rw" is
-# "-v /:/host:rw" and "-u0:0" is "--user 0:0". Resolving which shorthands a
-# single-dash token actually sets therefore needs both sets: scanning stops at
-# the first value-taking shorthand because the rest of the token is its value.
-_BOOLEAN_SHORT_FLAGS = frozenset("diPqt")
-_VALUE_SHORT_FLAGS = frozenset("acehlmpuvw")
-
-
-def _short_flags_in_token(token: str) -> list[str]:
-    """Expand a single-dash token into the short flags it sets."""
-    flags: list[str] = []
-    for char in token[1:]:
-        if char in _BOOLEAN_SHORT_FLAGS:
-            flags.append(f"-{char}")
-            continue
-        if char in _VALUE_SHORT_FLAGS:
-            flags.append(f"-{char}")
-            # Everything after a value-taking shorthand is its value.
-            break
-        # Unknown shorthand: stop rather than misread a value as more flags.
-        break
-    return flags
-
-
-def _blocked_flags_in_token(raw: str) -> list[str]:
-    """Return the blocked flags a single ``docker run`` token resolves to."""
-    # Split off any "=value" tail so "--network=host" matches "--network".
-    flag = raw.split("=", 1)[0]
-    if flag.startswith("--"):
-        return [flag] if flag in _BLOCKED_EXTRA_RUN_FLAGS else []
-    return [short for short in _short_flags_in_token(flag) if short in _BLOCKED_EXTRA_RUN_FLAGS]
-
-
-def _consumes_next_token(raw: str) -> bool:
-    """Return whether this token takes the following token as its value.
-
-    Needed so a detached value is not decoded as an option: docker accepts
-    ``--env-file -vars.env``, where ``-vars.env`` is a filename rather than
-    ``-v``.
-    """
-    name, sep, _ = raw.partition("=")
-    if sep:
-        # Value is attached, e.g. "--network=host".
-        return False
-    if name.startswith("--"):
-        # pflag booleans only accept "--flag=false", never "--flag false".
-        return name not in _VALUELESS_LONG_FLAGS
-    shorts = _short_flags_in_token(name)
-    if not shorts:
-        return False
-    if len(name) - 1 > len(shorts):
-        # Trailing text is the value, e.g. "-v/:/host:rw" or "-m0".
-        return False
-    return shorts[-1][1] in _VALUE_SHORT_FLAGS
-
-
-def _validate_extra_run_args(args: Sequence[str]) -> None:
-    """Reject extra ``docker run`` args that would break the isolation contract.
-
-    A caller can otherwise pass ``["--privileged"]``, ``["--network=host"]``,
-    ``["-v", "/:/host:rw"]``, etc. and silently undo every isolation flag
-    this tool sets. The blocklist covers the obvious offenders; operators
-    that genuinely need one of these flags should subclass the tool or
-    build their own argv rather than slip past the check.
-    """
-    bad: list[str] = []
-    index = 0
-    while index < len(args):
-        raw = args[index]
-        index += 1
-        # "-" is a conventional positional, and "--" only ends option parsing;
-        # neither takes a value, and args after "--" are still worth checking
-        # so a blocked flag cannot hide behind the marker.
-        if raw in ("-", "--") or not raw.startswith("-"):
-            continue
-        if _blocked_flags_in_token(raw):
-            bad.append(raw)
-        if _consumes_next_token(raw):
-            index += 1
-    if bad:
-        raise ValueError(
-            "extra_run_args contains flags that would dismantle DockerShellTool's "
-            f"isolation defaults: {bad}. Override these via dedicated constructor "
-            "arguments (network, host_workdir, mount_readonly, read_only_root, "
-            "memory, pids_limit, user) or subclass the tool if you really need "
-            "to relax the sandbox."
-        )
+def _validate_unsafe_extra_run_args(args: Sequence[str]) -> None:
+    """Validate the shape of trusted ``docker run`` extensions."""
+    for index, raw in enumerate(args):
+        if not isinstance(raw, str):
+            raise ValueError(f"unsafe_extra_run_args contains a non-string token at index {index}: {raw!r}")
 
 
 class DockerNotAvailableError(RuntimeError):
@@ -387,26 +248,14 @@ class DockerShellTool:
         pids_limit: Max processes inside the container.
         user: ``UID:GID`` to run as. Default ``65534:65534`` (nobody).
         read_only_root: Mount the root filesystem read-only. Default ``True``.
-        extra_run_args: Additional args appended to ``docker run``.
-
-            .. warning::
-               This parameter can dismantle the tool's isolation
-               contract. Flags that would undo the default sandbox
-               (``--privileged``, ``--cap-add``, ``--security-opt``,
-               ``--network``/``--net``, ``-v``/``--volume``,
-               ``--mount``, ``--device``, ``--pid``, ``--ipc``,
-               ``--userns``, ``-u``/``--user``, ``--read-only``,
-               ``--tmpfs``, ``--add-host``, ``--gpus``, ``--cgroupns``,
-               ``--device-cgroup-rule``, ``-m``/``--memory``,
-               ``--memory-swap``, ``--pids-limit``) are rejected at
-               construction time, including when a short flag carries
-               its value attached to it (``-v/:/host:rw``) or is
-               clustered with other short flags (``-itv/:/host:rw``).
-               Override the corresponding dedicated argument
-               (``network``, ``host_workdir``, ``mount_readonly``,
-               ``read_only_root``, ``user``, etc.) instead. If you
-               genuinely need to relax the sandbox further, subclass
-               the tool — don't slip past this check.
+        unsafe_extra_run_args: Trusted application-supplied Docker options
+            appended verbatim to ``docker run``. Set this only from
+            developer-controlled configuration; never use values from users,
+            model output, or other untrusted sources. These options can weaken
+            or completely remove container isolation. Review every option
+            carefully. In particular, avoid options such as ``--privileged``,
+            ``--network=host``, host-path volume mounts, and added capabilities
+            unless the application explicitly requires and secures them.
         env: Environment variables to set inside the container. These are
             passed via ``-e`` and apply to every command.
         policy: Optional :class:`ShellPolicy`. Less critical than for
@@ -443,7 +292,7 @@ class DockerShellTool:
         pids_limit: int = DEFAULT_PIDS_LIMIT,
         user: str = DEFAULT_CONTAINER_USER,
         read_only_root: bool = True,
-        extra_run_args: Sequence[str] | None = None,
+        unsafe_extra_run_args: Sequence[str] | None = None,
         env: Mapping[str, str] | None = None,
         policy: ShellPolicy | None = None,
         timeout: float | None = 30.0,
@@ -455,7 +304,8 @@ class DockerShellTool:
     ) -> None:
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
-        _validate_extra_run_args(tuple(extra_run_args or ()))
+        unsafe_extra_run_args_snapshot = tuple(unsafe_extra_run_args or ())
+        _validate_unsafe_extra_run_args(unsafe_extra_run_args_snapshot)
         self._image = image
         self._container_name = container_name or f"af-shell-{secrets.token_hex(6)}"
         self._mode: ShellMode = mode
@@ -467,7 +317,7 @@ class DockerShellTool:
         self._pids_limit = pids_limit
         self._user = user
         self._read_only_root = read_only_root
-        self._extra_run_args = tuple(extra_run_args or ())
+        self._unsafe_extra_run_args = unsafe_extra_run_args_snapshot
         self._env = dict(env or {})
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
@@ -607,7 +457,7 @@ class DockerShellTool:
             argv.extend(["-v", f"{self._host_workdir}:{self._workdir}:{ro}"])
         for k, v in self._env.items():
             argv.extend(["-e", f"{k}={v}"])
-        argv.extend(self._extra_run_args)
+        argv.extend(self._unsafe_extra_run_args)
         argv.extend([self._image, self._shell, "-c", command])
 
         started = time.monotonic()
@@ -716,7 +566,7 @@ class DockerShellTool:
             mount_readonly=self._mount_readonly,
             read_only_root=self._read_only_root,
             extra_env=self._env,
-            extra_args=self._extra_run_args,
+            extra_args=self._unsafe_extra_run_args,
         )
         proc = await asyncio.create_subprocess_exec(
             *argv,

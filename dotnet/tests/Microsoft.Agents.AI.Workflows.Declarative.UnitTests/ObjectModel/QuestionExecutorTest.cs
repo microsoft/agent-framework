@@ -125,6 +125,39 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         await this.PrepareResponseTestAsync(model, expectedPrompt: "Provide input:");
     }
 
+    [Theory]
+    [InlineData("always prompt")]
+    [InlineData("skip question mode")]
+    [InlineData("repeat count")]
+    public async Task QuestionRejectsSensitiveControlValueAsync(string location)
+    {
+        // Arrange
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        Question.Builder builder = this.CreateModel(
+            nameof(QuestionRejectsSensitiveControlValueAsync), "TestVariable").ToBuilder();
+        switch (location)
+        {
+            case "always prompt":
+                builder.AlwaysPrompt = BoolExpression.Expression("Local.Control").ToBuilder();
+                break;
+            case "skip question mode":
+                builder.SkipQuestionMode = EnumExpression<SkipQuestionModeWrapper>.Expression(
+                    """If(Local.Control, "AlwaysAsk", "AlwaysSkipIfVariableHasValue")""").ToBuilder();
+                break;
+            case "repeat count":
+                builder.RepeatCount = IntExpression.Expression("If(Local.Control, 2, 1)").ToBuilder();
+                break;
+        }
+        QuestionExecutor action = new(AssignParent<Question>(builder), new MockAgentProvider().Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains(location, exception.Message);
+    }
+
     [Fact]
     public async Task QuestionCaptureResponseWithValidEntityAsync()
     {

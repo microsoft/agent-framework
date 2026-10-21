@@ -31,6 +31,7 @@ from .._types import (
     UsageDetails,
     _copy_operation_state,  # pyright: ignore[reportPrivateUsage]
     add_usage_details,
+    merge_additional_properties,
 )
 from ..exceptions import AgentException, AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
@@ -956,7 +957,10 @@ class WorkflowAgent(BaseAgent):
                 created_at=incoming.created_at or current.created_at,
                 usage_details=add_usage_details(current.usage_details, incoming.usage_details),
                 raw_representation=raw_list if raw_list else None,
-                additional_properties=incoming.additional_properties or current.additional_properties,
+                additional_properties=merge_additional_properties(
+                    current.additional_properties,
+                    incoming.additional_properties,
+                ),
             )
 
         # PHASE 2: CONVERT GROUPED UPDATES TO RESPONSES AND MERGE
@@ -995,9 +999,10 @@ class WorkflowAgent(BaseAgent):
                 ):
                     latest_created_at = aggregated.created_at
                 if aggregated.additional_properties:
-                    if merged_additional_properties is None:
-                        merged_additional_properties = {}
-                    merged_additional_properties.update(aggregated.additional_properties)
+                    merged_additional_properties = merge_additional_properties(
+                        merged_additional_properties,
+                        aggregated.additional_properties,
+                    )
                 raw_value = aggregated.raw_representation
                 if raw_value:
                     cast_value = cast(object | list[object], raw_value)
@@ -1019,9 +1024,10 @@ class WorkflowAgent(BaseAgent):
             ):
                 latest_created_at = flattened.created_at
             if flattened.additional_properties:
-                if merged_additional_properties is None:
-                    merged_additional_properties = {}
-                merged_additional_properties.update(flattened.additional_properties)
+                merged_additional_properties = merge_additional_properties(
+                    merged_additional_properties,
+                    flattened.additional_properties,
+                )
             flat_raw = flattened.raw_representation
             if flat_raw:
                 cast_flat = cast(object | list[object], flat_raw)

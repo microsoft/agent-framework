@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from agent_framework import AgentResponse, ChatOptions, Content, Message
 from agent_framework_hosting import AgentRunArgs
-from mcp import types
+from mcp import MCPError, types
 
 logger = logging.getLogger("agent_framework.hosting.mcp")
 
@@ -39,14 +39,14 @@ def mcp_to_run(
         Arguments corresponding to ``Agent.run(...)``.
 
     Raises:
-        ValueError: If the selected argument is missing or is not a string.
+        MCPError: If the selected argument is missing or is not a string.
     """
     if arguments is None or argument_name not in arguments:
-        raise ValueError(f"MCP tool arguments must include a '{argument_name}' string.")
+        raise MCPError(types.INVALID_PARAMS, f"MCP tool arguments must include a '{argument_name}' string.")
 
     message_value = arguments[argument_name]
     if not isinstance(message_value, str):
-        raise ValueError(f"MCP tool argument '{argument_name}' must be a string.")
+        raise MCPError(types.INVALID_PARAMS, f"MCP tool argument '{argument_name}' must be a string.")
 
     options = {name: arguments[name] for name in chat_option_arguments if name in arguments}
     return AgentRunArgs(
@@ -98,8 +98,8 @@ def mcp_from_run(
                         types.ResourceLink(
                             type="resource_link",
                             name=name,
-                            uri=content.uri,  # pyright: ignore[reportArgumentType]
-                            mimeType=content.media_type,
+                            uri=content.uri,
+                            mime_type=content.media_type,
                             _meta=metadata,
                         )
                     )
@@ -117,7 +117,7 @@ def mcp_from_run(
                             types.ImageContent(
                                 type="image",
                                 data=encoded,
-                                mimeType=content.media_type,
+                                mime_type=content.media_type,
                                 _meta=metadata,
                             )
                         )
@@ -126,7 +126,7 @@ def mcp_from_run(
                             types.AudioContent(
                                 type="audio",
                                 data=encoded,
-                                mimeType=content.media_type,
+                                mime_type=content.media_type,
                                 _meta=metadata,
                             )
                         )
@@ -140,9 +140,9 @@ def mcp_from_run(
                             types.EmbeddedResource(
                                 type="resource",
                                 resource=types.BlobResourceContents(
-                                    uri=resource_uri,  # pyright: ignore[reportArgumentType]
+                                    uri=resource_uri,
                                     blob=encoded,
-                                    mimeType=content.media_type,
+                                    mime_type=content.media_type,
                                 ),
                                 _meta=metadata,
                             )
