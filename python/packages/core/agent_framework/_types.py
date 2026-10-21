@@ -2528,63 +2528,70 @@ def prepend_instructions_to_messages(
 
 
 def _process_update(response: ChatResponse | AgentResponse, update: ChatResponseUpdate | AgentResponseUpdate) -> None:
-    """Processes a single update and modifies the response in place."""
-    is_new_message = False
+    """Merge an update, creating a message only when it carries message-level data."""
     if (
-        not response.messages
-        or (
-            update.message_id
-            and response.messages[-1].message_id
-            and response.messages[-1].message_id != update.message_id
-        )
-        or (
-            update.author_name
-            and response.messages[-1].author_name
-            and response.messages[-1].author_name != update.author_name
-        )
-        or (update.role and response.messages[-1].role != update.role)
+        update.contents
+        or update.role is not None
+        or update.author_name is not None
+        or update.message_id is not None
+        or update.merge_mode == "replace"
     ):
-        is_new_message = True
+        is_new_message = False
+        if (
+            not response.messages
+            or (
+                update.message_id
+                and response.messages[-1].message_id
+                and response.messages[-1].message_id != update.message_id
+            )
+            or (
+                update.author_name
+                and response.messages[-1].author_name
+                and response.messages[-1].author_name != update.author_name
+            )
+            or (update.role and response.messages[-1].role != update.role)
+        ):
+            is_new_message = True
 
-    if is_new_message:
-        message = Message("assistant", [])
-        response.messages.append(message)
-    else:
-        message = response.messages[-1]
-    if getattr(update, "merge_mode", None) == "replace":
-        message.contents.clear()
-    # Incorporate the update's properties into the message.
-    if update.author_name is not None:
-        message.author_name = update.author_name
-    if update.role is not None:
-        message.role = update.role
-    if update.message_id:
-        message.message_id = update.message_id
-    for content in update.contents:
-        # Fast path: get type attribute (most content will have it)
-        content_type = getattr(content, "type", None)
-        # Slow path: only check for dict if type is None
-        if content_type is None and isinstance(content, (dict, MutableMapping)):
-            try:
-                content = Content.from_dict(content)
-                content_type = content.type
-            except ContentError as exc:
-                logger.warning(f"Skipping unknown content type or invalid content: {exc}")
-                continue
-        match content_type:
-            case "function_call":
-                _merge_function_call_content(message, content)
-            case "usage":
-                if content.merge_mode == "replace":
-                    response.usage_details = deepcopy(content.usage_details)
-                elif response.usage_details is None:
-                    response.usage_details = UsageDetails()
-                    response.usage_details = add_usage_details(response.usage_details, content.usage_details)
-                else:
-                    # mypy doesn't narrow type based on match/case, but we know this is UsageContent
-                    response.usage_details = add_usage_details(response.usage_details, content.usage_details)
-            case _:
-                message.contents.append(content)
+        if is_new_message:
+            message = Message("assistant", [])
+            response.messages.append(message)
+        else:
+            message = response.messages[-1]
+        if update.merge_mode == "replace":
+            message.contents.clear()
+        # Incorporate the update's properties into the message.
+        if update.author_name is not None:
+            message.author_name = update.author_name
+        if update.role is not None:
+            message.role = update.role
+        if update.message_id:
+            message.message_id = update.message_id
+        for content in update.contents:
+            # Fast path: get type attribute (most content will have it)
+            content_type = getattr(content, "type", None)
+            # Slow path: only check for dict if type is None
+            if content_type is None and isinstance(content, (dict, MutableMapping)):
+                try:
+                    content = Content.from_dict(content)
+                    content_type = content.type
+                except ContentError as exc:
+                    logger.warning(f"Skipping unknown content type or invalid content: {exc}")
+                    continue
+            match content_type:
+                case "function_call":
+                    _merge_function_call_content(message, content)
+                case "usage":
+                    if content.merge_mode == "replace":
+                        response.usage_details = deepcopy(content.usage_details)
+                    elif response.usage_details is None:
+                        response.usage_details = UsageDetails()
+                        response.usage_details = add_usage_details(response.usage_details, content.usage_details)
+                    else:
+                        # mypy doesn't narrow type based on match/case, but we know this is UsageContent
+                        response.usage_details = add_usage_details(response.usage_details, content.usage_details)
+                case _:
+                    message.contents.append(content)
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id

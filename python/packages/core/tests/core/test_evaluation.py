@@ -697,6 +697,9 @@ class TestEvaluateAgentTools:
 
         assert updates
         assert restored.text == final.text
+        assert len(restored.messages) == len(final.messages)
+        if empty_stream:
+            assert restored.messages == final.messages == []
         assert _to_eval_item(query="No tools", response=restored, agent=agent).tools is None
         assert restored.additional_properties["agent_framework.evaluation"] == {"version": 1, "tools": []}
 
