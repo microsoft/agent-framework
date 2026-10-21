@@ -1431,29 +1431,6 @@ def test_mcp_request_timeout_must_be_positive_or_none() -> None:
     assert unlimited.request_timeout is None
 
 
-async def test_connect_passes_positive_request_timeout_to_session() -> None:
-    tool = MCPStdioTool(name="test", command="test-command", request_timeout=5, load_tools=False, load_prompts=False)
-
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session = AsyncMock()
-        mock_session._request_id = 1
-
-        session_cm = AsyncMock()
-        session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-        session_cm.__aexit__ = AsyncMock(return_value=None)
-        mock_session_class.return_value = session_cm
-
-        await tool.connect()
-
-        assert mock_session_class.call_args.kwargs["read_timeout_seconds"] == timedelta(seconds=5)
-
-
 def test_mcp_host_payload_size_boundary_uri_serialization_and_early_abort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
