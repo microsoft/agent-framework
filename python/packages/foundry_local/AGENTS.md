@@ -2,7 +2,7 @@
 
 Integration with Microsoft Foundry Local for local model inference.
 
-Uses `foundry_local_sdk` (SDK 2.1+, below 3.0) on Python 3.11-3.14. Clients share
+Uses `foundry_local_sdk` (SDK 2.2.1+, below 3.0) on Python 3.11-3.14. Clients share
 `FoundryLocalManager.instance` and use its built-in web service with the existing
 OpenAI transport. Model lifecycle operations live on catalog model objects.
 The adapter defaults to the public catalog and `/v1`. Use `catalog_type="local"`

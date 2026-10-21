@@ -708,7 +708,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-openai", editable = "packages/openai" },
-    { name = "foundry-local-sdk", specifier = ">=2.1.0,<3" },
+    { name = "foundry-local-sdk", specifier = ">=2.2.1,<3" },
 ]
 
 [[package]]
@@ -2202,7 +2202,7 @@ wheels = [
 
 [[package]]
 name = "foundry-local-sdk"
-version = "2.2.0"
+version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cffi" },
@@ -2214,11 +2214,11 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/e1/d46db6cfbcd10f359283fcf9e1721f3d816b1a6efadb719c680c3ce9e1f5/foundry_local_sdk-2.2.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:4c2adf49d17b5f8af85a8c3441c1f89b2c500288208b4dfa1947a1ecce9b8770", size = 6394412 },
-    { url = "https://files.pythonhosted.org/packages/11/9b/503670a54d23974034e311d50c29c1027df488e43df2891e0e82838c8420/foundry_local_sdk-2.2.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:6c4b50820a0535989c90639ad5854c46753222fbf225c7491eabaa96a35eb872", size = 8993455 },
-    { url = "https://files.pythonhosted.org/packages/14/6e/22690505066b3ac40ccbfe41400cb1d17bc36f0b4119062599dfdd263721/foundry_local_sdk-2.2.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:9ff88a6b6ef6dc08ec43e9960c7cd7176f7f6d1af20e742a08e899974c9205e8", size = 8694204 },
-    { url = "https://files.pythonhosted.org/packages/a7/e7/d91bf7590cd761b3b522ee6a20d894cae3703742c3fb20d40fd21df3d1aa/foundry_local_sdk-2.2.0-cp311-abi3-win_amd64.whl", hash = "sha256:a3e20fb1fbacc470a700f9c1462dd9b8db16a282c61ee450024074c764258124", size = 40810205 },
-    { url = "https://files.pythonhosted.org/packages/0b/89/55c873bb8fcc4acb2933fe6ee9123870e61e020c9f20e921459f0486f1ce/foundry_local_sdk-2.2.0-cp311-abi3-win_arm64.whl", hash = "sha256:3af9de4ec792fef66800c19ae63cdc6e99c464c7e52c98c3a59ba09d3366e38c", size = 40575017 },
+    { url = "https://files.pythonhosted.org/packages/17/ee/9718d428de802ee5264e314c2eda1392cb99ccbe9bca7386eec278103b7f/foundry_local_sdk-2.2.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:7180ea612ab5e2af0f6c8475d413ea592b7c067871b19c9e24a44c0a21f1c6e7", size = 6394441 },
+    { url = "https://files.pythonhosted.org/packages/d4/d1/e1678487f99cfc52b573feba04c12133df7446a4d128abf1a489c0092f7f/foundry_local_sdk-2.2.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:b534b9d3700ab90c69986a817ee542da215fab62e0f13e2e27f05c53b3239154", size = 8993548 },
+    { url = "https://files.pythonhosted.org/packages/7c/73/670318151e07fdf131df926a270d2443b7255e3b5851e8bdb5dca98f88c9/foundry_local_sdk-2.2.1-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:6ee4bd5407f5134bb243456603f4398a8732d765c7b3cc4b4d6fa2910ad2bda5", size = 8693997 },
+    { url = "https://files.pythonhosted.org/packages/86/7a/ce8b0b2f870590e57d841a95adab0e965d6b3643fce5b20ca82222443a9f/foundry_local_sdk-2.2.1-cp311-abi3-win_amd64.whl", hash = "sha256:2a88dd8ba0ca89ba04b2f03a182238e0632d894b313117975ba0f8a4d68767d3", size = 40815873 },
+    { url = "https://files.pythonhosted.org/packages/bc/12/a7d2aabf69089b3711b9de18b7d2ff228af26d401dcf3b7af343c03a3aec/foundry_local_sdk-2.2.1-cp311-abi3-win_arm64.whl", hash = "sha256:f28790aaac7abc4d14b9e6cfae422d3ed2679a8c62f2c7084c0e59297b9a6689", size = 40611400 },
 ]
 
 [[package]]

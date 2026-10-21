@@ -1,6 +1,6 @@
 # Get Started with Microsoft Agent Framework Foundry Local
 
-Requires Python 3.11-3.14 and Foundry Local SDK 2.1 or newer.
+Requires Python 3.11-3.14 and Foundry Local SDK 2.2.1 or newer, below 3.0.
 Install the integration:
 
 ```bash
