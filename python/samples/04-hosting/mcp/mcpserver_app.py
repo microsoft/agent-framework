@@ -4,16 +4,16 @@
 #     "agent-framework-foundry",
 #     "agent-framework-hosting-mcp",
 #     "azure-identity",
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 # ]
 # ///
-# Run with: uv run fastmcp_app.py
+# Run with: uv run mcpserver_app.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host an Agent Framework agent with FastMCP and the conversion helpers.
+"""Host an Agent Framework agent with MCPServer and the conversion helpers.
 
-FastMCP derives the native MCP tool schema from the decorated function
+MCPServer derives the native MCP tool schema from the decorated function
 signature. The Agent Framework hosting package only converts the validated
 arguments and completed agent response at the protocol boundary.
 
@@ -27,7 +27,7 @@ Required environment variables: ``FOUNDRY_PROJECT_ENDPOINT`` and
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -36,7 +36,7 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_hosting_mcp import mcp_from_run, mcp_to_run
 from azure.identity.aio import DefaultAzureCredential
 from mcp import types
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 credential = DefaultAzureCredential()
 agent = Agent(
@@ -52,20 +52,15 @@ agent = Agent(
 
 
 @asynccontextmanager
-async def lifespan(_server: FastMCP[None]) -> AsyncIterator[None]:
-    """Close the model credential when the FastMCP server stops."""
+async def lifespan(_server: MCPServer[None]) -> AsyncGenerator[None]:
+    """Close the model credential when the MCP server stops."""
     async with credential:
         yield
 
 
-server = FastMCP(
-    name="agent-framework-hosting-fastmcp-sample",
+server = MCPServer(
+    name="agent-framework-hosting-mcpserver-sample",
     instructions="Expose an Agent Framework agent as an MCP tool.",
-    host="127.0.0.1",
-    port=8000,
-    streamable_http_path="/mcp",
-    json_response=True,
-    stateless_http=True,
     lifespan=lifespan,
 )
 
@@ -78,8 +73,8 @@ server = FastMCP(
 async def run_agent(
     task: str,
     reasoning_effort: Literal["low", "medium", "high"] | None = None,
-) -> list[types.ContentBlock]:
-    """Run the agent with FastMCP-validated arguments."""
+) -> types.CallToolResult:
+    """Run the agent with MCPServer-validated arguments."""
     arguments: dict[str, object] = {"task": task}
     if reasoning_effort is not None:
         arguments["reasoning_effort"] = reasoning_effort
@@ -90,8 +85,15 @@ async def run_agent(
         options=run["options"],
         stream=False,
     )
-    return mcp_from_run(result)
+    return types.CallToolResult(content=mcp_from_run(result))
 
 
 if __name__ == "__main__":
-    server.run(transport="streamable-http")
+    server.run(
+        transport="streamable-http",
+        host="127.0.0.1",
+        port=8000,
+        streamable_http_path="/mcp",
+        stateless_http=True,
+        json_response=True,
+    )

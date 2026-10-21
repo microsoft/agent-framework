@@ -10,7 +10,16 @@ import logging
 import sys
 import warnings
 import weakref
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from pathlib import Path
 from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 from urllib.parse import urlparse
@@ -182,6 +191,17 @@ async def _resolve_function_approval(
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by the Copilot agent or client."""
+    keys: set[str] = set()
+    for owner in (agent, client):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast(Collection[Any], declared) if isinstance(key, str))
+    return frozenset(keys)
+
 
 # One lock per (CopilotClient, service session ID), shared across agents that share a client.
 # Entries disappear once no run holds or awaits the lock.
@@ -1127,7 +1147,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 if data.delta_content:
                     update = AgentResponseUpdate(
                         role="assistant",
-                        contents=[Content.from_text(data.delta_content)],
+                        contents=[Content.from_text(data.delta_content, merge_mode="append")],
                         response_id=data.message_id,
                         message_id=data.message_id,
                         raw_representation=event,
@@ -1145,7 +1165,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 model = event.data.model or None
                 if usage_details or finish_reason or model:
                     update = AgentResponseUpdate(
-                        contents=[Content.from_usage(usage_details, raw_representation=event.data)]
+                        contents=[
+                            Content.from_usage(
+                                usage_details,
+                                merge_mode="replace",
+                                raw_representation=event.data,
+                            )
+                        ]
                         if usage_details
                         else None,
                         finish_reason=cast(Any, finish_reason),
@@ -1161,6 +1187,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     call_id=tool_call_id,
                     name=tool_name,
                     arguments=arguments,
+                    hosted=True,
+                    merge_mode="replace",
                     raw_representation=event.data,
                 )
                 update = AgentResponseUpdate(
@@ -1354,6 +1382,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             List of Copilot SDK tools.
         """
         copilot_tools: list[CopilotTool] = []
+        parent_service_session_state_keys = _provider_service_session_state_keys(self, self._client)
 
         for tool in tools:
             if isinstance(tool, CopilotTool):
@@ -1364,6 +1393,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         tool,
                         agent_session=agent_session,
                         function_invocation_kwargs=function_invocation_kwargs,
+                        parent_service_session_state_keys=parent_service_session_state_keys,
                     )
                 )
             elif isinstance(tool, MutableMapping):
@@ -1378,6 +1408,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         agent_session: AgentSession | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
+        parent_service_session_state_keys: frozenset[str] = frozenset(),
     ) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool.
 
@@ -1392,6 +1423,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         callback is configured instead, approval is enforced inside this handler for
         backward compatibility. (``on_function_approval`` and ``on_pre_tool_use`` are
         mutually exclusive, so only one mechanism is ever active.)
+
+        Args:
+            ai_func: Agent Framework function tool to convert.
+
+        Keyword Args:
+            agent_session: Parent agent session passed to the tool.
+            function_invocation_kwargs: Runtime keyword arguments forwarded to the tool.
+            parent_service_session_state_keys: Provider-owned state declared by the parent agent and client.
         """
         approval_handler = self._function_approval_handler
         enforce = approval_handler is not None and ai_func.approval_mode == "always_require"
@@ -1419,6 +1458,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     arguments=args,
                     session=agent_session,
                     kwargs=runtime_kwargs,
+                    parent_service_session_state_keys=parent_service_session_state_keys,
                 )
                 if ai_func.input_model:
                     args_instance = ai_func.input_model(**args)

@@ -19,6 +19,7 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 
+from agent_framework_azure_cosmos_memory import __version__
 from agent_framework_azure_cosmos_memory._context_provider import (
     DEFAULT_CONTEXT_PROMPT,
     CosmosMemoryContextProvider,
@@ -99,15 +100,16 @@ class TestInit:
 
     def test_init_with_all_params(self, mock_memory_client: AsyncMock) -> None:
         """Initialize with all parameters provided."""
-        provider = CosmosMemoryContextProvider(
-            source_id="test_memory",
-            memory_client=mock_memory_client,
-            top_k=10,
-            min_confidence=0.8,
-            memory_types=["fact", "episodic"],
-            context_prompt="Custom prompt:",
-            auto_extract=True,
-        )
+        with patch("agent_framework_azure_cosmos_memory._context_provider.get_user_agent") as mock_get_user_agent:
+            provider = CosmosMemoryContextProvider(
+                source_id="test_memory",
+                memory_client=mock_memory_client,
+                top_k=10,
+                min_confidence=0.8,
+                memory_types=["fact", "episodic"],
+                context_prompt="Custom prompt:",
+                auto_extract=True,
+            )
 
         assert provider.source_id == "test_memory"
         assert provider.top_k == 10
@@ -117,6 +119,7 @@ class TestInit:
         assert provider.auto_extract is True
         assert provider.memory_client is mock_memory_client
         assert provider._should_close_client is False
+        mock_get_user_agent.assert_not_called()
 
     def test_init_default_values(self, mock_memory_client: AsyncMock) -> None:
         """Initialize with default values."""
@@ -129,11 +132,34 @@ class TestInit:
         assert provider.context_prompt == DEFAULT_CONTEXT_PROMPT
         assert provider.auto_extract is True
 
+    def test_init_rejects_non_positive_top_k(self, mock_memory_client: AsyncMock) -> None:
+        """The toolkit rejects a non-positive top_k on every search, so fail at construction."""
+        for top_k in (0, -1):
+            with pytest.raises(ValueError, match="top_k must be greater than 0"):
+                CosmosMemoryContextProvider(memory_client=mock_memory_client, top_k=top_k)
+
+    def test_init_rejects_min_confidence_outside_documented_range(self, mock_memory_client: AsyncMock) -> None:
+        """Scores above 1.0 match no memory and negative scores drop the filter; both are silent."""
+        for min_confidence in (-0.1, 1.01, float("nan"), float("inf")):
+            with pytest.raises(ValueError, match="min_confidence must be between 0.0 and 1.0"):
+                CosmosMemoryContextProvider(memory_client=mock_memory_client, min_confidence=min_confidence)
+
+    def test_init_accepts_boundary_search_params(self, mock_memory_client: AsyncMock) -> None:
+        """The documented bounds are inclusive."""
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client, top_k=1, min_confidence=1.0)
+
+        assert provider.top_k == 1
+        assert provider.min_confidence == 1.0
+
     def test_init_creates_client_when_none(self) -> None:
         """When no client provided, creates AsyncCosmosMemoryClient with default credential."""
-        with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-        ) as mock_client_class:
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient") as mock_client_class,
+            patch(
+                "agent_framework_azure_cosmos_memory._context_provider.get_user_agent",
+                return_value="agent-framework-python/test",
+            ) as mock_get_user_agent,
+        ):
             mock_client_class.return_value = AsyncMock()
 
             provider = CosmosMemoryContextProvider(
@@ -149,6 +175,10 @@ class TestInit:
             _, kwargs = mock_client_class.call_args
             assert kwargs["use_default_credential"] is True
             assert "cosmos_credential" not in kwargs
+            assert kwargs["user_agent"] == (
+                f"agent-framework-python/test agent-framework-azure-cosmos-memory/{__version__}"
+            )
+            mock_get_user_agent.assert_called_once_with()
             # The explicitly provided models are forwarded to the toolkit client.
             assert kwargs["embedding_deployment_name"] == "text-embedding-3-large"
             assert kwargs["chat_deployment_name"] == "gpt-4o-mini"
@@ -156,9 +186,13 @@ class TestInit:
 
     def test_init_wires_explicit_credential(self) -> None:
         """An explicit credential is passed to both Cosmos and AI Foundry, disabling default."""
-        with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-        ) as mock_client_class:
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient") as mock_client_class,
+            patch(
+                "agent_framework_azure_cosmos_memory._context_provider.get_user_agent",
+                return_value="agent-framework-python/test",
+            ) as mock_get_user_agent,
+        ):
             mock_client_class.return_value = AsyncMock()
             sentinel = MagicMock()
 
@@ -174,24 +208,49 @@ class TestInit:
             assert kwargs["cosmos_credential"] is sentinel
             assert kwargs["ai_foundry_credential"] is sentinel
             assert kwargs["use_default_credential"] is False
+            assert kwargs["user_agent"] == (
+                f"agent-framework-python/test agent-framework-azure-cosmos-memory/{__version__}"
+            )
+            mock_get_user_agent.assert_called_once_with()
 
     def test_init_raises_without_endpoints(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises SettingNotFoundError when the Cosmos endpoint is not provided."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         with pytest.raises(SettingNotFoundError, match="cosmos_endpoint"):
             CosmosMemoryContextProvider()
 
     def test_init_raises_without_foundry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises SettingNotFoundError when the Foundry endpoint is not provided."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         with pytest.raises(SettingNotFoundError, match="foundry_endpoint"):
             CosmosMemoryContextProvider(cosmos_endpoint="https://test.documents.azure.com:443/")
 
     def test_init_raises_without_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises when the chat/embedding models are not provided (no silent default)."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         # Endpoints resolve, but the models do not: rather than defaulting to a model that may not
         # be deployed, construction must raise so the caller knows to set one.
@@ -200,6 +259,44 @@ class TestInit:
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
             )
+
+    def test_init_prefers_foundry_project_endpoint_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FOUNDRY_PROJECT_ENDPOINT takes precedence over the legacy environment variable."""
+        monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://preferred.ai.azure.com/api/projects/test")
+        monkeypatch.setenv("FOUNDRY_ENDPOINT", "https://legacy.ai.azure.com/api/projects/test")
+
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["ai_foundry_endpoint"] == "https://preferred.ai.azure.com/api/projects/test"
+
+    def test_init_accepts_legacy_foundry_endpoint_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FOUNDRY_ENDPOINT remains supported for existing configurations."""
+        monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
+        monkeypatch.setenv("FOUNDRY_ENDPOINT", "https://legacy.ai.azure.com/api/projects/test")
+
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["ai_foundry_endpoint"] == "https://legacy.ai.azure.com/api/projects/test"
 
     def test_init_processor_config_forwarded_to_built_client(self) -> None:
         """processor_config is forwarded to the built client via cadence_thresholds."""

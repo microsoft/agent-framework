@@ -95,15 +95,15 @@ The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-
 
 See [main.py](main.py) for the full implementation.
 
-### Request-owned connections
+### Request-owned resources
 
 The host receives `agent=create_agent`, not a process-wide agent instance.
-Every request creates a fresh client and Toolbox MCP connection **under that
-request's platform context**, then closes them afterward. The MCP HTTP writer
-captures context when connecting; reusing one connection across hosted requests
-would retain an earlier caller's `x-agent-foundry-call-id`. This pattern avoids
-that reuse without changing the semantics of long-lived Toolbox instances in
-other applications.
+Every request creates a fresh client and Toolbox MCP connection, then closes
+them afterward. This gives the sample one clear owner for its model transports,
+credential and Toolbox lifecycle. `FoundryToolbox` also supports long-lived
+instances: it resolves the current platform headers before each operation and
+reconnects the MCP session when that identity changes, so a shared instance does
+not retain an earlier caller's `x-agent-foundry-call-id`.
 
 The sample client closes only its own model/project transports and credential,
 including when MCP entry fails or the request is cancelled. Local authentication

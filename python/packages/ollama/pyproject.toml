@@ -4,7 +4,7 @@ description = "Ollama integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b261002"
+version = "1.0.0b261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/agent-framework/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -19,11 +19,13 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Framework :: Pydantic :: 2",
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.13.0,<2",
+    "agent-framework-core>=1.22.0,<2",
     "ollama>=0.5.3,<0.5.4",
 ]
 
@@ -101,5 +103,5 @@ module-name = "agent_framework_ollama"
 module-root = ""
 
 [build-system]
-requires = ["uv_build>=0.8.2,<0.13.0"]
+requires = ["uv_build>=0.8.2,<0.14.0"]
 build-backend = "uv_build"

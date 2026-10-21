@@ -32,7 +32,7 @@ under the home directory.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT       — Microsoft Foundry project endpoint URL
-    AZURE_AI_MODEL_DEPLOYMENT_NAME — Model deployment name for the hosted agent
+    FOUNDRY_MODEL                  — Model deployment name for local runs
     TOOLBOX_MCP_SERVER_URL         — Optional Foundry Toolbox MCP endpoint URL
     PURVIEW_CLIENT_APP_ID          — Optional app/client ID; enables Purview
     ENABLE_SENSITIVE_DATA          — Enables sensitive telemetry capture (prompts/responses) when true
@@ -107,7 +107,7 @@ async def create_agent() -> Agent:
     config, context = AgentConfig.from_env(), get_request_context()
     scope = FoundryRequestScope.from_context(config, context, local_session_id="local-development")
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
         ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
         if config.is_hosted

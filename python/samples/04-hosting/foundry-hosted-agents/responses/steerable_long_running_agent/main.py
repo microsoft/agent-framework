@@ -9,7 +9,7 @@ AgentServer SDK is released and verified.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
-    AZURE_AI_MODEL_DEPLOYMENT_NAME: Model deployment name.
+    FOUNDRY_MODEL: Model deployment name.
 """
 
 import os
@@ -26,7 +26,7 @@ load_dotenv()
 def main() -> None:
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=DefaultAzureCredential(),
     )
 

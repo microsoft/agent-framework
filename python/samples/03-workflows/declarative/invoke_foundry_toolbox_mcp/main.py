@@ -19,7 +19,7 @@ import os
 from collections.abc import Generator
 from pathlib import Path
 
-import httpx
+import httpx2 as httpx
 from agent_framework import Agent
 from agent_framework.declarative import (
     DefaultMCPToolHandler,
