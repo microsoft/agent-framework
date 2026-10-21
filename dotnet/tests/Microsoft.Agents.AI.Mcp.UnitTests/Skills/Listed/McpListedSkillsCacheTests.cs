@@ -11,24 +11,35 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 public sealed class McpListedSkillsCacheTests
 {
     [Fact]
+    public void Constructor_NullDiscoverSkills_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>("discoverSkills", () => new McpListedSkillsCache(clock, null!));
+    }
+
+    [Fact]
     public async Task GetOrCreateAsync_PositiveTtl_ReturnsOriginalListUntilExactExpirationAsync()
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        using var cache = new McpListedSkillsCache(clock);
         int calls = 0;
-        McpListedSkillsDiscoveryResult? discovered = null;
-        Task<McpListedSkillsDiscoveryResult> DiscoverAsync(CancellationToken token)
+        McpListedSkillsSnapshot? discovered = null;
+        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
-            discovered = CreateResult(clock, 1000);
+            discovered = CreateSnapshot(clock, 1000);
             return Task.FromResult(discovered);
         }
 
+        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+
         // Act
-        var first = await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+        var first = await cache.GetOrCreateAsync(CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(999));
-        var fresh = await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+        var fresh = await cache.GetOrCreateAsync(CancellationToken.None);
 
         // Assert
         Assert.NotNull(discovered);
@@ -39,7 +50,7 @@ public sealed class McpListedSkillsCacheTests
 
         // Act
         clock.Advance(TimeSpan.FromMilliseconds(1));
-        var refreshed = await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+        var refreshed = await cache.GetOrCreateAsync(CancellationToken.None);
 
         // Assert
         Assert.NotSame(first, refreshed);
@@ -55,21 +66,21 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        using var cache = new McpListedSkillsCache(clock);
         int calls = 0;
-        Task<McpListedSkillsDiscoveryResult> DiscoverAsync(CancellationToken token)
+        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
             long[] ttls = [5000, 5000, 5000];
             ttls[expiredPage] = 1000;
-            return Task.FromResult(CreateResult(clock, ttls));
+            return Task.FromResult(CreateSnapshot(clock, ttls));
         }
 
-        var first = await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        var first = await cache.GetOrCreateAsync(CancellationToken.None);
 
         // Act
         clock.Advance(TimeSpan.FromSeconds(1));
-        var refreshed = await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+        var refreshed = await cache.GetOrCreateAsync(CancellationToken.None);
 
         // Assert
         Assert.NotSame(first, refreshed);
@@ -83,17 +94,17 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        using var cache = new McpListedSkillsCache(clock);
-        var release = new TaskCompletionSource<McpListedSkillsDiscoveryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<McpListedSkillsSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         int calls = 0;
-        Task<McpListedSkillsDiscoveryResult> DiscoverAsync(CancellationToken token) =>
-            ++calls == 1 ? release.Task : Task.FromResult(CreateResult(clock, ttl));
+        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token) =>
+            ++calls == 1 ? release.Task : Task.FromResult(CreateSnapshot(clock, ttl));
+        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
 
         // Act
         Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
-            .Select(_ => cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None)).ToArray();
+            .Select(_ => cache.GetOrCreateAsync(CancellationToken.None)).ToArray();
         Assert.Equal(1, calls);
-        release.SetResult(CreateResult(clock, ttl));
+        release.SetResult(CreateSnapshot(clock, ttl));
         var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
 
         // Assert
@@ -114,14 +125,14 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        using var cache = new McpListedSkillsCache(clock);
-        var release = new TaskCompletionSource<McpListedSkillsDiscoveryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<McpListedSkillsSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var error = new InvalidOperationException("Discovery failed.");
         int calls = 0;
-        Task<McpListedSkillsDiscoveryResult> DiscoverAsync(CancellationToken token) =>
-            ++calls == 1 ? release.Task : Task.FromResult(CreateResult(clock, 1000));
-        var active = cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
-        var waiting = cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token) =>
+            ++calls == 1 ? release.Task : Task.FromResult(CreateSnapshot(clock, 1000));
+        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        var active = cache.GetOrCreateAsync(CancellationToken.None);
+        var waiting = cache.GetOrCreateAsync(CancellationToken.None);
 
         // Act
         release.SetException(error);
@@ -130,7 +141,7 @@ public sealed class McpListedSkillsCacheTests
         Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() => active.WaitAsync(TimeSpan.FromSeconds(10))));
         var skills = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Single(skills);
-        Assert.Same(skills, await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None));
+        Assert.Same(skills, await cache.GetOrCreateAsync(CancellationToken.None));
         Assert.Equal(2, calls);
     }
 
@@ -139,10 +150,9 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        using var cache = new McpListedSkillsCache(clock);
         using var cts = new CancellationTokenSource();
         int calls = 0;
-        Task<McpListedSkillsDiscoveryResult> DiscoverAsync(CancellationToken token)
+        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             if (++calls == 1)
             {
@@ -150,15 +160,17 @@ public sealed class McpListedSkillsCacheTests
                 cts.Cancel();
             }
 
-            return Task.FromResult(CreateResult(clock, 1000));
+            return Task.FromResult(CreateSnapshot(clock, 1000));
         }
 
+        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+
         // Act & Assert
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.GetOrCreateAsync(DiscoverAsync, cts.Token));
-        var skills = await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.GetOrCreateAsync(cts.Token));
+        var skills = await cache.GetOrCreateAsync(CancellationToken.None);
         Assert.Single(skills);
         Assert.Equal(2, calls);
-        Assert.Same(skills, await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None));
+        Assert.Same(skills, await cache.GetOrCreateAsync(CancellationToken.None));
     }
 
     [Theory]
@@ -168,24 +180,25 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        using var cache = new McpListedSkillsCache(clock);
         int calls = 0;
-        Task<McpListedSkillsDiscoveryResult> DiscoverAsync(CancellationToken token)
+        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
-            return Task.FromResult(CreateResult(clock, 1000));
+            return Task.FromResult(CreateSnapshot(clock, 1000));
         }
+
+        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
 
         if (cached)
         {
-            await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+            await cache.GetOrCreateAsync(CancellationToken.None);
         }
 
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
         // Act & Assert
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.GetOrCreateAsync(DiscoverAsync, cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.GetOrCreateAsync(cts.Token));
         Assert.Equal(cached ? 1 : 0, calls);
     }
 
@@ -196,17 +209,18 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        using var cache = new McpListedSkillsCache(clock);
         int calls = 0;
-        Task<McpListedSkillsDiscoveryResult> DiscoverAsync(CancellationToken token)
+        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
-            return Task.FromResult(CreateResult(clock, 1000));
+            return Task.FromResult(CreateSnapshot(clock, 1000));
         }
+
+        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
 
         if (cached)
         {
-            await cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None);
+            await cache.GetOrCreateAsync(CancellationToken.None);
         }
 
         // Act
@@ -214,11 +228,11 @@ public sealed class McpListedSkillsCacheTests
         cache.Dispose();
 
         // Assert
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => cache.GetOrCreateAsync(DiscoverAsync, CancellationToken.None));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => cache.GetOrCreateAsync(CancellationToken.None));
         Assert.Equal(cached ? 1 : 0, calls);
     }
 
-    private static McpListedSkillsDiscoveryResult CreateResult(ManualTimeProvider clock, params long[] ttls) =>
+    private static McpListedSkillsSnapshot CreateSnapshot(ManualTimeProvider clock, params long[] ttls) =>
         new([new AgentInlineSkill("test-skill", "A test skill.", "Test instructions.")],
             ttls.Select(ttl => new McpListedSkillsPageLifetime(clock.GetTimestamp(), TimeSpan.FromMilliseconds(ttl))).ToList());
 

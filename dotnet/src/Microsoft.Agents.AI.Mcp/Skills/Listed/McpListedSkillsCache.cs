@@ -14,34 +14,36 @@ namespace Microsoft.Agents.AI;
 internal sealed class McpListedSkillsCache : IDisposable
 {
     private readonly TimeProvider _timeProvider;
+    private readonly Func<CancellationToken, Task<McpListedSkillsSnapshot>> _discoverSkills;
     private readonly SemaphoreSlim _discoveryGate = new(1, 1);
-    private volatile McpListedSkillsDiscoveryResult? _cachedSkills;
+    private volatile McpListedSkillsSnapshot? _cachedSnapshot;
     private bool _disposed;
 
     /// <summary>
     /// Initializes a cache using the clock that records discovery page receipt timestamps.
     /// </summary>
     /// <param name="timeProvider">The clock for checking page freshness.</param>
-    public McpListedSkillsCache(TimeProvider timeProvider)
+    /// <param name="discoverSkills">Discovers and validates all pages, including their receipt timestamps and TTLs.</param>
+    public McpListedSkillsCache(TimeProvider timeProvider, Func<CancellationToken, Task<McpListedSkillsSnapshot>> discoverSkills)
     {
         this._timeProvider = Throw.IfNull(timeProvider);
+        this._discoverSkills = Throw.IfNull(discoverSkills);
     }
 
     /// <summary>
     /// Gets fresh cached skills or invokes discovery to replace the catalog.
     /// </summary>
-    /// <param name="discoverSkills">Discovers and validates all pages, including their receipt timestamps and TTLs.</param>
     /// <param name="cancellationToken">The token used to cancel waiting or discovery.</param>
     /// <returns>The cached or newly discovered skills.</returns>
-    public async Task<IList<AgentSkill>> GetOrCreateAsync(Func<CancellationToken, Task<McpListedSkillsDiscoveryResult>> discoverSkills, CancellationToken cancellationToken)
+    public async Task<IList<AgentSkill>> GetOrCreateAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(this._disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         // Reuse the catalog only while every page is fresh.
-        if (this.GetCachedSkills() is { } cached)
+        if (this.GetCachedSnapshot() is { } cached)
         {
-            return cached;
+            return cached.Skills;
         }
 
         // Allow only one caller to discover or refresh the catalog at a time.
@@ -52,20 +54,20 @@ internal sealed class McpListedSkillsCache : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
 
             // Another caller may have refreshed the cache while this caller waited.
-            cached = this.GetCachedSkills();
+            cached = this.GetCachedSnapshot();
             if (cached is not null)
             {
-                return cached;
+                return cached.Skills;
             }
 
             // Refresh all pages from the beginning.
-            var result = await discoverSkills(cancellationToken).ConfigureAwait(false);
+            var snapshot = await this._discoverSkills(cancellationToken).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            this.CacheSkills(result);
+            this.CacheSnapshot(snapshot);
 
-            return result.Skills;
+            return snapshot.Skills;
         }
         finally
         {
@@ -74,11 +76,11 @@ internal sealed class McpListedSkillsCache : IDisposable
     }
 
     /// <summary>
-    /// Gets the cached skills, or <see langword="null"/> if the cache is absent or expired.
+    /// Gets the cached snapshot, or <see langword="null"/> if it is absent or any listing page has expired.
     /// </summary>
-    private List<AgentSkill>? GetCachedSkills()
+    private McpListedSkillsSnapshot? GetCachedSnapshot()
     {
-        if (this._cachedSkills is not { } cached)
+        if (this._cachedSnapshot is not { } cached)
         {
             return null;
         }
@@ -94,17 +96,17 @@ internal sealed class McpListedSkillsCache : IDisposable
             }
         }
 
-        return cached.Skills;
+        return cached;
     }
 
     /// <summary>
-    /// Caches the discovered skills together with their page lifetimes.
+    /// Stores the snapshot.
     /// </summary>
-    /// <param name="result">The complete discovery result.</param>
-    private void CacheSkills(McpListedSkillsDiscoveryResult result)
+    /// <param name="snapshot">The skill list and its listing-page lifetimes.</param>
+    private void CacheSnapshot(McpListedSkillsSnapshot snapshot)
     {
         // Publish the complete catalog and page lifetimes together only after discovery and validation succeed.
-        this._cachedSkills = result;
+        this._cachedSnapshot = snapshot;
     }
 
     /// <inheritdoc/>
