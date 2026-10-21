@@ -211,10 +211,10 @@ async with Agent(
 4. **Run the examples**:
    ```bash
    # Semantic mode (fast, simple)
-   python azure_ai_with_search_context_semantic.py
+   python search_context_semantic.py
 
    # Agentic mode (intelligent, complex)
-   python azure_ai_with_search_context_agentic.py
+   python search_context_agentic.py
    ```
 
 ## Key Parameters

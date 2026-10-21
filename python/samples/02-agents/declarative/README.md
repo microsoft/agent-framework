@@ -257,7 +257,7 @@ python get_weather_agent.py
 python microsoft_learn_agent.py
 python inline_yaml.py
 python azure_openai_responses_agent.py
-python openai_responses_agent.py
+python openai_agent.py
 ```
 
 ## Learn More
