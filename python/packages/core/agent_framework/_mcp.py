@@ -227,7 +227,7 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 # object is a reference to the owner of the headers, so we keep track which headers belong to which tool
-_mcp_call_headers: ContextVar[tuple[object, dict[str, str]]] = ContextVar("_mcp_call_headers")
+_mcp_call_headers: ContextVar[tuple[object, dict[str, str]] | None] = ContextVar("_mcp_call_headers")
 _mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] = ContextVar(
     "_mcp_tool_runtime_context", default=None
 )
@@ -595,10 +595,10 @@ class _MCPConnection(Protocol):
 class _ClientMCPConnection:
     """MCP connection backed by a high-level Client."""
 
-    def __init__(self, client: Client) -> None:
+    def __init__(self, client: Client, *, is_framework_owned: bool) -> None:
         self.client: Client | None = client
         self.session: ClientSession | None = None
-        self.is_framework_owned = True
+        self.is_framework_owned = is_framework_owned
         self._client = client
 
     async def call_tool(
@@ -707,7 +707,7 @@ def _as_mcp_connection(  # pyright: ignore[reportUnusedFunction]
     from mcp import Client as MCPClient
 
     if isinstance(client, MCPClient):
-        return _ClientMCPConnection(client)
+        return _ClientMCPConnection(client, is_framework_owned=False)
     return _SessionMCPConnection(client)
 
 
@@ -724,6 +724,11 @@ _MCP_SAMPLING_DEPRECATION_MESSAGE = (
     "MCP sampling is deprecated as of MCP specification version 2026-07-28. Under the MCP feature lifecycle, "
     "it remains supported for at least twelve months before becoming eligible for removal. "
     "MCP servers should call LLM provider APIs directly."
+)
+_MCP_SESSION_DEPRECATION_MESSAGE = (
+    "`MCPTool.session` is deprecated and will be removed in vNext. "
+    "Use a high-level `mcp.Client` via `mcp_client=`. "
+    "See https://github.com/microsoft/agent-framework/issues/9452."
 )
 
 # A user-supplied gate invoked before each server-initiated sampling request is
@@ -1072,9 +1077,9 @@ class MCPTool:
         MCPStdioTool or MCPStreamableHTTPTool.
 
     Caching:
-        Framework-owned modern connections honor server-provided ``ttlMs`` and ``cacheScope`` hints through the
-        MCP SDK's per-Client response cache. Legacy servers and caller-supplied ``ClientSession`` connections remain
-        uncached under the default zero-TTL policy.
+        Modern high-level ``Client`` connections honor server-provided ``ttlMs`` and ``cacheScope`` hints through
+        the MCP SDK's per-Client response cache. Legacy servers and caller-supplied ``ClientSession`` connections
+        remain uncached under the default zero-TTL policy.
 
     Examples:
         See the subclass documentation for usage examples:
@@ -1094,6 +1099,7 @@ class MCPTool:
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
+        mcp_client: Client | None = None,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
         client: SupportsChatGetResponse | None = None,
@@ -1163,20 +1169,35 @@ class MCPTool:
             asyncio.Queue[tuple[str, bool, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
         ) = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
-        self._connection: _MCPConnection | None = _SessionMCPConnection(session) if session is not None else None
+
+        if mcp_client is not None and session is not None:
+            raise ValueError("`mcp_client` and `session` are mutually exclusive. If possible, prefer `mcp_client`.")
+        if mcp_client is not None:
+            self._connection = _ClientMCPConnection(mcp_client, is_framework_owned=False)
+        elif session is not None:
+            self._connection = _SessionMCPConnection(session)
+        else:
+            self._connection = None
+
         self.request_timeout = request_timeout
         self.client = client
         self.sampling_approval_callback = sampling_approval_callback
         self.sampling_max_tokens = sampling_max_tokens
         self.sampling_max_requests = sampling_max_requests
         self._sampling_deprecation_warned = False
-        if (
+        wrapper_sampling_configured = (
             client is not None
             or sampling_approval_callback is not None
             or sampling_max_tokens != _DEFAULT_SAMPLING_MAX_TOKENS
             or sampling_max_requests != _DEFAULT_SAMPLING_MAX_REQUESTS
-        ):
+        )
+        if wrapper_sampling_configured:
             self._warn_sampling_deprecated(stacklevel=4)
+            if mcp_client is not None or session is not None:
+                logger.warning(
+                    "MCPTool sampling options are ignored for a caller-owned connection; "
+                    "configure sampling policy on the supplied Client or ClientSession."
+                )
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
         self._function_load_callback: _MCPFunctionLoadCallback | None = None
@@ -1206,17 +1227,28 @@ class MCPTool:
 
     @property
     def session(self) -> ClientSession | None:
-        """Return the low-level session for compatibility and advanced use."""
+        """Return the deprecated caller-supplied low-level session.
+
+        .. deprecated::
+            Use a high-level ``mcp.Client`` via ``mcp_client=``.
+        """
+        warnings.warn(_MCP_SESSION_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
         return self._connection.session if self._connection is not None else None
 
     @session.setter
     def session(self, value: ClientSession | None) -> None:
-        """Replace the connection with a caller-owned session compatibility path."""
+        """Replace the deprecated caller-owned low-level session compatibility path.
+
+        .. deprecated::
+            Use a high-level ``mcp.Client`` via ``mcp_client=``.
+        """
         connection = self._connection
-        if connection is not None and connection.is_framework_owned:
-            if value is connection.session:
-                return
-            raise RuntimeError("Cannot replace the session while its framework-owned MCP Client is connected.")
+        if connection is not None and connection.client is not None:
+            raise ValueError(
+                "Cannot assign `MCPTool.session` while the tool uses a high-level MCP Client. "
+                "Create a separate tool for the deprecated ClientSession compatibility path."
+            )
+        warnings.warn(_MCP_SESSION_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
         self._connection = _SessionMCPConnection(value) if value is not None else None
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
@@ -1787,12 +1819,19 @@ class MCPTool:
             return
 
         # v2 introduces `mcp_client.listen`, but messages are teed via the message_handler passed in
-        # in the constructor anyway, so we check for the feature availability an fallback to legacy behaviour
+        # during Client construction, so framework-owned Clients can fall back to legacy notifications.
         initial_context = mcp_client.listen(tools_list_changed=tools_changed, prompts_list_changed=prompts_changed)
         try:
             initial_subscription = await initial_context.__aenter__()
         except ListenNotSupportedError:
-            logger.debug("Listen not supported, falling back to legacy behaviour.")
+            connection = self._connection
+            if connection is not None and connection.client is mcp_client and not connection.is_framework_owned:
+                logger.warning(
+                    "Automatic legacy catalog refresh is unavailable for a caller-owned Client; "
+                    "configure legacy notification handling when constructing the Client."
+                )
+            else:
+                logger.debug("Listen not supported, falling back to legacy behaviour.")
             return
 
         async def refresh_catalogs() -> None:
@@ -2010,10 +2049,14 @@ class MCPTool:
                 return
 
             self._lifecycle_queue = asyncio.Queue()
-            self._lifecycle_owner_task = asyncio.create_task(
-                self._run_lifecycle_owner(),
-                name=f"mcp-lifecycle:{self.name}",
-            )
+            token = _mcp_call_headers.set(None)
+            try:
+                self._lifecycle_owner_task = asyncio.create_task(
+                    self._run_lifecycle_owner(),
+                    name=f"mcp-lifecycle:{self.name}",
+                )
+            finally:
+                _mcp_call_headers.reset(token)
 
     async def _run_lifecycle_owner(self) -> None:
         queue = self._lifecycle_queue
@@ -2314,7 +2357,6 @@ class MCPTool:
                         sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                     )
                 )
-                session = mcp_client.session
             except (Exception, asyncio.CancelledError) as ex:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
                 if cancelled:
@@ -2347,7 +2389,8 @@ class MCPTool:
                 ) as init_span:
                     init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, mcp_client.protocol_version)
                     self._set_server_capabilities(mcp_client.server_capabilities)
-                    self._ping_available = session.initialize_result is not None
+                    # initialize_result exists only for legacy negotiation; modern MCP has no ping.
+                    self._ping_available = mcp_client.session.initialize_result is not None
             except (Exception, asyncio.CancelledError) as ex:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
                 if cancelled:
@@ -2373,7 +2416,9 @@ class MCPTool:
                     error_msg,
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
-            self._connection = _ClientMCPConnection(mcp_client)
+            self._connection = _ClientMCPConnection(mcp_client, is_framework_owned=True)
+        elif connection.client is not None:
+            self._set_server_capabilities(connection.client.server_capabilities)
         elif connection.session is not None:
             session = connection.session
             try:
@@ -3579,6 +3624,7 @@ class MCPStdioTool(MCPTool):
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
+        mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
@@ -3627,8 +3673,14 @@ class MCPStdioTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: An existing MCP client session to use. The caller retains ownership;
-                closing or resetting this wrapper does not close or replace that session.
+            mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that client. Mutually exclusive
+                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
+                The supplied Client also owns its transport and authentication configuration, so it cannot be
+                combined with this wrapper's ``header_provider``.
+            session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
+                usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
+                that session. Sampling options configured on this wrapper do not modify the supplied session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3703,6 +3755,7 @@ class MCPStdioTool(MCPTool):
             always_load=always_load,
             tool_name_prefix=tool_name_prefix,
             additional_properties=additional_properties,
+            mcp_client=mcp_client,
             session=session,
             client=client,
             load_tools=load_tools,
@@ -3786,6 +3839,7 @@ class MCPStreamableHTTPTool(MCPTool):
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
+        mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
@@ -3837,8 +3891,12 @@ class MCPStreamableHTTPTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: An existing MCP client session to use. The caller retains ownership;
-                closing or resetting this wrapper does not close or replace that session.
+            mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that client. Mutually exclusive
+                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
+            session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
+                usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
+                that session. Sampling options configured on this wrapper do not modify the supplied session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3973,6 +4031,12 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
+        if mcp_client is not None and header_provider is not None:
+            raise ValueError(
+                "`header_provider` cannot be used in combination with a user-supplied `mcp_client`; "
+                "configure per-request headers on the supplied Client's transport."
+            )
+
         super().__init__(
             name=name,
             description=description,
@@ -3982,6 +4046,7 @@ class MCPStreamableHTTPTool(MCPTool):
             always_load=always_load,
             tool_name_prefix=tool_name_prefix,
             additional_properties=additional_properties,
+            mcp_client=mcp_client,
             session=session,
             client=client,
             load_tools=load_tools,
@@ -4229,7 +4294,8 @@ class MCPStreamableHTTPTool(MCPTool):
     def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
         self._session_headers = dict(headers)
         self._session_header_identity = _mcp_header_identity(headers)
-        self._session_header_session = self.session
+        connection = self._connection
+        self._session_header_session = connection.session if connection is not None else None
 
     def _stage_session_headers(self, headers: Mapping[str, str], kwargs: Mapping[str, Any]) -> None:
         self._pending_session_headers = dict(headers)
@@ -4278,8 +4344,8 @@ class MCPStreamableHTTPTool(MCPTool):
     ) -> None:
         identity = _mcp_header_identity(headers)
         connection = self._connection
-        if connection is not None and not connection.is_framework_owned:
-            if self._session_header_identity is None or self._session_header_session is not self.session:
+        if isinstance(connection, _SessionMCPConnection):
+            if self._session_header_identity is None or self._session_header_session is not connection.session:
                 raise _mcp_tool_execution_exception(
                     "MCP header identity is unknown for a caller-supplied session; "
                     "use a separate framework-managed tool instance."

@@ -18,7 +18,6 @@ the Agent Framework Python SDK. Entries are reviewed against the
 | Name | Brief description | Scenarios | Project | Issues |
 | --- | --- | --- | --- | --- |
 | Engram | Durable memory tools with optional middleware for Agent Framework agents. | Explicit cross-session memory recall and persistence; automatic recall and capture | [agent-framework-engram](https://github.com/lumetra-io/engram-agent-framework) | [Open an issue](https://github.com/lumetra-io/engram-agent-framework/issues/new/choose) |
-| Quilzo | A self-hosted MCP gateway that offers an organization's MCP servers to agents with pinned tool definitions, per-role access, held calls and an audit log. | Calling MCP tools through `MCPStreamableHTTPTool` with a token; tool calls that wait for a person to approve; audit of every tool call | [Quilzo with Agent Framework](https://quilzo.github.io/frameworks/#agent-framework) | [Open an issue](https://github.com/quilzo/quilzo/issues/new/choose) |
 
 ## Context providers
 
