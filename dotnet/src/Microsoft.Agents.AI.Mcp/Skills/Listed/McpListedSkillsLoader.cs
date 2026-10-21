@@ -60,7 +60,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
-        this._cache = new McpListedSkillsCache(this._timeProvider);
+        this._cache = new McpListedSkillsCache(this._timeProvider, this.DiscoverCoreAsync);
     }
 
     /// <summary>
@@ -76,10 +76,10 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
     /// <exception cref="ObjectDisposedException">The loader has been disposed.</exception>
     public Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
     {
-        return this._cache.GetOrCreateAsync(this.DiscoverCoreAsync, cancellationToken);
+        return this._cache.GetOrCreateAsync(cancellationToken);
     }
 
-    private async Task<McpListedSkillsDiscoveryResult> DiscoverCoreAsync(CancellationToken cancellationToken)
+    private async Task<McpListedSkillsSnapshot> DiscoverCoreAsync(CancellationToken cancellationToken)
     {
         var (skillEntries, pageLifetimes) = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
 
@@ -95,7 +95,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
             skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
         }
 
-        return new McpListedSkillsDiscoveryResult(skills, pageLifetimes);
+        return new McpListedSkillsSnapshot(skills, pageLifetimes);
     }
 
     private async Task<(List<McpListedSkillEntry> Entries, List<McpListedSkillsPageLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
