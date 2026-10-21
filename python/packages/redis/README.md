@@ -53,6 +53,11 @@ JSON collections additionally require RedisJSON.
 Redis Search indexes require logical database 0, so vector-store URLs and clients
 must select database 0 (the default).
 
+When upgrading an existing `RedisContextProvider` index, stop older writers and
+initialize once with `overwrite_index=True` to migrate its scope schema while
+preserving stored hashes. Repeat if prompted to resume a bounded migration,
+then remove the option; normal providers reject incomplete migrations.
+
 Choose `storage_type="hash"` for non-null records with binary vector storage,
 or `"json"` for nullable fields/vectors and native JSON data. HASH rejects
 `None`, including `vector=None`; JSON preserves explicit null. Both support
@@ -147,40 +152,6 @@ records belonging to a verified application, tenant, agent, provider source,
 and session into the corresponding scoped key using an application-owned
 migration process. After verifying the copied history, remove legacy keys
 separately according to the application's retention policy.
-
-## Isolate retrieved memories
-
-`RedisContextProvider` stores exact application, agent, user, and session
-identifiers as metadata, but indexes only deterministic versioned tokens for
-those values. Scope comparisons therefore preserve case and treat punctuation
-as ordinary identifier content. Values supplied inside documents cannot
-override the provider's configured scopes.
-
-Indexes created by earlier releases use a different scope schema. A provider
-using the current schema fails closed when it encounters such an index. During
-a coordinated deployment, stop older writers and rebuild the index once while
-preserving its hashes:
-
-```python
-context_provider = RedisContextProvider(
-    redis_url="redis://localhost:6379",
-    index_name="context",
-    prefix="context",
-    application_id="support-app",
-    user_id="user-123",
-    overwrite_index=True,
-)
-```
-
-The migration records resumable progress outside the indexed key namespace,
-backfills the current scope tokens from the exact identifiers stored in each
-matching Redis hash, and only then replaces the index definition. Each pass is
-bounded; if a large namespace needs another pass, initialization raises an
-actionable error and the next provider with `overwrite_index=True` resumes from
-the saved cursor. Normal providers reject an incomplete migration. Existing
-memory content remains in place. After the migration completes, remove
-`overwrite_index=True`. Review or remove records whose historical scope
-metadata is not authoritative before migration.
 
 ## Store and search documents
 

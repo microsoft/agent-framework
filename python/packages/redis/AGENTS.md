@@ -10,10 +10,6 @@ Redis-based storage for agent threads and context.
   an owned client from a URL or credential provider, or borrow a standalone async Redis client configured with
   `decode_responses=True`; borrowed clients remain caller-owned.
 - **`RedisContextProvider`** - Context provider with Redis-backed retrieval
-  Scope identifiers are stored as raw metadata but indexed through versioned,
-  domain-separated tokens in case-sensitive TAG fields. Existing legacy
-  indexes fail closed unless `overwrite_index=True` is explicitly used for a
-  coordinated in-place rebuild and token backfill.
 - **`RedisSettings`** - TypedDict connection settings for vector stores, resolved with core `load_settings` from
   explicit URL overrides, an optional .env file, or `REDIS_URL`. URLs use `SecretString` to mask credentials.
 - **`RedisCollection` / `RedisStore`** - Experimental generic vector storage and search over native HASH and JSON
