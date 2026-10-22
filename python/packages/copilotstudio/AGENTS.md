@@ -13,7 +13,7 @@ Integration with Microsoft Copilot Studio agents.
 from agent_framework.microsoft import CopilotStudioAgent
 
 agent = CopilotStudioAgent(
-    bot_identifier="your-bot-id",
+    agent_identifier="your-agent-schema-name",
     environment_id="your-env-id",
 )
 response = await agent.run("Hello")

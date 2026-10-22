@@ -47,6 +47,7 @@ from uuid import UUID, uuid4
 
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
+from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
 from pydantic_core import to_jsonable_python
 
@@ -1231,8 +1232,13 @@ class FunctionTool(SerializationMixin):
             return parsed
 
         span_attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        metric_attributes = dict(span_attributes)
-        metric_attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
+        # Keep metric dimensions explicit so span-only attributes cannot flow into the histogram.
+        metric_attributes: dict[str, AttributeValue] = {
+            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+            OtelAttr.TOOL_NAME: self.name,
+            OtelAttr.TOOL_TYPE: "function",
+            OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
+        }
         # Filter out framework kwargs that are not JSON serializable.
         serializable_kwargs = {
             k: v

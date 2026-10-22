@@ -2279,6 +2279,44 @@ class MCPTool:
         self._supports_prompts = getattr(capabilities, "prompts", None) is not None
         self._supports_logging = getattr(capabilities, "logging", None) is not None
 
+    async def _recover_connection_after_loss(
+        self,
+        *,
+        operation: str,
+        inner_exception: Exception,
+        load_configured: bool,
+    ) -> None:
+        """Recreate a framework-owned connection or fail clearly for a caller-owned connection."""
+        connection = self._connection
+        if connection is not None and not connection.is_framework_owned:
+            connection_type = "Client" if connection.client is not None else "ClientSession"
+            raise _mcp_tool_execution_exception(
+                f"MCP connection lost during {operation}. The active {connection_type} is caller-owned and cannot "
+                "be recreated by Agent Framework. Create a replacement connection and MCP tool instance.",
+                inner_exception=inner_exception,
+            ) from inner_exception
+
+        logger.info("MCP connection was lost during %s. Reconnecting...", operation)
+        try:
+            if load_configured:
+                await self.connect(reset=True)
+            else:
+                await self._reconnect_without_loading()
+        except Exception as reconnect_ex:
+            raise _mcp_tool_execution_exception(
+                f"Failed to reconnect to MCP server after {operation}.",
+                inner_exception=reconnect_ex,
+            ) from reconnect_ex
+
+    def _is_connection_loss(self, exception: Exception) -> bool:
+        """Return whether an exception proves that the active MCP connection ended."""
+        from anyio import ClosedResourceError
+        from mcp import MCPError
+
+        return isinstance(exception, ClosedResourceError) or (
+            isinstance(exception, MCPError) and "session terminated" in exception.error.message.lower()
+        )
+
     async def _reconnect_without_loading(self) -> None:
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=True, load_configured=False)
@@ -2903,14 +2941,11 @@ class MCPTool:
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
-                        logger.info("MCP connection closed unexpectedly while loading prompts. Reconnecting...")
-                        try:
-                            await self._reconnect_without_loading()
-                        except Exception as reconn_ex:
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
+                        await self._recover_connection_after_loss(
+                            operation="prompt discovery",
+                            inner_exception=cl_ex,
+                            load_configured=False,
+                        )
                         continue
                     _log_mcp_exception(
                         logging.ERROR,
@@ -3049,14 +3084,11 @@ class MCPTool:
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
-                        logger.info("MCP connection closed unexpectedly while loading tools. Reconnecting...")
-                        try:
-                            await self._reconnect_without_loading()
-                        except Exception as reconn_ex:
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
+                        await self._recover_connection_after_loss(
+                            operation="tool discovery",
+                            inner_exception=cl_ex,
+                            load_configured=False,
+                        )
                         continue
                     _log_mcp_exception(
                         logging.ERROR,
@@ -3234,6 +3266,7 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
+        from anyio import ClosedResourceError
         from mcp import MCPError
 
         if not self._ping_available:
@@ -3246,23 +3279,36 @@ class MCPTool:
                 self._ping_available = False
                 logger.debug("Skipping future MCP pings because the server does not support ping.")
                 return
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self._reconnect_without_loading()
-            except Exception as ex:
-                raise _mcp_tool_execution_exception(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
-        except Exception:
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self._reconnect_without_loading()
-            except Exception as ex:
-                raise _mcp_tool_execution_exception(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
+            if self._is_connection_loss(mcp_exc) or self._connection is None or self._connection.is_framework_owned:
+                await self._recover_connection_after_loss(
+                    operation="connection liveness check",
+                    inner_exception=mcp_exc,
+                    load_configured=False,
+                )
+                return
+            raise _mcp_tool_execution_exception(
+                "MCP connection liveness check failed.",
+                inner_exception=mcp_exc,
+            ) from mcp_exc
+        except ClosedResourceError as connection_ex:
+            await self._recover_connection_after_loss(
+                operation="connection liveness check",
+                inner_exception=connection_ex,
+                load_configured=False,
+            )
+        except Exception as connection_ex:
+            connection = self._connection
+            if connection is None or connection.is_framework_owned:
+                await self._recover_connection_after_loss(
+                    operation="connection liveness check",
+                    inner_exception=connection_ex,
+                    load_configured=False,
+                )
+                return
+            raise _mcp_tool_execution_exception(
+                "MCP connection liveness check failed.",
+                inner_exception=connection_ex,
+            ) from connection_ex
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
@@ -3365,29 +3411,24 @@ class MCPTool:
                     set_mcp_span_error(span, type(tool_ex).__name__, str(tool_ex))
                 raise
             except (ClosedResourceError, MCPError) as call_ex:
-                is_session_terminated = (
-                    isinstance(call_ex, MCPError) and "session terminated" in call_ex.error.message.lower()
-                )
-                is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
-                if not is_connection_lost:
+                if not self._is_connection_loss(call_ex):
                     error_message = call_ex.error.message if isinstance(call_ex, MCPError) else str(call_ex)
                     if span.is_recording():
                         set_mcp_span_error(span, type(call_ex).__name__, error_message)
                     raise _mcp_tool_execution_exception(error_message, inner_exception=call_ex) from call_ex
 
                 if attempt == 0:
-                    # First attempt failed, try reconnecting.
-                    logger.info("MCP connection closed or terminated unexpectedly. Reconnecting...")
                     try:
-                        await self.connect(reset=True)
-                        continue
-                    except Exception as reconn_ex:
+                        await self._recover_connection_after_loss(
+                            operation="tool call",
+                            inner_exception=call_ex,
+                            load_configured=True,
+                        )
+                    except ToolExecutionException as recovery_error:
                         if span.is_recording():
-                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                        raise _mcp_tool_execution_exception(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
+                            set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
+                        raise
+                    continue
 
                 # Second attempt also failed, give up.
                 _log_mcp_exception(
@@ -3508,31 +3549,29 @@ class MCPTool:
                     return parser(prompt_result)
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
-                        # First attempt failed, try reconnecting
-                        logger.info("MCP connection closed unexpectedly. Reconnecting...")
                         try:
-                            await self.connect(reset=True)
-                            continue  # Retry the operation
-                        except Exception as reconn_ex:
-                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
-                    else:
-                        # Second attempt also failed, give up
-                        _log_mcp_exception(
-                            logging.ERROR,
-                            cl_ex,
-                            "MCP connection closed unexpectedly after reconnection: %s",
-                            cl_ex,
-                            redacted_message="MCP prompt call connection closed after reconnection",
-                        )
-                        set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
-                        raise _mcp_tool_execution_exception(
-                            f"Failed to call prompt '{prompt_name}' - connection lost.",
-                            inner_exception=cl_ex,
-                        ) from cl_ex
+                            await self._recover_connection_after_loss(
+                                operation="prompt call",
+                                inner_exception=cl_ex,
+                                load_configured=True,
+                            )
+                        except ToolExecutionException as recovery_error:
+                            set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
+                            raise
+                        continue
+                    # Second attempt also failed, give up
+                    _log_mcp_exception(
+                        logging.ERROR,
+                        cl_ex,
+                        "MCP connection closed unexpectedly after reconnection: %s",
+                        cl_ex,
+                        redacted_message="MCP prompt call connection closed after reconnection",
+                    )
+                    set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
+                    raise _mcp_tool_execution_exception(
+                        f"Failed to call prompt '{prompt_name}' - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
                 except MCPError as mcp_exc:
                     error_message = mcp_exc.error.message
                     set_mcp_span_error(span, type(mcp_exc).__name__, error_message)
@@ -3616,7 +3655,7 @@ class MCPStdioTool(MCPTool):
     def __init__(
         self,
         name: str,
-        command: str,
+        command: str | None = None,
         *,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
@@ -3648,13 +3687,18 @@ class MCPStdioTool(MCPTool):
         """Initialize the MCP stdio tool.
 
         Note:
-            The arguments are used to create a StdioServerParameters object,
-            which is then used to create a stdio client. See ``mcp.client.stdio.stdio_client``
+            Supply either ``command`` for a framework-owned high-level Client, or an already-entered
+            ``mcp_client`` for a caller-owned high-level Client. The deprecated ``session`` path
+            remains caller-owned and may continue to be combined with ``command`` for compatibility.
+
+            In framework-owned command mode, the arguments are used to create a
+            ``StdioServerParameters`` object and stdio client. See ``mcp.client.stdio.stdio_client``
             and ``mcp.client.stdio.stdio_server_parameters`` for more details.
 
         Args:
             name: The name of the tool.
-            command: The command to run the MCP server.
+            command: The command to run for framework-owned stdio Client construction. Mutually exclusive
+                with ``mcp_client``. May be omitted when supplying ``mcp_client`` or the deprecated ``session``.
 
         Keyword Args:
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
@@ -3675,9 +3719,10 @@ class MCPStdioTool(MCPTool):
             request_timeout: The default timeout in seconds for all requests.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
-                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
-                The supplied Client also owns its transport and authentication configuration, so it cannot be
-                combined with this wrapper's ``header_provider``.
+                with ``command`` and ``session``. ``request_timeout``, ``args``, ``env``, ``encoding``, and
+                additional stdio keyword arguments configure framework-owned process construction and cannot be
+                supplied with ``mcp_client``. Sampling options configured on this wrapper do not modify the
+                supplied Client.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
                 that session. Sampling options configured on this wrapper do not modify the supplied session.
@@ -3744,8 +3789,35 @@ class MCPStdioTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
-            kwargs: Any extra arguments to pass to the stdio client.
+            kwargs: Additional arguments for framework-owned ``StdioServerParameters`` construction.
         """
+        if mcp_client is not None and session is not None:
+            raise ValueError("`mcp_client` and `session` are mutually exclusive. If possible, prefer `mcp_client`.")
+        if mcp_client is not None and command is not None:
+            raise ValueError(
+                "`command` and `mcp_client` are mutually exclusive; configure the process on the supplied Client."
+            )
+        if mcp_client is None and session is None and command is None:
+            raise ValueError("`command` is required when neither `mcp_client` nor `session` supplies a connection.")
+        if mcp_client is not None:
+            conflicting_options = [
+                option
+                for option, is_configured in (
+                    ("request_timeout", request_timeout is not None),
+                    ("args", args is not None),
+                    ("env", env is not None),
+                    ("encoding", encoding is not None),
+                    ("kwargs", bool(kwargs)),
+                )
+                if is_configured
+            ]
+            if conflicting_options:
+                formatted_options = ", ".join(f"`{option}`" for option in conflicting_options)
+                raise ValueError(
+                    f"`mcp_client` cannot be combined with framework-owned stdio options: {formatted_options}. "
+                    "Configure these settings on the supplied Client instead."
+                )
+
         super().__init__(
             name=name,
             description=description,
@@ -3779,7 +3851,8 @@ class MCPStdioTool(MCPTool):
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
-        attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
+        if self.command is not None:
+            attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
         return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -3788,6 +3861,11 @@ class MCPStdioTool(MCPTool):
         Returns:
             An async context manager for the stdio client transport.
         """
+        if self.command is None:
+            raise RuntimeError(
+                "Internal invariant violated: MCPStdioTool requires `command` to create a framework-owned Client."
+            )
+
         args: dict[str, Any] = {
             "command": self.command,
             "args": self.args,
@@ -3831,7 +3909,7 @@ class MCPStreamableHTTPTool(MCPTool):
     def __init__(
         self,
         name: str,
-        url: str,
+        url: str | None = None,
         *,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
@@ -3864,15 +3942,20 @@ class MCPStreamableHTTPTool(MCPTool):
         """Initialize the MCP streamable HTTP tool.
 
         Note:
-            The arguments are used to create a streamable HTTP client using the
-            new ``mcp.client.streamable_http.streamable_http_client`` API.
-            If an ``httpx2.AsyncClient`` is provided via ``http_client``, it will be used as the underlying transport
-            client.
-            Otherwise, the tool creates and manages a default client without response-cookie persistence.
+            Supply either ``url`` for a framework-owned high-level Client, or an already-entered
+            ``mcp_client`` for a caller-owned high-level Client. The deprecated ``session`` path
+            remains caller-owned and may continue to be combined with ``url`` for compatibility.
+
+            In framework-owned URL mode, the arguments are used to create a streamable HTTP client
+            using the new ``mcp.client.streamable_http.streamable_http_client`` API. If an
+            ``httpx2.AsyncClient`` is provided via ``http_client``, it will be used as the underlying
+            transport client. Otherwise, the tool creates and manages a default client without
+            response-cookie persistence.
 
         Args:
             name: The name of the tool.
-            url: The URL of the MCP server.
+            url: The URL of the MCP server for framework-owned Client construction. Mutually exclusive
+                with ``mcp_client``. May be omitted when supplying ``mcp_client`` or the deprecated ``session``.
 
         Keyword Args:
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
@@ -3893,7 +3976,10 @@ class MCPStreamableHTTPTool(MCPTool):
             request_timeout: The default timeout in seconds for all requests.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
-                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
+                with ``url`` and ``session``. ``request_timeout``, ``terminate_on_close``, ``http_client``,
+                ``static_headers``, and ``header_provider`` configure framework-owned HTTP construction and
+                cannot be supplied with ``mcp_client``. Sampling options configured on this wrapper do not
+                modify the supplied Client.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
                 that session. Sampling options configured on this wrapper do not modify the supplied session.
@@ -4031,11 +4117,32 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
-        if mcp_client is not None and header_provider is not None:
+        if mcp_client is not None and session is not None:
+            raise ValueError("`mcp_client` and `session` are mutually exclusive. If possible, prefer `mcp_client`.")
+        if mcp_client is not None and url is not None:
             raise ValueError(
-                "`header_provider` cannot be used in combination with a user-supplied `mcp_client`; "
-                "configure per-request headers on the supplied Client's transport."
+                "`url` and `mcp_client` are mutually exclusive; configure the endpoint on the supplied Client."
             )
+        if mcp_client is None and session is None and url is None:
+            raise ValueError("`url` is required when neither `mcp_client` nor `session` supplies a connection.")
+        if mcp_client is not None:
+            conflicting_options = [
+                option
+                for option, is_configured in (
+                    ("request_timeout", request_timeout is not None),
+                    ("terminate_on_close", terminate_on_close is not None),
+                    ("http_client", http_client is not None),
+                    ("static_headers", static_headers is not None),
+                    ("header_provider", header_provider is not None),
+                )
+                if is_configured
+            ]
+            if conflicting_options:
+                formatted_options = ", ".join(f"`{option}`" for option in conflicting_options)
+                raise ValueError(
+                    f"`mcp_client` cannot be combined with framework-owned HTTP options: {formatted_options}. "
+                    "Configure these settings on the supplied Client instead."
+                )
 
         super().__init__(
             name=name,
@@ -4091,6 +4198,8 @@ class MCPStreamableHTTPTool(MCPTool):
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
+        if self.url is None:
+            return attrs
         attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
         attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
         try:
@@ -4119,6 +4228,11 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
+        if self.url is None:
+            raise RuntimeError(
+                "Internal invariant violated: MCPStreamableHTTPTool requires `url` to create a framework-owned Client."
+            )
+
         from httpx2 import URL, AsyncClient, Timeout
 
         self._promote_pending_session_headers()
