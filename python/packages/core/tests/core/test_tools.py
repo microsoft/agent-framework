@@ -497,6 +497,41 @@ async def test_function_call_with_object_arguments_still_runs_the_tool() -> None
     assert result_groups[0][0].result == "ok"
 
 
+@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]"])
+async def test_malformed_arguments_are_answered_before_the_call_is_sent_for_approval(
+    arguments: str,
+) -> None:
+    """A payload that is not arguments is answered instead of being sent for approval.
+
+    Approving a call whose arguments are not arguments cannot make that call work, so
+    the model is told what went wrong rather than a human being asked to approve a
+    call that can only fail.
+    """
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write(value: str = "") -> str:
+        calls.append({"value": value})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="guarded_write", arguments=arguments),
+        ],
+        tools=[guarded_write],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == []
+    assert len(result_groups) == 1
+    result = result_groups[0][0]
+    assert result.type == "function_result"
+    assert "not a JSON object" in str(result.exception)
+    assert all(content.type != "function_approval_request" for group in result_groups for content in group)
+
+
 async def test_invoke_preserves_explicit_null_argument():
     """A required nullable argument the model sets to null must reach the function.
 

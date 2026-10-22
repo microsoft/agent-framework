@@ -2173,6 +2173,10 @@ def _parse_function_call_arguments(function_call: Content, tool_name: str) -> di
     argument it never declared, and the model would not learn that its call was
     malformed. Such a call is answered like a missing required argument, so the
     model can retry it.
+
+    The check runs before the middleware pipeline, so middleware never sees a
+    malformed payload as a tool call: a payload that is not arguments is not a
+    call, and it is answered instead of being invoked.
     """
     arguments = function_call.arguments
     if isinstance(arguments, str) and arguments:
@@ -2715,6 +2719,7 @@ async def _try_execute_function_call_groups(
             if function_call.type == "function_call"
         ]
         pause_groups: list[list[Content]] = []
+        surfaced_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
                 continue
@@ -2724,24 +2729,42 @@ async def _try_execute_function_call_groups(
                 and tool_name not in approval_tool_names
                 and (tool_name in declaration_only_tool_names or tool_name in additional_tool_names)
             ):
-                pause_groups.append([_as_user_input_pause(function_call)])
+                group = [_as_user_input_pause(function_call)]
+                pause_groups.append(group)
+                surfaced_groups.append(group)
                 continue
+            if tool_name is not None:
+                # A payload that is not arguments cannot become a working call by
+                # approving it, so answer it here instead of asking a human to
+                # approve a call that can only fail. The same guard runs again in
+                # _auto_invoke_function.
+                try:
+                    _parse_function_call_arguments(function_call, tool_name)
+                except _FunctionArgumentValidationError as exc:
+                    surfaced_groups.append([_function_argument_validation_error_result(function_call, exc, config)])
+                    continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
             if tool_name is None:
                 visible_requests.append(approval_request)
-                pause_groups.append([approval_request])
+                group = [approval_request]
+                pause_groups.append(group)
+                surfaced_groups.append(group)
                 continue
             tool = tool_map.get(tool_name)
             if tool_name in approval_tool_names or tool is None:
                 visible_requests.append(approval_request)
-                pause_groups.append([approval_request])
+                group = [approval_request]
+                pause_groups.append(group)
+                surfaced_groups.append(group)
                 continue
             if not _has_authoritative_approval_session(approval_session):
                 visible_requests.append(approval_request)
-                pause_groups.append([approval_request])
+                group = [approval_request]
+                pause_groups.append(group)
+                surfaced_groups.append(group)
                 continue
             already_approved_requests.append(approval_request)
         _store_already_approved_approval_requests(
@@ -2752,7 +2775,7 @@ async def _try_execute_function_call_groups(
         )
         _store_pending_approval_requests(approval_session, visible_requests)
         _store_pending_mixed_pause_batch(approval_session, pause_groups)
-        return pause_groups, False
+        return surfaced_groups, False
     if has_declaration_only_call:
         # Host-owned calls pause for caller input, but known local siblings must
         # still execute. A caller-owned session can defer those siblings until
