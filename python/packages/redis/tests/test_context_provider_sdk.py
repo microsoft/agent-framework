@@ -92,9 +92,6 @@ async def test_context_manager_closes_owned_index_only(
     for borrowed, expected_waits in ((False, 1), (True, 0)):
         closes.reset_mock()
         provider = _provider(redis_client, borrowed=borrowed)
-        # The index connects lazily on first use, so model an index that has been
-        # used (before_run runs exists/create through it) before the provider exits.
-        await provider.redis_index.set_client(redis_client)
         async with provider:
             pass
         assert closes.await_count == expected_waits

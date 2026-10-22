@@ -39,6 +39,7 @@ def mock_index() -> AsyncMock:
     client = MagicMock()
     client.hset = AsyncMock()
     client.hmget = AsyncMock(return_value=[b"1", b"complete", b"0", b"", b"", b"0", b"[]"])
+    client.aclose = AsyncMock()
     idx.client = client
     idx.create = AsyncMock()
     idx.load = AsyncMock()
