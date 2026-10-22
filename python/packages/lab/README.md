@@ -80,6 +80,14 @@ uv run poe test
 uv run poe pyright
 ```
 
+Lab release artifacts are built and published separately from the root
+`python-release.yml` workflow. From this directory, maintainers can create the
+standalone wheel and source distribution in the shared Python release directory:
+
+```bash
+uv build --out-dir ../../dist
+```
+
 Lightning observability tests intentionally exercise heavier tracing paths and are marked as `resource_intensive`:
 
 ```bash
