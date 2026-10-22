@@ -8548,7 +8548,6 @@ def _caller_owned_mcp_tool(connection_type: str) -> tuple[MCPStdioTool, Any]:
         return (
             MCPStdioTool(
                 name="test",
-                command="unused",
                 mcp_client=client,
                 load_tools=True,
                 load_prompts=True,
