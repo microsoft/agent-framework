@@ -701,7 +701,7 @@ class RedisContextProvider(ContextProvider):
         finally:
             renewal_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await renewal_task
+                _ = await renewal_task
             await client.eval(
                 "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
                 1,
