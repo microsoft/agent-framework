@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework import Agent, AgentResponse, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
@@ -19,6 +19,12 @@ The researcher uses the public Microsoft Learn MCP server, then the technical wr
 turns the research into a concise answer. The caller creates and enters the high-level
 MCP Client, passes it to `MCPStreamableHTTPTool`, and keeps both open until the
 sequential workflow finishes.
+
+For most applications, passing the `url=` directly to `MCPStreamableHTTPTool` and let
+Agent Framework manage the connection is sufficient. Use this caller-owned Client pattern
+when the application must configure or reuse the high-level MCP Client, or keep its
+connection alive across multiple workflow runs. The caller owns the Client
+lifetime, while Agent Framework still owns the wrapper lifecycle.
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be set to the Microsoft Foundry project endpoint.
@@ -37,29 +43,34 @@ async def main() -> None:
 
     MS_LEARN_MCP_URL = "https://learn.microsoft.com/api/mcp"
 
-    # 2) Enter the caller-owned MCP Client before creating the MCP tool.
-    async with Client(server=MS_LEARN_MCP_URL) as mcp_client:
-        # 3) Enter the MCP wrapper so its background tasks close before the caller-owned Client.
-        async with MCPStreamableHTTPTool(name="ms_learn", mcp_client=mcp_client) as mcp_tool:
-            research_agent = Agent(
-                client=chat_client,
-                name="research_agent",
-                tools=mcp_tool,
-                instructions="You are a Microsoft research agent backing your research with Microsoft Learn docs.",
-            )
-            writer_agent = Agent(
-                client=chat_client,
-                name="writer_agent",
-                instructions=(
-                    "You are a technical writer who explains concepts clearly, concisely, and focuses on the key "
-                    "points."
-                ),
-            )
+    # 2) Enter the caller-owned MCP Client before creating the MCP tool
+    async with (
+        Client(server=MS_LEARN_MCP_URL) as mcp_client,
+        MCPStreamableHTTPTool(name="ms_learn", mcp_client=mcp_client) as mcp_tool
+    ):
 
-            # 4) Build and run the workflow while the caller-owned MCP Client and wrapper remain entered.
-            workflow = SequentialBuilder(participants=[research_agent, writer_agent]).build().as_agent()
-            response = await workflow.run("Explain how to set up the Python Agent Framework.")
-            print(response.text)
+        research_agent = Agent(
+            client=chat_client,
+            name="research_agent",
+            tools=mcp_tool,
+            instructions="You are a Microsoft research agent backing your research with Microsoft Learn docs.",
+        )
+        writer_agent = Agent(
+            client=chat_client,
+            name="writer_agent",
+            instructions=(
+                "You are a technical writer who explains concepts clearly, concisely, and focuses on the key "
+                "points."
+            ),
+        )
+
+        # 3) Build and run the workflow while the caller-owned MCP Client and wrapper remain entered.
+        workflow = SequentialBuilder(participants=[research_agent, writer_agent]).build()
+        result = await workflow.run("Explain how to set up the Python Agent Framework.")
+
+        for message in result.get_outputs():
+            if isinstance(message, AgentResponse):
+                print(message.text)
 
         """
         Sample output:
