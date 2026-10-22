@@ -889,7 +889,7 @@ class RawGeminiChatClient(
         if response_schema is not None:
             kwargs["response_schema"] = response_schema
         elif (schema := self._extract_response_schema(response_format)) is not None:
-            kwargs["response_schema"] = schema
+            kwargs["response_json_schema"] = schema
         tools = self._prepare_tools(options)
         if tools:
             kwargs["tools"] = tools

@@ -984,7 +984,7 @@ class Content:
                 content = Content.from_data(data=image_bytes, media_type="image/png")
 
                 # If you have a base64 string and need to detect media type
-                base64_string = "iVBORw0KGgo..."
+                base64_string = "iVBORw0KGgo="
                 media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
@@ -1023,7 +1023,7 @@ class Content:
         """Create content from a URI, can be both data URI or external URI.
 
         Use this when you already have a properly formed data URI
-        (e.g., "data:image/png;base64,iVBORw0KGgo...").
+        (e.g., "data:image/png;base64,iVBORw0KGgo=").
         Or when you receive a link to a online resource (e.g., "https://example.com/image.png").
 
         Args:
@@ -1049,10 +1049,10 @@ class Content:
         Examples:
             .. code-block:: python
 
-                from agent_framework import Content
+                from agent_framework import Content, detect_media_type_from_base64
 
                 # Create from a data URI
-                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo...", media_type="image/png")
+                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo=", media_type="image/png")
                 assert content.type == "data"
 
                 # Create from an external URI
@@ -1060,12 +1060,9 @@ class Content:
                 assert content.type == "uri"
 
                 # When receiving a raw already encode data string, you can do this:
-                raw_base64_string = "iVBORw0KGgo..."
-                content = Content.from_uri(
-                    uri=f"data:{(detect_media_type_from_base64(data_str=raw_base64_string) or 'image/png')};base64,{
-                        raw_base64_string
-                    }"
-                )
+                raw_base64_string = "iVBORw0KGgo="
+                media_type = detect_media_type_from_base64(data_str=raw_base64_string) or "image/png"
+                content = Content.from_uri(uri=f"data:{media_type};base64,{raw_base64_string}")
         """
         return cls(
             **_validate_uri(uri, media_type),
@@ -3297,13 +3294,16 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse, ChatResponseUpdate, ChatClient
+                from agent_framework import ChatResponse, ChatResponseUpdate, Content
 
-                client = ChatClient()  # should be a concrete implementation
-                response = await ChatResponse.from_update_generator(
-                    client.get_streaming_response("Hello, how are you?")
-                )
-                print(response.text)
+
+                async def updates():
+                    yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
+                    yield ChatResponseUpdate(contents=[Content.from_text(text=" How can I help you?")])
+
+
+                response = await ChatResponse.from_update_generator(updates())
+                print(response.text)  # "Hello How can I help you?"
 
         Args:
             updates: An async iterable of ChatResponseUpdate objects to combine.

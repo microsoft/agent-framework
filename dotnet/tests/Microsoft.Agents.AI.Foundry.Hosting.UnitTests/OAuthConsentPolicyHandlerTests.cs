@@ -261,6 +261,12 @@ public class OAuthConsentPolicyHandlerTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             new((AgentSession?)null);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private abstract class AgentBase : AIAgent

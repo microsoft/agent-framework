@@ -49,29 +49,35 @@ CHAT_OPTION_ARGUMENTS = {
 }
 
 
-async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+async def list_tools(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None
+) -> types.ListToolsResult:
     """Return the app-owned native MCP tool definition."""
-    return types.ListToolsResult(tools=[
-        types.Tool(
-            name="run_agent_manually",
-            description=agent.description or "",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    TASK_ARGUMENT: {
-                        "type": "string",
-                        "description": "The request for the hosted agent.",
+    return types.ListToolsResult(
+        tools=[
+            types.Tool(
+                name="run_agent_manually",
+                description=agent.description or "",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        TASK_ARGUMENT: {
+                            "type": "string",
+                            "description": "The request for the hosted agent.",
+                        },
+                        **CHAT_OPTION_ARGUMENTS,
                     },
-                    **CHAT_OPTION_ARGUMENTS,
+                    "required": [TASK_ARGUMENT],
+                    "additionalProperties": False,
                 },
-                "required": [TASK_ARGUMENT],
-                "additionalProperties": False,
-            },
-        )
-    ])
+            )
+        ]
+    )
 
 
-async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+async def call_tool(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+) -> types.CallToolResult:
     """Convert, run, and render without the agent-backed adapter."""
     name = params.name
     arguments = params.arguments or {}

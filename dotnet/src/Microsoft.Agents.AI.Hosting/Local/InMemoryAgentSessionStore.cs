@@ -72,6 +72,19 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
             : null;
     }
 
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
+
+        this._sessions.TryRemove((GetStorageIdentity(agent), key), out _);
+        return default;
+    }
+
     private static string GetStorageIdentity(AIAgent agent)
     {
         // Hosted execution can supply a logical storage identity that survives transient agent instances.
