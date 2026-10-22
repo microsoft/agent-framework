@@ -232,23 +232,31 @@ async def test_openai_base64_decoding(openai_unit_test_env: dict[str, str]) -> N
     for expected, actual in zip(raw_floats, result[0].vector):
         assert abs(expected - actual) < 1e-6
 
+
 async def test_openai_base64_misaligned_payload_raises_descriptive_error(openai_unit_test_env: dict[str, str]) -> None:
     """A truncated base64 payload must fail with a clear error naming the input index,
     not a bare struct buffer-size error."""
     import base64
     import struct
 
-    # One well formed float (4 bytes) plus a stray byte.
+    # Input 0 is well formed; input 1 is one float (4 bytes) plus a stray byte, so it
+    # decodes to 5 bytes. The response lists them in reverse order to make sure the
+    # diagnostic reports the item's own index rather than its position in the list.
+    aligned = base64.b64encode(struct.pack("<1f", 0.25)).decode()
     misaligned = base64.b64encode(struct.pack("<1f", 0.5) + b"\x00").decode()
 
-    mock_item = MagicMock()
-    mock_item.embedding = misaligned
-    mock_item.index = 0
+    good_item = MagicMock()
+    good_item.embedding = aligned
+    good_item.index = 0
+
+    bad_item = MagicMock()
+    bad_item.embedding = misaligned
+    bad_item.index = 1
 
     mock_response = MagicMock()
-    mock_response.data = [mock_item]
+    mock_response.data = [bad_item, good_item]
     mock_response.model = "text-embedding-3-small"
-    mock_response.usage = MagicMock(prompt_tokens=3, total_tokens=3)
+    mock_response.usage = MagicMock(prompt_tokens=6, total_tokens=6)
 
     client = OpenAIEmbeddingClient()
     client.client = MagicMock()
@@ -257,9 +265,13 @@ async def test_openai_base64_misaligned_payload_raises_descriptive_error(openai_
 
     options: OpenAIEmbeddingOptions = {"encoding_format": "base64"}
 
-    with pytest.raises(ValueError, match="cannot be split into 4-byte little-endian floats"):
-        await client.get_embeddings(["test"], options=options)
+    with pytest.raises(ValueError) as exc_info:
+        await client.get_embeddings(["first", "second"], options=options)
 
+    message = str(exc_info.value)
+    assert "input index 1" in message
+    assert "decoded to 5 bytes" in message
+    assert "cannot be split into 4-byte little-endian floats" in message
 
 
 async def test_openai_error_when_no_model() -> None:
