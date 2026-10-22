@@ -40,6 +40,7 @@ gaia = [
 # Lightning RL training module dependencies
 lightning = [
   "agentlightning>=0.2.0,<0.4.0",
+  "litellm!=1.82.7,!=1.82.8,!=1.107.0",
 ]
 
 # TAU2 benchmark module dependencies
