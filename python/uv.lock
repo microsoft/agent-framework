@@ -792,7 +792,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-responses"
-version = "1.0.0a261015"
+version = "1.0.0a261022"
 source = { editable = "packages/hosting-responses" }
 dependencies = [
     { name = "agent-framework-core" },
