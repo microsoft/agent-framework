@@ -431,7 +431,7 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
         await search.invoke(arguments={})
 
 
-@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]", '"text"'])
+@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]", '"text"', "   "])
 async def test_function_call_arguments_that_are_not_a_json_object_are_answered_with_an_error(
     arguments: str,
 ) -> None:

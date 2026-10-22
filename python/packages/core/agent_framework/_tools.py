@@ -2175,7 +2175,7 @@ def _parse_function_call_arguments(function_call: Content, tool_name: str) -> di
     model can retry it.
     """
     arguments = function_call.arguments
-    if isinstance(arguments, str) and arguments.strip():
+    if isinstance(arguments, str) and arguments:
         try:
             decoded = json.loads(arguments)
         except (json.JSONDecodeError, TypeError):
