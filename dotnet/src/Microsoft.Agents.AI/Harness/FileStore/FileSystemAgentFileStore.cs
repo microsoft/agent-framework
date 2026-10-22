@@ -32,6 +32,24 @@ namespace Microsoft.Agents.AI;
 public sealed class FileSystemAgentFileStore : AgentFileStore
 {
     /// <summary>
+    /// UTF-8 without a byte order mark, used for every write.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Encoding.UTF8"/> emits a BOM, which prefixes each stored file with <c>EF BB BF</c>.
+    /// The store's own reads strip it, so a write/read round trip hides the problem, but every other
+    /// consumer sees the extra bytes: byte-for-byte comparisons differ, lengths are off by three, and
+    /// strict parsers reject the leading bytes. Writing without the BOM matches the parameterless
+    /// <see cref="File.WriteAllText(string, string)"/> overload.
+    /// <para>
+    /// Unlike the other UTF-8 instances in this repository, this one leaves <c>throwOnInvalidBytes</c>
+    /// at its default. Turning it on would change how invalid content fails, which is a separate
+    /// behavior change from removing the BOM, and would not match the lenient decoding still used on
+    /// the read path.
+    /// </para>
+    /// </remarks>
+    private static readonly UTF8Encoding s_utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>
     /// The canonical full path of the root directory, always ending with a directory separator.
     /// </summary>
     private readonly string _rootPath;
@@ -70,10 +88,12 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
             Directory.CreateDirectory(parentDir);
         }
 
+        // Both branches must use the same encoding, or the bytes on disk would differ by target
+        // framework.
 #if NET8_0_OR_GREATER
-        await File.WriteAllTextAsync(fullPath, content, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        await File.WriteAllTextAsync(fullPath, content, s_utf8NoBom, cancellationToken).ConfigureAwait(false);
 #else
-        using var writer = new StreamWriter(fullPath, false, Encoding.UTF8);
+        using var writer = new StreamWriter(fullPath, false, s_utf8NoBom);
         await writer.WriteAsync(content).ConfigureAwait(false);
 #endif
     }
@@ -88,6 +108,11 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
             return null;
         }
 
+        // Left on Encoding.UTF8 because this fix is about what gets written, not what gets read.
+        // Either UTF-8 instance would behave identically here: a leading BOM is stripped by the
+        // reader's byte-order-mark detection, which is on by default and independent of the
+        // encoding passed in. That is what keeps files written before this change -- which still
+        // begin with EF BB BF -- loading cleanly.
 #if NET8_0_OR_GREATER
         return await File.ReadAllTextAsync(fullPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
 #else
