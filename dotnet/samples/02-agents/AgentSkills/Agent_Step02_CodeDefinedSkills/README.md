@@ -25,13 +25,13 @@ Converts between common units using multiplication factors. Defined entirely in 
 ### Prerequisites
 
 - .NET 10.0 SDK
-- Azure OpenAI endpoint with a deployed model
+- A Microsoft Foundry project with a deployed model
 
 ### Setup
 
 ```bash
-export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+export FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 
 ### Run
