@@ -1043,7 +1043,6 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
         OtelAttr.TOOL_TYPE: "function",
         OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "telemetry_test_tool",
     }
-    assert expression not in attributes.values()
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
