@@ -35,9 +35,36 @@ class ValidateAgentSkillLinksTests(unittest.TestCase):
 
         self.assertEqual([], validate_agent_skill_links(self.skills))
 
+    def test_accepts_reference_style_file_inside_skill(self) -> None:
+        (self.skill / "references").mkdir()
+        (self.skill / "references" / "details.md").write_text("# Details\n", encoding="utf-8")
+        self.write_skill("[Details][resource]\n\n[resource]: references/details.md\n")
+
+        self.assertEqual([], validate_agent_skill_links(self.skills))
+
+    def test_accepts_remote_links_mailto_and_anchors(self) -> None:
+        self.write_skill(
+            "[HTTP](http://example.com)\n"
+            "[HTTPS][secure]\n"
+            "[Email](mailto:agent@example.com)\n"
+            "[Section](#section)\n"
+            "\n"
+            "[secure]: https://example.com\n"
+        )
+
+        self.assertEqual([], validate_agent_skill_links(self.skills))
+
     def test_rejects_parent_traversal(self) -> None:
         (self.skills / "outside.md").write_text("# Outside\n", encoding="utf-8")
         self.write_skill("[Outside](../outside.md)\n")
+
+        errors = validate_agent_skill_links(self.skills)
+
+        self.assertTrue(any("escapes skill root" in error for error in errors))
+
+    def test_rejects_reference_style_parent_traversal(self) -> None:
+        (self.skills / "outside.md").write_text("# Outside\n", encoding="utf-8")
+        self.write_skill("[Outside][resource]\n\n[resource]: ../outside.md\n")
 
         errors = validate_agent_skill_links(self.skills)
 
@@ -69,6 +96,20 @@ class ValidateAgentSkillLinksTests(unittest.TestCase):
         errors = validate_agent_skill_links(self.skills)
 
         self.assertTrue(any("not a regular file" in error for error in errors))
+
+    def test_rejects_file_uri(self) -> None:
+        self.write_skill("[Outside](file:///tmp/outside.md)\n")
+
+        errors = validate_agent_skill_links(self.skills)
+
+        self.assertTrue(any("unsupported URI scheme" in error for error in errors))
+
+    def test_rejects_unknown_uri_scheme(self) -> None:
+        self.write_skill("[Outside](custom://example/resource)\n")
+
+        errors = validate_agent_skill_links(self.skills)
+
+        self.assertTrue(any("unsupported URI scheme" in error for error in errors))
 
     def test_rejects_missing_target(self) -> None:
         self.write_skill("[Missing](references/missing.md)\n")

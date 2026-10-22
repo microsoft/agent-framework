@@ -171,6 +171,8 @@ building agents, harnesses, workflows, evaluations, integrations, and hosting:
 gh skill install microsoft/agent-framework agent-framework-builder-python@main
 ```
 
+The explicit `@main` ref is required until a tagged Agent Framework release includes the skill.
+
 The cross-agent `skills` CLI is also supported:
 
 ```bash

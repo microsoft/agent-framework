@@ -9,6 +9,8 @@ Keep credentials, custom tools, transports, authorization, and application servi
 - Prefer code-first construction when custom Python logic, strong typing, unsupported actions, or dynamic routing would
   make the definition harder to validate than code.
 - Do not invent schema kinds or parse definitions into ad hoc constructor calls; use the published schema and factory.
+- Use Python 3.13 or earlier when definitions rely on Power Fx expressions (values beginning with `=`). On Python 3.14
+  and 3.15, the optional `powerfx` dependency is unavailable, so those values emit a warning and remain unevaluated.
 
 The `agent-framework-declarative` distribution is released, but individual surfaces can have different feature
 maturity. Check current package status and public docstrings before making compatibility commitments.

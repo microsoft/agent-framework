@@ -18,6 +18,9 @@ gh skill preview microsoft/agent-framework agent-framework-builder-python@main
 gh skill install microsoft/agent-framework agent-framework-builder-python@main
 ```
 
+The explicit `@main` ref is required until a tagged Agent Framework release includes the skill. Until then,
+unqualified `gh skill` installs and search discovery can resolve an older release that does not contain it.
+
 Or use the cross-agent skills CLI:
 
 ```bash

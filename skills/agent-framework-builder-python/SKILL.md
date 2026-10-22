@@ -58,8 +58,9 @@ relying on remembered preview-era syntax.
 
 ## Defaults
 
-- Agent Framework supports Python 3.11 and later. Build new environments with the latest supported Python release, or
-  at least the previous release (N-1), unless a required dependency has a narrower compatibility range.
+- For new environments, use Python 3.11 or later within Agent Framework's currently supported range. Prefer the latest
+  supported Python release or the previous release (N-1), unless a required dependency has a narrower compatibility
+  range.
 - Install the narrow Agent Framework distribution needed by the application instead of defaulting to the
   `agent-framework` meta-package.
 - Agent Framework does not automatically read `.env` files. If the project uses one, call `load_dotenv()` explicitly
