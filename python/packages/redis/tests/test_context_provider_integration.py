@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Awaitable
 from typing import Any, cast
@@ -31,7 +32,7 @@ async def live_redis() -> AsyncIterator[tuple[str, Redis, str, str]]:
         pytest.skip("Set REDIS_VECTOR_TEST_URL to a disposable Redis Search server.")
     suffix = uuid4().hex
     index_name = f"af-context-test-{suffix}"
-    prefix = f"af-context-test-{suffix}:"
+    prefix = f"af-context-test-[*]-{suffix}:"
     client = Redis.from_url(url)
     try:
         yield url, client, index_name, prefix
@@ -40,7 +41,12 @@ async def live_redis() -> AsyncIterator[tuple[str, Redis, str, str]]:
         encoded_name = index_name.encode()
         if encoded_name in indexes or index_name in indexes:
             await client.execute_command("FT.DROPINDEX", index_name)
-        keys = [key async for key in client.scan_iter(match=f"{prefix.rstrip(':')}*")]
+        encoded_prefix = prefix.encode()
+        keys = [
+            key
+            async for key in client.scan_iter(_type="hash")
+            if (key if isinstance(key, bytes) else str(key).encode()).startswith(encoded_prefix)
+        ]
         if keys:
             await client.delete(*keys)
         marker_key = _scope_migration_key(index_name, prefix)
@@ -138,9 +144,15 @@ async def test_live_session_scopes_and_document_overrides_are_provider_owned(
     )
     assert await caller._redis_search("session marker") == []
 
-    keys = [key async for key in client.scan_iter(match=f"{prefix}*")]
+    encoded_prefix = prefix.encode()
+    keys = [
+        key
+        async for key in client.scan_iter(_type="hash")
+        if (key if isinstance(key, bytes) else str(key).encode()).startswith(encoded_prefix)
+    ]
     assert len(keys) == 1
-    record = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(keys[0]))
+    key = keys[0].decode() if isinstance(keys[0], bytes) else str(keys[0])
+    record = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(key))
     assert record[b"application_id"] == b"app"
     assert record[b"agent_id"] == b"agent"
     assert record[b"user_id"] == b"authoritative-user"
@@ -233,3 +245,48 @@ async def test_live_legacy_index_requires_explicit_rebuild_and_preserves_exact_s
     await cast(Awaitable[int], client.hset(marker_key, mapping={"state": _SCOPE_MIGRATION_BACKFILL}))
     with pytest.raises(ValueError, match="migration is incomplete"):
         await _provider(url, index_name, prefix, user_id="Alice")._redis_search("migration marker")
+
+
+@pytest.mark.integration
+async def test_live_migration_renews_lock_during_slow_scan(
+    live_redis: tuple[str, Redis, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url, client, index_name, prefix = live_redis
+    legacy_schema = {
+        "index": {"name": index_name, "prefix": prefix, "key_separator": ":", "storage_type": "hash"},
+        "fields": [
+            {"name": "content", "type": "text"},
+            {"name": "application_id", "type": "tag"},
+            {"name": "agent_id", "type": "tag"},
+            {"name": "user_id", "type": "tag"},
+        ],
+    }
+    legacy_index = AsyncSearchIndex.from_dict(legacy_schema, redis_client=client)
+    await legacy_index.create()
+    await legacy_index.load([
+        {"content": "lease marker", "application_id": "app", "agent_id": "agent", "user_id": "Alice"}
+    ])
+    monkeypatch.setattr("agent_framework_redis._context_provider._SCOPE_MIGRATION_LOCK_SECONDS", 1)
+    first = _provider(url, index_name, prefix, user_id="Alice", overwrite_index=True)
+    await first.redis_index.exists()
+    first_client = first.redis_index.client
+    assert first_client is not None
+    original_scan = first_client.scan
+    scan_started = asyncio.Event()
+
+    async def slow_scan(*args: Any, **kwargs: Any) -> Any:
+        scan_started.set()
+        await asyncio.sleep(1.5)
+        return await original_scan(*args, **kwargs)
+
+    monkeypatch.setattr(first_client, "scan", slow_scan)
+    migration = asyncio.create_task(first._redis_search("lease marker"))
+    await scan_started.wait()
+    await asyncio.sleep(1.1)
+
+    second = _provider(url, index_name, prefix, user_id="Alice", overwrite_index=True)
+    with pytest.raises(RuntimeError, match="already running"):
+        await second._redis_search("lease marker")
+
+    assert len(await migration) == 1

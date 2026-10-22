@@ -9,6 +9,8 @@ This module provides ``RedisContextProvider``, built on the new
 from __future__ import annotations
 
 import asyncio
+import base64
+import contextlib
 import hashlib
 import json
 import secrets
@@ -53,6 +55,9 @@ _SCOPE_MIGRATION_LOCK_SECONDS = 30
 _SCOPE_MIGRATION_BACKFILL = "backfill"
 _SCOPE_MIGRATION_REINDEXING = "reindexing"
 _SCOPE_MIGRATION_COMPLETE = "complete"
+_SCOPE_MIGRATION_PAUSED_MESSAGE = (
+    "Redis context scope migration paused after a bounded backfill pass. Rerun with overwrite_index=True to resume."
+)
 
 _TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
 _TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
@@ -81,6 +86,18 @@ def _scope_key_namespace(prefix: str, key_separator: str) -> str:
     if not normalized_prefix:
         raise ValueError("Redis context index migration requires a key prefix containing non-separator characters.")
     return f"{normalized_prefix}{key_separator}"
+
+
+def _redis_scan_literal(value: str) -> str:
+    return "".join(f"\\{char}" if char in "\\*?[]" else char for char in value)
+
+
+def _encode_redis_keys(keys: list[Any]) -> str:
+    return json.dumps([base64.b64encode(key if isinstance(key, bytes) else str(key).encode()).decode() for key in keys])
+
+
+def _decode_redis_keys(value: str) -> list[bytes]:
+    return [base64.b64decode(item) for item in json.loads(value or "[]")]
 
 
 def _schema_signature(schema: dict[str, Any]) -> dict[str, Any]:
@@ -387,11 +404,27 @@ class RedisContextProvider(ContextProvider):
             "cursor",
             "sample_field",
             "sample_token",
+            "pending_cursor",
+            "pending_keys",
         )
         decoded = [
             value.decode() if isinstance(value, bytes) else str(value) if value is not None else "" for value in values
         ]
-        return dict(zip(("version", "state", "cursor", "sample_field", "sample_token"), decoded, strict=True))
+        return dict(
+            zip(
+                (
+                    "version",
+                    "state",
+                    "cursor",
+                    "sample_field",
+                    "sample_token",
+                    "pending_cursor",
+                    "pending_keys",
+                ),
+                decoded,
+                strict=True,
+            )
+        )
 
     async def _set_scope_migration_state(
         self,
@@ -400,20 +433,211 @@ class RedisContextProvider(ContextProvider):
         cursor: int,
         sample_field: str = "",
         sample_token: str = "",
+        pending_cursor: int = 0,
+        pending_keys: list[Any] | None = None,
+        lock_key: str | None = None,
+        lock_value: str | None = None,
     ) -> None:
         client = self.redis_index.client
         if client is None:
             raise RuntimeError("Redis index did not initialize a client for scope migration state.")
-        await client.hset(
-            _scope_migration_key(self.index_name, self.prefix),
-            mapping={
-                "version": str(_SCOPE_SCHEMA_VERSION),
-                "state": state,
-                "cursor": str(cursor),
-                "sample_field": sample_field,
-                "sample_token": sample_token,
-            },
+        mapping = {
+            "version": str(_SCOPE_SCHEMA_VERSION),
+            "state": state,
+            "cursor": str(cursor),
+            "sample_field": sample_field,
+            "sample_token": sample_token,
+            "pending_cursor": str(pending_cursor),
+            "pending_keys": _encode_redis_keys(pending_keys or []),
+        }
+        marker_key = _scope_migration_key(self.index_name, self.prefix)
+        if lock_key is None or lock_value is None:
+            await client.hset(marker_key, mapping=mapping)
+            return
+        arguments = [lock_value]
+        for name, value in mapping.items():
+            arguments.extend((name, value))
+        result = await client.eval(
+            "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end "
+            "for i = 2, #ARGV, 2 do redis.call('hset', KEYS[2], ARGV[i], ARGV[i + 1]) end return 1",
+            2,
+            lock_key,
+            marker_key,
+            *arguments,
         )
+        if not result:
+            raise RuntimeError("Redis context scope migration lost its distributed lock.")
+
+    async def _assert_scope_migration_lock(self, lock_key: str, lock_value: str) -> None:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        current = await client.get(lock_key)
+        current_value = current.decode() if isinstance(current, bytes) else current
+        if current_value != lock_value:
+            raise RuntimeError("Redis context scope migration lost its distributed lock.")
+
+    async def _renew_scope_migration_lock(self, lock_key: str, lock_value: str) -> None:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        while True:
+            await asyncio.sleep(max(_SCOPE_MIGRATION_LOCK_SECONDS / 3, 0.1))
+            renewed = await client.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] "
+                "then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end",
+                1,
+                lock_key,
+                lock_value,
+                _SCOPE_MIGRATION_LOCK_SECONDS,
+            )
+            if not renewed:
+                raise RuntimeError("Redis context scope migration lost its distributed lock.")
+
+    async def _process_scope_migration_keys(
+        self,
+        keys: list[bytes],
+        *,
+        sample_field: str,
+        sample_token: str,
+        lock_key: str,
+        lock_value: str,
+    ) -> tuple[str, str]:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        async with client.pipeline(transaction=False) as read_pipeline:
+            for key in keys:
+                read_pipeline.hmget(key, *_SCOPE_FIELDS)
+            records = await read_pipeline.execute()
+        writes: list[tuple[bytes, dict[str, str]]] = []
+        for key, values in zip(keys, records, strict=True):
+            tokens: dict[str, str] = {}
+            for name, raw_value in zip(_SCOPE_FIELDS, values, strict=True):
+                if raw_value is None:
+                    continue
+                value = raw_value.decode() if isinstance(raw_value, bytes) else str(raw_value)
+                if value:
+                    tokens[_scope_token_field(name)] = _scope_token(name, value)
+            if tokens:
+                writes.append((key, tokens))
+                if not sample_token:
+                    sample_field, sample_token = next(iter(tokens.items()))
+        if writes:
+            await self._assert_scope_migration_lock(lock_key, lock_value)
+            async with client.pipeline(transaction=False) as write_pipeline:
+                for key, mapping in writes:
+                    write_pipeline.hset(key, mapping=mapping)
+                await write_pipeline.execute()
+        return sample_field, sample_token
+
+    async def _backfill_scope_tokens(
+        self,
+        state: dict[str, str],
+        *,
+        lock_key: str,
+        lock_value: str,
+    ) -> tuple[str, str]:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        state_is_current = state.get("version") == str(_SCOPE_SCHEMA_VERSION)
+        cursor = (
+            int(state.get("cursor") or 0) if state_is_current and state.get("state") == _SCOPE_MIGRATION_BACKFILL else 0
+        )
+        sample_field = state.get("sample_field", "") if state_is_current else ""
+        sample_token = state.get("sample_token", "") if state_is_current else ""
+        pending_cursor = int(state.get("pending_cursor") or 0) if state_is_current else 0
+        pending_keys = _decode_redis_keys(state.get("pending_keys", "")) if state_is_current else []
+        namespace = _scope_key_namespace(self.prefix, self.redis_index.key_separator)
+        encoded_namespace = namespace.encode()
+        match_pattern = f"{_redis_scan_literal(namespace)}*"
+        processed = 0
+
+        await self._set_scope_migration_state(
+            _SCOPE_MIGRATION_BACKFILL,
+            cursor=cursor,
+            sample_field=sample_field,
+            sample_token=sample_token,
+            pending_cursor=pending_cursor,
+            pending_keys=pending_keys,
+            lock_key=lock_key,
+            lock_value=lock_value,
+        )
+        while True:
+            await self._assert_scope_migration_lock(lock_key, lock_value)
+            remaining = _SCOPE_MIGRATION_MAX_RECORDS - processed
+            if remaining <= 0:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE)
+
+            if not pending_keys:
+                scan_cursor = cursor
+                next_cursor, scanned_keys = await client.scan(
+                    cursor=scan_cursor,
+                    match=match_pattern,
+                    count=min(_SCOPE_MIGRATION_BATCH_SIZE, remaining),
+                    _type="hash",
+                )
+                pending_keys = [
+                    key if isinstance(key, bytes) else str(key).encode()
+                    for key in scanned_keys
+                    if (key if isinstance(key, bytes) else str(key).encode()).startswith(encoded_namespace)
+                ]
+                pending_cursor = int(next_cursor)
+                await self._set_scope_migration_state(
+                    _SCOPE_MIGRATION_BACKFILL,
+                    cursor=scan_cursor,
+                    sample_field=sample_field,
+                    sample_token=sample_token,
+                    pending_cursor=pending_cursor,
+                    pending_keys=pending_keys,
+                    lock_key=lock_key,
+                    lock_value=lock_value,
+                )
+                if not pending_keys:
+                    cursor = pending_cursor
+                    pending_cursor = 0
+                    await self._set_scope_migration_state(
+                        _SCOPE_MIGRATION_BACKFILL,
+                        cursor=cursor,
+                        sample_field=sample_field,
+                        sample_token=sample_token,
+                        lock_key=lock_key,
+                        lock_value=lock_value,
+                    )
+                    if cursor == 0:
+                        return sample_field, sample_token
+                    continue
+
+            batch = pending_keys[:remaining]
+            sample_field, sample_token = await self._process_scope_migration_keys(
+                batch,
+                sample_field=sample_field,
+                sample_token=sample_token,
+                lock_key=lock_key,
+                lock_value=lock_value,
+            )
+            processed += len(batch)
+            pending_keys = pending_keys[len(batch) :]
+            if not pending_keys:
+                cursor = pending_cursor
+                pending_cursor = 0
+            await self._set_scope_migration_state(
+                _SCOPE_MIGRATION_BACKFILL,
+                cursor=cursor,
+                sample_field=sample_field,
+                sample_token=sample_token,
+                pending_cursor=pending_cursor,
+                pending_keys=pending_keys,
+                lock_key=lock_key,
+                lock_value=lock_value,
+            )
+            if pending_keys:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE)
+            if cursor == 0:
+                return sample_field, sample_token
+            if processed >= _SCOPE_MIGRATION_MAX_RECORDS:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE)
 
     async def _migrate_scope_tokens(self) -> None:
         """Resume scope-token backfill, rebuild the index, and mark the migration complete."""
@@ -426,88 +650,44 @@ class RedisContextProvider(ContextProvider):
         if not await client.set(lock_key, lock_value, nx=True, ex=_SCOPE_MIGRATION_LOCK_SECONDS):
             raise RuntimeError("Another Redis context scope migration is already running.")
 
+        renewal_task = asyncio.create_task(self._renew_scope_migration_lock(lock_key, lock_value))
         try:
             state = await self._scope_migration_state()
             existing_index = await self._existing_index()
             schema_is_current = _schema_signature(existing_index.schema.to_dict()) == _schema_signature(
                 self.schema_dict
             )
-            if state.get("state") == _SCOPE_MIGRATION_COMPLETE and schema_is_current:
+            state_is_current = state.get("version") == str(_SCOPE_SCHEMA_VERSION)
+            if state_is_current and state.get("state") == _SCOPE_MIGRATION_COMPLETE and schema_is_current:
                 return
-            if state.get("state") == _SCOPE_MIGRATION_REINDEXING and schema_is_current:
+            if state_is_current and state.get("state") == _SCOPE_MIGRATION_REINDEXING and schema_is_current:
                 await self._wait_for_scope_index(state.get("sample_field", ""), state.get("sample_token", ""))
                 await self._set_scope_migration_state(
                     _SCOPE_MIGRATION_COMPLETE,
                     cursor=0,
                     sample_field=state.get("sample_field", ""),
                     sample_token=state.get("sample_token", ""),
+                    lock_key=lock_key,
+                    lock_value=lock_value,
                 )
                 return
 
-            namespace = _scope_key_namespace(self.prefix, self.redis_index.key_separator)
-            cursor = int(state.get("cursor") or 0) if state.get("state") == _SCOPE_MIGRATION_BACKFILL else 0
-            sample_field = state.get("sample_field", "")
-            sample_token = state.get("sample_token", "")
-            await self._set_scope_migration_state(
-                _SCOPE_MIGRATION_BACKFILL,
-                cursor=cursor,
-                sample_field=sample_field,
-                sample_token=sample_token,
-            )
-
-            deadline = asyncio.get_running_loop().time() + _SCOPE_MIGRATION_TIMEOUT_SECONDS
-            processed = 0
-            while True:
-                if processed >= _SCOPE_MIGRATION_MAX_RECORDS or asyncio.get_running_loop().time() >= deadline:
-                    raise RuntimeError(
-                        "Redis context scope migration paused after a bounded backfill pass. "
-                        "Rerun with overwrite_index=True to resume."
-                    )
-                cursor, keys = await client.scan(
-                    cursor=cursor,
-                    match=f"{namespace}*",
-                    count=min(_SCOPE_MIGRATION_BATCH_SIZE, _SCOPE_MIGRATION_MAX_RECORDS - processed),
-                    _type="hash",
+            try:
+                sample_field, sample_token = await asyncio.wait_for(
+                    self._backfill_scope_tokens(state, lock_key=lock_key, lock_value=lock_value),
+                    timeout=_SCOPE_MIGRATION_TIMEOUT_SECONDS,
                 )
-                if keys:
-                    async with client.pipeline(transaction=False) as read_pipeline:
-                        for key in keys:
-                            read_pipeline.hmget(key, *_SCOPE_FIELDS)
-                        records = await read_pipeline.execute()
-                    writes: list[tuple[Any, dict[str, str]]] = []
-                    for key, values in zip(keys, records, strict=True):
-                        tokens: dict[str, str] = {}
-                        for name, raw_value in zip(_SCOPE_FIELDS, values, strict=True):
-                            if raw_value is None:
-                                continue
-                            value = raw_value.decode() if isinstance(raw_value, bytes) else str(raw_value)
-                            if value:
-                                tokens[_scope_token_field(name)] = _scope_token(name, value)
-                        if tokens:
-                            writes.append((key, tokens))
-                            if not sample_token:
-                                sample_field, sample_token = next(iter(tokens.items()))
-                    if writes:
-                        async with client.pipeline(transaction=False) as write_pipeline:
-                            for key, mapping in writes:
-                                write_pipeline.hset(key, mapping=mapping)
-                            await write_pipeline.execute()
-                    processed += len(keys)
-                await self._set_scope_migration_state(
-                    _SCOPE_MIGRATION_BACKFILL,
-                    cursor=int(cursor),
-                    sample_field=sample_field,
-                    sample_token=sample_token,
-                )
-                if int(cursor) == 0:
-                    break
-
+            except TimeoutError as exc:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE) from exc
             await self._set_scope_migration_state(
                 _SCOPE_MIGRATION_REINDEXING,
                 cursor=0,
                 sample_field=sample_field,
                 sample_token=sample_token,
+                lock_key=lock_key,
+                lock_value=lock_value,
             )
+            await self._assert_scope_migration_lock(lock_key, lock_value)
             await self.redis_index.create(overwrite=True, drop=False)
             await self._wait_for_scope_index(sample_field, sample_token)
             await self._set_scope_migration_state(
@@ -515,8 +695,13 @@ class RedisContextProvider(ContextProvider):
                 cursor=0,
                 sample_field=sample_field,
                 sample_token=sample_token,
+                lock_key=lock_key,
+                lock_value=lock_value,
             )
         finally:
+            renewal_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await renewal_task
             await client.eval(
                 "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
                 1,
