@@ -794,6 +794,7 @@ async def audio_browser(memory_regression_server: tuple[str, str]) -> AsyncGener
                     if (String(url).endsWith("/v1/responses") && options?.method === "POST") {
                       probe.requests.push(JSON.parse(options.body));
                       const audio = probe.requests.at(-1).input[0].content.find(c => c.type === "input_audio");
+                      const audioUrl = audio ? `data:audio/wav;base64,${audio.input_audio.data}` : undefined;
                       const output = audio ? [
                         {
                           id: "audio-reply-text", type: "message", role: "assistant", status: "completed",
@@ -805,7 +806,11 @@ async def audio_browser(memory_regression_server: tuple[str, str]) -> AsyncGener
                         },
                         {
                           id: "audio-reply", type: "output_file", filename: "reply.wav",
-                          mime_type: "audio/wav", file_url: `data:audio/wav;base64,${audio.input_audio.data}`,
+                          mime_type: "audio/wav",
+                          file_url: ["base64", "data-uri"].includes(probe.replySource)
+                            ? "/expired-audio.wav" : audioUrl,
+                          file_data: probe.replySource === "base64" ? audio.input_audio.data
+                            : probe.replySource === "data-uri" ? audioUrl : undefined,
                         },
                       ] : [];
                       const event = { type: "response.completed", response: { id: "audio-test", output } };
@@ -827,8 +832,22 @@ async def audio_browser(memory_regression_server: tuple[str, str]) -> AsyncGener
             _shutdown_browser_process(process, profile_dir=profile_dir)
 
 
-@pytest.mark.parametrize("scenario", ["constructor", "permission", "processing", "success", "native", "uploads"])
-async def test_audio_input_lifecycle_and_uploads(audio_browser: tuple[_CDPClient, str], scenario: str) -> None:
+@pytest.mark.parametrize(
+    ("scenario", "reply_source"),
+    [
+        ("constructor", "url-only"),
+        ("permission", "url-only"),
+        ("processing", "url-only"),
+        ("success", "url-only"),
+        ("native", "url-only"),
+        ("uploads", "url-only"),
+        ("success", "base64"),
+        ("success", "data-uri"),
+    ],
+)
+async def test_audio_input_lifecycle_and_uploads(
+    audio_browser: tuple[_CDPClient, str], scenario: str, reply_source: str
+) -> None:
     """Microphone failures/cancellation release resources, while recordings and generic uploads keep their contracts."""
     client, session_id = audio_browser
 
@@ -838,7 +857,9 @@ async def test_audio_input_lifecycle_and_uploads(audio_browser: tuple[_CDPClient
     async def wait(expression: str) -> Any:
         return await _wait_for_expression(client, session_id=session_id, expression=expression, timeout_s=10)
 
-    await evaluate(f"window.audioProbe.mode = {json.dumps(scenario)}")
+    await evaluate(
+        f"window.audioProbe.mode = {json.dumps(scenario)}; window.audioProbe.replySource = {json.dumps(reply_source)}"
+    )
     if scenario == "native":
         await client.send(
             "Runtime.evaluate",
@@ -953,9 +974,11 @@ async def test_audio_input_lifecycle_and_uploads(audio_browser: tuple[_CDPClient
             assert max(abs(sample[0]) for sample in struct.iter_unpack("<h", samples)) > 1000
 
         await wait('document.body.textContent.includes("reply.wav")')
-        await wait("document.querySelector('audio[aria-label=\"reply.wav\"]')?.readyState >= 1")
-        assert await evaluate("!!document.querySelector('a[aria-label=\"Download audio\"]')")
         player = "document.querySelector('audio[aria-label=\"reply.wav\"]').parentElement"
+        expected_audio_url = f"data:audio/wav;base64,{content[0]['input_audio']['data']}"
+        assert await evaluate(f"{player}.querySelector('audio').src") == expected_audio_url
+        assert await evaluate(f"{player}.querySelector('a[aria-label=\"Download audio\"]').href") == expected_audio_url
+        await wait("document.querySelector('audio[aria-label=\"reply.wav\"]')?.readyState >= 1")
         await client.send(
             "Runtime.evaluate",
             {

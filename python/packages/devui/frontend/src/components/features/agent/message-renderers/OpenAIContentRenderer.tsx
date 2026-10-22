@@ -278,7 +278,7 @@ function FileContentRenderer({ content, className, autoPlayAudio }: ContentRende
 
   // For audio files
   if (isAudioFile && fileUrl) {
-    const sourceUrl = content.file_url || fileDataSourceUrl(content.file_data, mimeType) || fileUrl;
+    const sourceUrl = fileDataSourceUrl(content.file_data, mimeType) || content.file_url || fileUrl;
     return (
       <AudioFileRenderer
         sourceUrl={sourceUrl}
