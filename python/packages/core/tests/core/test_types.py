@@ -18,20 +18,26 @@ from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     Annotation,
+    BaseChatClient,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
     Content,
+    ContextProvider,
+    FunctionInvocationLayer,
     FunctionTool,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     TextSpanRegion,
     ToolMode,
     UsageDetails,
+    agent_middleware,
     detect_media_type_from_base64,
     get_namespaced_value,
     merge_additional_properties,
@@ -5615,6 +5621,51 @@ class TestResponseStreamCleanupHooks:
                 pass
 
         assert events == ["iterator"]
+
+    @pytest.mark.parametrize("buffered", [False, True])
+    @pytest.mark.parametrize("failure", [RuntimeError("hook failed"), asyncio.CancelledError()])
+    async def test_outer_stream_error_skips_after_run_with_agent_middleware(
+        self, span_exporter: Any, failure: BaseException, buffered: bool
+    ) -> None:
+        """An error in a middleware-wrapped agent stream reaches the inner stream, so after_run does not fire."""
+
+        class StreamingClient(FunctionInvocationLayer, BaseChatClient):
+            def _inner_get_response(self, *, messages: Any, stream: bool, options: Any, **kwargs: Any) -> Any:
+                async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                    for i in range(3):
+                        yield ChatResponseUpdate(contents=[Content.from_text(f"part{i} ")], role="assistant")
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        class RecordingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__("recorder")
+                self.after_run_calls = 0
+
+            async def after_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+                self.after_run_calls += 1
+
+        @agent_middleware
+        async def passthrough(context: Any, call_next: Any) -> None:
+            await call_next()
+
+        def failing_hook(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            raise failure
+
+        recorder = RecordingProvider()
+        history = InMemoryHistoryProvider()
+        agent = Agent(client=StreamingClient(), context_providers=[history, recorder], middleware=[passthrough])
+        session = agent.create_session()
+
+        stream = agent.run("hi", stream=True, session=session).with_transform_hook(failing_hook)
+        if buffered:
+            stream = stream.buffer_updates()
+        with pytest.raises(type(failure)):
+            async for _ in stream:
+                pass
+
+        assert recorder.after_run_calls == 0
+        assert await history.get_messages(session.session_id, state=session.state.get(history.source_id, {})) == []
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""

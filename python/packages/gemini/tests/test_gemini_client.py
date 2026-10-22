@@ -2807,6 +2807,58 @@ async def test_streaming_get_final_response() -> None:
     assert final.usage_details["output_token_count"] == 5
 
 
+async def test_streaming_updates_have_assistant_role() -> None:
+    """Streamed updates must carry the assistant role, matching the non-streaming response."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
+        _make_response([_make_part(text="world!")], finish_reason="STOP"),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+
+    updates = [update async for update in stream]
+    assert [update.role for update in updates] == ["assistant", "assistant"]
+
+
+async def test_streaming_answer_after_tool_call_stays_in_history() -> None:
+    """The answer streamed after a tool call must be its own assistant message, not part of the
+    tool message, so that it is sent back to Gemini on the next turn."""
+
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    client, mock = _make_gemini_client()
+    model_calls = [
+        [_make_response([_make_part(function_call=("call-1", "get_weather", {"city": "Paris"}))])],
+        [_make_response([_make_part(text="It is sunny in Paris.")])],
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(side_effect=lambda **_: _async_iter(model_calls.pop(0)))
+    question = Message(role="user", contents=[Content.from_text("What's the weather in Paris?")])
+
+    stream = client.get_response(messages=[question], options={"tools": [get_weather]}, stream=True)
+    async for _ in stream:
+        pass
+    final = await stream.get_final_response()
+
+    assert [message.role for message in final.messages] == ["assistant", "tool", "assistant"]
+    assert [content.type for content in final.messages[1].contents] == ["function_result"]
+    assert final.messages[2].text == "It is sunny in Paris."
+
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Paris.")]))
+    follow_up = Message(role="user", contents=[Content.from_text("Which city did I ask about?")])
+    await client.get_response(messages=[question, *final.messages, follow_up])
+
+    contents: list[types.Content] = mock.aio.models.generate_content.call_args.kwargs["contents"]
+    assert [content.role for content in contents] == ["user", "model", "user", "model", "user"]
+    assert _parts(contents[3])[0].text == "It is sunny in Paris."
+
+
 # The Gemini API returns a list of candidates, each representing a possible response from the model.
 # In practice only one candidate is returned, but the list can be empty or None if the request
 # was blocked by safety filters or the API returned an unexpected response.
