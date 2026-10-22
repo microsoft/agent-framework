@@ -6023,6 +6023,66 @@ async def test_function_invocation_result_parser_failure(
     ]
     assert len(execution_warnings) == 1
     assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
+    assert ("Set include_detailed_errors=True" in execution_warnings[0]) is not include_detailed_errors
+
+
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+@pytest.mark.usefixtures("span_exporter")
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_function_execution_error_warning_recommends_detailed_errors_only_when_disabled(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    include_detailed_errors: bool,
+    enable_sensitive_data: bool,
+) -> None:
+    @tool(name="error_function", approval_mode="never_require")
+    def error_func() -> str:
+        raise RuntimeError(f"Tool failure: {_PRIVATE_ERROR_DETAIL}")
+
+    monkeypatch.setattr(
+        chat_client_base,
+        "run_responses",
+        [
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="1", name="error_function", arguments="{}")],
+                )
+            ),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ],
+    )
+    monkeypatch.setitem(
+        chat_client_base.function_invocation_configuration,  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        "include_detailed_errors",
+        include_detailed_errors,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])], options={"tools": [error_func]}
+        )
+
+    result = next(content for msg in response.messages for content in msg.contents if content.type == "function_result")
+    assert (_PRIVATE_ERROR_DETAIL in (result.result or "")) is include_detailed_errors
+    execution_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.WARNING
+        and "raised an exception; returning an error result" in record.getMessage()
+    ]
+    assert len(execution_warnings) == 1
+    assert execution_warnings[0].startswith(
+        "Function 'error_function' raised an exception; returning an error result to the model."
+    )
+    assert ("Set include_detailed_errors=True" in execution_warnings[0]) is not include_detailed_errors
+    assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
 
 
 async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: SupportsChatGetResponse):
