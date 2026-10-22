@@ -31,16 +31,27 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent, mark_feature_used
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
-from agent_framework.exceptions import ContentError
+from agent_framework.exceptions import (
+    AgentFrameworkException,
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+    ContentError,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from google import genai
 from google.auth.credentials import Credentials
 from google.genai import types
+from google.genai.errors import APIError as GenAIAPIError
 from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
+from ._sdk_client import (
+    GoogleGeminiSettings,
+    create_genai_client,
+)
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -62,13 +73,30 @@ logger = logging.getLogger("agent_framework.gemini")
 __all__ = [
     "GeminiChatClient",
     "GeminiChatOptions",
-    "GeminiSettings",
     "GoogleGeminiSettings",
     "RawGeminiChatClient",
     "ThinkingConfig",
 ]
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+
+
+def _wrap_gemini_error(ex: Exception) -> ChatClientException:
+    """Translate a raw google-genai failure into the framework's ChatClientException hierarchy.
+
+    google-genai ``APIError`` instances are classified by HTTP status (401/403 -> auth, other
+    4xx -> invalid request), matching the Mistral client. Anything else - transport errors,
+    Vertex credential-refresh failures, unexpected SDK exceptions - is still wrapped as a
+    generic ``ChatClientException`` so callers catching that base type never see a raw
+    provider exception leak through.
+    """
+    if isinstance(ex, GenAIAPIError):
+        code = getattr(ex, "code", None)
+        if code in (401, 403):
+            return ChatClientInvalidAuthException(f"Gemini authentication failed: {ex}", inner_exception=ex)
+        if isinstance(code, int) and 400 <= code < 500:
+            return ChatClientInvalidRequestException(f"Invalid Gemini request: {ex}", inner_exception=ex)
+    return ChatClientException(f"Gemini chat request failed: {ex}", inner_exception=ex)
 
 
 # region Options & Settings
@@ -164,81 +192,10 @@ class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 GeminiChatOptionsT = TypeVar("GeminiChatOptionsT", bound=TypedDict, default="GeminiChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
-class GeminiSettings(TypedDict, total=False):
-    """Gemini configuration settings loaded from environment or .env files."""
-
-    api_key: SecretString | None
-    model: str | None
-
-
-class GoogleGeminiSettings(TypedDict, total=False):
-    """Google SDK configuration settings loaded from ``GOOGLE_*`` environment variables."""
-
-    api_key: SecretString | None
-    model: str | None
-    genai_use_vertexai: bool | None
-    cloud_project: str | None
-    cloud_location: str | None
-
-
 # endregion
 
 
-_GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
-_VERTEX_AI_BASE_URL = "https://aiplatform.googleapis.com"
 _DEFAULT_MAX_THOUGHT_SIGNATURES = 256
-
-
-def _resolve_vertexai_mode(client: genai.Client, *, fallback: bool | None = None) -> bool:
-    """Resolve whether a client targets Vertex AI, preferring the instantiated SDK client state."""
-    api_client = getattr(client, "_api_client", None)
-    vertexai = getattr(api_client, "vertexai", None)
-    if isinstance(vertexai, bool):
-        return vertexai
-    return bool(fallback)
-
-
-def _resolve_service_url(client: genai.Client, *, vertexai: bool) -> str:
-    """Resolve the base service URL from the instantiated SDK client, with a stable fallback."""
-    api_client = getattr(client, "_api_client", None)
-    http_options = getattr(api_client, "_http_options", None)
-    base_url = getattr(http_options, "base_url", None)
-    if isinstance(base_url, str) and base_url:
-        return base_url.rstrip("/")
-    return _VERTEX_AI_BASE_URL if vertexai else _GEMINI_API_BASE_URL
-
-
-def _validate_client_auth_configuration(
-    *,
-    vertexai: bool | None,
-    api_key: SecretString | None,
-    project: str | None,
-    location: str | None,
-    credentials: Credentials | None,
-) -> None:
-    """Validate supported auth combinations before instantiating the SDK client."""
-    if vertexai is not True:
-        if api_key is None:
-            raise ValueError(
-                "Gemini client requires an API key when Vertex AI is not enabled. "
-                "Set GOOGLE_API_KEY or GEMINI_API_KEY, or pass api_key explicitly."
-            )
-        return
-
-    if api_key is not None or credentials is not None or (project and location):
-        return
-
-    if project or location:
-        raise ValueError(
-            "Gemini client requires both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION "
-            "when Vertex AI is enabled without an API key."
-        )
-
-    raise ValueError(
-        "Gemini client requires Vertex AI credentials or configuration when Vertex AI is enabled. "
-        "Provide GOOGLE_API_KEY for Vertex AI express mode, pass credentials, or set "
-        "GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION."
-    )
 
 
 # Keys mapping to a different GenerateContentConfig field name
@@ -320,8 +277,9 @@ class RawGeminiChatClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
+        enterprise: bool | None = None,
         vertexai: bool | None = None,
         project: str | None = None,
         location: str | None = None,
@@ -335,12 +293,12 @@ class RawGeminiChatClient(
         """Create a raw Gemini chat client.
 
         Args:
-            api_key: Gemini Developer API key. Falls back to environment settings, preferring
-                ``GOOGLE_API_KEY`` over ``GEMINI_API_KEY``.
-            model: Default model identifier. Falls back to environment settings, preferring
-                ``GOOGLE_MODEL`` over ``GEMINI_MODEL``.
-            vertexai: Whether to use Vertex AI endpoints. Falls back to environment settings,
-                using ``GOOGLE_GENAI_USE_VERTEXAI`` when not passed explicitly.
+            api_key: Gemini Developer API key. Falls back to ``GOOGLE_API_KEY``.
+            model: Default model identifier. Falls back to ``GOOGLE_MODEL``.
+            enterprise: Whether to use Gemini Enterprise Agent Platform. Falls back to
+                ``GOOGLE_GENAI_USE_ENTERPRISE``.
+            vertexai: Legacy alias for ``enterprise``. Falls back to
+                ``GOOGLE_GENAI_USE_VERTEXAI`` when not passed explicitly.
             project: Google Cloud project ID for Vertex AI. Falls back to environment settings,
                 using ``GOOGLE_CLOUD_PROJECT`` when not passed explicitly.
             location: Vertex AI location. Falls back to environment settings, preferring
@@ -359,19 +317,12 @@ class RawGeminiChatClient(
         """
         if max_tracked_thought_signatures < 1:
             raise ValueError("max_tracked_thought_signatures must be greater than 0.")
-        settings = load_settings(
-            GeminiSettings,
-            env_prefix="GEMINI_",
-            api_key=api_key,
-            model=model,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
         google_settings = load_settings(
             GoogleGeminiSettings,
             env_prefix="GOOGLE_",
             api_key=api_key,
             model=model,
+            genai_use_enterprise=enterprise,
             genai_use_vertexai=vertexai,
             cloud_project=project,
             cloud_location=location,
@@ -379,46 +330,19 @@ class RawGeminiChatClient(
             env_file_encoding=env_file_encoding,
         )
 
+        configured_enterprise = google_settings.get("genai_use_enterprise")
         configured_vertexai = google_settings.get("genai_use_vertexai")
-        if client:
-            self._genai_client = client
-        else:
-            resolved_key = google_settings.get("api_key") or settings.get("api_key")
-            resolved_project = google_settings.get("cloud_project")
-            resolved_location = google_settings.get("cloud_location")
-            _validate_client_auth_configuration(
-                vertexai=configured_vertexai,
-                api_key=resolved_key,
-                project=resolved_project,
-                location=resolved_location,
-                credentials=credentials,
-            )
+        self._genai_client, self._vertexai, self._service_url = create_genai_client(
+            client=client,
+            api_key=google_settings.get("api_key"),
+            enterprise=configured_enterprise,
+            vertexai=configured_vertexai,
+            project=google_settings.get("cloud_project"),
+            location=google_settings.get("cloud_location"),
+            credentials=credentials,
+        )
 
-            client_kwargs: dict[str, Any] = {
-                "http_options": {"headers": {"x-goog-api-client": get_user_agent()}},
-            }
-            if configured_vertexai is not None:
-                client_kwargs["vertexai"] = configured_vertexai
-
-            if resolved_key is not None and (
-                configured_vertexai is not True
-                or (credentials is None and not (resolved_project and resolved_location))
-            ):
-                client_kwargs["api_key"] = resolved_key.get_secret_value()
-
-            if configured_vertexai is True and resolved_project:
-                client_kwargs["project"] = resolved_project
-
-            if configured_vertexai is True and resolved_location:
-                client_kwargs["location"] = resolved_location
-            if configured_vertexai is True and credentials is not None:
-                client_kwargs["credentials"] = credentials
-
-            self._genai_client = genai.Client(**client_kwargs)
-
-        self._vertexai = _resolve_vertexai_mode(self._genai_client, fallback=configured_vertexai)
-        self._service_url = _resolve_service_url(self._genai_client, vertexai=self._vertexai)
-        self.model = google_settings.get("model") or settings.get("model")
+        self.model = google_settings.get("model")
         self.max_tracked_thought_signatures = max_tracked_thought_signatures
         self._thought_signature_cache: OrderedDict[str, bytes] = OrderedDict()
 
@@ -559,12 +483,30 @@ class RawGeminiChatClient(
                     Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
                 )
-                async for chunk in await generate_content_stream(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                ):
-                    yield self._process_chunk(chunk)
+                try:
+                    response_stream = await generate_content_stream(
+                        model=model,
+                        contents=contents,
+                        config=config,
+                    )
+                    # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
+                    # instead of leaving the response open until the generator is garbage collected.
+                    try:
+                        # Once the server names a version, later chunks that omit it keep that version
+                        # instead of reverting to the requested alias.
+                        fallback_model = model
+                        async for chunk in response_stream:
+                            if chunk.model_version:
+                                fallback_model = chunk.model_version
+                            yield self._process_chunk(chunk, fallback_model)
+                    finally:
+                        aclose = getattr(response_stream, "aclose", None)
+                        if aclose is not None:
+                            await aclose()
+                except AgentFrameworkException:
+                    raise
+                except Exception as ex:
+                    raise _wrap_gemini_error(ex) from ex
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -572,7 +514,16 @@ class RawGeminiChatClient(
             validated = await self._validate_options(options)
             model, contents, config = self._prepare_request(messages, validated)
             mark_feature_used(FeatureIndex.GEMINI)
-            raw = await self._genai_client.aio.models.generate_content(model=model, contents=contents, config=config)  # type: ignore[arg-type]
+            generate_content = cast(
+                Callable[..., Awaitable[types.GenerateContentResponse]],
+                cast(Any, self._genai_client.aio.models).generate_content,
+            )
+            try:
+                raw = await generate_content(model=model, contents=contents, config=config)
+            except AgentFrameworkException:
+                raise
+            except Exception as ex:
+                raise _wrap_gemini_error(ex) from ex
             return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
         return _get_response()
@@ -610,7 +561,7 @@ class RawGeminiChatClient(
         """
         model = options.get("model") or self.model
         if not model:
-            raise ValueError("Gemini model is required. Set via model parameter or GEMINI_MODEL environment variable.")
+            raise ValueError("Gemini model is required. Set via model parameter or GOOGLE_MODEL environment variable.")
 
         system_instruction, contents = self._prepare_gemini_messages(messages)
         if call_instructions := options.get("instructions"):
@@ -719,19 +670,36 @@ class RawGeminiChatClient(
                         # No adjacent carrier: fall back to the signature recorded for this call at
                         # parse time. Covers replays where the carrier was dropped in transit.
                         thought_signature = self._recall_thought_signature(call_id)
-                    if (
-                        content.informational_only
-                        and isinstance(raw_part, types.Part)
-                        and raw_part.tool_call is not None
-                    ):
-                        tool_call = raw_part.tool_call.model_copy(
-                            update={
-                                "id": call_id,
-                                "args": content.parse_arguments() or {},
-                            },
-                            deep=True,
+                    if content.informational_only:
+                        if isinstance(raw_part, types.Part) and raw_part.tool_call is not None:
+                            tool_call = raw_part.tool_call.model_copy(
+                                update={
+                                    "id": call_id,
+                                    "args": content.parse_arguments() or {},
+                                },
+                                deep=True,
+                            )
+                            parts.append(raw_part.model_copy(update={"tool_call": tool_call}, deep=True))
+                            continue
+                        if content.name not in {tool_type.value for tool_type in types.ToolType}:
+                            raise ContentError(
+                                f"Gemini hosted tool-call replay requires a supported tool name, got {content.name!r}."
+                            )
+                        try:
+                            resolved_tool_type = types.ToolType(content.name or "")
+                        except ValueError as exc:
+                            raise ContentError(
+                                f"Gemini hosted tool-call replay requires a supported tool name, got {content.name!r}."
+                            ) from exc
+                        parts.append(
+                            types.Part(
+                                tool_call=types.ToolCall(
+                                    id=call_id,
+                                    tool_type=resolved_tool_type,
+                                    args=content.parse_arguments() or {},
+                                )
+                            )
                         )
-                        parts.append(raw_part.model_copy(update={"tool_call": tool_call}, deep=True))
                         continue
                     if content.name:
                         call_id_to_name[call_id] = content.name
@@ -909,6 +877,9 @@ class RawGeminiChatClient(
         for key, value in options.items():
             if key in _OPTION_EXCLUDE_KEYS or value is None:
                 continue
+            if key == "stop" and isinstance(value, str):
+                # ChatOptions allows a single stop string; stop_sequences takes a list.
+                value = [value]
             kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
 
         response_format = options.get("response_format")
@@ -918,7 +889,7 @@ class RawGeminiChatClient(
         if response_schema is not None:
             kwargs["response_schema"] = response_schema
         elif (schema := self._extract_response_schema(response_format)) is not None:
-            kwargs["response_schema"] = schema
+            kwargs["response_json_schema"] = schema
         tools = self._prepare_tools(options)
         if tools:
             kwargs["tools"] = tools
@@ -1122,20 +1093,22 @@ class RawGeminiChatClient(
             raw_representation=response,
         )
 
-    def _process_chunk(self, chunk: types.GenerateContentResponse) -> ChatResponseUpdate:
+    def _process_chunk(self, chunk: types.GenerateContentResponse, model: str) -> ChatResponseUpdate:
         """Convert a single streaming chunk to a framework ChatResponseUpdate.
 
         Usage details are attached only to the final chunk, identified by a non-None finish reason.
 
         Args:
             chunk: A streaming ``GenerateContentResponse`` chunk from the Gemini API.
+            model: The model to report when the chunk carries no model version: the last version the
+                server reported in this stream, or the model resolved for this request.
 
         Returns:
-            A ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
+            An assistant ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
         """
         candidate = chunk.candidates[0] if chunk.candidates else None
         parts: list[types.Part] = (candidate.content.parts or []) if candidate and candidate.content else []
-        contents = self._parse_parts(parts)
+        contents = self._parse_parts(parts, streaming=True)
 
         finish_reason = self._map_finish_reason(
             candidate.finish_reason.name if candidate and candidate.finish_reason else None
@@ -1143,20 +1116,22 @@ class RawGeminiChatClient(
 
         # Attach usage to the final chunk only (when finish_reason is set).
         if finish_reason and (usage := self._parse_usage(chunk.usage_metadata)):
-            contents.append(Content.from_usage(usage_details=usage))
+            contents.append(Content.from_usage(usage_details=usage, merge_mode="replace"))
 
         return ChatResponseUpdate(
+            role="assistant",
             contents=contents,
-            model=chunk.model_version,
+            model=chunk.model_version or model,
             finish_reason=finish_reason,
             raw_representation=chunk,
         )
 
-    def _parse_parts(self, parts: Sequence[types.Part]) -> list[Content]:
+    def _parse_parts(self, parts: Sequence[types.Part], *, streaming: bool = False) -> list[Content]:
         """Convert Gemini response parts to framework Content objects.
 
         Args:
             parts: Sequence of ``types.Part`` objects from a Gemini response candidate.
+            streaming: Whether the parts came from a streaming response chunk.
 
         Returns:
             A list of framework ``Content`` objects (text_reasoning, text, function_call, or
@@ -1166,10 +1141,22 @@ class RawGeminiChatClient(
         for part in parts:
             if part.thought:
                 if part.text:
-                    contents.append(Content.from_text_reasoning(text=part.text, raw_representation=part))
+                    contents.append(
+                        Content.from_text_reasoning(
+                            text=part.text,
+                            merge_mode="append" if streaming else None,
+                            raw_representation=part,
+                        )
+                    )
                 continue
             if part.text is not None:
-                contents.append(Content.from_text(text=part.text, raw_representation=part))
+                contents.append(
+                    Content.from_text(
+                        text=part.text,
+                        merge_mode="append" if streaming else None,
+                        raw_representation=part,
+                    )
+                )
             elif part.tool_call is not None:
                 tool_call = part.tool_call
                 if tool_call.id:
@@ -1187,6 +1174,8 @@ class RawGeminiChatClient(
                         name=tool_name,
                         arguments=tool_call.args or {},
                         informational_only=True,
+                        hosted=True,
+                        merge_mode="replace" if streaming else None,
                         raw_representation=part,
                     )
                 )
@@ -1211,7 +1200,8 @@ class RawGeminiChatClient(
                 if part.thought_signature is not None:
                     contents.append(
                         Content.from_text_reasoning(
-                            protected_data=base64.b64encode(part.thought_signature).decode("utf-8")
+                            protected_data=base64.b64encode(part.thought_signature).decode("utf-8"),
+                            merge_mode="append" if streaming else None,
                         )
                     )
                     # Also key it by the resolved call_id so the signature survives surfaces that
@@ -1223,6 +1213,7 @@ class RawGeminiChatClient(
                         call_id=call_id,
                         name=function_call.name or "",
                         arguments=function_call.args or {},
+                        merge_mode="replace" if streaming else None,
                         raw_representation=part,
                     )
                 )
@@ -1237,10 +1228,22 @@ class RawGeminiChatClient(
                 )
             elif part.executable_code is not None:
                 if part.executable_code.code:
-                    contents.append(Content.from_text(text=part.executable_code.code, raw_representation=part))
+                    contents.append(
+                        Content.from_text(
+                            text=part.executable_code.code,
+                            merge_mode="append" if streaming else None,
+                            raw_representation=part,
+                        )
+                    )
             elif part.code_execution_result is not None:
                 if part.code_execution_result.output:
-                    contents.append(Content.from_text(text=part.code_execution_result.output, raw_representation=part))
+                    contents.append(
+                        Content.from_text(
+                            text=part.code_execution_result.output,
+                            merge_mode="append" if streaming else None,
+                            raw_representation=part,
+                        )
+                    )
             else:
                 logger.debug("Skipping unsupported response part from Gemini")
         return contents
@@ -1351,8 +1354,9 @@ class GeminiChatClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
+        enterprise: bool | None = None,
         vertexai: bool | None = None,
         project: str | None = None,
         location: str | None = None,
@@ -1368,11 +1372,11 @@ class GeminiChatClient(
         """Create a Gemini chat client.
 
         Args:
-            api_key: Gemini Developer API key. Falls back to environment settings, preferring
-                ``GOOGLE_API_KEY`` over ``GEMINI_API_KEY``.
-            model: Default model identifier. Falls back to environment settings, preferring
-                ``GOOGLE_MODEL`` over ``GEMINI_MODEL``.
-            vertexai: Whether to use Vertex AI endpoints. Falls back to ``GOOGLE_GENAI_USE_VERTEXAI``.
+            api_key: Gemini Developer API key. Falls back to ``GOOGLE_API_KEY``.
+            model: Default model identifier. Falls back to ``GOOGLE_MODEL``.
+            enterprise: Whether to use Gemini Enterprise Agent Platform. Falls back to
+                ``GOOGLE_GENAI_USE_ENTERPRISE``.
+            vertexai: Legacy alias for ``enterprise``. Falls back to ``GOOGLE_GENAI_USE_VERTEXAI``.
             project: Google Cloud project ID for Vertex AI. Falls back to ``GOOGLE_CLOUD_PROJECT``.
             location: Vertex AI location. Falls back to ``GOOGLE_CLOUD_LOCATION``.
             credentials: Google Cloud credentials for Vertex AI. When omitted, the SDK can use
@@ -1392,6 +1396,7 @@ class GeminiChatClient(
         super().__init__(
             api_key=api_key,
             model=model,
+            enterprise=enterprise,
             vertexai=vertexai,
             project=project,
             location=location,

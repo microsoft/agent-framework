@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -108,6 +109,43 @@ def test_encode_dict_with_non_string_keys() -> None:
     assert result == {"1": "one", "2": "two"}
 
 
+def test_encode_dict_with_stringified_key_collision_uses_pickle() -> None:
+    """Distinct keys that collide after str() must not silently overwrite values."""
+    data = {1: "integer-key", "1": "string-key"}
+    result = encode_checkpoint_value(data)
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
+    restored = decode_checkpoint_value(result, allowed_types=frozenset())
+    assert restored == data
+    assert restored[1] == "integer-key"
+    assert restored["1"] == "string-key"
+
+
+def test_encode_dict_stringifies_each_key_once_for_stateful_str() -> None:
+    """Reserved/collision checks and encoding must reuse one str(key) per entry."""
+
+    class FlipStr:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def __str__(self) -> str:
+            self.n += 1
+            return "stable" if self.n == 1 else "other"
+
+        def __hash__(self) -> int:
+            return id(self)
+
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+    key = FlipStr()
+    data = {key: "value"}
+    result = encode_checkpoint_value(data)
+    # First str() was "stable" for all checks; must not disagree across passes.
+    assert result == {"stable": "value"}
+
+
 def test_encode_empty_list() -> None:
     """Test encoding an empty list."""
     assert encode_checkpoint_value([]) == []
@@ -136,6 +174,71 @@ def test_encode_set() -> None:
     assert isinstance(result, dict)
     assert _PICKLE_MARKER in result
     assert _TYPE_MARKER in result
+
+
+def test_encode_dict_subclasses_are_pickled() -> None:
+    """Test that dict subclasses are pickled instead of flattened to plain dicts.
+
+    defaultdict, Counter, and OrderedDict carry behavior that a plain JSON
+    object cannot represent, so they must take the pickle path like tuples
+    and sets do.
+    """
+    cases: list[Any] = [
+        defaultdict(list, {"todos": ["a"]}),
+        Counter({"x": 2, "y": 1}),
+        OrderedDict([("b", 2), ("a", 1)]),
+    ]
+    for value in cases:
+        result = encode_checkpoint_value(value)
+        assert isinstance(result, dict), type(value)
+        assert _PICKLE_MARKER in result
+        assert _TYPE_MARKER in result
+        assert result[_TYPE_MARKER] == f"collections:{type(value).__name__}"
+
+
+def test_encode_nested_dict_subclass_is_pickled() -> None:
+    """Test that dict subclasses nested in containers are also pickled."""
+    inner: defaultdict[str, list[int]] = defaultdict(list)
+    inner["k"].append(1)
+    result = encode_checkpoint_value({"state": [inner]})
+
+    assert isinstance(result, dict)
+    nested = result["state"][0]
+    assert isinstance(nested, dict)
+    assert _PICKLE_MARKER in nested
+    assert nested[_TYPE_MARKER] == "collections:defaultdict"
+
+
+def test_round_trip_dict_subclasses_preserve_type_and_behavior() -> None:
+    """Test that dict subclasses survive a JSON round trip with type and behavior intact."""
+    original: defaultdict[str, list[str]] = defaultdict(list)
+    original["todos"].append("a")
+
+    encoded = json.loads(json.dumps(encode_checkpoint_value(original)))
+    restored = decode_checkpoint_value(encoded, allowed_types=frozenset())
+
+    assert type(restored) is defaultdict
+    assert restored == original
+    # The default factory must survive so state access patterns keep working on resume.
+    restored["new_key"].append("x")
+    assert restored["new_key"] == ["x"]
+
+
+def test_round_trip_counter_and_ordered_dict_preserve_type() -> None:
+    """Test Counter and OrderedDict round trips under the restricted unpickler."""
+    counter = Counter({"a": 2})
+    restored_counter = decode_checkpoint_value(
+        json.loads(json.dumps(encode_checkpoint_value(counter))), allowed_types=frozenset()
+    )
+    assert type(restored_counter) is Counter
+    assert restored_counter == counter
+
+    ordered = OrderedDict([("b", 2), ("a", 1)])
+    restored_ordered = decode_checkpoint_value(
+        json.loads(json.dumps(encode_checkpoint_value(ordered))), allowed_types=frozenset()
+    )
+    assert type(restored_ordered) is OrderedDict
+    assert restored_ordered == ordered
 
 
 def test_encode_nested_dict() -> None:

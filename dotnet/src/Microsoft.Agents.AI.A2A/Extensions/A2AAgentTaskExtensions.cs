@@ -25,12 +25,9 @@ internal static class A2AAgentTaskExtensions
             }
         }
 
-        if (agentTask.Status?.GetUserInputRequests() is { } userInputRequests)
+        if (agentTask.Status?.ToChatMessage() is { } statusMessage)
         {
-            (messages ??= []).Add(new(ChatRole.Assistant, userInputRequests)
-            {
-                RawRepresentation = agentTask.Status,
-            });
+            (messages ??= []).Add(statusMessage);
         }
 
         return messages;
@@ -50,9 +47,9 @@ internal static class A2AAgentTaskExtensions
             }
         }
 
-        if (agentTask.Status?.GetUserInputRequests() is { } userInputRequests)
+        if (agentTask.Status?.ToChatMessage()?.Contents is { } statusContents)
         {
-            (aiContents ??= []).AddRange(userInputRequests);
+            (aiContents ??= []).AddRange(statusContents);
         }
 
         return aiContents;

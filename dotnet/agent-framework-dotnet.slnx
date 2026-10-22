@@ -388,9 +388,11 @@
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Steering/HostedSteering.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/FoundryHostedSession/FoundryHostedSession.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/Hosted-Toolbox-AuthPaths-Client/Hosted-Toolbox-AuthPaths-Client.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SessionFilesClient/SessionFilesClient.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/UserIsolationAgent/UserIsolationAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-E2E-Resilience/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-E2E-Resilience/Using-E2E-Resilience.csproj" />
@@ -450,7 +452,6 @@
     <File Path="Directory.Build.targets" />
     <File Path="Directory.Packages.props" />
     <File Path="global.json" />
-    <File Path="nuget.config" />
     <File Path="README.md" />
   </Folder>
   <Folder Name="/Solution Items/.github/" />
@@ -587,6 +588,10 @@
   <Folder Name="/Solution Items/src/Shared/StructuredOutput/">
     <File Path="src/Shared/StructuredOutput/StructuredOutputSchemaUtilities.cs" />
   </Folder>
+  <Folder Name="/Solution Items/src/Shared/UnitTests/">
+    <File Path="src/Shared/UnitTests/CapturingLoggerFactory.cs" />
+    <File Path="src/Shared/UnitTests/README.md" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/Workflows/" />
   <Folder Name="/Solution Items/src/Shared/Workflows/Execution/">
     <File Path="src/Shared/Workflows/Execution/README.md" />
@@ -644,7 +649,6 @@
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AnthropicChatCompletion.IntegrationTests/AnthropicChatCompletion.IntegrationTests.csproj" />
-    <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
     <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
     <Project Path="tests/Foundry.Hosting.IntegrationTests.TestContainer/Foundry.Hosting.IntegrationTests.TestContainer.csproj" />
     <Project Path="tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj" />

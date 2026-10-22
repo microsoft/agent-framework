@@ -71,9 +71,10 @@ class AgentFrameworkExecutor:
 
         self.checkpoint_manager = CheckpointConversationManager(self.conversation_store)
 
-        # Tracks pending approval requests: request_id -> server-side function_call.
+        # Tracks pending approval requests by (conversation_id, request_id), with
+        # plain request_id keys retained for legacy/unscoped approvals.
         # Prevents forged responses from executing arbitrary tools (CWE-863).
-        self._pending_approvals: dict[str, dict[str, Any]] = {}
+        self._pending_approvals: dict[str | tuple[str, str], dict[str, Any]] = {}
 
     def _setup_instrumentation_provider(self) -> None:
         """Set up our own TracerProvider so we can add processors."""
@@ -130,78 +131,23 @@ class AgentFrameworkExecutor:
 
         return None
 
-    def _track_approval_request(self, event: dict[str, Any]) -> None:
+    def _track_approval_request(self, event: dict[str, Any], conversation_id: str | None = None) -> None:
         """Record a server-issued approval request so we can validate the response later."""
         request_id = event.get("request_id")
         fc = event.get("function_call", {})
         if isinstance(request_id, str) and request_id:
             occurrence_id = fc.get("occurrence_id")
-            self._pending_approvals[request_id] = {
+            approval_key: str | tuple[str, str] = (
+                (conversation_id, request_id) if conversation_id is not None else request_id
+            )
+            self._pending_approvals[approval_key] = {
                 "id": occurrence_id if isinstance(occurrence_id, str) and occurrence_id else request_id,
                 "call_id": fc.get("id", ""),
                 "name": fc.get("name", ""),
                 "arguments": fc.get("arguments", {}),
+                "conversation_id": conversation_id,
             }
             logger.debug("Tracked approval request: %s for function: %s", request_id, fc.get("name", "unknown"))
-
-    async def _ensure_mcp_connections(self, agent: Any) -> None:
-        """Ensure MCP tool connections are healthy before agent execution.
-
-        This is a workaround for an Agent Framework bug where MCP tool connections
-        can become stale (underlying streams closed) but is_connected remains True.
-        This happens when HTTP streaming responses end and GeneratorExit propagates.
-
-        This method detects stale connections and reconnects them. It's designed to
-        be a no-op once the Agent Framework fixes this issue upstream.
-
-        Args:
-            agent: Agent object that may have MCP tools
-        """
-        if not hasattr(agent, "mcp_tools"):
-            return
-
-        for mcp_tool in agent.mcp_tools:
-            if not getattr(mcp_tool, "is_connected", False):
-                continue
-
-            tool_name = getattr(mcp_tool, "name", "unknown")
-
-            try:
-                # Check if underlying write stream is closed
-                session = getattr(mcp_tool, "session", None)
-                if session is None:
-                    continue
-
-                write_stream = getattr(session, "_write_stream", None)
-                if write_stream is None:
-                    continue
-
-                # Detect stale connection: is_connected=True but stream is closed
-                is_closed = getattr(write_stream, "_closed", False)
-                if not is_closed:
-                    continue  # Connection is healthy
-
-                # Stale connection detected - reconnect
-                logger.warning(f"MCP tool '{tool_name}' has stale connection (stream closed), reconnecting...")
-
-                # Clean up old connection
-                try:
-                    if hasattr(mcp_tool, "close"):
-                        await mcp_tool.close()
-                except Exception as close_err:
-                    logger.debug(f"Error closing stale MCP tool '{tool_name}': {close_err}")
-                    # Force reset state
-                    mcp_tool.is_connected = False
-                    mcp_tool.session = None
-
-                # Reconnect
-                if hasattr(mcp_tool, "connect"):
-                    await mcp_tool.connect()
-                    logger.info(f"MCP tool '{tool_name}' reconnected successfully")
-
-            except Exception as e:
-                # If detection fails, log and continue - let it fail naturally during execution
-                logger.debug(f"Error checking MCP tool '{tool_name}' connection: {e}")
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
@@ -258,7 +204,10 @@ class AgentFrameworkExecutor:
                         isinstance(event, dict)
                         and cast(dict[str, Any], event).get("type") == "response.function_approval.requested"
                     ):
-                        self._track_approval_request(cast(dict[str, Any], event))
+                        self._track_approval_request(
+                            cast(dict[str, Any], event),
+                            self._get_request_conversation_id(request),
+                        )
                     events.append(event)
                     if _get_event_type(event) == "response.failed":
                         continue
@@ -366,12 +315,15 @@ class AgentFrameworkExecutor:
 
             yield AgentStartedEvent()
 
+            # Get conversation identity before converting input so approval
+            # responses can be bound to the conversation that originated them.
+            conversation_id = self._get_request_conversation_id(request)
+
             # Convert input to proper Message or string
-            user_message = self._convert_input_to_chat_message(request.input)
+            user_message = self._convert_input_to_chat_message(request.input, conversation_id)
 
             # Get session from conversation parameter (OpenAI standard!)
             session = None
-            conversation_id = self._get_request_conversation_id(request)
             if conversation_id:
                 session = self.conversation_store.get_session(conversation_id)
                 if session:
@@ -383,11 +335,6 @@ class AgentFrameworkExecutor:
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
                 logger.debug(f"Executing agent with multimodal Message: {type(user_message)}")
-
-            # Workaround for MCP tool stale connection bug (GitHub issue pending)
-            # When HTTP streaming ends, GeneratorExit can close MCP stdio streams
-            # but is_connected stays True. Detect and reconnect before execution.
-            await self._ensure_mcp_connections(agent)
 
             # Agent must have run() method - use stream=True for streaming
             if hasattr(agent, "run") and callable(agent.run):
@@ -622,7 +569,7 @@ class AgentFrameworkExecutor:
             logger.error(f"Error in workflow execution: {e}")
             yield {"type": "error", "message": f"Workflow execution error: {e!s}"}
 
-    def _convert_input_to_chat_message(self, input_data: Any) -> Any:
+    def _convert_input_to_chat_message(self, input_data: Any, conversation_id: str | None = None) -> Any:
         """Convert OpenAI Responses API input to Agent Framework Message or string.
 
         Handles various input formats including text, images, files, and multimodal content.
@@ -630,6 +577,7 @@ class AgentFrameworkExecutor:
 
         Args:
             input_data: OpenAI ResponseInputParam (List[ResponseInputItemParam])
+            conversation_id: Conversation associated with the input, used to validate approval responses.
 
         Returns:
             Message for multimodal content, or string for simple text
@@ -648,12 +596,14 @@ class AgentFrameworkExecutor:
         # Handle OpenAI ResponseInputParam (List[ResponseInputItemParam])
         if isinstance(input_data, list):
             input_items: Any = cast(Any, input_data)
-            return self._convert_openai_input_to_chat_message(input_items, Message)
+            return self._convert_openai_input_to_chat_message(input_items, Message, conversation_id)
 
         # Fallback for other formats
         return self._extract_user_message_fallback(input_data)
 
-    def _convert_openai_input_to_chat_message(self, input_items: list[Any], Message: Any) -> Any:
+    def _convert_openai_input_to_chat_message(
+        self, input_items: list[Any], Message: Any, conversation_id: str | None = None
+    ) -> Any:
         """Convert OpenAI ResponseInputParam to Agent Framework messages.
 
         Processes text, images, files, and other content types from OpenAI format
@@ -662,6 +612,7 @@ class AgentFrameworkExecutor:
         Args:
             input_items: List of OpenAI ResponseInputItemParam objects (dicts or objects)
             Message: Message class for creating chat messages
+            conversation_id: Conversation associated with the input, used to validate approval responses.
 
         Returns:
             One Message, or a list of Messages when input contains multiple message items
@@ -706,6 +657,10 @@ class AgentFrameworkExecutor:
                                     file_id = content_dict.get("file_id")
                                     detail = content_dict.get("detail", "auto")
                                     image_properties = {
+                                        "openai": {
+                                            "content_type": "input_image",
+                                            "image_detail": detail if isinstance(detail, str) else "auto",
+                                        },
                                         "openai_content_type": "input_image",
                                         "detail": detail if isinstance(detail, str) else "auto",
                                     }
@@ -739,10 +694,14 @@ class AgentFrameworkExecutor:
 
                                     # Use file_data or file_url
                                     # Include filename in additional_properties for OpenAI/Azure file handling
-                                    file_properties: dict[str, Any] = {"openai_content_type": "input_file"}
+                                    file_properties: dict[str, Any] = {
+                                        "openai": {"content_type": "input_file"},
+                                        "openai_content_type": "input_file",
+                                    }
                                     if filename:
                                         file_properties["filename"] = filename
                                     if isinstance(detail, str):
+                                        cast(dict[str, Any], file_properties["openai"])["image_detail"] = detail
                                         file_properties["detail"] = detail
 
                                     if isinstance(file_data, str) and file_data:
@@ -760,6 +719,7 @@ class AgentFrameworkExecutor:
                                             Content.from_uri(
                                                 uri=data_uri,
                                                 media_type=media_type,
+                                                name=filename or None,
                                                 additional_properties=file_properties,
                                             )
                                         )
@@ -773,6 +733,7 @@ class AgentFrameworkExecutor:
                                             Content.from_uri(
                                                 uri=file_url,
                                                 media_type=media_type,
+                                                name=filename or None,
                                                 additional_properties=file_properties,
                                             )
                                         )
@@ -803,11 +764,42 @@ class AgentFrameworkExecutor:
 
                                         # Only accept responses that match a request we issued.
                                         # Always use the server-stored function_call data.
-                                        stored_fc = (
-                                            None
-                                            if request_id in approval_request_ids
-                                            else self._pending_approvals.get(request_id)
+                                        approval_key: str | tuple[str, str] = (
+                                            (conversation_id, request_id) if conversation_id is not None else request_id
                                         )
+                                        legacy_key = request_id
+
+                                        if request_id in approval_request_ids:
+                                            stored_fc = None
+                                        elif (
+                                            approval_key != legacy_key
+                                            and approval_key in self._pending_approvals
+                                            and legacy_key in self._pending_approvals
+                                        ):
+                                            logger.warning(
+                                                "Rejected function_approval_response for request_id %s: "
+                                                "ambiguous scoped and unscoped approvals exist.",
+                                                request_id,
+                                            )
+                                            stored_fc = None
+                                            continue
+                                        else:
+                                            stored_fc = self._pending_approvals.get(approval_key)
+                                            if stored_fc is None and approval_key != legacy_key:
+                                                stored_fc = self._pending_approvals.get(legacy_key)
+                                        if (
+                                            stored_fc is not None
+                                            and stored_fc.get("conversation_id") is not None
+                                            and stored_fc.get("conversation_id") != conversation_id
+                                        ):
+                                            logger.warning(
+                                                "Rejected function_approval_response for request_id %s: "
+                                                "approval belongs to a different conversation.",
+                                                request_id,
+                                            )
+                                            stored_fc = None
+                                            continue
+
                                         if stored_fc is None:
                                             logger.warning(
                                                 "Rejected function_approval_response with unknown "
@@ -870,7 +862,13 @@ class AgentFrameworkExecutor:
             raise InputConversionError("OpenAI input did not contain any supported message content")
 
         for request_id in approval_request_ids:
-            self._pending_approvals.pop(request_id, None)
+            approval_key: str | tuple[str, str] = (
+                (conversation_id, request_id) if conversation_id is not None else request_id
+            )
+            if approval_key in self._pending_approvals:
+                self._pending_approvals.pop(approval_key, None)
+            else:
+                self._pending_approvals.pop(request_id, None)
 
         logger.info("Created %d Message object(s) from OpenAI input", len(messages))
 

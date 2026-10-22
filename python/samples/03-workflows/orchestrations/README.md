@@ -45,6 +45,11 @@ from agent_framework.orchestrations import (
 
 ### group-chat
 
+[Group chat message filtering](./group_chat_message_filtering.py) demonstrates
+intercepting participant text before shared-history updates and broadcasts, using
+a custom orchestrator for sender validation, content filtering, and redaction.
+The example deliberately leaves participant intermediate outputs disabled.
+
 | Sample                               | File                                                                                                         | Concepts                                                                                              |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | Group Chat with Agent Manager        | [group_chat_agent_manager.py](./group_chat_agent_manager.py)                           | Agent-based manager using `with_orchestrator(agent=)` to select next speaker                        |
@@ -71,6 +76,7 @@ from agent_framework.orchestrations import (
 | Magentic Workflow            | [magentic.py](./magentic.py)                                             | Orchestrate multiple agents with a Magentic manager and streaming     |
 | Magentic + Human Plan Review | [magentic_human_plan_review.py](./magentic_human_plan_review.py)       | Human reviews or updates the plan before execution                    |
 | Magentic + Checkpoint Resume | [magentic_checkpoint.py](./magentic_checkpoint.py)                     | Resume Magentic orchestration from saved checkpoints                  |
+| Magentic + Custom Manager Prompts | [magentic_custom_prompts.py](./magentic_custom_prompts.py)       | Override the manager's planning, ledger, and final answer prompts     |
 | Magentic Orchestration as Agent | [magentic_workflow_as_agent.py](../agents/magentic_workflow_as_agent.py)    | Build a MagenticBuilder workflow and reuse it as an agent             |
 
 ## Tips

@@ -43,6 +43,12 @@ from agent_framework.observability import (
     get_function_span,
 )
 
+
+def _span_attributes(span: Any) -> dict[str, Any]:
+    attributes = span.attributes
+    return dict(attributes) if attributes is not None else {}
+
+
 # region Test constants
 
 
@@ -958,13 +964,17 @@ async def test_agent_streaming_sync_setup_span_is_parented_to_agent_span(
     )
 
 
-async def test_function_call_with_error_handling(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_function_call_with_error_handling(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test that function call errors are properly captured in telemetry."""
+    private_error_detail = "founder-secret-token"
 
     # Create a function that raises an error using the decorator
     @tool(name="failing_function", description="A function that fails")
     async def failing_function(param: str) -> str:
-        raise ValueError("Function execution failed")
+        raise ValueError(f"Function execution failed: {private_error_detail}")
 
     span_exporter.clear()
 
@@ -986,21 +996,20 @@ async def test_function_call_with_error_handling(span_exporter: InMemorySpanExpo
 
     # Verify error status was set
     assert span.status.status_code == StatusCode.ERROR
-    assert span.status.description is not None
-    assert "Function execution failed" in span.status.description
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
 
     # Verify error type attribute was set
     assert span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
 
-    # Verify exception event was recorded
-    assert len(span.events) > 0
-    exception_event = next((e for e in span.events if e.name == "exception"), None)
-    assert exception_event is not None
-    assert exception_event.attributes is not None
-    assert exception_event.attributes["exception.type"] == "ValueError"
-    exception_message = exception_event.attributes["exception.message"]
-    assert isinstance(exception_message, str)
-    assert "Function execution failed" in exception_message
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_event = exception_events[0]
+        assert exception_event.attributes is not None
+        assert exception_event.attributes["exception.type"] == "ValueError"
+        exception_message = exception_event.attributes["exception.message"]
+        assert isinstance(exception_message, str)
+        assert private_error_detail in exception_message
 
 
 # region Test OTEL environment variable parsing
@@ -1914,6 +1923,138 @@ def test_enable_instrumentation_explicit_param_overrides_env(monkeypatch):
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
 
 
+@pytest.mark.parametrize("message_events", [False, True])
+def test_enable_instrumentation_message_events_overrides_env(monkeypatch, message_events: bool) -> None:
+    import agent_framework.observability as observability
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", str(not message_events))
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
+    settings = observability.ObservabilitySettings(enable_instrumentation=False)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    assert settings.enable_message_events is not message_events
+
+    observability.enable_instrumentation(enable_message_events=message_events)
+
+    assert settings.enable_instrumentation is True
+    assert settings.enable_message_events is message_events
+    assert settings.enable_sensitive_data is False
+
+
+@pytest.mark.parametrize("message_events", [False, True])
+@pytest.mark.parametrize("source", ["environment", "providers", "instrumentation"])
+def test_enable_instrumentation_preserves_message_events(monkeypatch, message_events: bool, source: str) -> None:
+    import agent_framework.observability as observability
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", str(message_events if source == "environment" else not message_events))
+    settings = observability.ObservabilitySettings()
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    if source == "providers":
+        with patch.object(settings, "_configure"):
+            observability.configure_otel_providers(enable_message_events=message_events)
+    elif source == "instrumentation":
+        observability.enable_instrumentation(enable_message_events=message_events)
+
+    for env_value in [str(not message_events), None]:
+        if env_value is None:
+            monkeypatch.delenv("ENABLE_MESSAGE_EVENTS")
+        else:
+            monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", env_value)
+        observability.enable_instrumentation()
+        assert settings.enable_message_events is message_events
+        observability.enable_instrumentation(enable_message_events=None)
+        assert settings.enable_message_events is message_events
+
+
+@pytest.mark.parametrize("current_value", [False, True])
+@pytest.mark.parametrize("message_events", [False, True, None])
+@pytest.mark.parametrize("force", [False, True])
+def test_enable_instrumentation_message_events_respects_sticky_disable(
+    monkeypatch, current_value: bool, message_events: bool | None, force: bool
+) -> None:
+    import agent_framework.observability as observability
+
+    settings = observability.ObservabilitySettings(enable_message_events=current_value)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    observability.disable_instrumentation()
+
+    observability.enable_instrumentation(enable_message_events=message_events, enable_sensitive_data=True, force=force)
+
+    assert settings.enable_instrumentation is force
+    assert settings.enable_sensitive_data is force
+    assert settings.is_user_disabled is not force
+    expected = message_events if force and message_events is not None else current_value
+    assert settings.enable_message_events is expected
+
+
+@pytest.mark.parametrize("is_setup", [False, True])
+def test_enable_instrumentation_message_events_preserves_providers(
+    monkeypatch, span_exporter, log_record_exporter, is_setup: bool
+) -> None:
+    from opentelemetry import metrics, trace
+    from opentelemetry._logs import get_logger_provider
+
+    import agent_framework.observability as observability
+
+    settings = observability.OBSERVABILITY_SETTINGS
+    monkeypatch.setattr(settings, "enable_console_exporters", True)
+    monkeypatch.setattr(settings, "_executed_setup", is_setup)
+    providers = (trace.get_tracer_provider(), get_logger_provider(), metrics.get_meter_provider())
+    with patch.object(settings, "_configure") as configure:
+        for message_events in [False, True, None]:
+            observability.enable_instrumentation(enable_message_events=message_events)
+            assert settings.is_setup is is_setup
+            assert settings.enable_console_exporters is True
+            assert trace.get_tracer_provider() is providers[0]
+            assert get_logger_provider() is providers[1]
+            assert metrics.get_meter_provider() is providers[2]
+        configure.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("message_events", [False, True])
+@pytest.mark.parametrize("enable_sensitive_data", [False, True], indirect=True)
+@pytest.mark.parametrize("semconv", ["", "gen_ai_latest_experimental"])
+async def test_enable_instrumentation_controls_message_event_emission(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data: bool,
+    stream: bool,
+    message_events: bool,
+    semconv: str,
+) -> None:
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = semconv
+    observability.enable_instrumentation(enable_message_events=message_events)
+    client = mock_chat_client()
+    messages = [Message("user", ["Test message"])]
+    if stream:
+        response_stream = client.get_response(messages=messages, options={"model": "Test"}, stream=True)
+        async for _ in response_stream:
+            pass
+        await response_stream.get_final_response()
+    else:
+        await client.get_response(messages=messages, options={"model": "Test"})
+
+    records = [record.log_record for record in log_record_exporter.get_finished_logs()]
+    expected_events = []
+    if message_events and enable_sensitive_data:
+        expected_events = [OtelAttr.USER_MESSAGE.value]
+        if stream:
+            expected_events.append(OtelAttr.CHOICE.value)
+    assert [record.event_name for record in records] == expected_events
+    if records:
+        assert records[0].body == {"content": "Test message"}
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes
+    assert attributes is not None
+    assert (OtelAttr.INPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
+    assert (OtelAttr.OUTPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
+
+
 def test_enable_instrumentation_does_not_touch_console_exporters(monkeypatch):
     """Test enable_instrumentation does not modify enable_console_exporters (it is an exporter concern)."""
     import importlib
@@ -2394,7 +2535,8 @@ async def test_chat_client_observability_provider_name_under_baseline_semconv(
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert OtelAttr.SYSTEM in attributes
     assert OtelAttr.PROVIDER_NAME not in attributes
 
@@ -2677,6 +2819,72 @@ def test_make_json_safe_callable_method_type_error_falls_through():
     assert result == {"value": "fallback"}
 
 
+def test_make_json_safe_plain_enum_uses_its_value():
+    """Test make_json_safe serializes plain Enum members as their values instead of walking the enum class."""
+    import json
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Color(Enum):
+        RED = 1
+        LABEL = "label"
+
+    result = make_json_safe({"color": Color.RED, "label": Color.LABEL, "nested": [Color.RED]})
+
+    assert result == {"color": 1, "label": "label", "nested": [1]}
+    assert json.loads(json.dumps(result)) == result
+
+
+def test_make_json_safe_enum_with_serializer_hook_keeps_it():
+    """Test make_json_safe uses an enum's own to_dict/model_dump/dict hook instead of its raw value."""
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Shape(Enum):
+        SQUARE = 4
+
+        def to_dict(self):
+            return {"name": self.name, "sides": self.value}
+
+    class Mode(Enum):
+        FAST = "fast"
+
+        def model_dump(self):
+            return {"mode": self.value, "label": "Fast"}
+
+    class Unit(Enum):
+        METRE = "m"
+
+        def dict(self):
+            return {"symbol": self.value}
+
+    assert make_json_safe({"shape": Shape.SQUARE}) == {"shape": {"name": "SQUARE", "sides": 4}}
+    assert make_json_safe(Mode.FAST) == {"mode": "fast", "label": "Fast"}
+    assert make_json_safe([Unit.METRE]) == [{"symbol": "m"}]
+
+
+def test_make_json_safe_mixin_enums_are_unchanged():
+    """Test make_json_safe keeps str and int mixin enums as the scalars they already are."""
+    import json
+    from enum import Enum, IntEnum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Level(str, Enum):
+        HIGH = "high"
+
+    class Priority(IntEnum):
+        LOW = 1
+
+    result = make_json_safe({"level": Level.HIGH, "priority": Priority.LOW})
+
+    assert result["level"] is Level.HIGH
+    assert result["priority"] is Priority.LOW
+    assert json.dumps(result) == '{"level": "high", "priority": 1}'
+
+
 def test_make_json_safe_dict_with_non_string_keys():
     """Test make_json_safe converts non-primitive dict keys to strings."""
     import json
@@ -2811,7 +3019,25 @@ def test_create_workflow_span(span_exporter):
     spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1
     assert spans[0].name == "test_workflow"
-    assert spans[0].attributes["key"] == "value"
+    assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+
+
+def test_start_workflow_span_does_not_attach_as_current(span_exporter: InMemorySpanExporter) -> None:
+    """start_workflow_span must not attach, so callers can yield without a dangling OTel token."""
+    from opentelemetry import trace
+
+    from agent_framework.observability import start_workflow_span
+
+    span_exporter.clear()  # type: ignore[attr-defined]
+    before = trace.get_current_span()
+    span = start_workflow_span("test_workflow_unattached", attributes={"key": "value"})
+    assert trace.get_current_span() is before
+    span.end()
+
+    spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
+    assert len(spans) == 1
+    assert spans[0].name == "test_workflow_unattached"
+    assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemorySpanExporter) -> None:
@@ -2942,13 +3168,16 @@ def test_create_otlp_exporters_no_endpoints():
 # region Test exception handling in chat client traces
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_chat_client_observability_exception(mock_chat_client, span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_chat_client_observability_exception(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test that exceptions are captured in spans."""
+    private_error_detail = "founder-secret-token"
 
     class FailingChatClient(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
-            raise ValueError("Test error")
+            raise ValueError(f"Test error: {private_error_detail}")
 
     client = FailingChatClient()
     messages = [Message(role="user", contents=["Test"])]
@@ -2961,6 +3190,15 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
     assert len(spans) == 1
     span = spans[0]
     assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3567,9 +3805,12 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
     assert mock_emit.call_count == 0
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_agent_observability_with_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_agent_observability_with_exception(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test agent instrumentation captures exceptions."""
+    private_error_detail = "founder-secret-token"
 
     class _FailingAgent:
         AGENT_PROVIDER_NAME = "test_provider"
@@ -3597,7 +3838,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
             return self._default_options
 
         async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
-            raise RuntimeError("Agent failed")
+            raise RuntimeError(f"Agent failed: {private_error_detail}")
 
     class FailingAgent(AgentTelemetryLayer, _FailingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
@@ -3610,7 +3851,17 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].status.status_code == StatusCode.ERROR
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 # region Test agent streaming observability
@@ -3783,7 +4034,8 @@ def test_capture_messages_baseline_semconv_emits_events_only(span_exporter: InMe
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert OtelAttr.INPUT_MESSAGES not in attributes
     mock_emit.assert_called_once()
     assert mock_emit.call_args.kwargs["event_name"] == "gen_ai.user.message"
@@ -3818,7 +4070,8 @@ def test_capture_messages_latest_experimental_emits_span_attribute_only_when_eve
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
     assert mock_emit.call_count == 0
@@ -3851,7 +4104,8 @@ def test_capture_messages_defaults_emit_both_events_and_span_attribute(span_expo
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
     mock_emit.assert_called_once()
@@ -3919,7 +4173,8 @@ def test_capture_messages_preserves_custom_finish_reason(span_exporter: InMemory
 
     assert mock_emit.call_args.kwargs["body"]["finish_reason"] == "guardrail"
     spans = span_exporter.get_finished_spans()
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     output_messages = json.loads(cast(str, attributes[OtelAttr.OUTPUT_MESSAGES]))
     assert output_messages[-1]["finish_reason"] == "guardrail"
 
@@ -3956,7 +4211,9 @@ def test_capture_messages_exports_native_otel_event(span_exporter: InMemorySpanE
     record = readable_record.log_record
     assert record.event_name == "gen_ai.user.message"
     assert record.body == {"content": "Test"}
-    assert dict(record.attributes or {}) == {"gen_ai.system": "test_provider"}
+    record_attributes = record.attributes
+    assert record_attributes is not None
+    assert dict(record_attributes) == {"gen_ai.system": "test_provider"}
     assert record.trace_id == span_context.trace_id
     assert record.span_id == span_context.span_id
 
@@ -4225,7 +4482,8 @@ def test_get_token_usage_histogram():
 # region Test capture_exception
 
 
-def test_capture_exception(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+def test_capture_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data: bool) -> None:
     """Test capture_exception adds exception info to span."""
     from time import time_ns
 
@@ -4233,18 +4491,27 @@ def test_capture_exception(span_exporter: InMemorySpanExporter):
 
     from agent_framework.observability import capture_exception, get_tracer
 
+    private_error_detail = "founder-secret-token"
     span_exporter.clear()
     tracer = get_tracer()
 
     with tracer.start_as_current_span("test_span") as span:
-        exception = ValueError("Test error")
+        exception = ValueError(f"Test error: {private_error_detail}")
         capture_exception(span=span, exception=exception, timestamp=time_ns())
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].status.status_code == StatusCode.ERROR
-    # Verify exception was recorded
-    assert len(spans[0].events) > 0
+    exported_span = spans[0]
+    assert exported_span.status.status_code == StatusCode.ERROR
+    assert exported_span.attributes is not None
+    assert exported_span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert (private_error_detail in (exported_span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in exported_span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 # region Test _get_span
@@ -5496,7 +5763,7 @@ async def test_agent_instructions_include_context_provider_extensions(
     agent_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
 
@@ -5560,13 +5827,13 @@ async def test_agent_instructions_not_overwritten_by_unrelated_nested_chat(
     agent_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
     chat_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
     ]
     assert len(chat_spans) == 2
 
@@ -5703,6 +5970,254 @@ def test_capture_response_with_error_type(span_exporter: InMemorySpanExporter):
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     assert spans[0].attributes.get(OtelAttr.ERROR_TYPE) == "ValueError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+def test_filter_metric_attributes() -> None:
+    """_filter_metric_attributes preserves only the allowed GenAI metric attributes."""
+    from agent_framework.observability import OtelAttr, _filter_metric_attributes
+
+    attributes = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.PROVIDER_NAME: "test_provider",
+        OtelAttr.SYSTEM: "test_system",
+        OtelAttr.REQUEST_MODEL: "gpt-4o",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+        OtelAttr.ADDRESS: "127.0.0.1",
+        OtelAttr.PORT: 8000,
+        "custom_attribute": "ignored",
+        OtelAttr.CONVERSATION_ID: "conv-123",
+    }
+    filtered = _filter_metric_attributes(attributes)
+    assert filtered == {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.PROVIDER_NAME: "test_provider",
+        OtelAttr.SYSTEM: "test_system",
+        OtelAttr.REQUEST_MODEL: "gpt-4o",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+        OtelAttr.ADDRESS: "127.0.0.1",
+        OtelAttr.PORT: 8000,
+    }
+
+
+def test_capture_operation_error_keeps_only_metric_attributes() -> None:
+    """The error record carries the metric attribute set plus error.type, nothing else."""
+    from agent_framework.observability import _capture_operation_error
+
+    histogram = Mock()
+    _capture_operation_error(
+        attributes={
+            OtelAttr.OPERATION: OtelAttr.CHAT_COMPLETION_OPERATION,
+            OtelAttr.REQUEST_MODEL: "test-model",
+            OtelAttr.CONVERSATION_ID: "conv-1",
+        },
+        exception=TimeoutError("slow"),
+        operation_duration_histogram=histogram,
+        duration=0.25,
+    )
+
+    histogram.record.assert_called_once_with(
+        0.25,
+        attributes={
+            OtelAttr.OPERATION: OtelAttr.CHAT_COMPLETION_OPERATION,
+            OtelAttr.REQUEST_MODEL: "test-model",
+            OtelAttr.ERROR_TYPE: "TimeoutError",
+        },
+    )
+
+
+def test_capture_operation_error_without_histogram_or_duration() -> None:
+    """No histogram or no duration means nothing is recorded."""
+    from agent_framework.observability import _capture_operation_error
+
+    histogram = Mock()
+    _capture_operation_error(attributes={}, exception=ValueError("x"), operation_duration_histogram=histogram)
+    _capture_operation_error(attributes={}, exception=ValueError("x"), duration=1.0)
+    histogram.record.assert_not_called()
+
+
+async def test_chat_client_records_duration_on_error(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A failed non-streaming call records gen_ai.client.operation.duration with error.type."""
+
+    class FailingChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        async def _get_non_streaming_response(self, **kwargs: Any) -> ChatResponse:
+            raise ValueError("boom")
+
+    client = FailingChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="boom"):
+        await client.get_response(messages=[Message(role="user", contents=["hi"])], options={"model": "Test"})
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_chat_client_records_duration_on_streaming_error(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream that fails mid-iteration also records the duration metric with error.type."""
+
+    class FailingStreamChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+                raise RuntimeError("stream broke")
+
+            return ResponseStream(_stream(), finalizer=lambda updates: ChatResponse.from_updates(updates))
+
+    client = FailingStreamChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="stream broke"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        ):
+            pass
+
+    histogram.record.assert_called_once()
+    attributes = histogram.record.call_args[1]["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+
+
+async def test_chat_client_records_duration_when_stream_setup_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream that fails before it is built records the duration metric with error.type."""
+
+    class FailingSetupChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            raise RuntimeError("setup broke")
+
+    client = FailingSetupChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="setup broke"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        ):
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_chat_client_records_duration_when_stream_finalizer_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream whose finalizer raises records the duration metric with error.type."""
+
+    class FailingFinalizerChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+
+            def _broken_finalizer(updates: Any) -> ChatResponse:
+                raise ValueError("finalizer failed")
+
+            return ResponseStream(_stream(), finalizer=_broken_finalizer)
+
+    client = FailingFinalizerChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="finalizer failed"):
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        )
+        async for _ in stream:
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_chat_client_records_duration_when_stream_result_hook_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream whose result hook raises records the duration metric with error.type."""
+
+    def _broken_result_hook(response: ChatResponse) -> ChatResponse:
+        raise RuntimeError("result hook failed")
+
+    client = mock_chat_client()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="result hook failed"):
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        )
+        stream.with_result_hook(_broken_result_hook)
+        async for _ in stream:
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_embedding_client_records_duration_on_error(span_exporter: InMemorySpanExporter) -> None:
+    """A failed embedding call records gen_ai.client.operation.duration with error.type."""
+    from agent_framework import BaseEmbeddingClient, GeneratedEmbeddings
+    from agent_framework.observability import EmbeddingTelemetryLayer
+
+    class RawFailingEmbeddingClient(BaseEmbeddingClient[str, list[float], Any]):  # type: ignore[type-arg]
+        async def get_embeddings(
+            self, values: Sequence[str], *, options: Any = None
+        ) -> GeneratedEmbeddings[list[float], Any]:
+            raise ValueError("embed boom")
+
+    class FailingEmbeddingClient(EmbeddingTelemetryLayer, RawFailingEmbeddingClient):  # type: ignore[misc]
+        OTEL_PROVIDER_NAME = "test"
+
+        def service_url(self) -> str:
+            return "https://test.example.com"
+
+    client = FailingEmbeddingClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="embed boom"):
+        await client.get_embeddings(["hi"], options={"model": "test-embed"})
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "test-embed"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.EMBEDDING_OPERATION
 
 
 def test_backfill_request_model_when_unknown(span_exporter: InMemorySpanExporter):

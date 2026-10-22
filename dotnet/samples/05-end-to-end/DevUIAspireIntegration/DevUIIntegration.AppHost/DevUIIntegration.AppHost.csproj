@@ -4,7 +4,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>net10.0</TargetFrameworks>
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks />
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -18,6 +19,7 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.Azure.AIFoundry" />
+    <PackageReference Include="Aspire.Hosting.Azure" />
     <PackageReference Include="OpenAI" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" IsAspireProjectResource="false" />

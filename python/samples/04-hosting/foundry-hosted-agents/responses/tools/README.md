@@ -24,6 +24,20 @@ When a tool is set to `always_require`, the agent host emits an `mcp_approval_re
 
 The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
 
+The host uses `agent=create_agent` and `history_source="agent_server"`. Each
+request receives its own client and credential; their owned transports are
+closed afterward. History and approval continuation remain in the host's
+trusted user/sandbox-scoped stores, not on a reused agent instance. A fresh
+factory does not remove pending approvals: return the approval response with
+the same outer continuation and sandbox. `store=false` cannot establish a
+persistent approval continuation.
+
+The weather tool is illustrative. The approved shell tool still executes on
+the host and is not made safe by a factory or an approval alone; use this only
+in an isolated development sandbox. The safer dedicated-upload file example is
+[here](../files/). Local model calls use `AzureCliCredential`; deployed calls
+use managed identity.
+
 ## Running the Agent Host
 
 Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.

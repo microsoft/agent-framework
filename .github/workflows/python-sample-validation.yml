@@ -53,7 +53,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-01-get-started
@@ -120,7 +120,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents
@@ -167,7 +167,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-harness
@@ -209,7 +209,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-tools
@@ -255,7 +255,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-openai
@@ -299,7 +299,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-azure
@@ -341,7 +341,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-anthropic
@@ -375,7 +375,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-github-copilot
@@ -411,7 +411,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-amazon
@@ -447,7 +447,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-ollama
@@ -493,7 +493,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-foundry
@@ -539,7 +539,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-copilotstudio
@@ -572,7 +572,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-02-agents-custom
@@ -614,7 +614,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-03-workflows
@@ -628,7 +628,6 @@ jobs:
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Foundry hosted agent configuration
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_PROJECT_ID: ${{ vars.FOUNDRY_PROJECT_ID }}
       AZURE_CONTAINER_REGISTRY_ENDPOINT: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -661,7 +660,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-04-hosting-foundry-hosted-agents
@@ -700,7 +699,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-04-hosting-other
@@ -747,7 +746,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-05-end-to-end
@@ -804,7 +803,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-autogen-migration
@@ -873,7 +872,7 @@ jobs:
         uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-report-semantic-kernel-migration
@@ -907,7 +906,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download all validation reports
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: validation-report-*
           path: reports/
@@ -939,7 +938,7 @@ jobs:
           key: validation-history-${{ github.run_id }}
 
       - name: Upload trend report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: validation-trend-report

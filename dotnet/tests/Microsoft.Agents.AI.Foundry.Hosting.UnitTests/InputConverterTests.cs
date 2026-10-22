@@ -810,17 +810,31 @@ public class InputConverterTests
     [Fact]
     public void ConvertItemsToMessages_McpApprovalRequest_ProducesToolApprovalRequest()
     {
+        // Arrange
+        const string AfRequestId = "ficc_call_weather";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_weather",
+            "get_weather",
+            "{\"city\":\"Seattle\"}");
         var item = new ItemMcpApprovalRequest(
-            id: "mcpr_" + new string('a', 50),
+            id: wireId,
             serverLabel: "agent_framework",
             name: "get_weather",
             arguments: "{\"city\":\"Seattle\"}");
 
-        var messages = InputConverter.ConvertItemsToMessages([item]);
+        // Act
+        var messages = InputConverter.ConvertItemsToMessages([item], stateBag);
 
+        // Assert
         var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
-        Assert.Equal(item.Id, content.RequestId);
+        Assert.Equal(AfRequestId, content.RequestId);
         var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_weather", fc.CallId);
         Assert.Equal("get_weather", fc.Name);
         Assert.NotNull(fc.Arguments);
         Assert.Equal("Seattle", fc.Arguments!["city"]?.ToString());
@@ -878,17 +892,122 @@ public class InputConverterTests
     [Fact]
     public void ConvertOutputItemsToMessages_McpApprovalRequest_ProducesToolApprovalRequest()
     {
+        // Arrange
+        const string AfRequestId = "ficc_call_delete";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_delete",
+            "delete_file",
+            "{}");
         var item = new OutputItemMcpApprovalRequest(
-            id: "mcpr_" + new string('b', 50),
+            id: wireId,
             serverLabel: "agent_framework",
             name: "delete_file",
             arguments: "{}");
 
-        var messages = InputConverter.ConvertOutputItemsToMessages([item]);
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([item], stateBag);
+
+        // Assert
+        var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(AfRequestId, content.RequestId);
+        var functionCall = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_delete", functionCall.CallId);
+        Assert.Equal("delete_file", functionCall.Name);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_ResolvesAfRequestFromStateBag()
+    {
+        const string AfRequestId = "ficc_call_history";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_history",
+            "delete_file",
+            "{\"path\":\"/tmp/x\"}");
+
+        var item = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "delete_file",
+            arguments: "{\"path\":\"/tmp/x\"}");
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([item], stateBag);
 
         var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
-        Assert.Equal(item.Id, content.RequestId);
-        Assert.Equal("delete_file", Assert.IsType<FunctionCallContent>(content.ToolCall).Name);
+        Assert.Equal(AfRequestId, content.RequestId);
+
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_history", fcc.CallId);
+        Assert.Equal("delete_file", fcc.Name);
+        Assert.NotNull(fcc.Arguments);
+        Assert.Equal("/tmp/x", ((System.Text.Json.JsonElement)fcc.Arguments!["path"]!).GetString());
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_ThrowsWhenMappedMetadataDisagrees()
+    {
+        const string AfRequestId = "ficc_reused_call";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "reused_call",
+            "new_tool",
+            "{\"value\":2}");
+
+        var replayedItem = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "old_tool",
+            arguments: "{\"value\":1}");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertOutputItemsToMessages([replayedItem], stateBag));
+        Assert.Contains(wireId, ex.Message);
+        Assert.Contains("does not match", ex.Message);
+    }
+
+    [Fact]
+    public void ConvertOutputAndInputItems_McpApprovalRoundTrip_UsesSameAfRequestId()
+    {
+        const string AfRequestId = "ficc_call_roundtrip";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_roundtrip",
+            "get_monster",
+            "{\"slug\":\"goblin\"}");
+
+        var historyItem = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "get_monster",
+            arguments: "{\"slug\":\"goblin\"}");
+        var approvalResponse = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
+
+        var historyMessages = InputConverter.ConvertOutputItemsToMessages([historyItem], stateBag);
+        var inputMessages = InputConverter.ConvertItemsToMessages([approvalResponse], stateBag);
+
+        var request = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(historyMessages[0].Contents));
+        var response = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(inputMessages[0].Contents));
+        Assert.Equal(request.RequestId, response.RequestId);
+        Assert.Equal(AfRequestId, request.RequestId);
+
+        Assert.Equal("call_roundtrip", Assert.IsType<FunctionCallContent>(request.ToolCall).CallId);
+        Assert.Equal("call_roundtrip", Assert.IsType<FunctionCallContent>(response.ToolCall).CallId);
     }
 
     [Fact]
@@ -924,18 +1043,34 @@ public class InputConverterTests
     [Fact]
     public void ConvertItemsToMessages_McpApprovalRequest_MalformedArguments_PreservesRaw()
     {
+        // Arrange
+        const string AfRequestId = "ficc_call_noisy";
+        const string Arguments = "not valid json";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_noisy",
+            "noisy",
+            Arguments);
         var item = new ItemMcpApprovalRequest(
-            id: "mcpr_" + new string('c', 50),
+            id: wireId,
             serverLabel: "agent_framework",
             name: "noisy",
-            arguments: "not valid json");
+            arguments: Arguments);
 
-        var messages = InputConverter.ConvertItemsToMessages([item]);
+        // Act
+        var messages = InputConverter.ConvertItemsToMessages([item], stateBag);
 
+        // Assert
         var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(AfRequestId, content.RequestId);
         var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_noisy", fc.CallId);
         Assert.NotNull(fc.Arguments);
-        Assert.Equal("not valid json", fc.Arguments!["_raw"]?.ToString());
+        Assert.Equal(Arguments, fc.Arguments!["_raw"]?.ToString());
     }
 
     [Fact]

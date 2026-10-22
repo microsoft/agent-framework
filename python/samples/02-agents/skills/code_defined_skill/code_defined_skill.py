@@ -8,6 +8,7 @@ from typing import Any
 
 from agent_framework import (
     Agent,
+    FunctionInvocationContext,
     InlineSkill,
     InlineSkillResource,
     SkillFrontmatter,
@@ -37,6 +38,13 @@ using a unit-converter skill:
 3. Dynamic Scripts
    Attach a callable script via the @skill.script decorator. Scripts are
    executable functions the agent can invoke directly in-process.
+
+This sample passes host-controlled ``precision`` through
+``agent.run(..., function_invocation_kwargs={"precision": 2})``. The resource
+receives it through ``**kwargs``. The script declares a
+``FunctionInvocationContext`` parameter and reads ``ctx.kwargs["precision"]``,
+keeping host values separate from model-supplied ``value`` and ``factor``.
+The injected context parameter is hidden from the script's parameter schema.
 
 Code-defined skills can be combined with file-based skills in a single
 SkillsProvider — see the mixed_skills sample.
@@ -95,12 +103,23 @@ def conversion_policy(**kwargs: Any) -> Any:
     When the resource function accepts ``**kwargs``, runtime keyword
     arguments passed to ``agent.run()`` are forwarded automatically.
 
+    These runtime values are *host-controlled request context*: they come only
+    from the application calling ``agent.run()``, never from the model. That
+    distinction matters for values that select authority — a tenant ID, a user
+    ID, or an auth token — so this resource treats a missing ``precision`` as a
+    bug rather than silently falling back to a default and masking it.
+
     Args:
         **kwargs: Runtime keyword arguments from ``agent.run()``.
             For example, ``agent.run(..., function_invocation_kwargs={"precision": 2})``
             makes ``kwargs["precision"]`` available here.
     """
-    precision = kwargs.get("precision", 4)
+    if "precision" not in kwargs:
+        raise RuntimeError(
+            "Expected host-supplied 'precision' in runtime kwargs. Runtime context must reach "
+            "resources via agent.run(function_invocation_kwargs=...)."
+        )
+    precision = kwargs["precision"]
     return dedent(f"""\
         # Conversion Policy
 
@@ -113,23 +132,33 @@ def conversion_policy(**kwargs: Any) -> Any:
 # 3. Dynamic Scripts — in-process callable function
 # ---------------------------------------------------------------------------
 @unit_converter_skill.script(name="convert", description="Convert a value: result = value × factor")
-def convert_units(value: float, factor: float, **kwargs: Any) -> str:
+def convert_units(value: float, factor: float, *, ctx: FunctionInvocationContext) -> str:
     """Convert a value using a multiplication factor: result = value × factor.
 
     The caller looks up the correct factor from the conversion-tables
     resource and passes it here.
 
+    The model supplies ``value`` and ``factor`` through the script's nested
+    ``args`` dictionary, while ``main()`` supplies ``precision`` through
+    ``function_invocation_kwargs``. Declaring ``ctx`` opts into context injection:
+    host values are available only in ``ctx.kwargs``, not merged into script
+    arguments. The model cannot supply ``ctx``.
+
     Args:
         value: The numeric value to convert.
         factor: Conversion factor from the conversion table.
-        **kwargs: Runtime keyword arguments from ``agent.run()``.
-            The ``precision`` kwarg controls how many decimal places
-            the result is rounded to (default 4).
+        ctx: Injected tool invocation context. Its host-supplied ``precision``
+            value controls how many decimal places the result is rounded to.
 
     Returns:
         JSON string with the inputs and converted result.
     """
-    precision = kwargs.get("precision", 4)
+    if "precision" not in ctx.kwargs:
+        raise RuntimeError(
+            "Expected host-supplied 'precision' in ctx.kwargs. "
+            "Pass it through agent.run(function_invocation_kwargs=...)."
+        )
+    precision = ctx.kwargs["precision"]
     result = round(value * factor, precision)
     return json.dumps({"value": value, "factor": factor, "result": result})
 

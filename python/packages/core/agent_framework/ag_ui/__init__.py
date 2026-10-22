@@ -13,9 +13,12 @@ Supported classes and functions:
 - AGUIHttpService
 - AGUIThreadSnapshot
 - AGUIThreadSnapshotStore
+- AuthorizationScopeResolver
 - InMemoryAGUIThreadSnapshotStore
 - SnapshotScopeResolver
 - add_agent_framework_fastapi_endpoint
+- agent_framework_messages_to_agui_host_history
+- state_carrier
 - state_update
 - __version__
 """
@@ -29,13 +32,16 @@ _IMPORTS = [
     "AgentFrameworkAgent",
     "AgentFrameworkWorkflow",
     "add_agent_framework_fastapi_endpoint",
+    "agent_framework_messages_to_agui_host_history",
     "AGUIChatClient",
     "AGUIEventConverter",
     "AGUIHttpService",
     "AGUIThreadSnapshot",
     "AGUIThreadSnapshotStore",
+    "AuthorizationScopeResolver",
     "InMemoryAGUIThreadSnapshotStore",
     "SnapshotScopeResolver",
+    "state_carrier",
     "state_update",
     "__version__",
 ]

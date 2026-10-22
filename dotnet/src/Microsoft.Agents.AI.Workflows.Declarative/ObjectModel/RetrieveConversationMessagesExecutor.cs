@@ -21,14 +21,16 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
         Throw.IfNull(this.Model.Messages);
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
 
-        string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string conversationId = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            ConversationIdLocation);
 
         List<ChatMessage> messages = [];
         await foreach (ChatMessage message in agentProvider.GetMessagesAsync(
             conversationId,
             limit: this.GetLimit(),
-            after: this.GetMessage(this.Model.MessageAfter),
-            before: this.GetMessage(this.Model.MessageBefore),
+            after: this.GetMessage(this.Model.MessageAfter, MessageAfterLocation),
+            before: this.GetMessage(this.Model.MessageBefore, MessageBeforeLocation),
             newestFirst: this.IsDescending(),
             cancellationToken).ConfigureAwait(false))
         {
@@ -42,23 +44,24 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
 
     private int? GetLimit()
     {
-        long limit = this.Evaluator.GetValue(this.Model.Limit).Value;
+        long limit = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.Limit), "message limit");
         return Convert.ToInt32(Math.Min(limit, 100));
     }
 
-    private string? GetMessage(StringExpression? messagExpression)
+    private string? GetMessage(StringExpression? messageExpression, string location)
     {
-        if (messagExpression is null)
+        if (messageExpression is null)
         {
             return null;
         }
 
-        return this.Evaluator.GetValue(messagExpression).Value;
+        return this.GetNonSensitiveValue(this.Evaluator.GetValue(messageExpression), location);
     }
 
     private bool IsDescending()
     {
-        AgentMessageSortOrderWrapper sortOrderWrapper = this.Evaluator.GetValue(this.Model.SortOrder).Value;
+        AgentMessageSortOrderWrapper sortOrderWrapper = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.SortOrder), "message sort order");
 
         return sortOrderWrapper.Value == AgentMessageSortOrder.NewestFirst;
     }

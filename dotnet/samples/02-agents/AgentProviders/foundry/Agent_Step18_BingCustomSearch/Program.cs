@@ -2,8 +2,8 @@
 
 // This sample shows how to use Bing Custom Search Tool with a ChatClientAgent.
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
@@ -18,7 +18,7 @@ const string AgentInstructions = """
 
 // Bing Custom Search tool parameters
 BingCustomSearchToolOptions bingCustomSearchToolParameters = new([
-    new BingCustomSearchConfiguration(connectionId, instanceName)
+    new BingCustomSearchOptions(connectionId, instanceName)
 ]);
 
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");

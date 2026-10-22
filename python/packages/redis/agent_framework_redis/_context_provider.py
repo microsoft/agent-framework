@@ -12,7 +12,6 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-import numpy as np
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
 from agent_framework._telemetry import mark_feature_used
@@ -23,6 +22,7 @@ from agent_framework.exceptions import (
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import AggregateHybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
+from redisvl.redis.utils import array_to_buffer
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
 
@@ -46,7 +46,11 @@ class RedisContextProvider(ContextProvider):
     """Redis context provider using the new ContextProvider hooks pattern.
 
     Stores context in Redis and retrieves scoped context via full-text or
-    optional hybrid vector search.
+    optional hybrid vector search. Retrieval spans sessions and is filtered by
+    every non-empty ``application_id``, ``agent_id``, and ``user_id``. At least
+    one identifier must be non-empty. Omitted identifiers do not constrain
+    retrieval, so applications should provide each stable, trusted identifier
+    that represents an intended isolation boundary.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
@@ -81,9 +85,12 @@ class RedisContextProvider(ContextProvider):
             vector_field_name: The name of the vector field in Redis.
             vector_algorithm: The algorithm to use for vector search.
             vector_distance_metric: The distance metric to use for vector search.
-            application_id: The application ID to scope the context.
-            agent_id: The agent ID to scope the context.
-            user_id: The user ID to scope the context.
+            application_id: Optional application-level retrieval scope. When
+                omitted, retrieval is not filtered by application.
+            agent_id: Optional agent-level retrieval scope. When omitted,
+                retrieval is not filtered by agent.
+            user_id: Optional user-level retrieval scope. When omitted,
+                retrieval is not filtered by user.
             context_prompt: The context prompt to use for the provider.
             redis_index: The Redis index to use for the provider.
             overwrite_index: Whether to overwrite the existing Redis index.
@@ -108,6 +115,9 @@ class RedisContextProvider(ContextProvider):
         self._token_escaper: TokenEscaper = TokenEscaper()
         self._index_initialized: bool = False
         self._schema_dict: dict[str, Any] | None = None
+        # An index built here owns its connection pool and must release it on close;
+        # an injected index stays under the caller's control (matching RedisHistoryProvider).
+        self._owns_index = redis_index is None
         index = redis_index or AsyncSearchIndex.from_dict(  # pyright: ignore[reportUnknownMemberType]
             self.schema_dict, redis_url=self.redis_url, validate_on_load=True
         )
@@ -334,10 +344,16 @@ class RedisContextProvider(ContextProvider):
                 text_list, batch_size=len(text_list)
             )
             for i, d in enumerate(prepared):
-                vec = np.asarray(embeddings[i], dtype=np.float32).tobytes()
+                # aembed_many returns lists unless as_buffer is enabled.
+                vec = array_to_buffer(
+                    embeddings[i],  # pyright: ignore[reportArgumentType]
+                    dtype=self.redis_vectorizer.dtype,
+                )
                 field_name: str = self.vector_field_name
                 d[field_name] = vec
 
+        # Redis hashes cannot encode None, including with non-validating borrowed indexes.
+        prepared = [{key: value for key, value in doc.items() if value is not None} for doc in prepared]
         await self.redis_index.load(prepared)
 
     async def _redis_search(
@@ -428,7 +444,15 @@ class RedisContextProvider(ContextProvider):
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        """Async context manager exit."""
+        """Async context manager exit; releases a provider-owned index connection."""
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the Redis connection when this provider owns the index."""
+        if self._owns_index:
+            client = getattr(self.redis_index, "client", None)
+            if client is not None:
+                await client.aclose()
 
 
 __all__ = ["RedisContextProvider"]

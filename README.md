@@ -70,6 +70,7 @@ Explore new MAF capabilities and real implementation patterns on the [official b
   - [Quickstart](#quickstart)
     - [Basic Agent - Python](#basic-agent---python)
     - [Basic Agent - .NET](#basic-agent---net)
+- [Agent Skills for Coding Agents](#agent-skills-for-coding-agents)
 - [More Examples & Samples](#more-examples--samples)
 - [Community & Feedback](#community--feedback)
 - [Troubleshooting](#troubleshooting)
@@ -81,7 +82,7 @@ Python
 
 ```bash
 pip install agent-framework
-# This will install all sub-packages, see `python/packages` for individual packages.
+# This installs the standard package set; install `agent-framework-lab` separately for experimental modules.
 # It may take a minute on first install on Windows.
 ```
 
@@ -128,7 +129,7 @@ async def main():
       client=FoundryChatClient(
           credential=AzureCliCredential(),
           # project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-          # model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+          # model=os.environ["FOUNDRY_MODEL"],
       ),
       name="HaikuAgent",
       instructions="You are an upbeat assistant that writes beautifully.",
@@ -150,8 +151,8 @@ using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 AIAgent agent =
     new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
@@ -160,6 +161,25 @@ AIAgent agent =
 // Once you have the agent, you can invoke it like any other AIAgent.
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
+
+## Agent Skills for Coding Agents
+
+Install the Python Agent Framework builder skill to give a compatible coding agent current guidance for choosing and
+building agents, harnesses, workflows, evaluations, integrations, and hosting:
+
+```bash
+gh skill install microsoft/agent-framework agent-framework-builder-python@main
+```
+
+The explicit `@main` ref is required until a tagged Agent Framework release includes the skill.
+
+The cross-agent `skills` CLI is also supported:
+
+```bash
+npx skills add microsoft/agent-framework --skill agent-framework-builder-python
+```
+
+See the [consumer skills catalog](./skills/) for details.
 
 ## More Examples & Samples
 
@@ -203,6 +223,7 @@ For environment variable configuration specific to each sample, refer to the REA
 ## Contributor Resources
 
 - [Contributing Guide](./CONTRIBUTING.md)
+- [AI-Assisted Contributions Policy](./AI_CONTRIBUTIONS.md)
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
 - [Design Documents](./docs/design)

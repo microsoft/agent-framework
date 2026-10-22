@@ -199,6 +199,19 @@ public static class ChatClientBuilderExtensions
     /// approve.
     /// </para>
     /// <para>
+    /// Any recorded request left unanswered on the next run is automatically rejected, including when only some
+    /// requests are answered or no messages are supplied. The rejected tool is not executed, and the conversation
+    /// can continue. This behavior requires the saved session and is disabled along with approval-response binding.
+    /// Generated rejection responses are included in the returned messages before tool results, so end-of-run
+    /// history saving can record them. Caller-supplied approval responses are not returned again.
+    /// </para>
+    /// <para>
+    /// Binding applies to responses for every tool category, including tools that do not require human approval. A
+    /// response takes effect only when its matching request was recorded in the current <see cref="AgentSession"/> by
+    /// the framework. Request content supplied or replayed by the caller does not establish that binding, so hosts must
+    /// persist the agent session across requests that participate in the same continuation.
+    /// </para>
+    /// <para>
     /// This extension method is intended for use with custom chat client stacks when
     /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>.
     /// When <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="false"/> (the default),

@@ -169,79 +169,64 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         bool recursive = false,
         CancellationToken cancellationToken = default)
     {
-        string fullDir = this.ResolveSafeDirectoryPath(directory);
+        Regex regex = CreateSearchRegex(regexPattern);
+        using var timeout = new MultiStepOperationTimeout(SearchTimeout, cancellationToken);
 
-        if (!Directory.Exists(fullDir))
+        try
         {
-            return [];
-        }
+            string fullDir = this.ResolveSafeDirectoryPath(directory);
+            timeout.ThrowIfCancellationRequested();
 
-        // Compile the regex with a timeout to guard against catastrophic backtracking (ReDoS).
-        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
-        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
-        var results = new List<FileSearchResult>();
-
-        foreach (string filePath in EnumerateFiles(fullDir, recursive))
-        {
-            // The file path relative to the search directory, using forward slashes.
-            string relativeName = GetRelativeStorePath(fullDir, filePath);
-
-            // Apply the optional glob filter on the relative path.
-            if (!StorePaths.MatchesGlob(relativeName, matcher))
+            if (!Directory.Exists(fullDir))
             {
-                continue;
+                timeout.ThrowIfCancellationRequested();
+                return [];
             }
 
-            // Read file content.
-#if NET8_0_OR_GREATER
-            string fileContent = await File.ReadAllTextAsync(filePath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
-#else
-            string fileContent;
-            using (var reader = new StreamReader(filePath, Encoding.UTF8))
-            {
-                fileContent = await reader.ReadToEndAsync().ConfigureAwait(false);
-            }
-#endif
+            Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
+            var results = new List<FileSearchResult>();
 
-            // Search each line for regex matches, tracking line numbers and building a snippet.
-            string[] lines = fileContent.Split('\n');
-            var matchingLines = new List<FileSearchMatch>();
-            string? firstSnippet = null;
-            int lineStartOffset = 0;
-
-            for (int i = 0; i < lines.Length; i++)
+            foreach (string filePath in EnumerateFiles(fullDir, recursive, timeout.Token))
             {
-                Match match = regex.Match(lines[i]);
-                if (match.Success)
+                timeout.ThrowIfCancellationRequested();
+
+                // The file path relative to the search directory, using forward slashes.
+                string relativeName = GetRelativeStorePath(fullDir, filePath);
+
+                // Apply the optional glob filter on the relative path.
+                if (!StorePaths.MatchesGlob(relativeName, matcher))
                 {
-                    matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i].TrimEnd('\r') });
-
-                    // Build a context snippet around the first match (±50 chars).
-                    if (firstSnippet is null)
-                    {
-                        int charIndex = lineStartOffset + match.Index;
-                        int snippetStart = Math.Max(0, charIndex - 50);
-                        int snippetEnd = Math.Min(fileContent.Length, charIndex + match.Value.Length + 50);
-                        firstSnippet = fileContent.Substring(snippetStart, snippetEnd - snippetStart);
-                    }
+                    continue;
                 }
 
-                // Advance the offset past this line (including the '\n' separator).
-                lineStartOffset += lines[i].Length + 1;
-            }
-
-            if (matchingLines.Count > 0)
-            {
-                results.Add(new FileSearchResult
+                // Read file content.
+#if NET8_0_OR_GREATER
+                string fileContent = await timeout.RunStepAsync(
+                    token => File.ReadAllTextAsync(filePath, Encoding.UTF8, token)).ConfigureAwait(false);
+#else
+                string fileContent = await timeout.RunStepAsync(async _ =>
                 {
-                    FileName = relativeName,
-                    Snippet = firstSnippet!,
-                    MatchingLines = matchingLines,
-                });
-            }
-        }
+                    using var reader = new StreamReader(filePath, Encoding.UTF8);
+                    return await reader.ReadToEndAsync().ConfigureAwait(false);
+                }).ConfigureAwait(false);
+#endif
 
-        return results;
+                // Number the lines through the base class's published primitive, so this store
+                // and the line editor cannot drift apart.
+                FileSearchResult? result = timeout.RunStep(token => ScanContent(relativeName, fileContent, regex, token));
+                if (result is not null)
+                {
+                    results.Add(result);
+                }
+            }
+
+            timeout.ThrowIfCancellationRequested();
+            return results;
+        }
+        catch (TimeoutException) when (timeout.Token.IsCancellationRequested)
+        {
+            throw CreateSearchTimeoutException(regexPattern);
+        }
     }
 
     /// <summary>
@@ -249,10 +234,16 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     /// <paramref name="recursive"/> is <see langword="true"/>), skipping symlinks/reparse points for both
     /// files and directories to prevent reading outside the root.
     /// </summary>
-    private static IEnumerable<string> EnumerateFiles(string directory, bool recursive)
+    private static IEnumerable<string> EnumerateFiles(
+        string directory,
+        bool recursive,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         foreach (string filePath in Directory.EnumerateFiles(directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Skip files that are symlinks/reparse points.
             if ((File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0)
             {
@@ -262,6 +253,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
             yield return filePath;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         if (!recursive)
         {
             yield break;
@@ -269,13 +261,15 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
 
         foreach (string subDir in Directory.EnumerateDirectories(directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Skip symlinked/reparse-point directories so recursion cannot escape the root.
             if ((File.GetAttributes(subDir) & FileAttributes.ReparsePoint) != 0)
             {
                 continue;
             }
 
-            foreach (string filePath in EnumerateFiles(subDir, recursive: true))
+            foreach (string filePath in EnumerateFiles(subDir, recursive: true, cancellationToken))
             {
                 yield return filePath;
             }

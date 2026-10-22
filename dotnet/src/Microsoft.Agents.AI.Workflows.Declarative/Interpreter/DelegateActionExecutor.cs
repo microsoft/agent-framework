@@ -52,6 +52,7 @@ internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IResettabl
     /// <inheritdoc/>
     public ValueTask ResetAsync()
     {
+        this._state.Reset();
         return default;
     }
 

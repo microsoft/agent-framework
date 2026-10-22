@@ -11,6 +11,7 @@ available in CI / dev sandboxes).
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -28,10 +29,7 @@ from agent_framework_tools.shell import (
     ShellResult,
     is_docker_available,
 )
-from agent_framework_tools.shell._docker import (
-    build_exec_argv,
-    build_run_argv,
-)
+from agent_framework_tools.shell._docker import build_exec_argv, build_run_argv
 
 _CommunicateOutcome: TypeAlias = tuple[bytes, bytes] | BaseException
 _WaitOutcome: TypeAlias = int | None | BaseException
@@ -194,6 +192,12 @@ def test_build_run_argv_passes_extra_env_and_args():
     image_idx = argv.index("alpine")
     assert "--label" in argv[:image_idx]
     assert "team=af" in argv[:image_idx]
+    # ...and after every enforced isolation default, so docker's last-flag-wins
+    # never lets an extra arg be overridden by one of the tool's own flags.
+    assert argv.index("--label") > max(
+        argv.index(flag)
+        for flag in ("--user", "--network", "--memory", "--pids-limit", "--cap-drop", "--security-opt", "--read-only")
+    )
 
 
 def test_build_exec_argv_interactive():
@@ -201,41 +205,20 @@ def test_build_exec_argv_interactive():
     assert argv == ["docker", "exec", "-i", "c", "bash", "--noprofile", "--norc"]
 
 
-# --------------------------------------------------------------------- extra_run_args validation
+# --------------------------------------------------------------------- unsafe_extra_run_args validation
 
 
-@pytest.mark.parametrize(
-    "extra",
-    [
-        ("--privileged",),
-        ("--network=host",),
-        ("--network", "host"),
-        ("--net=host",),
-        ("-v", "/:/host:rw"),
-        ("--volume=/etc:/etc",),
-        ("--cap-add=ALL",),
-        ("--cap-add", "SYS_ADMIN"),
-        ("--security-opt", "seccomp=unconfined"),
-        ("--device", "/dev/kvm"),
-        ("--pid=host",),
-        ("--ipc=host",),
-        ("--userns=host",),
-        ("--user=0:0",),
-        ("--read-only=false",),
-        ("--tmpfs", "/var:rw"),
-        ("--gpus", "all"),
-        ("--add-host", "evil:1.2.3.4"),
-        ("--label", "x=1", "--privileged"),  # mixed safe + unsafe
-    ],
-)
-def test_dockershell_rejects_isolation_breaking_extra_run_args(extra):
-    with pytest.raises(ValueError, match="isolation defaults"):
-        DockerShellTool(extra_run_args=list(extra))
+@pytest.mark.parametrize("token", [None, 42])
+def test_dockershell_rejects_non_string_unsafe_extra_run_args(token):
+    with pytest.raises(ValueError, match="unsafe_extra_run_args contains a non-string token"):
+        DockerShellTool(unsafe_extra_run_args=[token])  # type: ignore[list-item]
 
 
-def test_dockershell_accepts_benign_extra_run_args():
-    # Should not raise.
-    DockerShellTool(extra_run_args=("--label", "team=af", "--name-suffix", "x"))
+def test_dockershell_snapshots_unsafe_extra_run_args():
+    unsafe = ["--network", "host"]
+    unsafe_tool = DockerShellTool(unsafe_extra_run_args=unsafe)
+    unsafe.append("--privileged")
+    assert unsafe_tool._unsafe_extra_run_args == ("--network", "host")
 
 
 def test_build_exec_argv_non_interactive_appends_dash_c():
@@ -282,6 +265,35 @@ def test_as_function_carries_shell_kind():
     )
 
 
+async def test_as_function_preserves_structured_shell_result() -> None:
+    shell_result = ShellResult(
+        stdout="container output",
+        stderr="container error",
+        exit_code=7,
+        duration_ms=25,
+    )
+    tool = DockerShellTool(mode="stateless")
+
+    with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
+        function = tool.as_function()
+        result = await function.invoke(arguments={"command": "ignored"})
+        raw_result = await function.invoke(arguments={"command": "ignored"}, skip_parsing=True)
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == shell_result.format_for_model()
+    assert result[0].additional_properties == {
+        "stdout": "container output",
+        "stderr": "container error",
+        "exit_code": 7,
+        "truncated": False,
+        "timed_out": False,
+    }
+    assert isinstance(raw_result, str)
+    assert raw_result == shell_result.format_for_model()
+    assert json.loads(json.dumps(raw_result)) == shell_result.format_for_model()
+
+
 async def test_start_and_close_are_noops_in_stateless_mode() -> None:
     tool = DockerShellTool(mode="stateless")
 
@@ -315,6 +327,21 @@ async def test_start_creates_and_reuses_persistent_session() -> None:
         max_output_bytes=tool._max_output_bytes,
     )
     assert session.start.await_count == 2
+
+
+async def test_start_container_passes_unsafe_extra_run_args_verbatim() -> None:
+    tool = DockerShellTool(unsafe_extra_run_args=("--network", "host"))
+    proc = _FakeProcess(returncode=0)
+
+    with patch(
+        "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=proc),
+    ) as create_proc:
+        await tool._start_container()
+
+    assert create_proc.await_args is not None
+    argv = create_proc.await_args.args
+    assert argv[argv.index("--network", argv.index("--network") + 1) + 1] == "host"
 
 
 async def test_close_terminates_session_and_container() -> None:
@@ -409,6 +436,52 @@ async def test_run_stateless_builds_expected_argv() -> None:
     assert result.stderr == "warning\n"
     assert result.exit_code == 3
     assert result.timed_out is False
+
+
+async def test_run_stateless_places_unsafe_extra_args_after_isolation_defaults() -> None:
+    tool = DockerShellTool(
+        mode="stateless",
+        image="alpine:3",
+        shell="sh",
+        unsafe_extra_run_args=("--label", "team=af"),
+    )
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(
+        "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=proc),
+    ) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    argv = create_proc.await_args.args
+    assert argv[-4:] == ("alpine:3", "sh", "-c", "echo hi")
+    assert argv.index("--label") > max(
+        argv.index(flag)
+        for flag in ("--user", "--network", "--memory", "--pids-limit", "--cap-drop", "--security-opt", "--read-only")
+    )
+    assert argv.index("--label") < argv.index("alpine:3")
+
+
+async def test_run_stateless_passes_unsafe_extra_run_args_verbatim() -> None:
+    tool = DockerShellTool(
+        mode="stateless",
+        image="alpine:3",
+        shell="sh",
+        unsafe_extra_run_args=("--entrypoint", "/bin/custom"),
+    )
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(
+        "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=proc),
+    ) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    argv = create_proc.await_args.args
+    assert argv[argv.index("--entrypoint") + 1] == "/bin/custom"
+    assert argv.index("--entrypoint") < argv.index("alpine:3")
 
 
 async def test_run_stateless_timeout_reaps_container_when_kill_fails() -> None:
@@ -541,3 +614,27 @@ async def test_docker_no_network_by_default():
         # busybox wget against a host that should be unreachable with --network none
         r = await shell.run("wget -q -T 2 -O- http://example.com || echo NOACCESS")
         assert "NOACCESS" in r.stdout
+
+
+async def test_run_stateless_sets_stdin_to_devnull() -> None:
+    """Regression: stateless Docker spawns must not inherit host stdin.
+
+    Without stdin=DEVNULL, `docker run -i` forwards the host's stdin into the
+    container. Combined with model-chosen commands that read stdin (e.g., `cat`),
+    this causes the same input theft/hang bug as the local tool.
+
+    This test asserts the spawn is given stdin=DEVNULL by inspecting the
+    asyncio.create_subprocess_exec call.
+    """
+    tool = DockerShellTool(mode="stateless", image="alpine:3", shell="sh")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(
+        "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=proc),
+    ) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    kwargs = create_proc.await_args.kwargs
+    assert kwargs.get("stdin") == asyncio.subprocess.DEVNULL, f"Expected stdin=DEVNULL, got {kwargs.get('stdin')!r}"

@@ -519,7 +519,7 @@ public sealed class PurviewClientTests : IDisposable
         };
 
         return new ContentToProcess(
-            [metadata],
+            metadata,
             activityMetadata,
             deviceMetadata,
             integratedAppMetadata,

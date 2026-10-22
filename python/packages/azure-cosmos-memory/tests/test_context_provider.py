@@ -13,12 +13,13 @@ import pytest
 pytest.importorskip("azure.cosmos.agent_memory")
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 
+from agent_framework_azure_cosmos_memory import __version__
 from agent_framework_azure_cosmos_memory._context_provider import (
     DEFAULT_CONTEXT_PROMPT,
     CosmosMemoryContextProvider,
@@ -28,6 +29,28 @@ from agent_framework_azure_cosmos_memory._feature_usage import FeatureIndex
 # The provider methods accept an ``agent`` implementing ``SupportsAgentRun`` but never
 # use it in these tests, so a typed ``None`` stub keeps the call sites clean.
 _STUB_AGENT: Any = None
+
+
+class Toolkit03MemoryClient:
+    """Signature-bearing test double for the Toolkit 0.3.0b2 retrieval contract."""
+
+    async def search_cosmos(
+        self,
+        search_terms: str,
+        *,
+        user_id: str,
+        top_k: int,
+        memory_types: list[str],
+        min_confidence: float,
+        include_episodes: bool = False,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def build_procedural_context(self, user_id: str, task: str | None = None) -> str:
+        return ""
+
+    async def get_user_summary(self, user_id: str) -> dict[str, Any] | None:
+        return None
 
 
 async def test_before_run_marks_cosmos_memory_used_before_empty_return() -> None:
@@ -59,6 +82,16 @@ def mock_memory_client() -> AsyncMock:
     return mock_client
 
 
+@pytest.fixture
+def toolkit_03_memory_client() -> Any:
+    """Create a mock client that exposes the Toolkit 0.3.0b2 retrieval signatures."""
+    mock_client = create_autospec(Toolkit03MemoryClient, instance=True)
+    mock_client.search_cosmos.return_value = []
+    mock_client.build_procedural_context.return_value = ""
+    mock_client.get_user_summary.return_value = None
+    return mock_client
+
+
 # -- Initialization tests ------------------------------------------------------
 
 
@@ -67,15 +100,16 @@ class TestInit:
 
     def test_init_with_all_params(self, mock_memory_client: AsyncMock) -> None:
         """Initialize with all parameters provided."""
-        provider = CosmosMemoryContextProvider(
-            source_id="test_memory",
-            memory_client=mock_memory_client,
-            top_k=10,
-            min_confidence=0.8,
-            memory_types=["fact", "episodic"],
-            context_prompt="Custom prompt:",
-            auto_extract=True,
-        )
+        with patch("agent_framework_azure_cosmos_memory._context_provider.get_user_agent") as mock_get_user_agent:
+            provider = CosmosMemoryContextProvider(
+                source_id="test_memory",
+                memory_client=mock_memory_client,
+                top_k=10,
+                min_confidence=0.8,
+                memory_types=["fact", "episodic"],
+                context_prompt="Custom prompt:",
+                auto_extract=True,
+            )
 
         assert provider.source_id == "test_memory"
         assert provider.top_k == 10
@@ -85,6 +119,7 @@ class TestInit:
         assert provider.auto_extract is True
         assert provider.memory_client is mock_memory_client
         assert provider._should_close_client is False
+        mock_get_user_agent.assert_not_called()
 
     def test_init_default_values(self, mock_memory_client: AsyncMock) -> None:
         """Initialize with default values."""
@@ -97,11 +132,34 @@ class TestInit:
         assert provider.context_prompt == DEFAULT_CONTEXT_PROMPT
         assert provider.auto_extract is True
 
+    def test_init_rejects_non_positive_top_k(self, mock_memory_client: AsyncMock) -> None:
+        """The toolkit rejects a non-positive top_k on every search, so fail at construction."""
+        for top_k in (0, -1):
+            with pytest.raises(ValueError, match="top_k must be greater than 0"):
+                CosmosMemoryContextProvider(memory_client=mock_memory_client, top_k=top_k)
+
+    def test_init_rejects_min_confidence_outside_documented_range(self, mock_memory_client: AsyncMock) -> None:
+        """Scores above 1.0 match no memory and negative scores drop the filter; both are silent."""
+        for min_confidence in (-0.1, 1.01, float("nan"), float("inf")):
+            with pytest.raises(ValueError, match="min_confidence must be between 0.0 and 1.0"):
+                CosmosMemoryContextProvider(memory_client=mock_memory_client, min_confidence=min_confidence)
+
+    def test_init_accepts_boundary_search_params(self, mock_memory_client: AsyncMock) -> None:
+        """The documented bounds are inclusive."""
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client, top_k=1, min_confidence=1.0)
+
+        assert provider.top_k == 1
+        assert provider.min_confidence == 1.0
+
     def test_init_creates_client_when_none(self) -> None:
         """When no client provided, creates AsyncCosmosMemoryClient with default credential."""
-        with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-        ) as mock_client_class:
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient") as mock_client_class,
+            patch(
+                "agent_framework_azure_cosmos_memory._context_provider.get_user_agent",
+                return_value="agent-framework-python/test",
+            ) as mock_get_user_agent,
+        ):
             mock_client_class.return_value = AsyncMock()
 
             provider = CosmosMemoryContextProvider(
@@ -117,6 +175,10 @@ class TestInit:
             _, kwargs = mock_client_class.call_args
             assert kwargs["use_default_credential"] is True
             assert "cosmos_credential" not in kwargs
+            assert kwargs["user_agent"] == (
+                f"agent-framework-python/test agent-framework-azure-cosmos-memory/{__version__}"
+            )
+            mock_get_user_agent.assert_called_once_with()
             # The explicitly provided models are forwarded to the toolkit client.
             assert kwargs["embedding_deployment_name"] == "text-embedding-3-large"
             assert kwargs["chat_deployment_name"] == "gpt-4o-mini"
@@ -124,9 +186,13 @@ class TestInit:
 
     def test_init_wires_explicit_credential(self) -> None:
         """An explicit credential is passed to both Cosmos and AI Foundry, disabling default."""
-        with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-        ) as mock_client_class:
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient") as mock_client_class,
+            patch(
+                "agent_framework_azure_cosmos_memory._context_provider.get_user_agent",
+                return_value="agent-framework-python/test",
+            ) as mock_get_user_agent,
+        ):
             mock_client_class.return_value = AsyncMock()
             sentinel = MagicMock()
 
@@ -142,24 +208,49 @@ class TestInit:
             assert kwargs["cosmos_credential"] is sentinel
             assert kwargs["ai_foundry_credential"] is sentinel
             assert kwargs["use_default_credential"] is False
+            assert kwargs["user_agent"] == (
+                f"agent-framework-python/test agent-framework-azure-cosmos-memory/{__version__}"
+            )
+            mock_get_user_agent.assert_called_once_with()
 
     def test_init_raises_without_endpoints(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises SettingNotFoundError when the Cosmos endpoint is not provided."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         with pytest.raises(SettingNotFoundError, match="cosmos_endpoint"):
             CosmosMemoryContextProvider()
 
     def test_init_raises_without_foundry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises SettingNotFoundError when the Foundry endpoint is not provided."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         with pytest.raises(SettingNotFoundError, match="foundry_endpoint"):
             CosmosMemoryContextProvider(cosmos_endpoint="https://test.documents.azure.com:443/")
 
     def test_init_raises_without_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises when the chat/embedding models are not provided (no silent default)."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         # Endpoints resolve, but the models do not: rather than defaulting to a model that may not
         # be deployed, construction must raise so the caller knows to set one.
@@ -168,6 +259,44 @@ class TestInit:
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
             )
+
+    def test_init_prefers_foundry_project_endpoint_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FOUNDRY_PROJECT_ENDPOINT takes precedence over the legacy environment variable."""
+        monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://preferred.ai.azure.com/api/projects/test")
+        monkeypatch.setenv("FOUNDRY_ENDPOINT", "https://legacy.ai.azure.com/api/projects/test")
+
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["ai_foundry_endpoint"] == "https://preferred.ai.azure.com/api/projects/test"
+
+    def test_init_accepts_legacy_foundry_endpoint_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FOUNDRY_ENDPOINT remains supported for existing configurations."""
+        monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
+        monkeypatch.setenv("FOUNDRY_ENDPOINT", "https://legacy.ai.azure.com/api/projects/test")
+
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["ai_foundry_endpoint"] == "https://legacy.ai.azure.com/api/projects/test"
 
     def test_init_processor_config_forwarded_to_built_client(self) -> None:
         """processor_config is forwarded to the built client via cadence_thresholds."""
@@ -270,6 +399,7 @@ class TestBeforeRun:
         assert call_kwargs["top_k"] == 5
         assert call_kwargs["memory_types"] == ["fact", "procedural"]
         assert call_kwargs["min_confidence"] == 0.7
+        assert "include_episodes" not in call_kwargs
 
         # Verify memories added to context
         assert "cosmos_memory" in ctx.context_messages
@@ -279,6 +409,153 @@ class TestBeforeRun:
         assert "User completed ML course" in added[0].text  # type: ignore
         assert "0.95" in added[0].text  # type: ignore
         assert "0.85" in added[0].text  # type: ignore
+
+    async def test_older_toolkit_preserves_generic_mixed_search(self, mock_memory_client: AsyncMock) -> None:
+        """Older Toolkit clients receive all selected types through generic search."""
+        provider = CosmosMemoryContextProvider(
+            memory_client=mock_memory_client,
+            memory_types=["fact", "episodic", "procedural"],
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
+
+        await provider.before_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        call_kwargs = mock_memory_client.search_cosmos.call_args.kwargs
+        assert call_kwargs["memory_types"] == ["fact", "episodic", "procedural"]
+        assert "include_episodes" not in call_kwargs
+        mock_memory_client.build_procedural_context.assert_not_awaited()
+
+    async def test_toolkit_03_retrieves_mixed_memory_types(self, toolkit_03_memory_client: Any) -> None:
+        """Toolkit 0.3 uses one fact/episode search plus task-aware procedural projection."""
+        toolkit_03_memory_client.search_cosmos.return_value = [
+            {"content": "User prefers Python", "memory_type": "fact", "confidence": 0.95},
+            {"content": "User completed ML course", "memory_type": "episodic", "confidence": 0.85},
+        ]
+        toolkit_03_memory_client.build_procedural_context.return_value = "Always provide runnable examples."
+
+        provider = CosmosMemoryContextProvider(
+            memory_client=toolkit_03_memory_client,
+            top_k=7,
+            memory_types=["fact", "episodic", "procedural"],
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(
+            input_messages=[Message(role="user", contents=["Help me write Python"])],
+            session_id="s1",
+        )
+
+        await provider.before_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        toolkit_03_memory_client.search_cosmos.assert_awaited_once_with(
+            search_terms="Help me write Python",
+            user_id="test-session",
+            top_k=7,
+            memory_types=["fact", "episodic"],
+            min_confidence=0.7,
+            include_episodes=True,
+        )
+        toolkit_03_memory_client.build_procedural_context.assert_awaited_once_with(
+            user_id="test-session",
+            task="Help me write Python",
+        )
+        added = ctx.context_messages["cosmos_memory"]
+        assert len(added) == 1
+        assert "User prefers Python" in added[0].text  # type: ignore
+        assert "User completed ML course" in added[0].text  # type: ignore
+        assert "Always provide runnable examples." in added[0].text  # type: ignore
+
+    async def test_toolkit_03_fact_only_disables_episodes(self, toolkit_03_memory_client: Any) -> None:
+        """Fact-only retrieval explicitly disables episodes and skips procedures."""
+        provider = CosmosMemoryContextProvider(memory_client=toolkit_03_memory_client, memory_types=["fact"])
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
+
+        await provider.before_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        assert toolkit_03_memory_client.search_cosmos.call_args.kwargs["memory_types"] == ["fact"]
+        assert toolkit_03_memory_client.search_cosmos.call_args.kwargs["include_episodes"] is False
+        toolkit_03_memory_client.build_procedural_context.assert_not_awaited()
+
+    async def test_toolkit_03_procedural_only_skips_generic_search(self, toolkit_03_memory_client: Any) -> None:
+        """Procedural-only retrieval compiles the task context without running generic search."""
+        toolkit_03_memory_client.build_procedural_context.return_value = "Use the deployment runbook."
+        provider = CosmosMemoryContextProvider(memory_client=toolkit_03_memory_client, memory_types=["procedural"])
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Deploy the app"])], session_id="s1")
+
+        await provider.before_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        toolkit_03_memory_client.search_cosmos.assert_not_awaited()
+        toolkit_03_memory_client.build_procedural_context.assert_awaited_once_with(
+            user_id="test-session",
+            task="Deploy the app",
+        )
+        assert "Use the deployment runbook." in ctx.context_messages["cosmos_memory"][0].text  # type: ignore
+
+    async def test_toolkit_03_empty_procedural_context_is_not_injected(self, toolkit_03_memory_client: Any) -> None:
+        """An empty compiled procedure does not add a context message."""
+        provider = CosmosMemoryContextProvider(memory_client=toolkit_03_memory_client, memory_types=["procedural"])
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
+
+        await provider.before_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        assert "cosmos_memory" not in ctx.context_messages
+
+    async def test_toolkit_03_search_failure_does_not_block_other_context(self, toolkit_03_memory_client: Any) -> None:
+        """Generic search failure does not suppress procedures or the user summary."""
+        toolkit_03_memory_client.search_cosmos.side_effect = Exception("search boom")
+        toolkit_03_memory_client.build_procedural_context.return_value = "Use the recovery procedure."
+        toolkit_03_memory_client.get_user_summary.return_value = {"content": "Prefers concise answers"}
+        provider = CosmosMemoryContextProvider(
+            memory_client=toolkit_03_memory_client,
+            memory_types=["fact", "procedural"],
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
+
+        await provider.before_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        added = ctx.context_messages["cosmos_memory"]
+        assert any("Use the recovery procedure." in message.text for message in added)  # type: ignore
+        assert any("Prefers concise answers" in message.text for message in added)  # type: ignore
+
+    async def test_toolkit_03_procedural_failure_does_not_block_other_context(
+        self, toolkit_03_memory_client: Any
+    ) -> None:
+        """Procedural projection failure does not suppress facts or the user summary."""
+        toolkit_03_memory_client.search_cosmos.return_value = [
+            {"content": "User likes hiking", "memory_type": "fact", "confidence": 0.9}
+        ]
+        toolkit_03_memory_client.build_procedural_context.side_effect = Exception("procedure boom")
+        toolkit_03_memory_client.get_user_summary.return_value = {"content": "Prefers concise answers"}
+        provider = CosmosMemoryContextProvider(
+            memory_client=toolkit_03_memory_client,
+            memory_types=["fact", "procedural"],
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
+
+        await provider.before_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        added = ctx.context_messages["cosmos_memory"]
+        assert any("User likes hiking" in message.text for message in added)  # type: ignore
+        assert any("Prefers concise answers" in message.text for message in added)  # type: ignore
 
     async def test_user_summary_injected_as_untrusted_message(self, mock_memory_client: AsyncMock) -> None:
         """User summary is injected as an untrusted context message, not as agent instructions."""

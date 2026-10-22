@@ -24,6 +24,7 @@ from agent_framework import (
     FileAccessProvider,
     FileMemoryProvider,
     FileSystemAgentFileStore,
+    FunctionTool,
     InMemoryAgentFileStore,
     InMemoryHistoryProvider,
     Message,
@@ -33,6 +34,9 @@ from agent_framework import (
     SkillsProvider,
     TodoProvider,
     create_harness_agent,
+    get_agent_mode,
+    set_agent_mode,
+    tool,
 )
 from agent_framework._harness._agent import DEFAULT_HARNESS_INSTRUCTIONS, _assemble_instructions
 from agent_framework._harness._mode import AgentModeProvider
@@ -133,6 +137,56 @@ def test_create_harness_agent_disable_mode() -> None:
     assert AgentModeProvider not in provider_types
 
 
+async def test_create_harness_agent_with_replacement_mode_tool() -> None:
+    """Applications can replace a built-in mode tool without replacing provider state."""
+    session = AgentSession(session_id="session-1")
+    mode_provider = AgentModeProvider(source_id="ui_mode", expose_mode_set=False)
+
+    @tool
+    def update_mode(mode: str) -> str:
+        """Update the application's mode."""
+        return set_agent_mode(
+            session,
+            mode,
+            source_id=mode_provider.source_id,
+            available_modes=mode_provider.available_modes,
+            notify=False,
+        )
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        mode_provider=mode_provider,
+        tools=[update_mode],
+        agent_instructions="Use update_mode for approved mode changes.",
+        disable_todo=True,
+        disable_file_memory=True,
+        disable_web_search=True,
+    )
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Start planning"])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    assert [mode_tool.name for mode_tool in tools if isinstance(mode_tool, FunctionTool)] == ["update_mode", "mode_get"]
+    assert "Use update_mode for approved mode changes." in options["instructions"]
+    assert "mode_set" not in options["instructions"]
+    replacement = next(
+        mode_tool for mode_tool in tools if isinstance(mode_tool, FunctionTool) and mode_tool.name == "update_mode"
+    )
+    await replacement.invoke(arguments={"mode": "execute"})
+    assert get_agent_mode(session, source_id=mode_provider.source_id) == "execute"
+
+    updated_context, updated_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Continue"])],
+    )
+    assert "You are currently operating in the execute mode." in updated_options["instructions"]
+    assert updated_context.context_messages.get(mode_provider.source_id, []) == []
+
+
 def test_create_harness_agent_disable_file_memory() -> None:
     """disable_file_memory=True should exclude the FileMemoryProvider."""
     agent = create_harness_agent(
@@ -199,6 +253,28 @@ def test_create_harness_agent_file_access_approval_opt_outs() -> None:
     access_provider = next(p for p in agent.context_providers if isinstance(p, FileAccessProvider))
     assert access_provider.disable_readonly_tool_approval is True
     assert access_provider.disable_write_tool_approval is True
+
+
+def test_create_harness_agent_file_access_session_scoped_flag() -> None:
+    """The file_access_session_scoped flag should reach the FileAccessProvider."""
+    default_agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_store=InMemoryAgentFileStore(),
+    )
+    default_provider = next(p for p in default_agent.context_providers if isinstance(p, FileAccessProvider))
+    assert default_provider.session_scoped is False
+
+    scoped_agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_store=InMemoryAgentFileStore(),
+        file_access_session_scoped=True,
+    )
+    scoped_provider = next(p for p in scoped_agent.context_providers if isinstance(p, FileAccessProvider))
+    assert scoped_provider.session_scoped is True
 
 
 def test_create_harness_agent_default_file_stores_are_filesystem(

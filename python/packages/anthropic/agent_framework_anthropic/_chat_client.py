@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
 
 from agent_framework import (
@@ -32,8 +34,19 @@ from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE, normalize_tools
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
+from agent_framework.exceptions import (
+    AgentFrameworkException,
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+    ResponseInvalidatedException,
+)
 from agent_framework.observability import ChatTelemetryLayer
+from anthropic import APIError as AnthropicAPIError
 from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
+from anthropic import AuthenticationError as AnthropicAuthenticationError
+from anthropic import BadRequestError as AnthropicBadRequestError
+from anthropic import PermissionDeniedError as AnthropicPermissionDeniedError
 from anthropic.lib.bedrock import AsyncAnthropicBedrock
 from anthropic.lib.vertex import AsyncAnthropicVertex
 from anthropic.types.beta import (
@@ -82,10 +95,28 @@ __all__ = [
 logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
-BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
+BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04"]
+UNSUPPORTED_SAMPLING_OPTIONS: Final[tuple[str, ...]] = ("temperature", "top_p", "top_k")
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
+
+
+def _wrap_anthropic_error(ex: Exception) -> ChatClientException:
+    """Translate a raw anthropic-sdk failure into the framework's ChatClientException hierarchy.
+
+    ``APIError`` instances are classified by HTTP status (401/403 -> auth, other 4xx ->
+    invalid request), matching the Mistral client. Anything else - connection errors,
+    timeouts, unexpected SDK exceptions - is still wrapped as a generic ``ChatClientException``
+    so callers catching that base type never see a raw provider exception leak through.
+    """
+    if isinstance(ex, AnthropicAPIError):
+        status = getattr(ex, "status_code", None)
+        if isinstance(ex, (AnthropicAuthenticationError, AnthropicPermissionDeniedError)) or status in (401, 403):
+            return ChatClientInvalidAuthException(f"Anthropic authentication failed: {ex}", inner_exception=ex)
+        if isinstance(ex, AnthropicBadRequestError) or (isinstance(status, int) and 400 <= status < 500):
+            return ChatClientInvalidRequestException(f"Invalid Anthropic request: {ex}", inner_exception=ex)
+    return ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex)
 
 
 # region Anthropic Chat Options TypedDict
@@ -120,8 +151,8 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         a default of 1024 will be used.
 
     Keys:
-        temperature: Sampling temperature between 0 and 1.
-        top_p: Nucleus sampling parameter.
+        temperature: Unsupported by Anthropic SDK 1.x; ignored with a warning.
+        top_p: Unsupported by Anthropic SDK 1.x; ignored with a warning.
         max_tokens: Maximum number of tokens to generate (REQUIRED).
         stop: Stop sequences,
             translates to ``stop_sequences`` in Anthropic API.
@@ -133,7 +164,7 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         instructions: System instructions for the model, translating to ``system`` in
             the Anthropic API. Use a string for generic instructions or structured
             Anthropic system blocks when you need prompt-cache ``cache_control``.
-        top_k: Number of top tokens to consider for sampling.
+        top_k: Unsupported by Anthropic SDK 1.x; ignored with a warning.
         service_tier: Service tier ("auto" or "standard_only").
         thinking: Extended thinking configuration for Claude models.
             When enabled, responses include ``thinking`` content blocks showing Claude's
@@ -144,8 +175,7 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         additional_beta_flags: Additional beta flags to enable on the request.
     """
 
-    # Anthropic-specific generation parameters (supported by all models)
-    top_k: int
+    # Anthropic-specific generation parameters
     service_tier: Literal["auto", "standard_only"]
 
     # Extended thinking (Claude models)
@@ -161,6 +191,9 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
     additional_beta_flags: list[str]
 
     # Unsupported base options (override with None to indicate not supported)
+    temperature: None  # type: ignore[misc]
+    top_p: None  # type: ignore[misc]
+    top_k: None
     logit_bias: None  # type: ignore[misc]
     seed: None  # type: ignore[misc]
     frequency_penalty: None  # type: ignore[misc]
@@ -193,7 +226,24 @@ def _apply_option_translations(options: dict[str, Any]) -> None:
         if old_key not in options or old_key == new_key:
             continue
         old_value = options.pop(old_key)
+        if old_key == "stop" and isinstance(old_value, str):
+            # ChatOptions allows a single stop string; stop_sequences takes a list.
+            old_value = [old_value]
         options.setdefault(new_key, old_value)
+
+
+def _drop_unsupported_sampling_options(options: dict[str, Any]) -> None:
+    unsupported_options = [name for name in UNSUPPORTED_SAMPLING_OPTIONS if name in options]
+    if not unsupported_options:
+        return
+
+    for name in unsupported_options:
+        options.pop(name)
+
+    logger.warning(
+        "Ignoring unsupported Anthropic sampling options: %s",
+        ", ".join(unsupported_options),
+    )
 
 
 # region Role and Finish Reason Maps
@@ -226,6 +276,15 @@ def _map_finish_reason(stop_reason: str | None) -> FinishReason | None:
     if not stop_reason:
         return None
     return FinishReason(FINISH_REASON_MAP.get(stop_reason, stop_reason))
+
+
+@dataclass
+class _AnthropicRequestState:
+    """Mutable parsing state scoped to one Anthropic request."""
+
+    active_call_id: str | None = None
+    active_call_content_type: str | None = None
+    tool_name_aliases: dict[str, str] = field(default_factory=dict[str, str])
 
 
 class AnthropicSettings(TypedDict, total=False):
@@ -270,7 +329,7 @@ class RawAnthropicClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
         base_url: str | None = None,
         anthropic_client: AnthropicAsyncClient | None = None,
@@ -290,7 +349,7 @@ class RawAnthropicClient(
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
-                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+                The default flag is "mcp-client-2025-04-04".
             additional_properties: Additional properties stored on the client instance.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -381,10 +440,6 @@ class RawAnthropicClient(
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
         self.model = model_setting
-        # streaming requires tracking the last function call ID, name, and content type
-        self._last_call_id_name: tuple[str, str] | None = None
-        self._last_call_content_type: str | None = None
-        self._tool_name_aliases: dict[str, str] = {}
 
     # region Static factory methods for hosted tools
 
@@ -556,7 +611,8 @@ class RawAnthropicClient(
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
-        run_options = self._prepare_options(messages, options, **kwargs)
+        request_state = _AnthropicRequestState()
+        run_options = self._prepare_options(messages, options, request_state, **kwargs)
 
         if stream:
             # Streaming mode
@@ -565,19 +621,68 @@ class RawAnthropicClient(
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
                 emitted_usage: dict[str, int] = {}
+                local_function_call_started = False
+                open_local_function_call_blocks: set[int] = set()
+                latest_stop_reason: str | None = None
+                message_stop_received = False
                 mark_feature_used(FeatureIndex.ANTHROPIC)
-                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-                    parsed_chunk = self._process_stream_event(chunk, emitted_usage)
-                    if parsed_chunk:
-                        yield parsed_chunk
+                try:
+                    async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+                        parsed_chunk = self._process_stream_event(chunk, emitted_usage, request_state=request_state)
+                        if chunk.type == "content_block_start" and parsed_chunk is not None:
+                            if any(
+                                content.type == "function_call" and not content.informational_only
+                                for content in parsed_chunk.contents
+                            ):
+                                local_function_call_started = True
+                                open_local_function_call_blocks.add(chunk.index)
+                        elif chunk.type == "content_block_stop":
+                            open_local_function_call_blocks.discard(chunk.index)
+                        elif chunk.type == "message_delta" and chunk.delta.stop_reason is not None:
+                            latest_stop_reason = chunk.delta.stop_reason
+                        elif chunk.type == "message_stop":
+                            message_stop_received = True
+                            if local_function_call_started and (
+                                open_local_function_call_blocks or latest_stop_reason != "tool_use"
+                            ):
+                                raise ResponseInvalidatedException(
+                                    "Anthropic invalidated partial response output; "
+                                    "local function calls must not execute."
+                                )
+                        if parsed_chunk:
+                            yield parsed_chunk
+                    if local_function_call_started and not message_stop_received:
+                        raise ResponseInvalidatedException(
+                            "Anthropic invalidated partial response output after the response ended without "
+                            "message_stop; local function calls must not execute."
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except ResponseInvalidatedException:
+                    raise
+                except Exception as ex:
+                    if local_function_call_started:
+                        raise ResponseInvalidatedException(
+                            "Anthropic invalidated partial response output after the response stream failed; "
+                            "local function calls must not execute.",
+                            inner_exception=ex,
+                        ) from ex
+                    if isinstance(ex, AgentFrameworkException):
+                        raise
+                    raise _wrap_anthropic_error(ex) from ex
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             mark_feature_used(FeatureIndex.ANTHROPIC)
-            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-            return self._process_message(message, options)
+            try:
+                message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            except AgentFrameworkException:
+                raise
+            except Exception as ex:
+                raise _wrap_anthropic_error(ex) from ex
+            return self._process_message(message, options, request_state=request_state)
 
         return _get_response()
 
@@ -587,6 +692,8 @@ class RawAnthropicClient(
         self,
         messages: Sequence[Message],
         options: Mapping[str, Any],
+        request_state: _AnthropicRequestState | None = None,
+        /,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Create run options for the Anthropic client based on messages and options.
@@ -594,11 +701,13 @@ class RawAnthropicClient(
         Args:
             messages: The list of chat messages.
             options: The options dict.
+            request_state: State used to parse the response for this request.
             kwargs: Additional keyword arguments.
 
         Returns:
             A dictionary of run options for the Anthropic client.
         """
+        request_state = request_state or _AnthropicRequestState()
         # Start with a copy of options, excluding keys we handle separately
         run_options: dict[str, Any] = {
             k: v
@@ -622,6 +731,7 @@ class RawAnthropicClient(
         }
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)
+        _drop_unsupported_sampling_options(run_options)
 
         # system message - Anthropic expects system instructions as a separate request parameter
         instructions = options.get("instructions")
@@ -654,13 +764,14 @@ class RawAnthropicClient(
 
         # Handle user option -> metadata.user_id (Anthropic uses metadata.user_id instead of user)
         if user := run_options.pop("user", None):
-            metadata = run_options.get("metadata", {})
+            # Copy so the caller's metadata dict is not modified across requests.
+            metadata = dict(run_options.get("metadata") or {})
             if "user_id" not in metadata:
                 metadata["user_id"] = user
             run_options["metadata"] = metadata
 
         # tools, mcp servers and tool choice
-        if tools_config := self._prepare_tools_for_anthropic(options):
+        if tools_config := self._prepare_tools_for_anthropic(options, request_state=request_state):
             run_options.update(tools_config)
 
         # response_format - emit Anthropic's GA ``output_config.format`` shape.
@@ -758,7 +869,8 @@ class RawAnthropicClient(
                 schema = response_format
 
             if isinstance(schema, dict):
-                schema["additionalProperties"] = False
+                # Copy, so the caller's response_format is not changed for later requests.
+                schema = {**schema, "additionalProperties": False}
 
             return {
                 "type": "json_schema",
@@ -977,7 +1089,11 @@ class RawAnthropicClient(
             "content": a_content,
         }
 
-    def _prepare_tools_for_anthropic(self, options: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _prepare_tools_for_anthropic(
+        self,
+        options: Mapping[str, Any],
+        request_state: _AnthropicRequestState | None = None,
+    ) -> dict[str, Any] | None:
         """Prepare tools and tool choice configuration for the Anthropic API request.
 
         Converts FunctionTool to Anthropic format. MCP tools are routed to separate
@@ -985,12 +1101,14 @@ class RawAnthropicClient(
 
         Args:
             options: The options dict containing tools and tool choice settings.
+            request_state: State used to parse the response for this request.
 
         Returns:
             A dictionary with tools, mcp_servers, and tool_choice configuration, or None if empty.
         """
         from agent_framework._types import validate_tool_mode
 
+        request_state = request_state or _AnthropicRequestState()
         result: dict[str, Any] = {}
         tools = options.get("tools")
 
@@ -1039,9 +1157,9 @@ class RawAnthropicClient(
                 result["tools"] = tool_list
             if mcp_server_list:
                 result["mcp_servers"] = mcp_server_list
-            self._tool_name_aliases = tool_name_aliases
+            request_state.tool_name_aliases = tool_name_aliases
         else:
-            self._tool_name_aliases = {}
+            request_state.tool_name_aliases = {}
 
         # Process tool choice
         if options.get("tool_choice") is None:
@@ -1064,7 +1182,7 @@ class RawAnthropicClient(
                     api_tool_name = next(
                         (
                             api_name
-                            for api_name, local_name in self._tool_name_aliases.items()
+                            for api_name, local_name in request_state.tool_name_aliases.items()
                             if local_name == required_name
                         ),
                         required_name,
@@ -1087,22 +1205,36 @@ class RawAnthropicClient(
 
     # region Response Processing Methods
 
-    def _process_message(self, message: BetaMessage, options: Mapping[str, Any]) -> ChatResponse:
+    def _process_message(
+        self,
+        message: BetaMessage,
+        options: Mapping[str, Any],
+        request_state: _AnthropicRequestState | None = None,
+    ) -> ChatResponse:
         """Process the response from the Anthropic client.
 
         Args:
             message: The message returned by the Anthropic client.
             options: The options dict used for the request.
+            request_state: State used to parse this response.
 
         Returns:
             A ChatResponse object containing the processed response.
         """
+        contents = self._parse_contents_from_anthropic(message.content, request_state=request_state)
+        if message.stop_reason != "tool_use" and any(
+            content.type == "function_call" and not content.informational_only for content in contents
+        ):
+            raise ResponseInvalidatedException(
+                "Anthropic invalidated partial response output; local function calls must not execute."
+            )
+
         return ChatResponse(
             response_id=message.id,
             messages=[
                 Message(
                     role="assistant",
-                    contents=self._parse_contents_from_anthropic(message.content),
+                    contents=contents,
                     raw_representation=message,
                 )
             ],
@@ -1114,7 +1246,10 @@ class RawAnthropicClient(
         )
 
     def _process_stream_event(
-        self, event: BetaRawMessageStreamEvent, emitted_usage: dict[str, int] | None = None
+        self,
+        event: BetaRawMessageStreamEvent,
+        emitted_usage: dict[str, int] | None = None,
+        request_state: _AnthropicRequestState | None = None,
     ) -> ChatResponseUpdate | None:
         """Process a streaming event from the Anthropic client.
 
@@ -1124,6 +1259,7 @@ class RawAnthropicClient(
                 emitted, used to convert Anthropic's cumulative usage snapshots into
                 increments (see ``_incremental_usage``). Pass ``None`` for a one-off
                 event to keep the snapshot unchanged.
+            request_state: State used to parse this stream.
 
         Returns:
             A ChatResponseUpdate object containing the processed update.
@@ -1133,14 +1269,21 @@ class RawAnthropicClient(
                 usage_details: list[Content] = []
                 if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
                     usage_details.append(
-                        Content.from_usage(usage_details=self._incremental_usage(details, emitted_usage))
+                        Content.from_usage(
+                            usage_details=self._incremental_usage(details, emitted_usage),
+                            merge_mode="append",
+                        )
                     )
 
                 return ChatResponseUpdate(
                     role="assistant",
                     response_id=event.message.id,
                     contents=[
-                        *self._parse_contents_from_anthropic(event.message.content),
+                        *self._parse_contents_from_anthropic(
+                            event.message.content,
+                            request_state=request_state,
+                            streaming=True,
+                        ),
                         *usage_details,
                     ],
                     model=event.message.model,
@@ -1153,6 +1296,7 @@ class RawAnthropicClient(
                     contents=[
                         Content.from_usage(
                             usage_details=self._incremental_usage(usage, emitted_usage),
+                            merge_mode="append",
                             raw_representation=event.usage,
                         )
                     ]
@@ -1164,13 +1308,21 @@ class RawAnthropicClient(
             case "message_stop":
                 logger.debug("Received message_stop event; no content to process.")
             case "content_block_start":
-                contents = self._parse_contents_from_anthropic([event.content_block])
+                contents = self._parse_contents_from_anthropic(
+                    [event.content_block],
+                    request_state=request_state,
+                    streaming=True,
+                )
                 return ChatResponseUpdate(
                     contents=contents,
                     raw_representation=event,
                 )
             case "content_block_delta":
-                contents = self._parse_contents_from_anthropic([event.delta])
+                contents = self._parse_contents_from_anthropic(
+                    [event.delta],
+                    request_state=request_state,
+                    streaming=True,
+                )
                 return ChatResponseUpdate(
                     contents=contents,
                     raw_representation=event,
@@ -1233,8 +1385,17 @@ class RawAnthropicClient(
     def _parse_contents_from_anthropic(
         self,
         content: Sequence[BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock],
+        request_state: _AnthropicRequestState | None = None,
+        *,
+        streaming: bool = False,
     ) -> list[Content]:
-        """Parse contents from the Anthropic message."""
+        """Parse contents from the Anthropic message.
+
+        Anthropic does not supply Agent Framework merge modes. Streaming context selects the
+        type-specific mapping: text and function-call deltas append, while complete streamed
+        code-execution result snapshots replace.
+        """
+        request_state = request_state or _AnthropicRequestState()
         contents: list[Content] = []
         for content_block in content:
             match content_block.type:
@@ -1242,13 +1403,14 @@ class RawAnthropicClient(
                     contents.append(
                         Content.from_text(
                             text=content_block.text,
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                             annotations=self._parse_citations_from_anthropic(content_block),
                         )
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
-                    self._last_call_id_name = (content_block.id, content_block.name)
-                    self._last_call_content_type = content_block.type
+                    request_state.active_call_id = content_block.id
+                    request_state.active_call_content_type = content_block.type
                     if content_block.type == "mcp_tool_use":
                         contents.append(
                             Content.from_mcp_server_tool_call(
@@ -1269,26 +1431,32 @@ class RawAnthropicClient(
                                         raw_representation=content_block,
                                     )
                                 ],
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
                     else:
-                        resolved_tool_name = self._tool_name_aliases.get(content_block.name, content_block.name)
+                        resolved_tool_name = request_state.tool_name_aliases.get(content_block.name, content_block.name)
                         contents.append(
                             Content.from_function_call(
                                 call_id=content_block.id,
                                 name=resolved_tool_name,
                                 arguments=content_block.input,
                                 informational_only=content_block.type == "server_tool_use",
+                                hosted=content_block.type == "server_tool_use",
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
                 case "mcp_tool_result":
-                    call_id, _ = self._last_call_id_name or (None, None)
                     parsed_output: list[Content] | None = None
                     if content_block.content:
                         if isinstance(content_block.content, list):
-                            parsed_output = self._parse_contents_from_anthropic(content_block.content)
+                            parsed_output = self._parse_contents_from_anthropic(
+                                content_block.content,
+                                request_state,
+                                streaming=streaming,
+                            )
                         elif isinstance(content_block.content, (str, bytes)):
                             parsed_output = [
                                 Content.from_text(
@@ -1297,7 +1465,11 @@ class RawAnthropicClient(
                                 )
                             ]
                         else:
-                            parsed_output = self._parse_contents_from_anthropic([content_block.content])
+                            parsed_output = self._parse_contents_from_anthropic(
+                                [content_block.content],
+                                request_state,
+                                streaming=streaming,
+                            )
                     contents.append(
                         Content.from_mcp_server_tool_result(
                             call_id=content_block.tool_use_id,
@@ -1306,7 +1478,6 @@ class RawAnthropicClient(
                         )
                     )
                 case "web_search_tool_result" | "web_fetch_tool_result":
-                    call_id, _ = self._last_call_id_name or (None, None)
                     contents.append(
                         Content.from_function_result(
                             call_id=content_block.tool_use_id,
@@ -1364,6 +1535,7 @@ class RawAnthropicClient(
                             call_id=content_block.tool_use_id,
                             raw_representation=content_block,
                             outputs=code_outputs,
+                            merge_mode="replace" if streaming else None,
                         )
                     )
                 case "bash_code_execution_tool_result":
@@ -1391,7 +1563,7 @@ class RawAnthropicClient(
                                 )
                             )
                             for bash_file_content in content_block.content.content:
-                                contents.append(
+                                shell_outputs.append(
                                     Content.from_hosted_file(
                                         file_id=bash_file_content.file_id,
                                         raw_representation=bash_file_content,
@@ -1511,15 +1683,16 @@ class RawAnthropicClient(
                     )
                 case "input_json_delta":
                     # Skip argument deltas for MCP and server tools — execution is handled server-side.
-                    if self._last_call_content_type in ("mcp_tool_use", "server_tool_use"):
+                    if request_state.active_call_content_type in ("mcp_tool_use", "server_tool_use"):
                         pass
                     else:
-                        call_id = self._last_call_id_name[0] if self._last_call_id_name else ""
+                        call_id = request_state.active_call_id or ""
                         contents.append(
                             Content.from_function_call(
                                 call_id=call_id,
                                 name="",
                                 arguments=content_block.partial_json,
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
@@ -1528,6 +1701,7 @@ class RawAnthropicClient(
                         Content.from_text_reasoning(
                             text=content_block.thinking,
                             protected_data=getattr(content_block, "signature", None),
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )
                     )
@@ -1536,6 +1710,7 @@ class RawAnthropicClient(
                         Content.from_text_reasoning(
                             text=None,
                             protected_data=content_block.signature,
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )
                     )
@@ -1634,7 +1809,7 @@ class AnthropicClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
         base_url: str | None = None,
         anthropic_client: AnthropicAsyncClient | None = None,
@@ -1656,7 +1831,7 @@ class AnthropicClient(
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
-                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+                The default flag is "mcp-client-2025-04-04".
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.

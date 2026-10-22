@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Frozen;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -21,8 +23,11 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     private readonly ResponseAgentProvider _agentProvider;
     private readonly WorkflowFormulaState _state;
     private readonly Func<TInput, ChatMessage>? _inputTransform;
+    private readonly bool _allowProcessEnvironmentVariableFallback;
+    private readonly FrozenSet<string> _allowedEnvironmentVariables;
 
-    private string? _conversationId;
+    private readonly string? _conversationId;
+    private string? _generatedConversationId;
 
     /// <summary>
     /// Get the shared formula session to provide to workflow <see cref="ActionExecutor"/> instances.
@@ -42,14 +47,20 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._agentProvider = options.AgentProvider;
         this._conversationId = options.ConversationId;
         this._inputTransform = inputTransform;
-        this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
+        this._allowProcessEnvironmentVariableFallback = options.AllowProcessEnvironmentVariableFallback;
+        this._allowedEnvironmentVariables = (options.AllowedEnvironmentVariables ?? []).ToFrozenSet(StringComparer.Ordinal);
+        this._state = new WorkflowFormulaState(options.CreateRecalcEngine(), restorableEnvironmentVariables: this._allowedEnvironmentVariables);
         this._state.InitializeSystem();
+        this._state.CaptureInitialState();
         this.Session = new RootFormulaSession(this._state);
+        this.RegisterCheckpointRestoringCallback(this._state, this._state.RestoreCheckpointAsync);
     }
 
     /// <inheritdoc/>
     public ValueTask ResetAsync()
     {
+        this._state.Reset();
+        this._generatedConversationId = null;
         return default;
     }
 
@@ -61,13 +72,22 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 
-        if (string.IsNullOrWhiteSpace(this._conversationId))
+        string? conversationId = declarativeContext.GetWorkflowConversation();
+        if (string.IsNullOrWhiteSpace(conversationId))
         {
-            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            conversationId = this._conversationId;
         }
-        await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            if (string.IsNullOrWhiteSpace(this._generatedConversationId))
+            {
+                this._generatedConversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            }
+            conversationId = this._generatedConversationId;
+        }
+        await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
+        ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(conversationId, input, cancellationToken).ConfigureAwait(false);
 
         // Use the original input for System.LastMessage to ensure Text is preserved (the
         // service may strip text on round-trip), but substitute server-side media references
@@ -89,27 +109,24 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     protected abstract ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Initializes the specified variables from <see cref="IConfiguration"/> if available;
-    /// otherwise falls back to the process environment variables.
+    /// Initializes the specified variables from <see cref="IConfiguration"/> if available.
+    /// Only names included in <see cref="DeclarativeWorkflowOptions.AllowedEnvironmentVariables"/> are initialized.
+    /// Process environment variables are used only when enabled by <see cref="DeclarativeWorkflowOptions.AllowProcessEnvironmentVariableFallback"/>.
     /// </summary>
     /// <param name="context">The workflow execution context providing messaging and state services.</param>
     /// <param name="variableNames">The set of variable names to initialize.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
     protected async ValueTask InitializeEnvironmentAsync(IWorkflowContext context, params string[] variableNames)
     {
-        foreach (string variableName in variableNames)
+        foreach (string variableName in variableNames.Where(this._allowedEnvironmentVariables.Contains))
         {
             await context.QueueEnvironmentUpdateAsync(variableName, GetEnvironmentVariable(variableName)).ConfigureAwait(false);
         }
 
         string GetEnvironmentVariable(string name)
         {
-            if (this._configuration is not null)
-            {
-                return this._configuration[name] ?? string.Empty;
-            }
-
-            return Environment.GetEnvironmentVariable(name) ?? string.Empty;
+            string? configurationValue = this._configuration?[name];
+            return configurationValue ?? (this._allowProcessEnvironmentVariableFallback ? Environment.GetEnvironmentVariable(name) ?? string.Empty : string.Empty);
         }
     }
 

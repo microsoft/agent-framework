@@ -94,19 +94,80 @@ total = await call_tool("add", a=2, b=3)
 print(total)
 ```
 
+## Tool Approval
+
+Generated code reaches registered tools through `call_tool(...)`, which invokes
+them directly. A per-tool approval interaction cannot be surfaced at that point,
+so approval is **bundled** onto `execute_code` instead:
+
+* If any registered tool is an `ApprovalRequiredAIFunction`, `execute_code`
+  itself requires approval before the code runs.
+* `LocalCodeActApprovalMode.AlwaysRequire` makes `execute_code` require approval
+  regardless of the registered tools.
+
+```csharp
+var deploy = new ApprovalRequiredAIFunction(
+    AIFunctionFactory.Create(RunDeployment, name: "deploy"));
+
+using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions
+{
+    Tools = new[] { deploy },
+    // ApprovalMode = LocalCodeActApprovalMode.AlwaysRequire, // optional, opt-in
+});
+```
+
+For `LocalCodeActProvider`, approval is recomputed on every run, so tools added
+via `AddTools` after construction are taken into account. `LocalExecuteCodeFunction`
+captures its tools at construction time and exposes the approval requirement
+through `GetService<ApprovalRequiredAIFunction>()`.
+
 ## Code Validation
 
 By default, the package validates Python code against allow-lists before
 execution. The validator runs in its own short-lived Python subprocess with a
 dedicated timeout (`ProcessExecutionLimits.ValidationTimeoutSeconds`).
 
-- **Allowed imports**: `math`, `random`, `json`, `datetime`, `pathlib`, `os`
-  (only `os.environ`, `os.path` attributes are reachable), etc.
+- **Allowed imports**: `math`, `random`, `json`, `datetime`, `pathlib`, `os`,
+  etc. OS access is limited to lexical `os.path` transformations and read-only
+  access to the scrubbed `os.environ` mapping.
 - **Blocked imports**: `subprocess`, `sys`, `socket`, `importlib`, network and
   threading modules, etc.
 - **Allowed builtins**: `print`, `len`, `str`, type constructors, etc.
-- **Blocked builtins**: `eval`, `exec`, `compile`, `__import__`, `open`,
-  `getattr`, `setattr`, etc.
+- **Blocked builtins**: `__builtins__`, `__loader__`, `__spec__`, `eval`, `exec`,
+  `compile`, `__import__`, `open`, `getattr`, `setattr`, etc.
+
+`str.format` and `str.format_map` method access is blocked because replacement
+fields perform runtime attribute and item traversal that is invisible to AST
+validation. Use f-strings or the `format()` builtin instead; f-string
+expressions are validated as regular AST nodes.
+
+Runtime annotation evaluation is restricted as well. Access to ForwardRef
+evaluation methods (`_evaluate`, `evaluate`), annotation helpers (`_eval_type`,
+`evaluate_forward_ref`, `get_type_hints`, `get_annotations`), and the
+`functools.singledispatch`/`singledispatchmethod` factories is blocked.
+These helpers can evaluate annotation strings outside the inspected AST,
+including during annotation-inferred dispatch registration.
+
+Ordinary typing constructs, ForwardRef construction, unevaluated annotation
+declarations, and other functools utilities remain available. Generator
+expressions, async-generator expressions, and async functions are also allowed,
+but access to their `gi_frame`, `ag_frame`, and `cr_frame` attributes is
+blocked.
+
+Frame payload attributes (`f_builtins`, `f_globals`, and `f_locals`) are also
+blocked regardless of how a frame is obtained. Generated code may inspect
+non-payload task stack information, but it cannot recover the runner's builtin,
+global, or local namespaces from those frames.
+
+Capability restrictions apply at attribute access and from-import acquisition,
+before references can be aliased. Receiver types are not statically knowable,
+so unrelated attributes with the same names are also rejected. This includes
+harmless annotation resolution, non-evaluating modes of the blocked helpers,
+and otherwise-safe explicit-type singledispatch registration.
+
+OS-derived aliases retain the same restrictions. Filesystem-querying path
+helpers, environment mutation, unknown descendants, and reflective access are
+rejected by default.
 
 See [`Resources/validator.py`](Resources/validator.py) for the full default
 allow-lists.
@@ -126,6 +187,10 @@ using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeA
 ```
 
 Custom lists **replace** the defaults (not augment).
+
+Fixed attribute and AST-node restrictions remain in effect independently of
+these lists. Allowing a module does not enable its blocked capability or
+runtime-traversal attributes.
 
 ### Disabling Validation
 
@@ -156,7 +221,8 @@ scanned for **new** files after execution, and those files are returned as
 ## Environment Variables
 
 Pass environment variables explicitly. The subprocess does NOT inherit the host
-environment by default:
+environment by default. On Windows, the system variables required for Python to
+load its standard library are retained:
 
 ```csharp
 using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions

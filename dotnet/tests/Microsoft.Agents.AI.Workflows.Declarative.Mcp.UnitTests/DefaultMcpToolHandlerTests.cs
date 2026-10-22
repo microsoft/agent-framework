@@ -90,6 +90,59 @@ public sealed class DefaultMcpToolHandlerTests
 
     #region HttpClientProvider Tests
 
+    [Theory]
+    [InlineData("\r", false, false)]
+    [InlineData("\n", false, false)]
+    [InlineData("\0", false, false)]
+    [InlineData("\r", true, false)]
+    [InlineData("\n", true, false)]
+    [InlineData("\0", true, false)]
+    [InlineData("\r", false, true)]
+    [InlineData("\n", false, true)]
+    [InlineData("\0", false, true)]
+    [InlineData("\r", true, true)]
+    [InlineData("\n", true, true)]
+    [InlineData("\0", true, true)]
+    public async Task InvokeToolAsync_WithInvalidHeader_ShouldRejectBeforeClientCreationAsync(
+        string invalidCharacter,
+        bool invalidName,
+        bool useProvider)
+    {
+        // Arrange
+        bool clientCreationAttempted = false;
+        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
+        {
+            clientCreationAttempted = true;
+            throw new InvalidOperationException("Client creation should not be reached.");
+        }
+
+        HttpMessageHandler CreateHandler()
+        {
+            clientCreationAttempted = true;
+            throw new InvalidOperationException("Client creation should not be reached.");
+        }
+
+        await using DefaultMcpToolHandler handler = new(useProvider ? ProviderAsync : null, CreateHandler);
+        Dictionary<string, string> headers = new()
+        {
+            [invalidName ? $"X-Test{invalidCharacter}" : "X-Test"] = invalidName ? "value" : $"value{invalidCharacter}"
+        };
+
+        // Act
+        async Task actAsync() => await handler.InvokeToolAsync(
+            serverUrl: "https://example.com/mcp",
+            serverLabel: null,
+            toolName: "testTool",
+            arguments: null,
+            headers: headers,
+            connectionName: null);
+
+        // Assert
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Equal("headers", exception.ParamName);
+        Assert.False(clientCreationAttempted);
+    }
+
     [Fact]
     public async Task InvokeToolAsync_WithHttpClientProvider_ShouldCallProviderAsync()
     {
@@ -934,180 +987,6 @@ public sealed class DefaultMcpToolHandlerTests
         Assert.NotNull(result.AdditionalProperties);
         Assert.True(result.AdditionalProperties!.ContainsKey("traceId"));
         Assert.True(result.AdditionalProperties.ContainsKey("priority"));
-    }
-
-    #endregion
-
-    #region Origin Pinning Tests
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_SameOrigin_RetainsAuthorization()
-    {
-        // Arrange
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
-
-        // Assert — same origin, credential is preserved
-        Assert.True(request.Headers.Contains("Authorization"));
-    }
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_DifferentHost_RemovesAuthorization()
-    {
-        // Arrange — server-advertised endpoint on an attacker origin
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
-
-        // Assert — credential must not cross the origin boundary
-        Assert.False(request.Headers.Contains("Authorization"));
-    }
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_DifferentPort_RemovesAuthorization()
-    {
-        // Arrange — same host but a different port is a different origin
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com:8443/mcp");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
-
-        // Assert
-        Assert.False(request.Headers.Contains("Authorization"));
-    }
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_ExplicitDefaultPort_RetainsAuthorization()
-    {
-        // Arrange — pinned endpoint carries an explicit :443 while the request omits it; these are
-        // the same origin and Uri.Compare must normalize the default port rather than strip.
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com:443/mcp"));
-
-        // Assert — explicit vs implicit default port is the same origin
-        Assert.True(request.Headers.Contains("Authorization"));
-    }
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_RelativeRequestUri_RetainsAuthorization()
-    {
-        // Arrange — a relative URI resolves against the client's base address (the pinned origin) and
-        // therefore can never target a foreign origin. It must not throw and must retain credentials.
-        using HttpRequestMessage request = new(HttpMethod.Post, new Uri("/mcp/message", UriKind.Relative));
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        void act() => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
-
-        // Assert — does not throw and leaves the credential in place
-        Assert.Null(Record.Exception(act));
-        Assert.True(request.Headers.Contains("Authorization"));
-    }
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_DifferentScheme_RemovesAuthorization()
-    {
-        // Arrange — downgrade to http is a different origin (and would leak over plaintext)
-        using HttpRequestMessage request = new(HttpMethod.Post, "http://trusted.example.com/mcp");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
-
-        // Assert
-        Assert.False(request.Headers.Contains("Authorization"));
-    }
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_RemovesCookieAndProxyAuthorization()
-    {
-        // Arrange
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-        request.Headers.TryAddWithoutValidation("Cookie", "session=abc");
-        request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Bearer proxy-token");
-
-        // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
-
-        // Assert — all credential-bearing headers are stripped
-        Assert.False(request.Headers.Contains("Authorization"));
-        Assert.False(request.Headers.Contains("Cookie"));
-        Assert.False(request.Headers.Contains("Proxy-Authorization"));
-    }
-
-    [Fact]
-    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_PreservesNonCredentialHeaders()
-    {
-        // Arrange
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-        request.Headers.TryAddWithoutValidation("X-Trace-Id", "trace-123");
-
-        // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
-
-        // Assert — only credential headers are removed; other headers are untouched
-        Assert.False(request.Headers.Contains("Authorization"));
-        Assert.True(request.Headers.Contains("X-Trace-Id"));
-    }
-
-    [Fact]
-    public async Task OriginPinningHandler_CrossOriginRequest_DoesNotForwardAuthorizationAsync()
-    {
-        // Arrange — capture what the inner handler actually receives on the wire
-        CapturingHandler inner = new();
-        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
-        using HttpMessageInvoker invoker = new(pinning);
-
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
-
-        // Assert — the credential never reached the inner handler for the foreign origin
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
-        Assert.False(inner.LastRequestHadAuthorization);
-    }
-
-    [Fact]
-    public async Task OriginPinningHandler_SameOriginRequest_ForwardsAuthorizationAsync()
-    {
-        // Arrange
-        CapturingHandler inner = new();
-        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
-        using HttpMessageInvoker invoker = new(pinning);
-
-        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
-
-        // Act
-        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
-
-        // Assert — same-origin credential flows through normally
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
-        Assert.True(inner.LastRequestHadAuthorization);
-    }
-
-    private sealed class CapturingHandler : HttpMessageHandler
-    {
-        public bool LastRequestHadAuthorization { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            this.LastRequestHadAuthorization = request.Headers.Contains("Authorization");
-            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
-        }
     }
 
     #endregion

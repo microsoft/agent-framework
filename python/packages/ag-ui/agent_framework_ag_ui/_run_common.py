@@ -37,7 +37,18 @@ from agent_framework import Content, ResponseStream
 
 from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
-from ._utils import _approval_interrupt_id, generate_event_id, make_json_safe, normalize_agui_role
+from ._utils import (
+    _approval_interrupt_id,
+    _extract_mcp_tool_result_host_payload,
+    _extract_tool_result_marker_values,
+    _function_call_is_hosted,
+    _mcp_host_history_fields,
+    _model_items_for_agui_replay,
+    _stringify_tool_result,
+    generate_event_id,
+    make_json_safe,
+    normalize_agui_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +173,23 @@ def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
             return command_dict.get("resume")
 
     return forwarded_props_dict.get("resume")
+
+
+def _is_snapshot_hydration_request(
+    input_data: dict[str, Any],
+    *,
+    snapshot_enabled: bool,
+    supports_checkpoint_resume: bool,
+) -> bool:
+    """Return whether a request only replays the latest stored snapshot."""
+    if not snapshot_enabled or input_data.get("messages") or _extract_resume_payload(input_data) is not None:
+        return False
+    if not supports_checkpoint_resume:
+        return True
+    forwarded_props = input_data.get("forwarded_props") or input_data.get("forwardedProps")
+    if not isinstance(forwarded_props, Mapping):
+        return True
+    return not (forwarded_props.get("checkpoint_id") or forwarded_props.get("checkpointId"))
 
 
 def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], str | None]:
@@ -510,6 +538,9 @@ class FlowState:
     waiting_for_approval: bool = False
     current_state: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     accumulated_text: str = ""
+    # Number of text deltas emitted for the currently open message. Used to tell a
+    # genuine repeated token apart from a full-message replay chunk (#9336).
+    text_delta_count: int = 0
     pending_tool_calls: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     tool_results: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
@@ -582,24 +613,52 @@ def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
     flow.snapshot_segments.append({"kind": "reasoning", "id": message_id})
 
 
+def _offset_annotation_text_spans(annotations: list[dict[str, Any]], offset: int) -> None:
+    """Rebase text spans from a delta to the accumulated message."""
+    if offset == 0:
+        return
+    for annotation in annotations:
+        regions = annotation.get("annotated_regions")
+        if not isinstance(regions, list):
+            continue
+        for region in regions:
+            if not isinstance(region, dict) or region.get("type") != "text_span":
+                continue
+            start_index = region.get("start_index")
+            end_index = region.get("end_index")
+            if isinstance(start_index, int):
+                region["start_index"] = start_index + offset
+            if isinstance(end_index, int):
+                region["end_index"] = end_index + offset
+
+
 def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> list[BaseEvent]:
-    """Emit TextMessage events for TextContent."""
-    if not content.text:
+    """Emit text deltas and message-linked annotation batches."""
+    if not content.text and not content.annotations:
         return []
 
     if skip_text or flow.waiting_for_approval:
         return []
 
     events: list[BaseEvent] = []
+    duplicate_text = False
     if not flow.message_id:
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
-    elif flow.accumulated_text and content.text == flow.accumulated_text:
+    elif flow.accumulated_text and content.text == flow.accumulated_text and (flow.text_delta_count > 1):
         # Guard against full-message replay chunks that can appear after streaming deltas.
+        # A duplicate equal to the whole accumulated text is only a safe replay signal when
+        # the text already streamed in more than one chunk. With a single prior chunk the
+        # duplicate is indistinguishable from a genuine repeated token, annotated or not,
+        # so the one-chunk policy stays the same as the unannotated path: keep the text
+        # (issue #9336) and let the annotation emission reconcile occurrences.
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
-        return []
+        if not content.annotations:
+            return []
+        duplicate_text = True
 
     # A tool-only response may pre-open a message before its tool-call segment
     # is tracked. If that segment claims the pre-opened ID, rotate to a fresh
@@ -611,6 +670,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     ):
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         events.append(TextMessageEndEvent(message_id=current_message_id))
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
 
@@ -621,9 +681,42 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if segment is None:
         segment = _open_text_segment(flow, flow.message_id)
 
-    events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
-    flow.accumulated_text += content.text
+    annotation_offset = len(flow.accumulated_text)
+    if content.text and not duplicate_text:
+        events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
+        flow.accumulated_text += content.text
+        flow.text_delta_count += 1
     segment["text"] = flow.accumulated_text
+    if content.annotations:
+        annotations = cast(
+            "list[dict[str, Any]]",
+            make_json_safe(
+                [
+                    {key: value for key, value in annotation.items() if key != "raw_representation"}
+                    for annotation in content.annotations
+                ]
+            ),
+        )
+        if content.text and not duplicate_text:
+            _offset_annotation_text_spans(annotations, annotation_offset)
+        new_annotations = annotations
+        if duplicate_text:
+            # Reconcile replay by occurrence count, not source URL or dictionary uniqueness.
+            remaining_annotations = list(segment.get("annotations", []))
+            new_annotations = []
+            for annotation in annotations:
+                if annotation in remaining_annotations:
+                    remaining_annotations.remove(annotation)
+                else:
+                    new_annotations.append(annotation)
+        if new_annotations:
+            segment.setdefault("annotations", []).extend(new_annotations)
+            events.append(
+                CustomEvent(
+                    name="annotations",
+                    value={"messageId": flow.message_id, "annotations": new_annotations},
+                )
+            )
     return events
 
 
@@ -696,22 +789,6 @@ def _emit_tool_call(
     return events
 
 
-def _extract_tool_result_marker_values(content: Content, key: str) -> list[Any]:
-    """Extract marker values from outer and inner tool-result content."""
-    values: list[Any] = []
-
-    outer_ap = getattr(content, "additional_properties", None) or {}
-    if key in outer_ap:
-        values.append(outer_ap[key])
-
-    for item in content.items or ():
-        item_ap = getattr(item, "additional_properties", None) or {}
-        if key in item_ap:
-            values.append(item_ap[key])
-
-    return values
-
-
 def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
     """Extract a deterministic AG-UI state update from a tool-result ``Content``.
 
@@ -745,13 +822,17 @@ def _extract_tool_result_display(content: Content) -> Any:  # noqa: ANN401
     return display_values[-1] if display_values else _UNSET
 
 
-def _stringify_tool_result(raw_result: Any) -> str:  # noqa: ANN401
-    return raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
-
-
 def _resolve_ui_payload(llm_str: str, display_result: Any) -> str:  # noqa: ANN401
     """Pick the UI-bound string: the serialized display payload when set, else the LLM string."""
     return llm_str if display_result is _UNSET else _stringify_tool_result(display_result)
+
+
+def _resolve_tool_result_host_payload(content: Content, display_result: Any) -> tuple[bool, Any]:  # noqa: ANN401
+    """Resolve an MCP Host payload, preferring an explicit display projection."""
+    has_host_payload, host_payload = _extract_mcp_tool_result_host_payload(content)
+    if has_host_payload and display_result is not _UNSET:
+        host_payload = display_result
+    return has_host_payload, host_payload
 
 
 def _emit_tool_result_common(
@@ -762,33 +843,36 @@ def _emit_tool_result_common(
     *,
     state_update: Mapping[str, Any] | None = None,
     display_result: Any = _UNSET,  # noqa: ANN401
+    snapshot_result: Any = _UNSET,  # noqa: ANN401
+    model_items: list[dict[str, Any]] | None = None,
 ) -> list[BaseEvent]:
-    """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
+    """Shared helper for emitting ToolCallResult (and ToolCallEnd when still open).
 
     Both ``_emit_tool_result`` (standard function results) and ``_emit_mcp_tool_result``
     (MCP server tool results) delegate to this function.
 
-    Args:
-        call_id: Tool call identifier.
-        raw_result: The stringified tool result content sent back to the LLM.
-        flow: Current ``FlowState``.
-        predictive_handler: Optional predictive state handler driven by
-            ``predict_state_config``.
-        state_update: Optional deterministic state snapshot produced by a tool
-            returning :func:`agent_framework_ag_ui.state_update`. When present,
-            it is merged into ``flow.current_state`` and a ``StateSnapshotEvent``
-            is emitted after the ``ToolCallResult`` event. When both
-            ``predictive_handler`` and ``state_update`` are active, predictive
-            updates are applied first, then the deterministic merge, and a
-            single coalesced ``StateSnapshotEvent`` is emitted.
+    ``TOOL_CALL_END`` is emitted only when ``call_id`` was opened in this run and
+    has not already been ended (including synthetic protocol closure before an
+    approval interrupt). On resume, a fresh ``FlowState`` never STARTs that id,
+    so only ``TOOL_CALL_RESULT`` is emitted — matching Agent approval resume.
     """
     events: list[BaseEvent] = []
 
-    events.append(ToolCallEndEvent(tool_call_id=call_id))
+    # Only end tool calls that were opened in this run and are still open.
+    # Synthetic protocol closure before an approval interrupt (Workflow
+    # ``_drain_open_tool_calls``, Agent ``_emit_approval_request``) already
+    # emitted TOOL_CALL_END; a later real function_result — including on a
+    # resumed run with a fresh FlowState that never STARTed this id — must not
+    # emit an unmatched or duplicate END. Match Agent approval resume, which
+    # surfaces TOOL_CALL_RESULT only via ``_make_approval_tool_result_events``.
+    tool_is_open = call_id in flow.tool_calls_by_id and call_id not in flow.tool_calls_ended
+    if tool_is_open:
+        events.append(ToolCallEndEvent(tool_call_id=call_id))
     flow.tool_calls_ended.add(call_id)
 
     result_content = _stringify_tool_result(raw_result)
     ui_result_content = _resolve_ui_payload(result_content, display_result)
+    snapshot_result_content = _resolve_ui_payload(result_content, snapshot_result)
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
@@ -799,14 +883,27 @@ def _emit_tool_result_common(
         )
     )
 
-    flow.tool_results.append(
-        {
-            "id": message_id,
-            "role": "tool",
-            "toolCallId": call_id,
-            "content": result_content,
-        }
-    )
+    snapshot_message: dict[str, Any] = {
+        "id": message_id,
+        "role": "tool",
+        "toolCallId": call_id,
+        "content": result_content,
+    }
+    event_replay_properties: dict[str, Any] = {}
+    if snapshot_result is not _UNSET:
+        event_replay_properties = _mcp_host_history_fields(
+            snapshot_result_content,
+            [{"type": "text", "text": result_content}] if model_items is None else model_items,
+        )
+        snapshot_message.update(event_replay_properties)
+        events[-1] = ToolCallResultEvent(
+            message_id=message_id,
+            tool_call_id=call_id,
+            content=ui_result_content,
+            role="tool",
+            **event_replay_properties,
+        )
+    flow.tool_results.append(snapshot_message)
     # A result closes the current tool-call segment: a later call opens a new
     # one, so `call A -> result A -> call B` snapshots as two call/result pairs
     # in stream order instead of grouping B with A (moonbox3's replay concern).
@@ -836,6 +933,7 @@ def _emit_tool_result_common(
         events.append(TextMessageEndEvent(message_id=flow.message_id))
     flow.message_id = None
     flow.accumulated_text = ""
+    flow.text_delta_count = 0
 
     return events
 
@@ -851,6 +949,9 @@ def _emit_tool_result(
     raw_result = content.result if content.result is not None else ""
     state_update = _extract_tool_result_state(content)
     display_result = _extract_tool_result_display(content)
+    has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+    if has_host_payload and display_result is _UNSET:
+        display_result = host_payload
     return _emit_tool_result_common(
         content.call_id,
         raw_result,
@@ -858,6 +959,10 @@ def _emit_tool_result(
         predictive_handler,
         state_update=state_update,
         display_result=display_result,
+        snapshot_result=host_payload if has_host_payload else _UNSET,
+        model_items=(
+            _model_items_for_agui_replay(content, _stringify_tool_result(raw_result)) if has_host_payload else None
+        ),
     )
 
 
@@ -905,7 +1010,7 @@ def _emit_approval_request(
         )
     )
     if interrupt_id:
-        response_schema = _approval_response_schema() if func_call.additional_properties.get("server_label") else None
+        response_schema = _approval_response_schema() if _function_call_is_hosted(func_call) else None
         flow.interrupts.append(
             _approval_interrupt_for_function_call(
                 interrupt_id=str(interrupt_id),
@@ -1022,6 +1127,9 @@ def _emit_mcp_tool_result(
     raw_output = content.output if content.output is not None else ""
     state_update = _extract_tool_result_state(content)
     display_result = _extract_tool_result_display(content)
+    has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+    if has_host_payload and display_result is _UNSET:
+        display_result = host_payload
     return _emit_tool_result_common(
         content.call_id,
         raw_output,
@@ -1029,6 +1137,10 @@ def _emit_mcp_tool_result(
         predictive_handler,
         state_update=state_update,
         display_result=display_result,
+        snapshot_result=host_payload if has_host_payload else _UNSET,
+        model_items=(
+            _model_items_for_agui_replay(content, _stringify_tool_result(raw_output)) if has_host_payload else None
+        ),
     )
 
 

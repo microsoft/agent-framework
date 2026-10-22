@@ -35,6 +35,24 @@ namespace Microsoft.Agents.AI;
 /// Developers should validate and sanitize LLM output before rendering it in HTML, executing it as code, using it in database queries,
 /// or passing it to any security-sensitive context. Apply defense-in-depth by combining tool approval requirements with output validation.
 /// </para>
+/// <para>
+/// <strong>Changing tools while approvals are outstanding:</strong> an approval request can outlive the deployment that issued it.
+/// A pending request records the call the model asked for, including its arguments, and waits for a human — who may not be available
+/// for some time, with the session suspended in the meantime. If the agent is upgraded while a request is outstanding and the tool it
+/// refers to has changed shape, then when the session is reloaded and the user approves, the stored arguments no longer match the tool
+/// and the call fails. The model is generally able to recover by calling the tool again in its new form, so this is not usually fatal,
+/// but developers making breaking changes to an <see cref="ApprovalRequiredAIFunction"/> — renaming or removing parameters, or changing
+/// their types — should expect it. Replacing a tool's implementation is a normal part of developing an agent and is not by itself a
+/// problem.
+/// </para>
+/// <para>
+/// <strong>Tools that become approval-required mid-flow:</strong> when a tool needs no approval, the framework answers on the caller's
+/// behalf, and it may carry that answer to the following turn. Because approval requirements are re-checked on each turn, a tool that
+/// has become an <see cref="ApprovalRequiredAIFunction"/> in the meantime does not inherit the earlier answer: the pending call is
+/// rejected rather than executed, so it never runs without a human being asked. The model is normally able to recover by issuing the
+/// call again, at which point it is surfaced for approval in the ordinary way. Applications that vary their tool set between turns
+/// should therefore expect an occasional extra round-trip while a change takes effect.
+/// </para>
 /// </remarks>
 public sealed partial class ChatClientAgent : AIAgent
 {

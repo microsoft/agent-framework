@@ -106,81 +106,61 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     /// <inheritdoc />
     public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
-        // Normalize the directory prefix for path matching.
-        string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
-        if (prefix.Length > 0 && !prefix.EndsWith("/", StringComparison.Ordinal))
+        Regex regex = CreateSearchRegex(regexPattern);
+        using var timeout = new MultiStepOperationTimeout(SearchTimeout, cancellationToken);
+
+        try
         {
-            prefix += "/";
-        }
-
-        // Compile the regex with a timeout to guard against catastrophic backtracking (ReDoS).
-        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
-        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
-        var results = new List<FileSearchResult>();
-
-        foreach (var kvp in this._files)
-        {
-            // Only consider files within the target directory (by path prefix).
-            if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            // Normalize the directory prefix for path matching.
+            string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
+            if (prefix.Length > 0 && !prefix.EndsWith("/", StringComparison.Ordinal))
             {
-                continue;
+                prefix += "/";
             }
 
-            // The file path relative to the search directory.
-            string relativeName = kvp.Key.Substring(prefix.Length);
+            Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
+            var results = new List<FileSearchResult>();
 
-            // When not recursive, exclude files in subdirectories (direct children only).
-            if (!recursive && relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
+            foreach (var kvp in this._files)
             {
-                continue;
-            }
+                timeout.ThrowIfCancellationRequested();
 
-            // Apply the optional glob filter on the relative path.
-            if (!StorePaths.MatchesGlob(relativeName, matcher))
-            {
-                continue;
-            }
-
-            // Search each line for regex matches, tracking line numbers and building a snippet.
-            string fileContent = kvp.Value;
-            string[] lines = fileContent.Split('\n');
-            var matchingLines = new List<FileSearchMatch>();
-            string? firstSnippet = null;
-            int lineStartOffset = 0;
-
-            for (int i = 0; i < lines.Length; i++)
-            {
-                Match match = regex.Match(lines[i]);
-                if (match.Success)
+                // Only consider files within the target directory (by path prefix).
+                if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i].TrimEnd('\r') });
-
-                    // Build a context snippet around the first match (±50 chars).
-                    if (firstSnippet is null)
-                    {
-                        int charIndex = lineStartOffset + match.Index;
-                        int snippetStart = Math.Max(0, charIndex - 50);
-                        int snippetEnd = Math.Min(fileContent.Length, charIndex + match.Value.Length + 50);
-                        firstSnippet = fileContent.Substring(snippetStart, snippetEnd - snippetStart);
-                    }
+                    continue;
                 }
 
-                // Advance the offset past this line (including the '\n' separator).
-                lineStartOffset += lines[i].Length + 1;
-            }
+                // The file path relative to the search directory.
+                string relativeName = kvp.Key.Substring(prefix.Length);
 
-            if (matchingLines.Count > 0)
-            {
-                results.Add(new FileSearchResult
+                // When not recursive, exclude files in subdirectories (direct children only).
+                if (!recursive && relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
                 {
-                    FileName = relativeName,
-                    Snippet = firstSnippet!,
-                    MatchingLines = matchingLines,
-                });
-            }
-        }
+                    continue;
+                }
 
-        return Task.FromResult<IReadOnlyList<FileSearchResult>>(results);
+                // Apply the optional glob filter on the relative path.
+                if (!StorePaths.MatchesGlob(relativeName, matcher))
+                {
+                    continue;
+                }
+
+                // Number the lines through the base class's published primitive, so this store
+                // and the line editor cannot drift apart.
+                FileSearchResult? result = timeout.RunStep(token => ScanContent(relativeName, kvp.Value, regex, token));
+                if (result is not null)
+                {
+                    results.Add(result);
+                }
+            }
+
+            return Task.FromResult<IReadOnlyList<FileSearchResult>>(results);
+        }
+        catch (TimeoutException) when (timeout.Token.IsCancellationRequested)
+        {
+            throw CreateSearchTimeoutException(regexPattern);
+        }
     }
 
     /// <inheritdoc />

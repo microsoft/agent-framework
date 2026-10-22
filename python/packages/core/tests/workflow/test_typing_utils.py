@@ -4,6 +4,7 @@ import importlib
 import sys
 from dataclasses import InitVar, dataclass, make_dataclass
 from dataclasses import field as dataclass_field
+from enum import Enum
 from types import ModuleType
 from typing import Annotated, Any, Generic, Literal, NewType, Optional, TypeVar, Union
 from unittest.mock import Mock
@@ -169,6 +170,30 @@ def test_union_types() -> None:
     assert is_instance_of("hello", int | str)
     assert is_instance_of(5, Union[int, str])
     assert not is_instance_of(5.0, int | str)
+
+
+def test_literal_types() -> None:
+    """Test Literal types match by allowed values without raising TypeError.
+
+    ``isinstance()`` cannot be used with ``typing.Literal``; matching must fall
+    back to value equality with strict member types (bool is not int, etc.).
+    """
+    assert is_instance_of("a", Literal["a", "b"])
+    assert is_instance_of("b", Literal["a", "b"])
+    assert not is_instance_of("c", Literal["a", "b"])
+    assert is_instance_of(1, Literal[1, 2])
+    # bool must not match an int literal member even though True == 1
+    assert not is_instance_of(True, Literal[1, 2])
+    # nested literals inside other containers keep working
+    assert is_instance_of(["a"], list[Literal["a", "b"]])
+    assert not is_instance_of(["c"], list[Literal["a", "b"]])
+
+    class Explosive:
+        def __eq__(self, other: object) -> bool:
+            raise RuntimeError("Equality should not be called when types differ")
+
+    # Strict type guard runs before equality, avoiding __eq__ on mismatched types
+    assert not is_instance_of(Explosive(), Literal["yes"])
 
 
 def test_list_types() -> None:
@@ -401,6 +426,10 @@ def test_type_compatibility_basic() -> None:
     # Any compatibility
     assert is_type_compatible(str, Any)
     assert is_type_compatible(list[int], Any)
+    assert is_type_compatible(Any, str)
+    assert is_type_compatible(Any, list[int])
+    assert is_type_compatible(Any, Union[str, int])
+    assert is_type_compatible(list[Any], list[str])
 
     # Subclass compatibility
     class Animal:
@@ -413,6 +442,50 @@ def test_type_compatibility_basic() -> None:
     assert not is_type_compatible(Animal, Dog)
 
 
+def test_type_compatibility_bare_container() -> None:
+    """A bare container class accepts any parameterization of it, in either direction."""
+    import typing
+    from collections.abc import Sequence
+
+    assert is_type_compatible(list[str], list)
+    assert is_type_compatible(dict[str, int], dict)
+    assert is_type_compatible(tuple[int, int], tuple)
+    assert is_type_compatible(list[int], Sequence)
+    assert is_type_compatible(list, list[str])
+
+    # Bare aliases from `typing` carry an origin but no arguments. getattr keeps
+    # pyupgrade from rewriting typing.List and typing.Dict to the builtins.
+    typing_list = getattr(typing, "List")  # noqa: B009
+    typing_dict = getattr(typing, "Dict")  # noqa: B009
+    assert is_type_compatible(list[str], typing.Sequence)
+    assert is_type_compatible(list[str], typing_list)
+    assert is_type_compatible(dict[str, int], typing.Mapping)
+    assert is_type_compatible(typing_list, typing.Sequence)
+    assert is_type_compatible(typing_list, list[str])
+    assert not is_type_compatible(list[str], typing.Mapping)
+    assert not is_type_compatible(typing_dict, list[str])
+
+    assert not is_type_compatible(list[str], dict)
+    assert not is_type_compatible(dict, list[str])
+    assert not is_type_compatible(list[str], str)
+
+
+def test_type_compatibility_bare_container_and_protocol() -> None:
+    """A Protocol that is not runtime_checkable is reported as incompatible, not raised."""
+    from typing import Generic, Protocol, TypeVar
+
+    T_co = TypeVar("T_co", covariant=True)
+
+    class SupportsClose(Protocol):
+        def close(self) -> None: ...
+
+    class Box(Protocol, Generic[T_co]):
+        def get(self) -> T_co: ...
+
+    assert not is_type_compatible(list[str], SupportsClose)
+    assert not is_type_compatible(list, Box[int])
+
+
 def test_type_compatibility_unions() -> None:
     """Test type compatibility with Union types."""
     # Source matches target union member
@@ -423,6 +496,38 @@ def test_type_compatibility_unions() -> None:
     # Source union - all members must be compatible with target
     assert is_type_compatible(Union[str, int], Union[str, int, float])
     assert not is_type_compatible(Union[str, int, bytes], Union[str, int])
+
+
+def test_type_compatibility_literals() -> None:
+    """Test that a Literal source is compatible when every literal value fits the target type."""
+
+    class Color(Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    user_id = NewType("user_id", str)
+    t = TypeVar("t")
+
+    assert is_type_compatible(Literal["approve", "reject"], str)
+    assert is_type_compatible(Literal[1, 2], int)
+    assert is_type_compatible(Literal[b"x"], bytes)
+    assert is_type_compatible(Literal["a", 1], Union[str, int])
+    assert is_type_compatible(Literal[None], Optional[str])
+    assert is_type_compatible(Literal["a"], Literal["a", "b"])
+    assert is_type_compatible(Literal["a"], Optional[Literal["a", "b"]])
+    assert is_type_compatible(Literal["a"], Union[user_id, str])
+    assert is_type_compatible(Literal[Color.RED], Color)
+    assert is_type_compatible(list[Literal["a", "b"]], list[str])
+
+    assert not is_type_compatible(Literal["a", 1], str)
+    assert not is_type_compatible(Literal["a", "c"], Literal["a", "b"])
+    # bool literal values do not match int literal members, the same as is_instance_of
+    assert not is_type_compatible(Literal[True], Literal[1])
+    # targets that isinstance() cannot check are handled like a plain str source, without raising
+    assert not is_type_compatible(Literal["a"], user_id)
+    assert not is_type_compatible(Literal["a"], t)
+    # a plain str can hold any string, so it still does not fit a Literal target
+    assert not is_type_compatible(str, Literal["a", "b"])
 
 
 def test_type_compatibility_collections() -> None:

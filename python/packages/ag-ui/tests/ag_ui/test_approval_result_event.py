@@ -8,14 +8,14 @@ import json
 from typing import Any
 
 from ag_ui.core import ToolCallResultEvent
-from agent_framework import AgentResponseUpdate, Content, FunctionTool
+from agent_framework import AgentResponseUpdate, Content, FunctionInvocationContext, FunctionTool
 from agent_framework.exceptions import UserInputRequiredException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream
 from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner, ApprovalStatus
-from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
+from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
 
 
 def _weather_tool(executions: list[str]) -> FunctionTool:
@@ -44,10 +44,11 @@ async def _run_resume(
         default_options={"tools": [tool]},
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id=thread_id)
     for call_id, city in calls:
         store.register(
             owner=ApprovalExecutionOwner.LOCAL,
-            thread_ids=[thread_id],
+            thread_ids=[approval_thread_id],
             name="get_weather",
             arguments=json.dumps({"city": city}, sort_keys=True, separators=(",", ":")),
             request_id=call_id,
@@ -88,15 +89,24 @@ async def _run_resume(
     return events
 
 
-async def _run_custom_approval(tool: FunctionTool) -> tuple[list[Any], StubAgent]:
+async def _run_custom_approval(
+    tool: FunctionTool,
+    *,
+    function_invocation_kwargs: dict[str, Any] | None = None,
+    default_additional_function_arguments: dict[str, Any] | None = None,
+) -> tuple[list[Any], StubAgent]:
     agent = StubAgent(
         updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
-        default_options={"tools": [tool]},
+        default_options={
+            "tools": [tool],
+            "additional_function_arguments": default_additional_function_arguments,
+        },
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-custom")
     store.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_ids=["thread-custom"],
+        thread_ids=[approval_thread_id],
         name=tool.name,
         arguments="{}",
         request_id="approval-custom",
@@ -114,6 +124,7 @@ async def _run_custom_approval(tool: FunctionTool) -> tuple[list[Any], StubAgent
             agent,
             AgentConfig(),
             approval_state_store=store,
+            function_invocation_kwargs=function_invocation_kwargs,
         )
     ]
     return events, agent
@@ -132,6 +143,30 @@ async def test_approved_call_emits_one_live_result_under_original_identity() -> 
     results = [event for event in events if isinstance(event, ToolCallResultEvent)]
     assert executions == ["Seattle"]
     assert [(event.tool_call_id, event.content) for event in results] == [("call-weather", "Sunny in Seattle")]
+
+
+async def test_approved_call_merges_function_invocation_kwargs_with_agent_defaults() -> None:
+    """Static approval execution uses normal runtime/default precedence without run-kwarg leakage."""
+    observed_kwargs: list[dict[str, Any]] = []
+
+    def inspect_context(context: FunctionInvocationContext) -> str:
+        observed_kwargs.append(dict(context.kwargs))
+        return "inspected"
+
+    events, _ = await _run_custom_approval(
+        FunctionTool(name="inspect_context", description="Inspect context", func=inspect_context),
+        function_invocation_kwargs={"runtime_only": "runtime", "shared": "runtime"},
+        default_additional_function_arguments={"default_only": "default", "shared": "default"},
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResultEvent)]
+    assert observed_kwargs[0] == {
+        "default_only": "default",
+        "runtime_only": "runtime",
+        "session": observed_kwargs[0]["session"],
+        "shared": "default",
+    }
+    assert [(event.tool_call_id, event.content) for event in results] == [("call-custom", "inspected")]
 
 
 async def test_rejected_call_does_not_execute_or_emit_live_result() -> None:
@@ -169,8 +204,9 @@ async def test_resolve_approval_responses_treats_non_boolean_decision_as_rejecti
     )
     response.approved = "true"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-bool")
     store.set_tool_approval_state(
-        "thread-bool",
+        approval_thread_id,
         {"collected_approval_responses": [response]},
     )
     agent = StubAgent(
@@ -193,7 +229,7 @@ async def test_resolve_approval_responses_treats_non_boolean_decision_as_rejecti
     ]
 
     occurrence = store.lifecycle.occurrence_for_alias(
-        thread_id="thread-bool",
+        thread_id=approval_thread_id,
         interrupt_id="approval-bool",
     )
     rejection_results = [

@@ -36,6 +36,7 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     private static readonly IReadOnlyList<string> s_stateKeys = [FixedStateKey];
 
     private readonly CodeExecutor _executor;
+    private readonly LocalCodeActApprovalMode _approvalMode;
 
     private readonly ConcurrentDictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FileMount> _fileMounts = new(StringComparer.Ordinal);
@@ -65,6 +66,8 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
                 options.AllowedBuiltins?.ToList(),
                 options.BlockedBuiltins?.ToList());
         }
+
+        this._approvalMode = options.ApprovalMode;
 
         this._executor = new CodeExecutor(
             pythonExecutablePath,
@@ -190,8 +193,15 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
             this._fileMounts.Values.ToList());
 
         FeatureUsageMarker.MarkUsed();
+        var approvalRequired = ComputeApprovalRequired(this._approvalMode, snapshot.Tools);
+
         var description = InstructionBuilder.BuildExecuteCodeDescription(snapshot.Tools, snapshot.FileMounts);
-        var executeCode = new ExecuteCodeFunction(this._executor, snapshot, description);
+
+        AIFunction executeCode = new ExecuteCodeFunction(this._executor, snapshot, description);
+        if (approvalRequired)
+        {
+            executeCode = new ApprovalRequiredAIFunction(executeCode);
+        }
 
         var instructions = InstructionBuilder.BuildContextInstructions();
 
@@ -201,6 +211,18 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
             Tools = [executeCode],
         });
     }
+
+    /// <summary>
+    /// Computes whether <c>execute_code</c> must require approval for the supplied tool set.
+    /// </summary>
+    /// <remarks>
+    /// Approval is bundled: because generated code can reach any registered tool through
+    /// <c>call_tool(...)</c> after execution has begun, a single approval-required tool escalates
+    /// the approval requirement to the whole <c>execute_code</c> invocation.
+    /// </remarks>
+    internal static bool ComputeApprovalRequired(LocalCodeActApprovalMode mode, IReadOnlyList<AIFunction> tools) =>
+        mode == LocalCodeActApprovalMode.AlwaysRequire
+            || tools.Any(t => t.GetService<ApprovalRequiredAIFunction>() is not null);
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(this._disposed, this);
 

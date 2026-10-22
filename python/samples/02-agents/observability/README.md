@@ -88,6 +88,18 @@ from microsoft.opentelemetry import use_microsoft_opentelemetry
 use_microsoft_opentelemetry(enable_azure_monitor=True)
 ```
 
+To disable Agent Framework's baseline GenAI message events without changing providers or exporters configured by a third party, use the instrumentation-only API:
+
+```python
+from agent_framework.observability import enable_instrumentation
+
+enable_instrumentation(enable_message_events=False)
+```
+
+An explicit `True` or `False` overrides the current message-event setting, including a value read from `ENABLE_MESSAGE_EVENTS`. Omitting the argument or passing `None` preserves the current setting without re-reading the environment, including settings established by `configure_otel_providers()` or an earlier explicit call.
+
+This flag controls baseline v1.36.0 events such as `gen_ai.user.message` and `gen_ai.choice`; it does not disable experimental message span attributes, spans, or metrics. Message events still require sensitive-data capture to be enabled separately. Existing `enable_sensitive_data` behavior is unchanged, and [sticky disable](#disabling-instrumentation) still requires `force=True` to re-enable instrumentation.
+
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
 from agent_framework.observability import create_resource, enable_sensitive_telemetry
@@ -103,14 +115,15 @@ configure_azure_monitor(
 enable_sensitive_telemetry()
 ```
 
-For Microsoft Foundry projects, use `client.configure_azure_monitor()` which retrieves the connection string from the project and configures everything:
+For model calls through `FoundryChatClient`, use `client.configure_azure_monitor()`
+to retrieve the connection string and configure Azure Monitor:
 
 ```python
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 client = FoundryChatClient(
-    project_endpoint="https://your-project.services.ai.azure.com",
+    project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
     model="gpt-4o",
     credential=AzureCliCredential(),
 )
@@ -118,6 +131,29 @@ client = FoundryChatClient(
 # Automatically configures Azure Monitor with connection string from project
 await client.configure_azure_monitor(enable_sensitive_data=True)
 ```
+
+For calls to an **existing prompt or hosted agent**, use
+[`foundry_agent_tracing.py`](foundry_agent_tracing.py) and
+`await agent.configure_azure_monitor()`.
+
+Install Azure Monitor 1.8.10 or later to connect client and service traces:
+
+```shell
+pip install --upgrade "azure-monitor-opentelemetry>=1.8.10,<2"
+```
+
+Connect Application Insights to your project and set `FOUNDRY_PROJECT_ENDPOINT`
+and `FOUNDRY_AGENT_NAME`. `FOUNDRY_AGENT_VERSION` is required for PromptAgents
+and optional for HostedAgents. Run from `python/` using the workspace packages:
+
+```powershell
+uv run python samples\02-agents\observability\foundry_agent_tracing.py
+uv run python samples\02-agents\observability\foundry_agent_tracing.py --stream
+```
+
+View the connected trace under **Build > Agents > your agent > Traces** in
+Foundry. Select the agent version and a time range covering the run, then open
+the printed trace ID.
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
 
@@ -155,6 +191,23 @@ os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "<opik_otlp_headers>"
 enable_sensitive_telemetry()
 ```
 
+Or with [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/microsoft-agent-framework/), which ingests traces over OTLP/HTTP at `<tracking-uri>/v1/traces` and routes them to an experiment via a header. MLflow accepts traces only, so pass a span exporter rather than a base `OTEL_EXPORTER_OTLP_ENDPOINT` (which would also aim log and metric exporters at endpoints MLflow does not serve):
+
+```python
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from agent_framework.observability import configure_otel_providers, enable_sensitive_telemetry
+
+# Start a tracking server first, e.g. `mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000`
+exporter = OTLPSpanExporter(
+    endpoint="http://localhost:5000/v1/traces",
+    headers={"x-mlflow-experiment-id": "<mlflow_experiment_id>"},
+)
+configure_otel_providers(exporters=[exporter])
+
+# Optional: opt in to capturing sensitive data
+enable_sensitive_telemetry()
+```
+
 **4. Manual setup**
 
 For full control, set up providers and exporters yourself. See [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) for a complete example that sends traces, logs, and metrics to the console. The `create_resource()` helper in `agent_framework.observability` can build a resource with the appropriate service name and version from environment variables (or sensible defaults), although the sample does not use it.
@@ -167,7 +220,7 @@ Because Agent Framework is **natively instrumented** with OpenTelemetry, you do 
 
 Whenever there is an active OpenTelemetry span context, Agent Framework automatically propagates trace context to MCP servers via the `params._meta` field of `tools/call` requests. It uses the globally configured OpenTelemetry propagator(s) — W3C Trace Context by default (producing `traceparent` and `tracestate`) — so custom propagators (B3, Jaeger, etc.) are also supported. This enables distributed tracing across agent-to-MCP-server boundaries, compliant with the [MCP `_meta` specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta).
 
-**Scope:** automatic `_meta` injection applies only to MCP sessions that the agent process itself opens — `MCPStreamableHTTPTool`, `MCPStdioTool`, and `MCPWebsocketTool` (or any other client-opened `MCPTool` subclass). It does **not** apply to hosted or provider-managed MCP tool configurations such as `FoundryChatClient.get_mcp_tool(...)`, `OpenAIChatClient.get_mcp_tool(...)`, `AnthropicClient.get_mcp_tool(...)`, `GeminiChatClient.get_mcp_tool(...)`, or toolbox-fetched tools (e.g. `toolbox = await client.get_toolbox(...)` then `Agent(tools=toolbox.tools)`). In those cases the `tools/call` message is issued by the provider service runtime rather than by the agent process, so propagating `traceparent`/`tracestate` across that boundary is the service runtime's responsibility. If you need end-to-end distributed tracing to the downstream MCP server, use a client-opened MCP transport instead of a hosted connector.
+**Scope:** automatic `_meta` injection applies only to MCP sessions that the agent process itself opens — `MCPStreamableHTTPTool`, `MCPStdioTool`, or another supported client-opened `MCPTool` subclass. It does **not** apply to hosted or provider-managed MCP tool configurations such as `FoundryChatClient.get_mcp_tool(...)`, `OpenAIChatClient.get_mcp_tool(...)`, `AnthropicClient.get_mcp_tool(...)`, `GeminiChatClient.get_mcp_tool(...)`, or toolbox-fetched tools (e.g. `toolbox = await client.get_toolbox(...)` then `Agent(tools=toolbox.tools)`). In those cases the `tools/call` message is issued by the provider service runtime rather than by the agent process, so propagating `traceparent`/`tracestate` across that boundary is the service runtime's responsibility. If you need end-to-end distributed tracing to the downstream MCP server, use a client-opened MCP transport instead of a hosted connector.
 
 ## Configuration
 

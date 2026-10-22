@@ -13,6 +13,9 @@ namespace Microsoft.Agents.AI;
 internal sealed class AgentSessionStateBagValueJsonConverter : JsonConverter<AgentSessionStateBagValue>
 {
     /// <inheritdoc/>
+    public override bool HandleNull => true;
+
+    /// <inheritdoc/>
     public override AgentSessionStateBagValue Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         var element = JsonElement.ParseValue(ref reader);

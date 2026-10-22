@@ -1,26 +1,52 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import importlib.metadata
+from typing import TYPE_CHECKING, Any, Final
 
-from ._invocations import InvocationsHostServer
-from ._responses import ResponsesHostServer
-from ._state_store import (
-    AgentSessionStoreProvider,
-    CheckpointStoreProvider,
-    ContextScopedStoreProvider,
-    FoundryAgentSessionStore,
-    FoundryCheckpointStore,
-    FoundryFunctionApprovalStore,
-    FunctionApprovalStore,
-    FunctionApprovalStoreProvider,
-    StoreProvider,
-)
-from ._toolbox import FoundryToolbox
+if TYPE_CHECKING:
+    from ._invocations import InvocationsHostServer
+    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn, response_input_messages
+    from ._responses import ResponsesHostServer
+    from ._scope import FoundryRequestScope
+    from ._state_store import (
+        AgentSessionStoreProvider,
+        CheckpointStoreProvider,
+        ContextScopedStoreProvider,
+        FoundryAgentSessionStore,
+        FoundryCheckpointStore,
+        FoundryFunctionApprovalStore,
+        FunctionApprovalStore,
+        FunctionApprovalStoreProvider,
+        StoreProvider,
+    )
+    from ._toolbox import FoundryToolbox
+    from ._workflow_source import WorkflowSource
 
 try:
     __version__ = importlib.metadata.version(__name__)
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
+
+_LAZY_EXPORTS: Final[dict[str, str]] = {
+    "AgentSessionStoreProvider": "._state_store",
+    "CheckpointStoreProvider": "._state_store",
+    "ContextScopedStoreProvider": "._state_store",
+    "FoundryAgentSessionStore": "._state_store",
+    "FoundryCheckpointStore": "._state_store",
+    "FoundryFunctionApprovalStore": "._state_store",
+    "FoundryRequestScope": "._scope",
+    "FoundryToolbox": "._toolbox",
+    "HostedResponseRequest": "._request",
+    "InvocationRun": "._request",
+    "FunctionApprovalStore": "._state_store",
+    "FunctionApprovalStoreProvider": "._state_store",
+    "InvocationsHostServer": "._invocations",
+    "ResponsesHostServer": "._responses",
+    "StoreProvider": "._state_store",
+    "WorkflowSource": "._workflow_source",
+    "WorkflowTurn": "._request",
+    "response_input_messages": "._request",
+}
 
 __all__ = [
     "AgentSessionStoreProvider",
@@ -29,10 +55,30 @@ __all__ = [
     "FoundryAgentSessionStore",
     "FoundryCheckpointStore",
     "FoundryFunctionApprovalStore",
+    "FoundryRequestScope",
     "FoundryToolbox",
     "FunctionApprovalStore",
     "FunctionApprovalStoreProvider",
+    "HostedResponseRequest",
+    "InvocationRun",
     "InvocationsHostServer",
     "ResponsesHostServer",
     "StoreProvider",
+    "WorkflowSource",
+    "WorkflowTurn",
+    "response_input_messages",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve public Foundry Hosting exports."""
+    if module_name := _LAZY_EXPORTS.get(name):
+        value = getattr(importlib.import_module(module_name, __name__), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Return public names for interactive discovery."""
+    return sorted(set(globals()) | set(__all__))

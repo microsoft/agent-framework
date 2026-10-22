@@ -4,7 +4,7 @@ An [Agent Framework](https://github.com/microsoft/agent-framework) agent that us
 
 ## Creating a Foundry Toolbox
 
-You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/hosted_agents/sample_toolboxes_crud.py).
+You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/toolboxes/sample_toolboxes_crud.py).
 
 You can also create a Foundry Toolbox in the Foundry portal. Read more about it [in the Foundry toolbox documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox).
 
@@ -21,13 +21,13 @@ This sample consumes a toolbox over its MCP endpoint. It bundles a [`toolbox.yam
 
 You can connect to MCP servers in Foundry Toolbox that use different authentication methods. This sample demonstrates the following authentication methods:
 
-- [**No authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md#5-mcp-no-auth): The tool does not require any authentication. The agent can invoke the tool without providing any credentials. Sample MCP server: `https://gitmcp.io/Azure/azure-rest-api-specs`
-- [**Key-based authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md#4-mcp-key-auth-github): The tool requires a key to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with a Personal Access Token (PAT) for authentication.
-- [**OAuth2 authentication (managed)**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md#6-mcp-oauth-managed-connector): The tool requires OAuth2 to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with OAuth2 for authentication.
-- [**Agent identity authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md#8-mcp-agent-identity): The tool requires an agent identity token to authenticate. Sample MCP server: `https://{foundry-resource-name}.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview` ([Azure Language MCP server](https://learn.microsoft.com/en-us/azure/ai-services/language-service/concepts/foundry-tools-agents#azure-language-mcp-server-preview)) with agent identity for authentication.
-- [**Entra Pass-through authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md#13-mcp-oauth-entra-passthrough): The tool requires an Entra pass-through token to authenticate; Foundry forwards the calling user's Entra token to the MCP server. Sample MCP server: the [Microsoft Foundry MCP server](https://learn.microsoft.com/en-us/azure/foundry/mcp/get-started?view=foundry&tabs=user), which exposes Foundry model-catalog, evaluation, agent, and session tools and requires only that the caller have access to the Foundry project (no extra license).
+- [**No authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-unauthenticated.md): The tool does not require any authentication. The agent can invoke the tool without providing any credentials. Sample MCP server: `https://gitmcp.io/Azure/azure-rest-api-specs`
+- [**Key-based authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-key-auth.md): The tool requires a key to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with a Personal Access Token (PAT) for authentication.
+- [**OAuth2 authentication (managed)**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-oauth-managed.md): The tool requires OAuth2 to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with OAuth2 for authentication.
+- [**Agent identity authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-microsoft-entra.md): The tool requires an agent identity token to authenticate. Sample MCP server: `https://{foundry-resource-name}.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview` ([Azure Language MCP server](https://learn.microsoft.com/en-us/azure/ai-services/language-service/concepts/foundry-tools-agents#azure-language-mcp-server-preview)) with agent identity for authentication.
+- [**Entra Pass-through authentication**](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-user-entra-token.md): The tool requires an Entra pass-through token to authenticate; Foundry forwards the calling user's Entra token to the MCP server. Sample MCP server: the [Microsoft Foundry MCP server](https://learn.microsoft.com/en-us/azure/foundry/mcp/get-started?view=foundry&tabs=user), which exposes Foundry model-catalog, evaluation, agent, and session tools and requires only that the caller have access to the Foundry project (no extra license).
 
-There are also Non-MCP tools in the toolbox that support different authentication methods. Learn more at the [Foundry sample repository](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md).
+There are also Non-MCP tools in the toolbox that support different authentication methods. Learn more at the [Foundry sample repository](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/README.md).
 
 ### Finding the Entra audience for an MCP server
 
@@ -95,13 +95,38 @@ The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-
 
 See [main.py](main.py) for the full implementation.
 
+### Request-owned resources
+
+The host receives `agent=create_agent`, not a process-wide agent instance.
+Every request creates a fresh client and Toolbox MCP connection, then closes
+them afterward. This gives the sample one clear owner for its model transports,
+credential and Toolbox lifecycle. `FoundryToolbox` also supports long-lived
+instances: it resolves the current platform headers before each operation and
+reconnects the MCP session when that identity changes, so a shared instance does
+not retain an earlier caller's `x-agent-foundry-call-id`.
+
+The sample client closes only its own model/project transports and credential,
+including when MCP entry fails or the request is cancelled. Local authentication
+uses `AzureCliCredential`; deployed authentication uses managed identity.
+`history_source="agent_server"` reconstructs the outer Responses transcript and
+disables inner model storage. Caller `store=false` prevents host-managed state,
+not external tool side effects.
+
+Toolbox connections remain explicitly configured in the Foundry project.
+PAT-backed tools act as the configured external account; user-identity tools
+require the appropriate pass-through connection and the current call ID. A fresh
+Python object does not by itself grant external permissions. GitHub PAT/OAuth
+connections, project roles and consent are separate setup, not offline coverage.
+Native code-interpreter file citations are a separate tracked behavior
+(microsoft/agent-framework#7916), not implemented by this lifecycle change.
+
 ## Running the agent
 
 ### Option 1: Azure Developer CLI (`azd`)
 
 #### Prerequisites
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later)
+1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.34.2 or later)
 2. Install the unified Foundry CLI extension bundle (provides `azd ai agent`, `connection`, `inspector`, `project`, `routine`, `skill`, and `toolbox`):
    ```bash
    # If you previously installed individual extensions, uninstall them first:
@@ -109,10 +134,12 @@ See [main.py](main.py) for the full implementation.
    #   azd ext uninstall azure.ai.toolboxes
    azd ext install microsoft.foundry
    ```
+   Requires `azure.ai.agents` 1.0.0-beta.19 or later for `-t`.
 3. Authenticate:
    ```bash
    azd auth login
    ```
+4. Prepare a GitHub MCP Personal Access Token (PAT) and the MCP endpoint of an existing Azure Language resource before initialization. The CLI may prompt for these values. Keep the PAT out of source control. The project's managed identity needs access to the Azure Language resource, and the calling user needs access for the Foundry MCP connection.
 
 #### Initialize the agent project
 
@@ -121,44 +148,51 @@ No cloning required. Create a new folder and initialize from the manifest:
 ```bash
 mkdir my-toolbox-agent && cd my-toolbox-agent
 
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/agent.manifest.yaml
+azd ai agent init -t https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/04-foundry-toolbox/azure.yaml
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow.
+Follow the prompts to configure your Foundry project. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project for the `azd ai` commands that follow.
+
+Run every subsequent command from the initialized project directory containing `azure.yaml`. If initialization reports a different output directory, change to that directory first.
 
 #### Create the toolbox with `azd ai`
 
 > [!TIP]
 > If you use GitHub Copilot for Azure to scaffold a hosted agent that consumes this toolbox, the following skill references describe the same endpoint contract (env var, headers, MCP protocol, citation patterns, and troubleshooting) that the agent must implement:
 >
-> - [Toolbox reference](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/microsoft-foundry/foundry-agent/create/references/toolbox-reference.md) — endpoint format, MCP protocol, OAuth consent handling, citation patterns, and troubleshooting.
-> - [Use toolbox in a hosted agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md) — endpoint resolution, env-var contract, payload shape, code integration patterns, and tracing.
+> - [Toolbox overview](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/toolbox/toolbox.md) — toolbox concept, API shape and schema, versions, endpoints, and MCP protocol.
+> - [Use toolbox in a hosted agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md) — endpoint resolution, env-var contract, payload shape, code integration patterns, and tracing.
 
-The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. Create the toolbox once from the bundled [`toolbox.yaml`](toolbox.yaml):
+The agent reads the toolbox's MCP endpoint from `TOOLBOX_ENDPOINT`. The initialized `azure.yaml` declares the toolbox and its connections. `azd deploy --all` below creates them. If you entered the correct dependency values during initialization, skip these commands. Use them only to correct or replace those values:
 
 ```bash
-azd ai toolbox create agent-tools --from-file ./toolbox.yaml --project-endpoint https://<account>.services.ai.azure.com/api/projects/<project>
+azd env set GITHUB_MCP_PAT "<your-GitHub-MCP-PAT>"
+azd env set AZURE_LANGUAGE_MCP_ENDPOINT "https://<language-service>.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview"
 ```
 
 The first version becomes the default automatically. Use `azd ai toolbox list`, `azd ai toolbox show agent-tools`, and `azd ai toolbox version list agent-tools` to inspect, and `azd ai toolbox delete agent-tools --force` to remove it.
 
 To stage incremental changes safely, use `azd ai toolbox connection add/remove` and `azd ai toolbox skill add/list/remove`; each creates a new toolbox version that carries forward existing connections and skills but **doesn't** change the default. Promote a version with `azd ai toolbox publish agent-tools <version>` when you're ready to make it active.
 
-`azd ai toolbox create` prints the toolbox's versioned MCP endpoint. Copy that endpoint and store it in your `azd` environment so the agent connects to it:
-
-```bash
-azd env set TOOLBOX_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/agent-tools/versions/1/mcp?api-version=v1"
-```
+The initialized project's `azure.yaml` maps `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`, the toolbox's versioned MCP endpoint, to the agent's `TOOLBOX_ENDPOINT`. No manual endpoint copy is needed.
 
 #### Provision Azure resources (if needed)
 
-If you don't already have a Foundry project and model deployment:
+Provision before deploying so that the project's managed identity exists and can be authorized:
 
 ```bash
 azd provision
 ```
 
+On the Azure Language resource, grant **Cognitive Services Language Owner** to the Foundry **project's system-assigned managed identity**, not the parent Foundry account identity or your own user identity. An administrator may need to perform this assignment. See the [managed-identity authorization guide](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS/tools/mcp-microsoft-entra.md#step-2--authorize-the-identity) for identity lookup and role assignment instructions. Allow time for the assignment to propagate before invoking the agent.
+
 #### Run the agent locally
+
+Before running locally, deploy the connections, toolbox, and agent:
+
+```bash
+azd deploy --all
+```
 
 ```bash
 azd ai agent run
@@ -179,7 +213,7 @@ azd ai agent invoke --local "What tools do you have?"
 Once tested locally, deploy to Microsoft Foundry:
 
 ```bash
-azd deploy
+azd deploy --all
 ```
 
 For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
@@ -223,7 +257,7 @@ Press **F5** to start the agent in debug mode. The agent host will start on `htt
 
 ### Creating a Foundry Toolbox
 
-You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/hosted_agents/sample_toolboxes_crud.py).
+You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/toolboxes/sample_toolboxes_crud.py).
 
 You can also create a Foundry Toolbox in the Foundry portal. Read more about it [in the Foundry toolbox documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox).
 
@@ -254,9 +288,10 @@ portal **Agent Playground** (signed-in user) and by `azd ai agent invoke` (the d
 so the tools operate as that user and only act on resources the user can already access. The Foundry MCP
 server requires no extra license — just access to the Foundry project.
 
-Because the tool acts as a specific user, running the agent **locally** (`python main.py`) or calling the
-endpoint with a raw token uses whatever identity that token represents (`az login` user locally, the
-agent's managed identity when hosted). If that identity has no access to the target resources, the tool
+This tool requires a delegated Microsoft Entra user context. Service-principal or managed-identity
+credentials alone do not satisfy that requirement, even if that identity has access to the target resources.
+The hosted agent can still use managed identity for its own service access when the platform forwards
+the calling user's context. If the calling user has no access to the target resources, the tool
 returns an authorization error even though it is discovered and called correctly.
 
 > Some other Entra pass-through MCP servers add their **own** entitlement checks on top of the token. For

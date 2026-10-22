@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Immutable;
+using System.Diagnostics;
+using System.IO;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
@@ -44,6 +46,43 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.State.Bind();
     }
 
+    [Theory]
+    [InlineData("Value(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error({Kind: ErrorKind.Custom, Message: Local.Setting})", VariableScopeNames.Local)]
+    public void ExpressionErrorReturnsLabelledBlankForSensitiveInput(string expression, string scope)
+    {
+        // Arrange
+        const string Value = "sample-setting";
+        this.State.Set("Setting", FormulaValue.New(Value), scope, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act
+        EvaluationResult<DataValue> result = this.State.Evaluator.GetValue(ValueExpression.Expression(expression));
+
+        // Assert
+        Assert.Equal(DataValue.Blank(), result.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+    }
+
+    [Theory]
+    [InlineData("Value(Local.Setting)")]
+    [InlineData("Error(Local.Setting)")]
+    public void ExpressionErrorPreservesNonSensitiveInput(string expression)
+    {
+        // Arrange
+        const string Value = "sample-setting";
+        this.State.Set("Setting", FormulaValue.New(Value), VariableScopeNames.Local);
+        this.State.Bind();
+
+        // Act
+        DeclarativeActionException exception = Assert.Throws<DeclarativeActionException>(
+            () => this.State.Evaluator.GetValue(ValueExpression.Expression(expression)));
+
+        // Assert
+        Assert.Contains(Value, exception.Message, StringComparison.Ordinal);
+    }
+
     #region BoolExpression Tests
 
     [Fact]
@@ -69,6 +108,113 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.EvaluateExpression(
             BoolExpression.Variable(PropertyPath.TopicVariable(Variables.BlankValue)),
             expectedValue: false);
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BoolExpressionGetValueForConditionalBlankPreservesSensitivity(bool value)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New(value), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            BoolExpression.Expression("If(Env.Setting, false)"),
+            expectedValue: false,
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ValueExpressionGetValueForConditionalErrorPreservesSensitivity(bool value)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New(value), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act
+        EvaluationResult<DataValue> result =
+            this.State.Evaluator.GetValue(ValueExpression.Expression("If(Env.Setting, 1 / 0, 1)"));
+
+        // Assert
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+        Assert.Equal(value ? DataValue.Blank() : NumberDataValue.Create(1), result.Value);
+    }
+
+    [Theory]
+    [InlineData(VariableScopeNames.Environment, "Env")]
+    [InlineData(VariableScopeNames.Local, "Local")]
+    public void StringExpressionGetValueForConversionErrorPreservesSensitivity(string scope, string alias)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New("not-a-number"), scope, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression($"Text(Value({alias}.Setting))"),
+            expectedValue: string.Empty,
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void ValueExpressionGetValueForNonSensitiveErrorStillThrows()
+    {
+        // Arrange
+        ValueExpression expression = ValueExpression.Expression("1 / 0");
+
+        // Act & Assert
+        Assert.Throws<DeclarativeActionException>(() => this.State.Evaluator.GetValue(expression));
+    }
+
+    [Theory]
+    [InlineData("{ Item: Value(Env.Setting) }")]
+    [InlineData("[Value(Env.Setting)]")]
+    [InlineData("Table({ Item: Value(Env.Setting) })")]
+    [InlineData("{ Nested: Table({ Item: Value(Env.Setting) }) }")]
+    public void ValueExpressionGetValueForNestedErrorPreservesSensitivity(string expression)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New("not-a-number"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            ValueExpression.Expression(expression),
+            expectedValue: DataValue.Blank(),
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Theory]
+    [InlineData("Value(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error({Kind: ErrorKind.Custom, Message: Local.Setting})", VariableScopeNames.Local)]
+    public void ExpressionErrorDiagnosticUsesReferenceName(string expression, string scope)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New("not-a-number"), scope, SensitivityLevel.Sensitive);
+        this.State.Bind();
+        using StringWriter output = new();
+        using TextWriterTraceListener listener = new(output);
+        Trace.Listeners.Add(listener);
+
+        try
+        {
+            // Act
+            this.State.Evaluator.GetValue(ValueExpression.Expression(expression));
+            listener.Flush();
+
+            // Assert
+            Assert.Contains($"{scope}.Setting", output.ToString());
+            Assert.DoesNotContain("not-a-number", output.ToString());
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+    }
 
     [Fact]
     public void BoolExpressionGetValueForVariable()
@@ -121,6 +267,80 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.EvaluateExpression(
             StringExpression.Variable(PropertyPath.TopicVariable(Variables.StringValue)),
             expectedValue: "Hello World");
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Variable(PropertyPath.Create("Env.SOME_SECRET")),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForQuotedEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("API-KEY", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("Env.'API-KEY'"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void ValueExpressionGetValueForEnvironmentScopeIsSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Set("PUBLIC_VALUE", FormulaValue.New("public-value"), VariableScopeNames.Environment);
+        this.State.Bind();
+
+        // Act
+        EvaluationResult<DataValue> result = this.State.Evaluator.GetValue(ValueExpression.Expression("Env"));
+
+        // Assert
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+        Assert.NotNull(result.Value.ToObject());
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForComputedDottedAccessIsSensitive()
+    {
+        // Arrange
+        TableValue secretTable = FormulaValue.NewTable(
+            RecordType.Empty().Add("Value", FormulaType.String),
+            new RecordValue[] { FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("secret-value"))) });
+        this.State.Set("SecretTable", secretTable, VariableScopeNames.Local, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("First(Local.SecretTable).Value"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableTextLiteralIsNotSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression(@"Concatenate(""Env.SOME_SECRET"", "" literal"")"),
+            expectedValue: "Env.SOME_SECRET literal");
     }
 
     [Fact]

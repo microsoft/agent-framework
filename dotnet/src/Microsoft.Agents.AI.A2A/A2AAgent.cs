@@ -19,9 +19,12 @@ namespace Microsoft.Agents.AI.A2A;
 /// Represents an <see cref="AIAgent"/> that can interact with remote agents that are exposed via the A2A protocol
 /// </summary>
 /// <remarks>
-/// This agent supports only messages as a response from A2A agents.
-/// Support for tasks will be added later as part of the long-running
-/// executions work.
+/// This agent supports messages, tasks, and streaming updates as responses from A2A agents.
+/// <para>
+/// For a direct gRPC connection, also reference the SDK's <c>A2A.Grpc</c> package
+/// and supply an <c>A2A.Grpc.A2AGrpcClient</c>.
+/// The caller owns the supplied client and must dispose it if it implements <see cref="IDisposable"/>.
+/// </para>
 /// </remarks>
 public sealed class A2AAgent : AIAgent
 {
@@ -201,6 +204,7 @@ public sealed class A2AAgent : AIAgent
                 case StreamResponseCase.Message:
                     var message = streamResponse.Message!;
                     contextId = message.ContextId;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(message);
                     break;
 
@@ -209,6 +213,7 @@ public sealed class A2AAgent : AIAgent
                     contextId = task.ContextId;
                     taskId = task.Id;
                     taskState = task.Status.State;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
@@ -217,6 +222,7 @@ public sealed class A2AAgent : AIAgent
                     contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
                     taskState = statusUpdate.Status.State;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
@@ -224,6 +230,7 @@ public sealed class A2AAgent : AIAgent
                     var artifactUpdate = streamResponse.ArtifactUpdate!;
                     contextId = artifactUpdate.ContextId;
                     taskId = artifactUpdate.TaskId;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(artifactUpdate);
                     break;
 
@@ -347,13 +354,7 @@ public sealed class A2AAgent : AIAgent
             return;
         }
 
-        // Surface cases where the A2A agent responds with a response that
-        // has a different context Id than the session's conversation Id.
-        if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
-        {
-            throw new InvalidOperationException(
-                $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
-        }
+        ValidateContext(session, contextId);
 
         // Assign a server-generated context Id to the session if it's not already set.
         session.ContextId ??= contextId;
@@ -361,9 +362,27 @@ public sealed class A2AAgent : AIAgent
         session.TaskState = taskState;
     }
 
+    private static void ValidateContext(A2AAgentSession session, string? contextId)
+    {
+        // Surface cases where the A2A agent responds with a response that
+        // has a different context Id than the session's conversation Id.
+        if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
+        {
+            throw new InvalidOperationException(
+                $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
+        }
+    }
+
     private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)
     {
         var a2aMessage = messages.ToA2AMessage();
+
+        if (a2aMessage.Parts.Count == 0)
+        {
+            throw new ArgumentException(
+                "The provided messages contain no content that can be sent to the remote agent.",
+                nameof(messages));
+        }
 
         // Linking the message to the existing conversation, if any.
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
@@ -479,7 +498,7 @@ public sealed class A2AAgent : AIAgent
             MessageId = statusUpdateEvent.Status.Message?.MessageId,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
-            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
+            Contents = statusUpdateEvent.Status.ToChatMessage()?.Contents,
         };
     }
 

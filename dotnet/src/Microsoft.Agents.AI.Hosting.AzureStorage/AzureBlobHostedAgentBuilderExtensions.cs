@@ -4,6 +4,7 @@ using System;
 using Azure.Storage.Blobs;
 using Microsoft.Agents.AI.Hosting.AzureStorage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
@@ -20,9 +21,14 @@ public static class AzureBlobHostedAgentBuilderExtensions
     /// <param name="containerClient">The Blob container client used to store sessions.</param>
     /// <param name="options">Optional session store configuration.</param>
     /// <param name="withIsolation">
-    /// Whether to scope session IDs with the configured <see cref="AgentIsolationKeyProvider"/>.
+    /// Whether to add an isolation partition from the configured <see cref="AgentIsolationKeyProvider"/>.
     /// </param>
     /// <returns>The supplied <paramref name="builder"/>.</returns>
+    /// <remarks>
+    /// The default isolation wrapper requires an <see cref="AgentIsolationKeyProvider"/> that supplies
+    /// a trusted caller key. Blob Storage credentials authorize the host's storage access, not the
+    /// caller's access to a session. The host must separately authenticate and authorize its callers.
+    /// </remarks>
     public static IHostedAgentBuilder WithAzureBlobSessionStore(
         this IHostedAgentBuilder builder,
         BlobContainerClient containerClient,
@@ -49,9 +55,14 @@ public static class AzureBlobHostedAgentBuilderExtensions
     /// <param name="options">Optional session store configuration.</param>
     /// <param name="lifetime">The dependency injection lifetime of the registered session store.</param>
     /// <param name="withIsolation">
-    /// Whether to scope session IDs with the configured <see cref="AgentIsolationKeyProvider"/>.
+    /// Whether to add an isolation partition from the configured <see cref="AgentIsolationKeyProvider"/>.
     /// </param>
     /// <returns>The supplied <paramref name="builder"/>.</returns>
+    /// <remarks>
+    /// The default isolation wrapper requires an <see cref="AgentIsolationKeyProvider"/> that supplies
+    /// a trusted caller key. Blob Storage credentials authorize the host's storage access, not the
+    /// caller's access to a session. The host must separately authenticate and authorize its callers.
+    /// </remarks>
     public static IHostedAgentBuilder WithAzureBlobSessionStore(
         this IHostedAgentBuilder builder,
         Func<IServiceProvider, string, BlobContainerClient> createBlobContainerClient,
@@ -67,7 +78,11 @@ public static class AzureBlobHostedAgentBuilderExtensions
             {
                 BlobContainerClient containerClient =
                     Throw.IfNull(createBlobContainerClient(serviceProvider, agentName));
-                return new AzureBlobAgentSessionStore(containerClient, agentName, options);
+                return new AzureBlobAgentSessionStore(
+                    containerClient,
+                    agentName,
+                    options,
+                    serviceProvider.GetService<ILoggerFactory>());
             },
             lifetime,
             withIsolation);

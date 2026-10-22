@@ -426,7 +426,11 @@ public class AgentFrameworkResponseHandlerResilienceTests
 
         public int SaveAttempts => this._saveAttempts;
 
-        public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, string? userId, CancellationToken cancellationToken = default)
+        public override ValueTask SaveSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            AgentSession session,
+            CancellationToken cancellationToken = default)
         {
             var attempt = Interlocked.Increment(ref this._saveAttempts);
             if (attempt == 1)
@@ -437,8 +441,17 @@ public class AgentFrameworkResponseHandlerResilienceTests
             return default;
         }
 
-        public override async ValueTask<AgentSession?> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default) =>
+        public override async ValueTask<AgentSession?> GetSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
             await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private sealed class CountingSessionStore : AgentSessionStore
@@ -449,9 +462,8 @@ public class AgentFrameworkResponseHandlerResilienceTests
 
         public override ValueTask SaveSessionAsync(
             AIAgent agent,
-            string conversationId,
+            AgentSessionStoreKey key,
             AgentSession session,
-            string? userId,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref this._saveAttempts);
@@ -460,28 +472,37 @@ public class AgentFrameworkResponseHandlerResilienceTests
 
         public override ValueTask<AgentSession?> GetSessionAsync(
             AIAgent agent,
-            string conversationId,
-            string? userId,
+            AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             new((AgentSession?)null);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private sealed class AlwaysLoadedSessionStore : AgentSessionStore
     {
         public override ValueTask SaveSessionAsync(
             AIAgent agent,
-            string conversationId,
+            AgentSessionStoreKey key,
             AgentSession session,
-            string? userId,
             CancellationToken cancellationToken = default) =>
             default;
 
         public override async ValueTask<AgentSession?> GetSessionAsync(
             AIAgent agent,
-            string conversationId,
-            string? userId,
+            AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private sealed class SessionAdvancingAgent : AIAgent

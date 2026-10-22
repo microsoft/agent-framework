@@ -18,7 +18,6 @@ DEFAULT_PENDING_RETENTION_SECONDS = 86_400
 DEFAULT_INDETERMINATE_RETENTION_SECONDS = 604_800
 DEFAULT_TERMINAL_RETENTION_SECONDS = 900
 _APPROVAL_SCOPE_INPUT_KEY = "__ag_ui_approval_scope"
-_APPROVAL_THREAD_SEPARATOR = "\x1f"
 
 
 def approval_state_thread_id(*, scope: object | None, thread_id: str) -> str:
@@ -26,13 +25,16 @@ def approval_state_thread_id(*, scope: object | None, thread_id: str) -> str:
 
     ``None`` is the only unscoped value. A provided scope must be a non-empty
     string so accidental empty or malformed scopes cannot collapse into the
-    unscoped namespace.
+    unscoped namespace. Length-prefixed fields keep the mapping injective even
+    when scope or thread values contain delimiter-like text.
     """
+    if not isinstance(thread_id, str) or not thread_id:
+        raise ValueError("thread_id must be a non-empty string.")
     if scope is None:
-        return thread_id
+        return f"u:{len(thread_id)}:{thread_id}"
     if not isinstance(scope, str) or not scope:
         raise ValueError("scope must be a non-empty string when provided.")
-    return f"{scope}{_APPROVAL_THREAD_SEPARATOR}{thread_id}"
+    return f"s:{len(scope)}:{scope}:{len(thread_id)}:{thread_id}"
 
 
 class InMemoryAGUIApprovalStateStore:
@@ -85,6 +87,7 @@ class InMemoryAGUIApprovalStateStore:
         interrupt_id: str,
         owner: ApprovalExecutionOwner,
         call_id: str | None = None,
+        function_call_id: str | None = None,
         scope: ApprovalScope | None = None,
         already_approved_requests: list[dict[str, Any]] | None = None,
         server_label: str | None = None,
@@ -99,6 +102,7 @@ class InMemoryAGUIApprovalStateStore:
             call_id=call_id or interrupt_id,
             name=name,
             arguments=arguments,
+            function_call_id=function_call_id,
             aliases=[request_id],
             response_id=request_id,
             already_approved_requests=already_approved_requests,

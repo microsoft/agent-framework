@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
@@ -17,6 +19,31 @@ from agent_framework.observability import ChatTelemetryLayer
 from anthropic.lib.bedrock import AsyncAnthropicBedrock
 
 from ._chat_client import AnthropicOptionsT, RawAnthropicClient
+
+logger = logging.getLogger("agent_framework.anthropic")
+
+DEFAULT_AWS_REGION = "us-east-1"
+
+
+def _resolve_aws_region(aws_region: str | None, aws_profile: str | None) -> str:
+    if aws_region:
+        return aws_region
+
+    if env_region := os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"):
+        return env_region
+
+    try:
+        import boto3
+
+        session: Any = boto3.Session(profile_name=aws_profile)
+        profile_region = cast(str | None, session.region_name)
+        if profile_region:
+            return profile_region
+    except ImportError:
+        pass
+
+    logger.warning("No AWS region specified, defaulting to %s", DEFAULT_AWS_REGION)
+    return DEFAULT_AWS_REGION
 
 
 class AnthropicBedrockSettings(TypedDict, total=False):
@@ -40,11 +67,11 @@ class RawAnthropicBedrockClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         self,
         *,
         model: str | None = None,
-        aws_secret_key: str | None = None,
-        aws_access_key: str | None = None,
+        aws_secret_key: str | SecretString | None = None,
+        aws_access_key: str | SecretString | None = None,
         aws_region: str | None = None,
         aws_profile: str | None = None,
-        aws_session_token: str | None = None,
+        aws_session_token: str | SecretString | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicBedrock | None = None,
         additional_beta_flags: list[str] | None = None,
@@ -90,7 +117,7 @@ class RawAnthropicBedrockClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
             anthropic_client = AsyncAnthropicBedrock(
                 aws_secret_key=secret_key_secret.get_secret_value() if secret_key_secret is not None else None,
                 aws_access_key=access_key_secret.get_secret_value() if access_key_secret is not None else None,
-                aws_region=settings.get("aws_region"),
+                aws_region=_resolve_aws_region(settings.get("aws_region"), settings.get("aws_profile")),
                 aws_profile=settings.get("aws_profile"),
                 aws_session_token=session_token_secret.get_secret_value() if session_token_secret is not None else None,
                 base_url=settings.get("anthropic_bedrock_base_url"),
@@ -118,11 +145,11 @@ class AnthropicBedrockClient(
         self,
         *,
         model: str | None = None,
-        aws_secret_key: str | None = None,
-        aws_access_key: str | None = None,
+        aws_secret_key: str | SecretString | None = None,
+        aws_access_key: str | SecretString | None = None,
         aws_region: str | None = None,
         aws_profile: str | None = None,
-        aws_session_token: str | None = None,
+        aws_session_token: str | SecretString | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicBedrock | None = None,
         additional_beta_flags: list[str] | None = None,

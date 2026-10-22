@@ -70,6 +70,16 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
             options?.JsonSerializerOptions);
         this._connection = Throw.IfNull(connection);
         this._keyPrefix = options?.KeyPrefix ?? "chat_history";
+        if (options?.MaxMessages is int maxMessages)
+        {
+            Throw.IfLessThanOrEqual(maxMessages, 0, nameof(options.MaxMessages));
+        }
+
+        if (options?.MaxMessagesToRetrieve is int maxMessagesToRetrieve)
+        {
+            Throw.IfLessThan(maxMessagesToRetrieve, 0, nameof(options.MaxMessagesToRetrieve));
+        }
+
         this._maxMessages = options?.MaxMessages;
         this._maxMessagesToRetrieve = options?.MaxMessagesToRetrieve;
         this._jsonSerializerOptions = options?.JsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
@@ -86,6 +96,13 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
         cancellationToken.ThrowIfCancellationRequested();
 
         FeatureUsageMarker.MarkUsed();
+
+        // A limit of zero retrieves nothing. LRANGE key 0 -1 would return the whole list.
+        if (this._maxMessagesToRetrieve == 0)
+        {
+            return [];
+        }
+
         var state = this._sessionState.GetOrInitializeState(context.Session);
         var db = this._connection.GetDatabase();
         var key = this.BuildKey(state);

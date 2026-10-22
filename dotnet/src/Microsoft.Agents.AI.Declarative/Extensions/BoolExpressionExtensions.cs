@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 
@@ -15,8 +17,9 @@ internal static class BoolExpressionExtensions
     /// </summary>
     /// <param name="expression">Expression to evaluate.</param>
     /// <param name="engine">Recalc engine to use for evaluation.</param>
+    /// <param name="cancellationToken">Cancellation token to observe while evaluating the expression.</param>
     /// <returns>The evaluated boolean value, or null if the expression is null or cannot be evaluated.</returns>
-    internal static bool? Eval(this BoolExpression? expression, RecalcEngine? engine)
+    internal static async Task<bool?> EvalAsync(this BoolExpression? expression, RecalcEngine? engine, CancellationToken cancellationToken = default)
     {
         if (expression is null)
         {
@@ -35,11 +38,11 @@ internal static class BoolExpressionExtensions
 
         if (expression.IsExpression)
         {
-            return engine.Eval(expression.ExpressionText!).AsBoolean();
+            return (await engine.EvalAsync(expression.ExpressionText!, cancellationToken).ConfigureAwait(false)).AsBoolean();
         }
         else if (expression.IsVariableReference)
         {
-            var formulaValue = engine.Eval(expression.VariableReference!.VariableName);
+            var formulaValue = await engine.EvalAsync(expression.VariableReference!.VariableName, cancellationToken).ConfigureAwait(false);
             if (formulaValue is BooleanValue booleanValue)
             {
                 return booleanValue.Value;

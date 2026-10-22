@@ -8,6 +8,9 @@
   <ItemGroup Condition="'$(InjectSharedIntegrationTestCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTests\*.cs" LinkBase="Shared\IntegrationTests" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedUnitTestCode)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\UnitTests\*.cs" LinkBase="Shared\UnitTests" />
+  </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedIntegrationTestAzureCredentialsCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTestsAzureCredentials\*.cs" LinkBase="Shared\IntegrationTestsAzureCredentials" />
   </ItemGroup>
@@ -34,5 +37,14 @@
   </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedFeatureUsageUserAgent)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\FeatureUsage\*.cs" LinkBase="Shared\FeatureUsage" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedOriginPinning)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\OriginPinning\*.cs" LinkBase="Shared\OriginPinning" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedHostedAgents)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\HostedAgents\*.cs" LinkBase="Shared\HostedAgents" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedHttpHeaderValidation)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Http\*.cs" LinkBase="Shared\Http" />
   </ItemGroup>
 </Project>

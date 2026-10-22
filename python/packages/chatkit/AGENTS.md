@@ -8,12 +8,19 @@ Integration with OpenAI ChatKit (Python) for building chat UIs.
 - **`stream_agent_response()`** - Stream agent responses to ChatKit
 - **`simple_to_agent_input()`** - Convert simple input to agent input format
 
+`ThreadItemConverter.structured_input_to_input()` is an async override hook returning
+`Message | list[Message] | None`; `to_agent_input()` normalizes its output and preserves thread order.
+
+`ThreadItemConverter.generated_image_to_input()` is an async override hook returning
+`Message | list[Message] | None`; data URI media types are inferred by `Content.from_uri()`.
+
 ## Usage
 
 ```python
 from agent_framework.chatkit import stream_agent_response, ThreadItemConverter
 
-async for event in stream_agent_response(agent, messages):
+response_stream = agent.run(messages, stream=True)
+async for event in stream_agent_response(response_stream, thread_id):
     # Handle ChatKit events
     pass
 ```

@@ -230,6 +230,50 @@ public class AIContextProviderChatClientTests
     }
 
     [Fact]
+    public async Task GetStreamingResponseAsync_WhenConsumerStopsEarly_DisposesInnerEnumeratorAsync()
+    {
+        // Arrange
+        bool disposed = false;
+
+        async IAsyncEnumerable<ChatResponseUpdate> StreamAsync()
+        {
+            try
+            {
+                yield return new ChatResponseUpdate(ChatRole.Assistant, "Part1");
+                yield return new ChatResponseUpdate(ChatRole.Assistant, "Part2");
+            }
+            finally
+            {
+                disposed = true;
+            }
+        }
+
+        var innerClient = CreateMockStreamingChatClient(
+            onGetStreamingResponse: (_, _, _) => StreamAsync());
+        var provider = new TestAIContextProvider("key1");
+        var chatClient = new AIContextProviderChatClient(innerClient, [provider]);
+
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = async (messages, session, options, ct) =>
+            {
+                await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, cancellationToken: ct))
+                {
+                    break;
+                }
+
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant, "done")]);
+            }
+        };
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hello")], s_mockSession);
+
+        // Assert
+        Assert.True(disposed);
+    }
+
+    [Fact]
     public async Task GetStreamingResponseAsync_OnFailure_InvokedAsyncCalledWithExceptionAsync()
     {
         // Arrange

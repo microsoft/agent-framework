@@ -424,6 +424,69 @@ public sealed class HostedAgentBuilderToolsExtensionsTests
         Assert.Equal(ServiceLifetime.Singleton, storeDescriptor.Lifetime);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WithSessionStore_DecoratedIsolation_PreservesConfiguredStoreAsync(bool useFactory)
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var agent = new Mock<AIAgent>().Object;
+        var builder = services.AddAIAgent("test-agent", (sp, name) => agent);
+        var provider = new Mock<AgentIsolationKeyProvider>();
+        provider.Setup(p => p.GetIsolationKeyAsync(It.IsAny<CancellationToken>())).ReturnsAsync("tenant-1");
+        var innerStore = new Mock<AgentSessionStore>();
+        var session = new TestAgentSession();
+        innerStore.Setup(s => s.GetSessionAsync(agent, It.IsAny<AgentSessionStoreKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var isolation = new IsolationKeyScopedAgentSessionStore(innerStore.Object, provider.Object);
+        var decoratedStore = new TestDelegatingAgentSessionStore(new TestDelegatingAgentSessionStore(isolation));
+        if (useFactory)
+        {
+            builder.WithSessionStore((sp, name) => decoratedStore);
+        }
+        else
+        {
+            builder.WithSessionStore(decoratedStore);
+        }
+
+        using var servicesProvider = services.BuildServiceProvider();
+
+        // Act
+        var resolvedStore = servicesProvider.GetRequiredKeyedService<AgentSessionStore>("test-agent");
+        var key = new AgentSessionStoreKey("session-1").WithPartition("region", "west");
+        var result = await resolvedStore.GetSessionAsync(agent, key);
+
+        // Assert
+        Assert.Same(decoratedStore, resolvedStore);
+        Assert.Same(isolation, resolvedStore.GetService<IsolationKeyScopedAgentSessionStore>());
+        Assert.Same(session, result);
+        innerStore.Verify(s => s.GetSessionAsync(
+            agent, key.WithPartition("isolation", "tenant-1"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void WithSessionStore_WithoutExistingIsolation_AddsIsolation()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, name) => new Mock<AIAgent>().Object);
+        var store = new InMemoryAgentSessionStore();
+        builder.WithSessionStore(store);
+        using var provider = services.BuildServiceProvider();
+
+        // Act
+        var resolvedStore = provider.GetRequiredKeyedService<AgentSessionStore>("test-agent");
+
+        // Assert
+        Assert.IsType<IsolationKeyScopedAgentSessionStore>(resolvedStore);
+        Assert.Same(store, resolvedStore.GetService<InMemoryAgentSessionStore>());
+    }
+
+    private sealed class TestDelegatingAgentSessionStore(AgentSessionStore innerStore) : DelegatingAgentSessionStore(innerStore);
+
+    private sealed class TestAgentSession : AgentSession;
+
     /// <summary>
     /// Dummy AITool implementation for testing.
     /// </summary>

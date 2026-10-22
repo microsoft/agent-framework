@@ -1,15 +1,36 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import os
+import shlex
+import shutil
+import signal
 import sys
+from collections.abc import Awaitable, Mapping, Sequence
+from contextlib import nullcontext
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from agent_framework import Agent, AgentSession, BaseChatClient, ChatResponse, Content, FunctionInvocationLayer, Message
+from agent_framework.security import (
+    ContentLabel,
+    IntegrityLabel,
+    LabelTrackingFunctionMiddleware,
+    PolicyEnforcementFunctionMiddleware,
+)
 
 from agent_framework_tools._feature_usage import FeatureIndex
-from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy
+from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy, ShellResult
 from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_stateless
+
+_TEST_SHELL = "agent-framework-test-shell"
+_APPROVED_COMMAND = "printf '%s' approved-value"
+_ALTERNATE_COMMAND = "printf '%s' alternate-value"
+_POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell") if sys.platform == "win32" else None)
 
 
 class _FakeExecProcess:
@@ -30,6 +51,69 @@ class _FakeExecProcess:
             raise result
         stdout, stderr = result
         return stdout, stderr
+
+
+class _ScriptedFunctionClient(FunctionInvocationLayer, BaseChatClient):
+    def __init__(self, responses: Sequence[ChatResponse]) -> None:
+        super().__init__()
+        self._responses = list(responses)
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse]:
+        assert not stream
+
+        async def get_response() -> ChatResponse:
+            if self._responses:
+                return self._responses.pop(0)
+            return ChatResponse(messages=Message(role="assistant", contents=["done"]))
+
+        return get_response()
+
+
+async def _request_variable_shell_approval(
+    session_id: str,
+) -> tuple[Agent[Any], AgentSession, Content, str, LabelTrackingFunctionMiddleware]:
+    tracker = LabelTrackingFunctionMiddleware()
+    session = AgentSession(session_id=session_id)
+    variable_id = tracker.get_variable_store(session).store(
+        _APPROVED_COMMAND,
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    function_call = Content.from_function_call(
+        call_id="provider-shell-call",
+        name="run_shell",
+        arguments={"command": f"[{variable_id}]"},
+        id="shell-call-occurrence",
+    )
+    client = _ScriptedFunctionClient([
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+    ])
+    # Isolate the variable-aware policy approval from the tool's independent blanket approval.
+    shell = LocalShellTool(
+        mode="stateless",
+        shell=[_TEST_SHELL],
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+    )
+    agent = Agent(
+        client=client,
+        tools=[shell.as_function()],
+        middleware=[
+            tracker,
+            PolicyEnforcementFunctionMiddleware(approval_on_violation=True),
+        ],
+    )
+
+    response = await agent.run("Run the hidden command", session=session)
+
+    assert len(response.user_input_requests) == 1
+    return agent, session, response.user_input_requests[0], variable_id, tracker
 
 
 async def test_stateless_echo() -> None:
@@ -245,12 +329,65 @@ async def test_persistent_powershell_propagates_cmdlet_error() -> None:
         assert result.stderr  # message surfaced
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell-specific exit-code handling")
+async def test_persistent_powershell_does_not_inherit_previous_exit_code() -> None:
+    """A cmdlet-only command must not report the rc of an earlier native command.
+
+    ``$LASTEXITCODE`` is a session-wide automatic variable that only native
+    (external) executables update, so it stays set after such a command and
+    would otherwise be reported for every later cmdlet-only command.
+    """
+    async with LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True) as tool:
+        failing = await tool.run("cmd /c exit 3")
+        assert failing.exit_code == 3
+
+        succeeding = await tool.run("Write-Output ok")
+        assert succeeding.exit_code == 0, f"inherited stale rc {succeeding.exit_code} from the previous command"
+        assert "ok" in succeeding.stdout
+
+        # The fix must not cost the session state persistent mode exists for:
+        # the user's own command can still read the previous native exit code,
+        # while the command reporting it exits 0 itself.
+        readback = await tool.run("Write-Output $LASTEXITCODE")
+        assert readback.exit_code == 0
+        assert readback.stdout.strip() == "3", (
+            f"$LASTEXITCODE no longer visible to the user's command: {readback.stdout!r}"
+        )
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell-specific encoding")
 async def test_persistent_powershell_utf8_roundtrip() -> None:
     """Non-ASCII output should round-trip without mojibake."""
     async with LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True) as tool:
         result = await tool.run("Write-Output 'café'")
         assert "café" in result.stdout
+
+
+@pytest.mark.skipif(_POWERSHELL is None, reason="PowerShell is not installed")
+async def test_persistent_powershell_returns_formatted_object_output(tmp_path: os.PathLike[str]) -> None:
+    """Output that pwsh renders as a table must arrive before the sentinel.
+
+    The host formats a script block's output only after the block returns,
+    which is after the sentinel has been written, so this output used to be
+    dropped, along with any plain string written after the first object.
+    Runs wherever PowerShell is installed, not just on Windows.
+    """
+    assert _POWERSHELL is not None
+    async with LocalShellTool(
+        mode="persistent",
+        shell=[_POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"],
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        workdir=str(tmp_path),
+    ) as tool:
+        result = await tool.run("[pscustomobject]@{ Marker = 'af-object' }; Write-Output 'af-trailing'")
+        assert result.exit_code == 0
+        assert "af-object" in result.stdout
+        assert "af-trailing" in result.stdout
+
+        selected = await tool.run(f"Get-Item -LiteralPath '{tmp_path}' | Select-Object Name")
+        assert selected.exit_code == 0
+        assert os.path.basename(str(tmp_path)) in selected.stdout
 
 
 async def test_concurrent_first_calls_do_not_spawn_two_sessions() -> None:
@@ -293,6 +430,127 @@ async def test_as_function_wires_kind_and_approval() -> None:
     assert ft.approval_mode == "always_require"
 
 
+async def test_as_function_preserves_structured_shell_result() -> None:
+    shell_result = ShellResult(
+        stdout="partial output",
+        stderr="command failed",
+        exit_code=3,
+        duration_ms=12,
+        truncated=True,
+        timed_out=True,
+    )
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+
+    with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
+        function = tool.as_function()
+        result = await function.invoke(arguments={"command": "ignored"})
+        raw_result = await function.invoke(arguments={"command": "ignored"}, skip_parsing=True)
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == shell_result.format_for_model()
+    assert result[0].additional_properties == {
+        "stdout": "partial output",
+        "stderr": "command failed",
+        "exit_code": 3,
+        "truncated": True,
+        "timed_out": True,
+    }
+    assert isinstance(raw_result, str)
+    assert raw_result == shell_result.format_for_model()
+    assert json.loads(json.dumps(raw_result)) == shell_result.format_for_model()
+
+
+async def test_variable_shell_approval_executes_only_the_reviewed_command() -> None:
+    agent, session, request, variable_id, _ = await _request_variable_shell_approval("exact-shell-approval")
+
+    assert request.id == "shell-call-occurrence"
+    assert request.function_call is not None
+    assert request.function_call.call_id == "provider-shell-call"
+    assert request.function_call.name == "run_shell"
+    assert request.function_call.parse_arguments() == {"command": f"[{variable_id}]"}
+
+    create_process = AsyncMock(return_value=_FakeExecProcess(communicate_results=[(b"approved-value", b"")]))
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        await agent.run(request.to_function_approval_response(True), session=session)
+
+    assert create_process.await_count == 1
+    assert create_process.await_args is not None
+    assert create_process.await_args.args == (_TEST_SHELL, "-c", _APPROVED_COMMAND)
+
+
+async def test_variable_shell_approval_blocks_changed_resolved_command() -> None:
+    agent, session, request, variable_id, _ = await _request_variable_shell_approval("changed-shell-variable")
+    security_state = session.state["__agent_framework_fides_security__"]
+    security_state["variables"][variable_id]["content"] = json.dumps(_ALTERNATE_COMMAND)
+
+    create_process = AsyncMock()
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        response = await agent.run(request.to_function_approval_response(True), session=session)
+
+    create_process.assert_not_awaited()
+    replacement = response.user_input_requests
+    assert len(replacement) == 1
+    assert replacement[0].id != request.id
+    assert replacement[0].function_call is not None
+    assert replacement[0].function_call.parse_arguments() == {"command": f"[{variable_id}]"}
+
+
+@pytest.mark.parametrize("mutation", ["reference", "command", "arguments", "request_id", "call_id"])
+async def test_variable_shell_approval_substitutions_cannot_change_executed_argv(mutation: str) -> None:
+    agent, session, request, _, tracker = await _request_variable_shell_approval(f"substituted-shell-{mutation}")
+    response = Content.from_dict(request.to_function_approval_response(True).to_dict())
+    assert response.function_call is not None
+
+    if mutation == "reference":
+        alternate_variable_id = tracker.get_variable_store(session).store(
+            _ALTERNATE_COMMAND,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        response.function_call.arguments = {"command": f"[{alternate_variable_id}]"}
+    elif mutation == "command":
+        response.function_call.arguments = {"command": _ALTERNATE_COMMAND}
+    elif mutation == "arguments":
+        response.function_call.arguments = {
+            "command": _ALTERNATE_COMMAND,
+            "unexpected": "substituted",
+        }
+    elif mutation == "request_id":
+        response.id = "different-request"
+    else:
+        response.function_call.call_id = "different-provider-call"
+
+    create_process = AsyncMock(
+        side_effect=lambda *_args, **_kwargs: _FakeExecProcess(communicate_results=[(b"approved-value", b"")])
+    )
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        await agent.run(response, session=session)
+
+    if mutation == "request_id":
+        create_process.assert_not_awaited()
+    else:
+        assert create_process.await_count == 1
+        assert create_process.await_args is not None
+        assert create_process.await_args.args == (_TEST_SHELL, "-c", _APPROVED_COMMAND)
+
+
+async def test_variable_shell_approval_cannot_be_replayed_on_later_turn_or_session() -> None:
+    agent, session, request, _, _ = await _request_variable_shell_approval("shell-approval-replay")
+    approval = request.to_function_approval_response(True)
+    create_process = AsyncMock(
+        side_effect=lambda *_args, **_kwargs: _FakeExecProcess(communicate_results=[(b"approved-value", b"")])
+    )
+
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        await agent.run(approval, session=session)
+        await agent.run(approval, session=session)
+        await agent.run(approval, session=AgentSession(session_id="different-shell-session"))
+
+    assert create_process.await_count == 1
+    assert create_process.await_args is not None
+    assert create_process.await_args.args == (_TEST_SHELL, "-c", _APPROVED_COMMAND)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX persistent reanchor test")
 async def test_persistent_confines_workdir_by_default(tmp_path: os.PathLike[str]) -> None:
     """With the default ``confine_workdir=True``, a ``cd`` in one call
@@ -310,6 +568,270 @@ async def test_persistent_confines_workdir_by_default(tmp_path: os.PathLike[str]
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
 
 
+@pytest.mark.parametrize("failure", ["timeout", "unrecoverable_timeout", "overflow"])
+async def test_persistent_queued_command_restarts_after_session_recovery(failure: str) -> None:
+    is_timeout = failure != "overflow"
+    if sys.platform == "win32":
+        command = (
+            "[System.Threading.Thread]::Sleep(30000)"
+            if is_timeout
+            else "while ($true) { [Console]::Write('overflow') }"
+        )
+        followup = "Write-Output recovered"
+    else:
+        command = "trap '' INT; sleep 30" if is_timeout else "while :; do printf 'overflow'; done"
+        followup = "printf 'recovered'"
+
+    async with LocalShellTool(
+        mode="persistent",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        max_output_bytes=128,
+    ) as tool:
+        session = tool._session
+        assert session is not None
+        original_process = session._proc
+        assert original_process is not None
+        # Keep the real interrupt case, and separately guarantee an
+        # unrecoverable timeout: PowerShell may emit its finally sentinel on
+        # CTRL_BREAK. Only suppress the graceful signal in this extra case;
+        # process shutdown and restart still use real subprocesses.
+        interrupt = (
+            patch.object(session, "_interrupt_current_command", new=AsyncMock())
+            if failure == "unrecoverable_timeout"
+            else nullcontext()
+        )
+        with interrupt:
+            failed, recovered = await asyncio.gather(
+                tool.run(command, timeout=0.5 if is_timeout else 10.0),
+                tool.run(followup, timeout=10.0),
+                return_exceptions=True,
+            )
+        assert original_process.returncode is not None
+        assert session._proc is not original_process
+
+    assert isinstance(failed, ShellResult)
+    assert failed.timed_out if is_timeout else failed.truncated
+    assert isinstance(recovered, ShellResult), recovered
+    assert recovered.stdout.strip() == "recovered"
+    assert recovered.exit_code == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX inherited-pipe regression")
+async def test_persistent_restart_cancels_readers_from_exited_shell(tmp_path: Path) -> None:
+    from agent_framework_tools.shell._session import ShellSession
+
+    release_child = tmp_path / "release-child"
+    release_followup = tmp_path / "release-followup"
+
+    class ExitWithInheritedPipes(ShellSession):
+        def _build_script(self, command: str, sentinel: str) -> str:
+            if command == "exit-with-child":
+                # Keep stdout alive beyond the parent shell's exit. The child
+                # is released only after the replacement shell starts.
+                return (
+                    f"(while [ ! -e {shlex.quote(str(release_child))} ]; do sleep 0.01; done; "
+                    "printf stale-child-output) & "
+                    f"printf '\\n{sentinel}_0\\n'; exit 0\n"
+                )
+            return super()._build_script(command, sentinel)
+
+    async with ExitWithInheritedPipes(["/bin/sh"]) as session:
+        original_process = session._proc
+        original_reader = session._stdout_reader
+        assert original_process is not None
+        assert original_reader is not None
+        followup: asyncio.Task[ShellResult] | None = None
+        try:
+            first = await session.run("exit-with-child", timeout=10.0)
+            assert first.exit_code == 0
+
+            async def wait_for_exit() -> None:
+                while original_process.returncode is None:  # noqa: ASYNC110 - wait() also waits for the inherited pipes
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_exit(), timeout=10.0)
+            assert not original_reader.done()
+            followup = asyncio.create_task(
+                session.run(
+                    f"printf started; while [ ! -e {shlex.quote(str(release_followup))} ]; "
+                    "do sleep 0.01; done; printf recovered",
+                    timeout=10.0,
+                )
+            )
+
+            async def wait_for_replacement() -> None:
+                while session._proc is original_process or b"started" not in session._stdout_buf:  # noqa: ASYNC110
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_replacement(), timeout=10.0)
+            release_child.touch()
+
+            await asyncio.wait_for(asyncio.gather(original_reader, return_exceptions=True), timeout=10.0)
+            release_followup.touch()
+            result = await asyncio.wait_for(followup, timeout=10.0)
+            assert result.stdout == "startedrecovered"
+            assert result.exit_code == 0
+            assert original_reader.cancelled()
+        finally:
+            release_child.touch()
+            release_followup.touch()
+            if followup is not None:
+                followup.cancel()
+                await asyncio.gather(followup, return_exceptions=True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX subprocess simulates Windows recovery policy")
+async def test_windows_timeout_sentinel_does_not_reuse_exiting_process() -> None:
+    from agent_framework_tools.shell import _session
+    from agent_framework_tools.shell._session import ShellSession
+
+    class SentinelThenExit(ShellSession):
+        def _build_script(self, command: str, sentinel: str) -> str:
+            if command == "interrupt-me":
+                # Real SIGINT flushes the completion marker, then waits for
+                # one stdin line before exiting. This deterministically
+                # models a marker preceding process exit: the next line
+                # must be cleanup's exit, not the queued user command.
+                return f"trap 'printf \"\\n{sentinel}_130\\n\"; read ignored; exit 130' INT; sleep 30\n"
+            return super()._build_script(command, sentinel)
+
+        async def _interrupt_current_command(self) -> None:
+            assert self._proc is not None
+            os.killpg(os.getpgid(self._proc.pid), signal.SIGINT)
+
+        async def _run_locked(self, command: str, *, timeout: float | None) -> ShellResult:
+            if command == "interrupt-me":
+                # Exercise only the Windows recovery decision on this POSIX
+                # runner; spawn, signal, pipes, readers and shutdown are real.
+                with patch.object(_session, "sys", SimpleNamespace(platform="win32")):
+                    return await super()._run_locked(command, timeout=timeout)
+            return await super()._run_locked(command, timeout=timeout)
+
+    async with SentinelThenExit(["/bin/sh"]) as session:
+        original_process = session._proc
+        assert original_process is not None
+        first, followup = await asyncio.gather(
+            session.run("interrupt-me", timeout=0.5),
+            session.run("printf recovered", timeout=5),
+            return_exceptions=True,
+        )
+        assert isinstance(first, ShellResult), first
+        assert first.timed_out
+        assert first.exit_code == 130
+        assert isinstance(followup, ShellResult), followup
+        assert followup.stdout == "recovered"
+        assert followup.exit_code == 0
+        assert original_process.returncode is not None
+        assert session._proc is not original_process
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX graceful interrupt contract")
+async def test_posix_graceful_timeout_preserves_shell_state() -> None:
+    from agent_framework_tools.shell._session import ShellSession
+
+    async with ShellSession(["/bin/sh"]) as session:
+        original_process = session._proc
+        first = await session.run("export RETAINED=value; trap ':' INT; sleep 30", timeout=0.5)
+        assert first.timed_out
+        followup = await session.run('printf "$RETAINED"', timeout=5)
+        assert followup.stdout == "value"
+        assert session._proc is original_process
+
+
+@pytest.mark.parametrize("queue_during_close", [False, True])
+async def test_persistent_close_rejects_queued_commands(queue_during_close: bool) -> None:
+    if sys.platform == "win32":
+        command = "[Console]::WriteLine('running'); [Console]::Out.Flush(); [System.Threading.Thread]::Sleep(30000)"
+        followup = "Write-Output queued"
+        reopened = "Write-Output reopened"
+    else:
+        command = "printf 'running\\n'; sleep 30"
+        followup = "printf 'queued'"
+        reopened = "printf 'reopened'"
+
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+    await tool.start()
+    session = tool._session
+    assert session is not None
+    tasks = [asyncio.create_task(tool.run(command, timeout=10.0))]
+    try:
+
+        async def wait_until_running() -> None:
+            while b"running" not in session._stdout_buf:
+                session._stdout_event.clear()
+                await session._stdout_event.wait()
+
+        await asyncio.wait_for(wait_until_running(), timeout=10.0)
+        if not queue_during_close:
+            tasks.append(asyncio.create_task(tool.run(followup, timeout=10.0)))
+            await asyncio.sleep(0)
+
+        closing = asyncio.create_task(tool.close())
+        await asyncio.sleep(0)
+        assert tool._get_session_lock().locked()
+        if queue_during_close:
+            tasks.append(asyncio.create_task(tool.run(followup, timeout=10.0)))
+            await asyncio.sleep(0)
+
+        await asyncio.wait_for(closing, timeout=10.0)
+        _, queued = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15.0)
+        assert isinstance(queued, RuntimeError), queued
+        assert tool._session is None
+        assert session._proc is None
+
+        result = await session.run(reopened, timeout=10.0)
+        assert result.stdout.strip() == "reopened"
+        assert result.exit_code == 0
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await tool.close()
+        await session.close()
+
+
+async def test_persistent_close_during_start_does_not_dispatch_command() -> None:
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+    await tool.start()
+    session = tool._session
+    assert session is not None
+    await tool.close()
+    created = asyncio.Event()
+    finish_start = asyncio.Event()
+    create_process = asyncio.create_subprocess_exec
+
+    async def delayed_create_process(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        proc = await create_process(*args, **kwargs)
+        created.set()
+        await finish_start.wait()
+        return proc
+
+    command = "Write-Output unexpected" if sys.platform == "win32" else "printf unexpected"
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        with (
+            patch("agent_framework_tools.shell._session.asyncio.create_subprocess_exec", delayed_create_process),
+            patch.object(session, "_run_locked", wraps=session._run_locked) as run_command,
+        ):
+            tasks.append(asyncio.create_task(session.run(command, timeout=10.0)))
+            await asyncio.wait_for(created.wait(), timeout=10.0)
+            tasks.append(asyncio.create_task(session.close()))
+            await asyncio.sleep(0)
+            finish_start.set()
+            result, _ = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
+
+        assert isinstance(result, RuntimeError), result
+        run_command.assert_not_awaited()
+        assert session._proc is None
+    finally:
+        finish_start.set()
+        await session.close()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell persistent reanchor test")
 async def test_persistent_confines_workdir_by_default_powershell(tmp_path: os.PathLike[str]) -> None:
     """PowerShell counterpart of the POSIX confinement check."""
@@ -324,3 +846,55 @@ async def test_persistent_confines_workdir_by_default_powershell(tmp_path: os.Pa
         await tool.run(f"Set-Location -LiteralPath '{subdir}'")
         pwd = await tool.run("(Get-Location).Path")
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX pipe stdin test")
+async def test_stateless_does_not_inherit_host_stdin() -> None:
+    """Regression: stateless commands must not inherit the host's stdin.
+
+    Without stdin=DEVNULL, a model-chosen command like `cat` would read from
+    the agent host's stdin. In a CLI agent, that's where the user types approval
+    prompts, so `cat` would steal input and cause either theft or a hang.
+
+    This test runs a real `cat` against a real pipe as the host's stdin and asserts:
+    1. The command gets EOF immediately (not the pipe's data)
+    2. The pipe's data is still unread by the host
+    """
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+
+    # Create a pipe and write data to it: this simulates a host that has
+    # input queued on stdin (e.g., a CLI agent with pre-filled approval).
+    r, w = os.pipe()
+    # Save the original stdin so we can restore it in finally
+    original_stdin = os.dup(0)
+    try:
+        os.write(w, b"host stdin data that must not be read by the tool\n")
+        # Keep write end open while executing so cat doesn't get EOF immediately
+        # if it inherits the pipe. Only close it after subprocess completes.
+
+        # Redirect file descriptor 0 (stdin) to the pipe's read end.
+        # This makes the pipe the host process's stdin.
+        os.dup2(r, 0)
+
+        # Run `cat` through the tool. Without the fix, `cat` would read from
+        # the inherited stdin (the pipe) and block until EOF.
+        result = await tool.run("cat", timeout=1.0)
+
+        # The command should exit with code 0 and produce no output (got EOF).
+        assert result.exit_code == 0, f"cat exited with {result.exit_code}"
+        assert result.stdout == "", f"cat unexpectedly read stdin: {result.stdout!r}"
+        assert result.timed_out is False, "cat hung waiting for stdin"
+
+        # Verify the pipe's data is still unread by the host.
+        # Since stdin is still redirected to the pipe, we need to restore it first.
+        os.dup2(original_stdin, 0)
+        remaining = os.read(r, 1024)
+        assert remaining == b"host stdin data that must not be read by the tool\n", (
+            f"Host stdin was consumed: {remaining!r}"
+        )
+    finally:
+        # Restore original stdin even if execution or assertions fail
+        os.dup2(original_stdin, 0)
+        os.close(original_stdin)
+        os.close(r)
+        os.close(w)

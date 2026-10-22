@@ -1,10 +1,10 @@
 [project]
 name = "agent-framework-azure-cosmos"
-description = "Azure Cosmos DB history provider integration for Microsoft Agent Framework."
+description = "Azure Cosmos DB for NoSQL integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260821"
+version = "1.0.0b261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -20,16 +20,17 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.15.0,<2",
-    "azure-cosmos>=4.3.0,<5",
+    "agent-framework-core>=1.19.0,<2",
+    "azure-cosmos>=4.7.0,<5",
     "six>=1.17.0,<2",
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -45,10 +46,12 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
+    "ignore::agent_framework._feature_stage.ExperimentalWarning",
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
 ]
 timeout = 120
 markers = [
+    "flaky: marks tests that depend on external services",
     "integration: marks tests as integration tests that require external services",
 ]
 
@@ -98,5 +101,5 @@ help = "Run the package integration test suite."
 cmd = "pytest tests/test_cosmos_history_provider.py -m integration"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message
+from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message, SecretString
 from agent_framework.exceptions import AgentException
 from microsoft_agents.copilotstudio.client import ConnectionSettings, CopilotClient
 
@@ -99,6 +99,19 @@ class TestCopilotStudioAgent:
         agent = CopilotStudioAgent(client=mock_copilot_client)
         assert agent.client == mock_copilot_client
         assert agent.id is not None
+
+    @pytest.mark.parametrize("token", ["fake-token", SecretString("fake-token")], ids=["str", "secret"])
+    @patch("agent_framework_copilotstudio._agent.CopilotClient")
+    def test_init_unwraps_token_for_client(self, client_type: MagicMock, token: str | SecretString) -> None:
+        CopilotStudioAgent(
+            environment_id="env-id",
+            agent_identifier="agent-id",
+            token=token,
+        )
+
+        client_type.assert_called_once()
+        assert type(client_type.call_args.kwargs["token"]) is str
+        assert client_type.call_args.kwargs["token"] == "fake-token"
 
     def test_init_applies_default_read_bufsize(self) -> None:
         """The internally built client raises aiohttp's per-line limit to avoid LineTooLong (issue #7257)."""
@@ -266,6 +279,7 @@ class TestCopilotStudioAgent:
             content = response.contents[0]
             assert content.type == "text"
             assert content.text == "Streaming response"
+            assert content.merge_mode == "append"
             response_count += 1
 
         assert response_count == 1

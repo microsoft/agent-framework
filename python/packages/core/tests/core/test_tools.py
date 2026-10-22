@@ -1,6 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import copy
+import logging
 import threading
+from contextvars import ContextVar
+from datetime import date, datetime
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -9,6 +13,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
+import agent_framework._tools as tools_module
 from agent_framework import (
     SKIP_PARSING,
     Content,
@@ -18,13 +23,286 @@ from agent_framework import (
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _auto_invoke_function,
+    _format_tool_parameters,
+    _normalize_tool_description_format,
     _parse_annotation,
     _parse_inputs,
+    _try_execute_function_call_groups,
     normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
+
+
+def test_normalize_tool_description_format_returns_detached_mapping():
+    formats = {"lookup": "json"}
+
+    normalized = _normalize_tool_description_format(formats)
+    formats.clear()
+
+    assert normalized == {"lookup": "json"}
+
+
+@pytest.mark.parametrize(
+    ("value", "error_type"),
+    [
+        ("yaml", ValueError),
+        (None, TypeError),
+        ({1: "json"}, TypeError),
+        ({"lookup": 1}, TypeError),
+        ({"lookup": "yaml"}, ValueError),
+    ],
+)
+def test_normalize_tool_description_format_rejects_invalid_values(value, error_type):
+    with pytest.raises(error_type, match="tool_description_format"):
+        _normalize_tool_description_format(value)
+
+
+def test_format_tool_parameters_compact_preserves_scalar_metadata():
+    schema = {
+        "type": "object",
+        "title": "InventoryInput",
+        "properties": {
+            "partNumber": {"type": "string", "description": "Part identifier", "title": "Part Number"},
+            "units": {"type": "integer", "default": 1},
+            "currency": {"type": "string", "enum": ["EUR", "USD"], "default": "EUR"},
+            "price": {"type": "number"},
+            "available": {"type": "boolean", "default": False},
+            "empty": {"type": "null", "default": None},
+        },
+        "required": ["partNumber", "empty"],
+    }
+    original = copy.deepcopy(schema)
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "compact"
+    assert parameters == {
+        "partNumber": {"type": "string", "required": True, "description": "Part identifier"},
+        "units": {"type": "integer", "required": False, "default": 1},
+        "currency": {"type": "string", "required": False, "enum": ["EUR", "USD"], "default": "EUR"},
+        "price": {"type": "number", "required": False},
+        "available": {"type": "boolean", "required": False, "default": False},
+        "empty": {"type": "null", "required": True, "default": None},
+    }
+    parameters["currency"]["enum"].append("GBP")
+    assert schema == original
+
+
+@pytest.mark.parametrize("required", [[], ["value"]])
+def test_format_tool_parameters_does_not_infer_requiredness_from_defaults(required):
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string", "default": "default"}},
+        "required": required,
+    }
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "compact"
+    assert parameters["value"]["required"] == ("value" in required)
+    assert parameters["value"]["default"] == "default"
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {}},
+        {"type": "object", "properties": {}, "required": [], "title": "EmptyInput"},
+    ],
+)
+def test_format_tool_parameters_empty_object(schema):
+    assert _format_tool_parameters(schema, parameter_format="compact") == ("compact", {})
+
+
+@pytest.mark.parametrize(
+    "property_schema",
+    [
+        {"type": "object", "properties": {"nested": {"type": "string"}}, "required": ["nested"]},
+        {"type": "array", "items": {"type": "integer"}},
+        {"$ref": "#/$defs/Address"},
+        {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        {"type": ["string", "null"]},
+        {"type": "string", "minLength": 1},
+        {"type": "number", "minimum": 0},
+        {"type": "integer", "exclusiveMaximum": 10},
+        {"type": "string", "pattern": "^[A-Z]+$"},
+        {"type": "string", "format": "date-time"},
+        {"type": "string", "const": "fixed"},
+        {"type": "string", "x-custom-keyword": {"constraint": "custom"}},
+        {"type": "string", "allOf": [{"maxLength": 10}]},
+        {"description": "An unconstrained parameter"},
+        True,
+        False,
+    ],
+)
+def test_format_tool_parameters_compact_falls_back_for_rich_properties(property_schema):
+    schema = {"type": "object", "properties": {"value": property_schema}, "required": ["value"]}
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "json"
+    assert parameters == schema
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"additionalProperties": False},
+        {"additionalProperties": {"type": "string"}},
+        {"$defs": {"Address": {"type": "string"}}},
+        {"oneOf": [{"required": ["value"]}, {"required": ["other"]}]},
+        {"dependentRequired": {"value": ["other"]}},
+        {"patternProperties": {"^x-": {"type": "integer"}}},
+        {"minProperties": 1},
+        {"x-custom-keyword": "preserve"},
+        {"required": ["unlisted"]},
+        {"required": "value"},
+        {"required": [1]},
+        {"properties": []},
+        {"properties": {1: {"type": "string"}}},
+        {"properties": {"value": {"type": "string", "required": True}}},
+        {"type": "array"},
+    ],
+)
+def test_format_tool_parameters_compact_falls_back_for_root_constraints(extra):
+    schema = {"type": "object", "properties": {"value": {"type": "string"}}, **extra}
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "json"
+    assert parameters == schema
+
+
+@pytest.mark.parametrize("parameter_format", ["compact", "json"])
+def test_format_tool_parameters_full_schema_result_is_detached(parameter_format):
+    schema = {
+        "type": "object",
+        "properties": {"value": {"$ref": "#/$defs/Value"}},
+        "$defs": {"Value": {"type": "string", "enum": ["one", "two"]}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+    original = copy.deepcopy(schema)
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format=parameter_format)
+
+    assert effective_format == "json"
+    assert parameters == original
+    parameters["$defs"]["Value"]["enum"].append("three")
+    assert schema == original
+
+
+def test_format_tool_parameters_json_preserves_simple_schema():
+    schema = {"type": "object", "properties": {"value": {"type": "string", "title": "Value"}}}
+
+    assert _format_tool_parameters(schema, parameter_format="json") == ("json", schema)
+
+
+@pytest.mark.parametrize("schema", [{}, {"properties": {"value": {"type": "string"}}}])
+def test_format_tool_parameters_does_not_treat_unconstrained_schema_as_empty(schema):
+    assert _format_tool_parameters(schema, parameter_format="compact") == ("json", schema)
+
+
+@pytest.mark.parametrize("parameter_format", ["other", "", None])
+def test_format_tool_parameters_rejects_unknown_format(parameter_format):
+    with pytest.raises(ValueError, match="parameter_format"):
+        _format_tool_parameters({"type": "object", "properties": {}}, parameter_format=parameter_format)
+
+
+async def test_sequential_function_invocation_runs_calls_in_model_order() -> None:
+    execution_order: list[str] = []
+
+    @tool
+    async def first() -> str:
+        execution_order.append("first_start")
+        await asyncio.sleep(0)
+        execution_order.append("first_end")
+        return "first"
+
+    @tool
+    async def second() -> str:
+        execution_order.append("second_start")
+        await asyncio.sleep(0)
+        execution_order.append("second_end")
+        return "second"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[first, second],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert not should_terminate
+    assert execution_order == ["first_start", "first_end", "second_start", "second_end"]
+    assert [group[0].result for group in result_groups] == ["first", "second"]
+
+
+async def test_sequential_function_invocation_isolates_context() -> None:
+    current_tool = ContextVar[str | None]("current_tool", default=None)
+
+    @tool
+    async def first() -> str:
+        current_tool.set("first")
+        return "first"
+
+    @tool
+    async def second() -> str:
+        return str(current_tool.get())
+
+    result_groups, _ = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[first, second],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert result_groups[1][0].result == "None"
+
+
+def test_function_invocation_configuration_allows_concurrency_by_default() -> None:
+    config = normalize_function_invocation_configuration(None)
+
+    assert config["allow_concurrent_invocation"] is True
+
+
+async def test_sequential_function_invocation_finishes_batch_after_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed_calls: list[str] = []
+
+    async def execute(function_call: Content, **_: Any) -> tuple[list[Content], bool]:
+        call_id = function_call.call_id
+        assert call_id is not None
+        executed_calls.append(call_id)
+        return [Content.from_function_result(call_id=call_id, result="done")], call_id == "first"
+
+    monkeypatch.setattr(tools_module, "_execute_single_function_call", execute)
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[
+            FunctionTool(name="first", func=lambda: "first"),
+            FunctionTool(name="second", func=lambda: "second"),
+        ],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert should_terminate
+    assert executed_calls == ["first", "second"]
+    assert [group[0].result for group in result_groups] == ["done", "done"]
 
 
 def test_tool_decorator():
@@ -178,6 +456,95 @@ async def test_invoke_omitted_optional_uses_function_default():
 
     result = await get_weather.invoke(arguments={"location": "Seattle"})
     assert result[0].text == "Seattle:C"
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "expected"),
+    [
+        (datetime, "2026-01-02T03:04:05", datetime(2026, 1, 2, 3, 4, 5)),
+        (set[str], ["b", "a"], {"a", "b"}),
+        (tuple[int, int], [1, 2], (1, 2)),
+    ],
+    ids=["datetime", "set", "tuple"],
+)
+async def test_invoke_converts_json_values_to_annotated_python_types(annotation: Any, raw_value: Any, expected: Any):
+    """Values pydantic converts from JSON must reach the function instead of failing the schema type check.
+
+    Regression for #8661: the lightweight JSON schema checks ran on the pydantic output, so a
+    ``datetime``/``set``/``tuple`` value was rejected against its ``string``/``array`` schema.
+    """
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture)
+
+    await capture_tool.invoke(arguments={"value": raw_value})
+
+    assert received == [expected]
+    assert type(received[0]) is type(expected)
+
+
+async def test_invoke_still_rejects_invalid_value_for_pydantic_tool():
+    """Pydantic still rejects values it cannot convert to the annotated type."""
+
+    @tool
+    def when(moment: datetime) -> str:
+        return moment.isoformat()
+
+    with pytest.raises(TypeError, match="Invalid arguments for 'when'"):
+        await when.invoke(arguments={"moment": "not a date"})
+
+
+async def test_invoke_accepts_input_model_instance_with_converted_values():
+    """An input model instance is checked in its JSON form, so converted values pass (#8661)."""
+
+    @tool
+    def when(moment: datetime, tags: set[str]) -> str:
+        return f"{type(moment).__name__}:{type(tags).__name__}"
+
+    assert when.input_model is not None
+    arguments = when.input_model.model_validate({"moment": "2026-01-02T03:04:05", "tags": ["b", "a"]})
+
+    assert (await when.invoke(arguments=arguments))[0].text == "datetime:set"
+
+
+async def test_invoke_still_checks_unvalidated_input_model_instance():
+    """Skipping the checks for model-validated arguments must not let an unvalidated instance through."""
+
+    @tool
+    def count_tool(count: int) -> str:
+        return str(count)
+
+    assert count_tool.input_model is not None
+    arguments = count_tool.input_model.model_construct(count="not a number")
+
+    with pytest.raises(TypeError, match="Invalid arguments for 'count_tool'"):
+        await count_tool.invoke(arguments=arguments)
+
+
+async def test_invoke_revalidates_constructed_input_model_instance():
+    """A constructed instance can hold a wrong Python type whose JSON form still matches the schema.
+
+    Its data is validated through the input model, so the function receives the annotated type.
+    """
+    received: list[Any] = []
+
+    @tool
+    def when(moment: datetime) -> str:
+        received.append(moment)
+        return "ok"
+
+    assert when.input_model is not None
+    arguments = when.input_model.model_construct(moment=date(2026, 9, 30))
+
+    await when.invoke(arguments=arguments)
+
+    assert received == [datetime(2026, 9, 30)]
+    assert type(received[0]) is datetime
 
 
 async def test_auto_invoke_preserves_explicit_null_argument():
@@ -341,6 +708,72 @@ async def test_tool_decorator_with_async():
         "type": "object",
     }
     assert (await async_test_tool(1, 2)) == 3
+
+
+async def test_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Async tool failures count toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_async_tool", max_invocation_exceptions=1)
+    async def failing_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+
+async def test_direct_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Direct async tool calls count failures toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_direct_async_tool", max_invocation_exceptions=1)
+    async def failing_direct_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+
+async def test_sync_awaitable_tool_exception_limit_counts_awaited_failures() -> None:
+    """Sync tools returning awaitables count failures during async invocation."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_sync_awaitable_tool", max_invocation_exceptions=1)
+    def failing_sync_awaitable_tool() -> Any:
+        async def fail_later() -> str:
+            raise RuntimeError("boom")
+
+        return fail_later()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
 
 
 def test_tool_decorator_in_class():
@@ -570,20 +1003,21 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
         name="telemetry_test_tool",
         description="A test tool for telemetry",
     )
-    def telemetry_test_tool(x: int, y: int) -> int:
-        """A function that adds two numbers for telemetry testing."""
-        return x + y
+    def telemetry_test_tool(expression: str) -> str:
+        """A function that echoes an expression for telemetry testing."""
+        return expression
 
     # Mock the histogram
     mock_histogram = Mock()
     telemetry_test_tool._invocation_duration_histogram = mock_histogram
     span_exporter.clear()
+    expression = "(12345 + 67890) / 3"
     # Call invoke
-    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+    result = await telemetry_test_tool.invoke(expression=expression, tool_call_id="test_call_id")
 
     # Verify result
     assert isinstance(result, list)
-    assert result[0].text == "3"
+    assert result[0].text == expression
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -595,16 +1029,20 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_RESULT] == "3"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"expression": "(12345 + 67890) / 3"}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_RESULT] == expression  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     # Verify histogram was called with correct attributes
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "telemetry_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "telemetry_test_tool",
+    }
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
@@ -648,8 +1086,12 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "telemetry_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "telemetry_test_tool",
+    }
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -734,8 +1176,14 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_tool_invoke_telemetry_with_exception(
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test the tool invoke method with telemetry when an exception occurs."""
+    private_error_detail = "founder-secret-token"
 
     @tool(
         name="exception_test_tool",
@@ -743,7 +1191,7 @@ async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanE
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
-        raise ValueError("Test exception for telemetry")
+        raise ValueError(f"Test exception for telemetry: {private_error_detail}")
 
     mock_histogram = Mock()
     exception_test_tool._invocation_duration_histogram = mock_histogram
@@ -751,24 +1199,47 @@ async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanE
     # Call invoke and expect exception
     with pytest.raises(ValueError, match="Test exception for telemetry"):
         await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
+    if enable_sensitive_data:
+        assert f"Function failed. Error: Test exception for telemetry: {private_error_detail}" in caplog.text
+    else:
+        assert "Function exception_test_tool failed (ValueError)." in caplog.text
+        assert private_error_detail not in caplog.text
+    assert "result parser failed" not in caplog.text
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "exception_test_tool" in span.name
+    assert span.attributes is not None
     assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    if enable_sensitive_data:
+        assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    else:
+        assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
     assert span.attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.status.status_code == trace.StatusCode.ERROR
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
     # Verify histogram was called with error attributes
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "exception_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "exception_test_tool",
+        OtelAttr.ERROR_TYPE: ValueError.__name__,
+    }
 
 
 async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):
@@ -806,7 +1277,12 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "async_telemetry_test"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "async_telemetry_test",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "async_telemetry_test",
+    }
 
 
 async def test_tool_invoke_invalid_pydantic_args():
@@ -867,6 +1343,29 @@ def test_tool_serialization():
     assert restored_tool_2.description == "A test tool for serialization"
     assert restored_tool_2.parameters() == serialize_test_tool.parameters()
     assert restored_tool_2(10, 4) == 6
+
+
+@pytest.mark.parametrize("with_func", [True, False])
+def test_tool_serialization_with_json_schema_input_model(with_func: bool):
+    """Test that a tool declared with a JSON schema keeps its parameters through serialization."""
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    }
+
+    def get_weather(city: str) -> str:
+        return f"Sunny in {city}"
+
+    func = get_weather if with_func else None
+    weather_tool = FunctionTool(name="get_weather", description="Get the weather", func=func, input_model=schema)
+
+    tool_dict = weather_tool.to_dict()
+    assert tool_dict["input_model"] == schema
+
+    restored_tool = FunctionTool.from_dict(tool_dict, dependencies={"function_tool": {"func": func}})
+    assert restored_tool.parameters() == schema
+    assert restored_tool.func is func
 
 
 # region _parse_inputs tests
@@ -1459,6 +1958,111 @@ async def test_invoke_sync_tool_can_stay_on_event_loop() -> None:
     assert tool_thread_ids == [event_loop_thread_id]
 
 
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+async def test_invoke_result_parser_exception_propagates(
+    span_exporter: InMemorySpanExporter,
+    enable_instrumentation: bool,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from agent_framework.exceptions import ToolException
+
+    error = ValueError("Unsupported result")
+    parser = Mock(side_effect=error)
+    raw_result = {"value": "unparsed-value"}
+
+    @tool(result_parser=parser, max_invocation_exceptions=1)
+    def make_result() -> dict[str, str]:
+        return raw_result
+
+    histogram = Mock()
+    make_result._invocation_duration_histogram = histogram
+    with caplog.at_level(logging.DEBUG, logger="agent_framework"), pytest.raises(ValueError) as exc_info:
+        await make_result.invoke()
+
+    assert exc_info.value is error
+    parser.assert_called_once_with(raw_result)
+    assert make_result.invocation_count == 1
+    assert make_result.invocation_exception_count == 1
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await make_result.invoke()
+    parser.assert_called_once_with(raw_result)
+    assert make_result.invocation_count == 1
+    assert make_result.invocation_exception_count == 1
+    parser_errors = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.ERROR
+        and "result parser failed" in record.getMessage()
+    ]
+    expected_parser_error = "Function make_result: result parser failed."
+    if enable_sensitive_data:
+        expected_parser_error += " Error: Unsupported result"
+    assert parser_errors == [expected_parser_error]
+    assert "succeeded" not in caplog.text
+    assert "unparsed-value" not in caplog.text
+    spans = span_exporter.get_finished_spans()
+    if enable_instrumentation:
+        assert len(spans) == 2
+        assert spans[0].status.status_code == trace.StatusCode.ERROR
+        assert spans[0].attributes is not None
+        assert spans[0].attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+        assert OtelAttr.TOOL_RESULT not in spans[0].attributes
+        assert bool(spans[0].events) is enable_sensitive_data
+        assert ("Unsupported result" in (spans[0].status.description or "")) is enable_sensitive_data
+        assert spans[1].attributes is not None
+        assert spans[1].attributes[OtelAttr.ERROR_TYPE] == "ToolException"
+        assert histogram.record.call_count == 2
+        assert histogram.record.call_args_list[0].kwargs["attributes"][OtelAttr.ERROR_TYPE] == "ValueError"
+    else:
+        assert not spans
+        histogram.record.assert_not_called()
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.parametrize("return_content", [False, True])
+async def test_invoke_result_parser_success(span_exporter: InMemorySpanExporter, return_content: bool) -> None:
+    parsed = [Content.from_text("parsed-value")] if return_content else "parsed-value"
+    parser = Mock(return_value=parsed)
+
+    @tool(result_parser=parser)
+    def make_result() -> dict[str, str]:
+        return {"value": "unparsed-value"}
+
+    result = await make_result.invoke()
+
+    assert len(result) == 1
+    assert result[0].text == "parsed-value"
+    parser.assert_called_once_with({"value": "unparsed-value"})
+    if return_content:
+        assert result is parsed
+    for span in span_exporter.get_finished_spans():
+        assert span.attributes is not None
+        assert span.attributes[OtelAttr.TOOL_RESULT] == "parsed-value"
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
+async def test_invoke_default_result_parser_failure_keeps_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    @tool
+    def make_result() -> dict[str, int]:
+        return {"value": 1}
+
+    monkeypatch.setattr(FunctionTool, "parse_result", Mock(side_effect=ValueError("Cannot convert result")))
+
+    result = await make_result.invoke()
+
+    assert len(result) == 1
+    assert result[0].text == "{'value': 1}"
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
 async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
     """The tool's own result_parser is bypassed when skip_parsing=True is requested."""
     parser_calls: list[Any] = []
@@ -1482,6 +2086,8 @@ async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
     assert parsed[0].text == "PARSED"
 
 
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
 async def test_constructor_skip_parsing_sentinel_returns_raw_by_default() -> None:
     """Constructing a tool with result_parser=SKIP_PARSING makes invoke return the raw value."""
 
