@@ -1258,6 +1258,117 @@ class TestApprovalFlow:
         assert result["reason"] == "Not authorized"
         assert result["approved"] is False
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("require_approval", [None, False, True])
+    @pytest.mark.parametrize("approved", [True, False])
+    async def test_registered_tool_approval_is_honored(
+        self, mock_state, mock_context, require_approval: bool | None, approved: bool
+    ):
+        """A tool registered with approval_mode="always_require" must request approval.
+
+        Omitting requireApproval or setting it to false does not override the
+        registered tool's approval requirement.
+        """
+        from agent_framework import tool
+
+        self._init_state(mock_state)
+        call_log: list[int] = []
+
+        @tool(approval_mode="always_require")
+        def sensitive_tool(x: int) -> int:
+            call_log.append(x)
+            return x * 2
+
+        action_def: dict[str, Any] = {
+            "kind": "InvokeFunctionTool",
+            "id": "registered_approval",
+            "functionName": "sensitive_tool",
+            "arguments": {"x": 3},
+            "output": {"result": "Local.result"},
+        }
+        if require_approval is not None:
+            action_def["requireApproval"] = require_approval
+
+        executor = InvokeFunctionToolExecutor(action_def, tools={"sensitive_tool": sensitive_tool})
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        # The tool must not run before approval, and the workflow must yield
+        mock_context.request_info.assert_called_once()
+        request = mock_context.request_info.call_args[0][0]
+        assert isinstance(request, ToolApprovalRequest)
+        assert request.function_name == "sensitive_tool"
+        assert request.arguments == {"x": 3}
+        assert call_log == []
+        mock_context.send_message.assert_not_called()
+
+        await executor.handle_approval_response(request, ToolApprovalResponse(approved=approved), mock_context)
+
+        assert call_log == ([3] if approved else [])
+        mock_context.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("require_approval", [None, False])
+    async def test_state_registered_tool_approval_is_honored(
+        self, mock_state, mock_context, require_approval: bool | None
+    ):
+        """The registered approval requirement also applies to State-registry tools."""
+        from agent_framework import tool
+
+        self._init_state(mock_state)
+
+        @tool(approval_mode="always_require")
+        def sensitive_tool() -> str:
+            raise AssertionError("Should not be called before approval")
+
+        mock_state._data[FUNCTION_TOOL_REGISTRY_KEY] = {"sensitive_tool": sensitive_tool}
+
+        action_def: dict[str, Any] = {
+            "kind": "InvokeFunctionTool",
+            "id": "state_registered_approval",
+            "functionName": "sensitive_tool",
+            "arguments": {},
+            "output": {"result": "Local.result"},
+        }
+        if require_approval is not None:
+            action_def["requireApproval"] = require_approval
+
+        executor = InvokeFunctionToolExecutor(action_def, tools={})
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        mock_context.request_info.assert_called_once()
+        mock_context.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("require_approval", [None, False, True])
+    async def test_unmarked_tool_uses_action_approval(self, mock_state, mock_context, require_approval: bool | None):
+        """A tool without approval_mode="always_require" follows the action's requireApproval."""
+        from agent_framework import tool
+
+        self._init_state(mock_state)
+
+        @tool(approval_mode="never_require")
+        def plain_tool(x: int) -> int:
+            return x * 2
+
+        action_def: dict[str, Any] = {
+            "kind": "InvokeFunctionTool",
+            "id": "unmarked_approval",
+            "functionName": "plain_tool",
+            "arguments": {"x": 4},
+            "output": {"result": "Local.result"},
+        }
+        if require_approval is not None:
+            action_def["requireApproval"] = require_approval
+
+        executor = InvokeFunctionToolExecutor(action_def, tools={"plain_tool": plain_tool})
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        assert mock_context.request_info.call_count == (1 if require_approval else 0)
+        assert mock_context.send_message.call_count == (0 if require_approval else 1)
+
 
 # ============================================================================
 # State registry tool lookup (lines 255-257)
