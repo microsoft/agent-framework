@@ -4122,7 +4122,15 @@ async def test_mcp_connection_reset_integration():
     """
     url = os.environ.get("LOCAL_MCP_URL")
 
-    tool = MCPStreamableHTTPTool(name="integration_test", url=url, approval_mode="never_require")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    # The query tool below is annotated read-only before the simulated drop;
+    # replay also needs the client-owned trust opt-in, which the default
+    # posture deliberately withholds.
+    tool = MCPStreamableHTTPTool(
+        name="integration_test",
+        url=url,
+        approval_mode="never_require",  # type: ignore[arg-type]
+        trust_server_idempotency_hints=True,
+    )  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async with tool:
         # Verify initial connection
