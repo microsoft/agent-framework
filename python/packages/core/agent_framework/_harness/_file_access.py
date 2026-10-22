@@ -1048,6 +1048,23 @@ class AgentFileStore(ABC):
     async def create_directory(self, path: str) -> None:
         """Ensure ``path`` exists as a directory, creating it if necessary."""
 
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty directory at ``path``.
+
+        Args:
+            path: The relative path of the directory to delete.
+
+        Returns:
+            ``True`` if an empty directory was removed; ``False`` if it did not
+            exist, was not a directory, or still held entries. Backends that
+            cannot remove directories return ``False`` rather than raising.
+
+        ``delete`` stays file-only so backends remain interchangeable; this is
+        the supported way to release an explicitly created directory (for
+        example a session-scoped working folder) once it is empty.
+        """
+        return False
+
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class InMemoryAgentFileStore(AgentFileStore):
@@ -1119,31 +1136,46 @@ class InMemoryAgentFileStore(AgentFileStore):
     async def delete(self, path: str) -> bool:
         """Delete the file and return whether anything was removed.
 
-        An explicitly created directory can also be deleted, but only when it is
-        empty: nothing is stored under it and no other explicit directory is
-        nested below it. This gives session-scoped directories a lifecycle instead
-        of staying in the shared map forever.
+        Deleting is file-only, matching :class:`FileSystemAgentFileStore`: a
+        path that names a directory (explicitly created or holding stored
+        descendants) is never removed and returns ``False``. Use
+        :meth:`delete_directory` to release an empty explicitly created
+        directory.
         """
         key = self._key(path)
         async with self._lock:
+            if key in self._explicit_dirs or self._dir_counts.get(key, 0) > 0:
+                return False
             removed = self._files.pop(key, None)
-            if removed is not None:
-                for ancestor in self._ancestor_keys(key):
-                    new_count = self._dir_counts[ancestor] - 1
-                    if new_count <= 0:
-                        del self._dir_counts[ancestor]
-                    else:
-                        self._dir_counts[ancestor] = new_count
-                return True
-            if key in self._explicit_dirs:
-                if self._dir_counts.get(key, 0) > 0:
-                    return False
-                prefix = key + "/"
-                if any(other != key and other.startswith(prefix) for other in self._explicit_dirs):
-                    return False
-                del self._explicit_dirs[key]
-                return True
-            return False
+            if removed is None:
+                return False
+            for ancestor in self._ancestor_keys(key):
+                new_count = self._dir_counts[ancestor] - 1
+                if new_count <= 0:
+                    del self._dir_counts[ancestor]
+                else:
+                    self._dir_counts[ancestor] = new_count
+            return True
+
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty explicitly created directory at ``path``.
+
+        The directory is removed only when it is empty: nothing is stored under
+        it and no other explicit directory is nested below it. This keeps the
+        file-only ``delete`` contract while giving session-scoped directories a
+        lifecycle instead of staying in the shared map forever.
+        """
+        key = self._key(_normalize_relative_path(path, is_directory=True))
+        async with self._lock:
+            if key not in self._explicit_dirs:
+                return False
+            if self._dir_counts.get(key, 0) > 0:
+                return False
+            prefix = key + "/"
+            if any(other != key and other.startswith(prefix) for other in self._explicit_dirs):
+                return False
+            del self._explicit_dirs[key]
+            return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
         """Return the direct child files and subdirectories of ``directory``.
@@ -1521,6 +1553,25 @@ class FileSystemAgentFileStore(AgentFileStore):
                 full_path.unlink()
             except FileNotFoundError:
                 return False
+        return True
+
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty directory at ``path``.
+
+        Returns ``True`` only when an empty directory was removed; a directory
+        that is missing, is a file, or still holds entries returns ``False``
+        instead of raising, matching :class:`InMemoryAgentFileStore`.
+        """
+        full_path = self._resolve_safe_directory_path(path)
+        return await asyncio.to_thread(self._delete_directory_sync, full_path)
+
+    @staticmethod
+    def _delete_directory_sync(full_path: Path) -> bool:
+        try:
+            full_path.rmdir()
+        except OSError:
+            # Missing path, a file, or a directory that still holds entries.
+            return False
         return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:

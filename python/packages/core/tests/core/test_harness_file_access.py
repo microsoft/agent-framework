@@ -2721,18 +2721,80 @@ async def test_scope_alone_enables_scoped_mode(chat_client_base: SupportsChatGet
     await provider.before_run(agent=None, session=AgentSession(), context=context, state={})
 
 
-async def test_in_memory_store_delete_removes_empty_explicit_directory() -> None:
-    """An empty explicitly created directory can be deleted; a used one cannot."""
+async def test_filesystem_delete_is_file_only_and_delete_directory_matches_in_memory(
+    tmp_path: Path,
+) -> None:
+    """FileSystemAgentFileStore.delete must reject directories exactly like the
+    in-memory backend, and delete_directory must release an empty directory."""
+
+    async def in_memory_mirror() -> tuple[InMemoryAgentFileStore, FileSystemAgentFileStore]:
+        memory_store = InMemoryAgentFileStore()
+        fs_root = tmp_path / "root"
+        fs_store = FileSystemAgentFileStore(fs_root)
+        for store in (memory_store, fs_store):
+            await store.create_directory("sessions/s1")
+            await store.write("sessions/s1/state.txt", "data")
+        return memory_store, fs_store
+
+    memory_store, fs_store = await in_memory_mirror()
+
+    # Backend parity: deleting a directory returns False on both backends.
+    assert await fs_store.delete("sessions/s1") is False
+    assert await memory_store.delete("sessions/s1") is False
+
+    # Deleting the file first leaves the (now empty) directory in place.
+    assert await fs_store.delete("sessions/s1/state.txt") is True
+    assert await memory_store.delete("sessions/s1/state.txt") is True
+    for store in (fs_store, memory_store):
+        assert [entry.name for entry in await store.list_children("sessions/s1")] == []
+
+    # delete_directory releases the empty directory on both backends.
+    assert await fs_store.delete_directory("sessions/s1") is True
+    assert await memory_store.delete_directory("sessions/s1") is True
+    for store in (fs_store, memory_store):
+        assert await store.list_children("sessions") == []
+
+    # A second release of the same path reports False on both backends.
+    assert await fs_store.delete_directory("sessions/s1") is False
+    assert await memory_store.delete_directory("sessions/s1") is False
+
+
+async def test_in_memory_store_delete_is_file_only() -> None:
+    """delete() must stay file-only: a directory path is never removed, matching
+    FileSystemAgentFileStore.delete on the same input (backend parity)."""
     store = InMemoryAgentFileStore()
     await store.create_directory("sessions/s1")
 
-    assert await store.delete("sessions/s1") is True
+    assert await store.delete("sessions/s1") is False
+    assert await store.delete("sessions/s1/state.txt") is False
     children = await store.list_children("sessions")
-    assert all(entry.name != "s1" for entry in children)
+    assert [entry.name for entry in children] == ["s1"]
 
     await store.create_directory("sessions/s2")
     await store.write("sessions/s2/state.txt", "data")
     assert await store.delete("sessions/s2") is False
     assert await store.delete("sessions/s2/state.txt") is True
-    assert await store.delete("sessions/s2") is True
-    assert await store.delete("sessions") is True
+    assert await store.delete("sessions/s2") is False
+    assert await store.delete("sessions") is False
+
+    # The emptied directory stays listed, exactly like an empty directory on a filesystem.
+    entries = await store.list_children("sessions")
+    assert [entry.name for entry in entries] == ["s1", "s2"]
+
+
+async def test_in_memory_store_delete_directory_releases_empty_explicit_directory() -> None:
+    """delete_directory() releases an empty explicitly created directory so a
+    session-scoped working folder does not stay in the shared map forever."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("sessions/s1")
+
+    assert await store.delete_directory("sessions/s1") is True
+    children = await store.list_children("sessions")
+    assert children == []
+
+    await store.create_directory("sessions/s2")
+    await store.write("sessions/s2/state.txt", "data")
+    assert await store.delete_directory("sessions/s2") is False
+    assert await store.delete("sessions/s2/state.txt") is True
+    assert await store.delete_directory("sessions/s2") is True
+    assert await store.delete_directory("sessions") is True
