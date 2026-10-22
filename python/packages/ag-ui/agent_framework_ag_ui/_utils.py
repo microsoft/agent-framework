@@ -10,8 +10,16 @@ import uuid
 from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any
 
+import ag_ui.core as _agui_core
 from agent_framework import AgentResponseUpdate, ChatResponseUpdate, Content, FunctionTool
 from agent_framework._serialization import make_json_safe
+
+_AGUI_PROTOCOL_VERSION: str | None = getattr(_agui_core, "PROTOCOL_VERSION", None)
+"""The AG-UI protocol version the installed ``ag-ui-protocol`` speaks, or ``None`` before 1.0.
+
+Releases before 1.0 have no version to declare and still accept the legacy ``binary`` part, which 1.0 rejects,
+so code that emits version-specific shapes gates on this value.
+"""
 
 
 def _mcp_tool_result_host_payload_key(core_mcp: Any) -> str:

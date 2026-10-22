@@ -18,7 +18,6 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     RunErrorEvent,
-    RunStartedEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageEndEvent,
@@ -50,6 +49,7 @@ from ._run_common import (
     _approval_interrupt_for_function_call,  # pyright: ignore[reportPrivateUsage]
     _approval_response_schema,  # pyright: ignore[reportPrivateUsage]
     _build_run_finished_event,
+    _build_run_started_event,
     _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
@@ -1224,12 +1224,12 @@ async def run_workflow_stream(
             missing_code="WORKFLOW_RESUME_MISSING_INTERRUPT",
         )
         if contract_error is not None and contract_code is not None:
-            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield _build_run_started_event(run_id, thread_id)
             yield RunErrorEvent(message=contract_error, code=contract_code)
             return
         resume_error = _resume_error_for_pending_workflow_requests(resume_entries)
         if resume_error is not None:
-            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield _build_run_started_event(run_id, thread_id)
             yield resume_error
             return
         cancelled_request_ids = {
@@ -1251,7 +1251,7 @@ async def run_workflow_stream(
         responses, pending_before_run, on_conversational_responses=on_conversational_responses
     )
     if response_error is not None:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         yield response_error
         return
     if cancelled_request_ids:
@@ -1273,7 +1273,7 @@ async def run_workflow_stream(
     # checkpoint. ``pending_before_run`` reflects the live (pre-restore) instance, so
     # short-circuiting on it here would skip the restore entirely.
     if checkpoint_id is None and not responses and pending_before_run:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         for request_event in pending_before_run.values():
             request_payload = _request_payload_from_request_event(request_event)
             if request_payload is None:
@@ -1299,7 +1299,7 @@ async def run_workflow_stream(
         return
 
     if checkpoint_id is None and not responses and not messages:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         yield _build_run_finished_event(
             run_id=run_id,
             thread_id=thread_id,
@@ -1413,12 +1413,12 @@ async def run_workflow_stream(
 
             if event_type == "started":
                 if not run_started_emitted:
-                    yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                    yield _build_run_started_event(run_id, thread_id)
                     run_started_emitted = True
                 continue
 
             if not run_started_emitted:
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                yield _build_run_started_event(run_id, thread_id)
                 run_started_emitted = True
 
             if event_type == "failed":
@@ -1586,7 +1586,7 @@ async def run_workflow_stream(
         failure_event = None
         logger.exception("Workflow AG-UI stream failed: %s", exc)
         if not run_started_emitted:
-            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield _build_run_started_event(run_id, thread_id)
             run_started_emitted = True
         # Close any open reasoning block / text message so RUN_ERROR stays the final event.
         for end_event in _drain_open_blocks():
@@ -1615,7 +1615,7 @@ async def run_workflow_stream(
         yield end_event
 
     if not run_started_emitted:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
 
     if not terminal_emitted and not run_error_emitted:
         if not interrupts:

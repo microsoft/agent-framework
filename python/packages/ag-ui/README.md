@@ -330,7 +330,8 @@ Additional compatibility and draft support:
 - Native `Workflow` endpoint registration via `add_agent_framework_fastapi_endpoint(...)`
 - Workflow-to-AG-UI event mapping (run/step/activity/tool/custom events)
 - Custom event compatibility for inbound `CUSTOM`, `CUSTOM_EVENT`, and `custom_event`
-- Pragmatic multimodal input parsing for both legacy (`binary`) and draft media-part shapes
+- Pragmatic multimodal input parsing for both legacy (`binary`) and AG-UI 1.0 media-part shapes
+- Works with `ag-ui-protocol` 0.1.x and 1.x; with 1.x, `RUN_STARTED` declares `protocolVersion`
 - Canonical interrupt/resume handling (`availableInterrupts`, `resume`, and `RUN_FINISHED.outcome.interrupts`)
 
 ## Security: Authentication & Authorization

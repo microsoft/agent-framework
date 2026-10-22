@@ -18,7 +18,6 @@ from ag_ui.core import (
     CustomEvent,
     MessagesSnapshotEvent,
     RunErrorEvent,
-    RunStartedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -90,10 +89,17 @@ from ._approval_execution import (
     InRunPendingToolTransitionOwner,
 )
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
-from ._message_adapters import _APPROVAL_DECISION_IS_BOOLEAN_KEY, normalize_agui_input_messages
+from ._message_adapters import (
+    _function_result_to_agui_content,
+    _APPROVAL_DECISION_IS_BOOLEAN_KEY,
+    normalize_agui_input_messages,
+    snapshot_messages_for_wire,
+)
 from ._predictive_state import PredictiveStateHandler
 from ._tooling import collect_server_tools, merge_tools
 from ._run_common import (
+    _UNSET,
+    _build_run_started_event,
     FlowState,
     _approval_interrupt_for_function_call,  # type: ignore
     _approval_steps_response_schema,  # type: ignore
@@ -738,18 +744,26 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
             llm_str = _stringify_tool_result(raw)
             display_result = _extract_tool_result_display(resolved)
             has_host_payload, host_payload = _resolve_tool_result_host_payload(resolved, display_result)
-            ui_str = _resolve_ui_payload(llm_str, host_payload if has_host_payload else display_result)
+            ui_content: str | list[dict[str, Any]] = _resolve_ui_payload(
+                llm_str, host_payload if has_host_payload else display_result
+            )
             replay_properties: dict[str, Any] = {}
             if has_host_payload:
                 replay_properties = _mcp_host_history_fields(
                     host_payload,
                     _model_items_for_agui_replay(resolved, llm_str),
                 )
+            elif display_result is _UNSET:
+                # Media in the result goes out as content parts, as it does in the rebuilt snapshot message
+                # (_resolved_tool_result_snapshot_messages).
+                agui_content = _function_result_to_agui_content(resolved)
+                if isinstance(agui_content, list):
+                    ui_content = agui_content
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
                     tool_call_id=resolved.call_id,
-                    content=ui_str,
+                    content=ui_content,  # type: ignore[arg-type]
                     role="tool",
                     **replay_properties,
                 )
@@ -766,7 +780,7 @@ def _run_start_events(
     resolved_approval_results: list[Content],
 ) -> list[BaseEvent]:
     """Build the events that open an agent run: RUN_STARTED, PredictState, initial state, and approval results."""
-    events: list[BaseEvent] = [RunStartedEvent(run_id=run_id, thread_id=thread_id)]
+    events: list[BaseEvent] = [_build_run_started_event(run_id, thread_id)]
     if predict_state_config:
         predict_state_value = [
             {
@@ -2274,11 +2288,14 @@ def _resolved_tool_result_snapshot_messages(
             llm_result = _stringify_tool_result(content.result if content.result is not None else "")
             display_result = _extract_tool_result_display(content)
             has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+            # A result holding media keeps it as content parts (with ag-ui-protocol 1.0); see
+            # _function_result_to_agui_content. Host-payload results keep their own fields below.
+            agui_content = llm_result if has_host_payload else _function_result_to_agui_content(content)
             snapshot_message: dict[str, Any] = {
                 "id": msg.message_id if msg.message_id and len(function_results) == 1 else generate_event_id(),
                 "role": "tool",
                 "toolCallId": call_id,
-                "content": llm_result,
+                "content": agui_content if isinstance(agui_content, list) else llm_result,
             }
             if has_host_payload:
                 snapshot_message.update(
@@ -2419,7 +2436,9 @@ def _build_messages_snapshot(
     if flow.snapshot_segments:
         _append_segmented_snapshot_messages(flow, all_messages)
         bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
-        return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
+        return MessagesSnapshotEvent(
+            messages=snapshot_messages_for_wire(_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
+        )
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
@@ -2454,7 +2473,7 @@ def _build_messages_snapshot(
     all_messages.extend(flow.reasoning_messages)
 
     bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
-    return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
+    return MessagesSnapshotEvent(messages=snapshot_messages_for_wire(_project_host_payload_history(bounded_messages)))  # type: ignore[arg-type]
 
 
 def _safe_point_tool_call_ids(flow: FlowState) -> set[str]:
@@ -2545,7 +2564,7 @@ def _build_safe_point_messages_snapshot(
             all_messages.extend(results)
 
     bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
-    return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
+    return MessagesSnapshotEvent(messages=snapshot_messages_for_wire(_project_host_payload_history(bounded_messages)))  # type: ignore[arg-type]
 
 
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:
@@ -3118,7 +3137,7 @@ async def _run_agent_stream(
             resume_payload, translated_message_ids, legacy_resume_error = legacy_resume
             raw_messages[:] = [message for message in raw_messages if id(message) not in translated_message_ids]
             if legacy_resume_error is not None:
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                yield _build_run_started_event(run_id, thread_id)
                 yield RunErrorEvent(message=legacy_resume_error, code="APPROVAL_RESUME_INVALID")
                 return
     approval_resume_messages, handled_resume_ids, cancelled_resume_ids, resume_error = (
@@ -3137,7 +3156,7 @@ async def _run_agent_stream(
         )
     )
     if resume_error is not None:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         resume_error_code = getattr(resume_error, "code", None)
         should_clear_tool_approval_state = resume_error_code == "APPROVAL_RESUME_CANCELLED" or (
             resume_error_code == "APPROVAL_RESUME_NOT_FOUND"
@@ -3188,7 +3207,7 @@ async def _run_agent_stream(
         # Fully handled via retained results. Reconstruction may have refilled
         # ``raw_messages`` with the stored transcript on a client-replayed retry;
         # do not fall through to a fresh agent run (#8140 / eavan review).
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         for event in _make_approval_tool_result_events(retained_approval_results):
             yield event
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
@@ -3221,7 +3240,7 @@ async def _run_agent_stream(
     # Handle empty messages (emit RunStarted immediately since no agent response)
     if not messages and not only_cancelled_resume:
         logger.warning("No messages provided in AG-UI input")
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
         return
 
@@ -3380,7 +3399,7 @@ async def _run_agent_stream(
         )
 
     if only_cancelled_resume:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         _clear_tool_approval_state(approval_state_store, approval_thread_id)
         retired_interrupt_ids = {
             reconciliation.interrupt_id
@@ -3480,7 +3499,7 @@ async def _run_agent_stream(
         for intent in authorized_executions.values():
             approval_state_store.lifecycle.release_claim(intent, policy=ClaimRecoveryPolicy.SAFE_TO_RETRY)
         unavailable_names = ", ".join(sorted({intent.name for intent in unavailable_local_intents}))
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         yield RunErrorEvent(
             message=f"Approved tool(s) {unavailable_names} are temporarily unavailable; retry the approval later.",
             code="APPROVAL_TOOL_UNAVAILABLE",
@@ -3527,7 +3546,7 @@ async def _run_agent_stream(
         }
         if retired_interrupt_ids:
             await snapshot_session.clear_interrupts(interrupt_ids=retired_interrupt_ids)
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         yield RunErrorEvent(
             message="Function invocation is disabled; the approved tool remains pending for an explicit retry.",
             code="APPROVAL_INVOCATION_DISABLED",
@@ -3600,7 +3619,7 @@ async def _run_agent_stream(
         return combined or None
 
     if replacement_approval_requests:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         for request in replacement_approval_requests:
             for event in _emit_content(
                 request,
@@ -3659,7 +3678,7 @@ async def _run_agent_stream(
         confirm_remaining_interrupts = remaining_stored_interrupts(
             {str(confirm_interrupt_id)} if confirm_interrupt_id else set()
         )
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield _build_run_started_event(run_id, thread_id)
         # Emit approved state snapshot before confirmation message
         if approved_state_snapshot_emitted:
             yield StateSnapshotEvent(snapshot=flow.current_state)
@@ -3919,7 +3938,7 @@ async def _run_agent_stream(
         stream_completed = True
     except ApprovalInvocationDisabledError:
         if not run_started_emitted:
-            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield _build_run_started_event(run_id, thread_id)
         yield RunErrorEvent(
             message="Function invocation is disabled; the approved tool remains pending for an explicit retry.",
             code="APPROVAL_INVOCATION_DISABLED",

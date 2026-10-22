@@ -24,6 +24,7 @@ from ag_ui.core import (
     ReasoningStartEvent,
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
+    RunStartedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -35,9 +36,11 @@ from ag_ui.core import (
 )
 from agent_framework import Content, ResponseStream
 
+from ._message_adapters import _function_result_to_agui_content
 from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 from ._utils import (
+    _AGUI_PROTOCOL_VERSION,
     _approval_interrupt_id,
     _extract_mcp_tool_result_host_payload,
     _extract_tool_result_marker_values,
@@ -505,6 +508,18 @@ def _approval_interrupt_for_function_call(
     }
 
 
+def _build_run_started_event(run_id: str, thread_id: str) -> RunStartedEvent:
+    """Create a RUN_STARTED event that declares the AG-UI protocol version this producer speaks.
+
+    AG-UI 1.0 requires a producer to declare ``protocolVersion`` on the event that opens a run, and the
+    ``ag-ui-protocol`` SDK leaves it unset by default. Releases before 1.0 have no such field, so nothing is
+    declared there. Every RUN_STARTED is built here so no emitter can forget the declaration.
+    """
+    if _AGUI_PROTOCOL_VERSION is None:
+        return RunStartedEvent(run_id=run_id, thread_id=thread_id)
+    return RunStartedEvent(run_id=run_id, thread_id=thread_id, protocol_version=_AGUI_PROTOCOL_VERSION)
+
+
 def _build_run_finished_event(
     run_id: str, thread_id: str, interrupts: list[dict[str, Any]] | None = None
 ) -> RunFinishedEvent:
@@ -648,9 +663,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
         flow.text_delta_count = 0
         _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
-    elif flow.accumulated_text and content.text == flow.accumulated_text and (
-        flow.text_delta_count > 1
-    ):
+    elif flow.accumulated_text and content.text == flow.accumulated_text and (flow.text_delta_count > 1):
         # Guard against full-message replay chunks that can appear after streaming deltas.
         # A duplicate equal to the whole accumulated text is only a safe replay signal when
         # the text already streamed in more than one chunk. With a single prior chunk the
@@ -847,11 +860,16 @@ def _emit_tool_result_common(
     display_result: Any = _UNSET,  # noqa: ANN401
     snapshot_result: Any = _UNSET,  # noqa: ANN401
     model_items: list[dict[str, Any]] | None = None,
+    content_parts: list[dict[str, Any]] | None = None,
 ) -> list[BaseEvent]:
     """Shared helper for emitting ToolCallResult (and ToolCallEnd when still open).
 
     Both ``_emit_tool_result`` (standard function results) and ``_emit_mcp_tool_result``
     (MCP server tool results) delegate to this function.
+
+    ``content_parts`` is the result as AG-UI 1.0 content parts when it holds media; the
+    TOOL_CALL_RESULT event (unless a display payload overrides it) and the snapshot tool
+    message then carry the parts, so the media survives the relay and the next request.
 
     ``TOOL_CALL_END`` is emitted only when ``call_id`` was opened in this run and
     has not already been ended (including synthetic protocol closure before an
@@ -873,15 +891,24 @@ def _emit_tool_result_common(
     flow.tool_calls_ended.add(call_id)
 
     result_content = _stringify_tool_result(raw_result)
-    ui_result_content = _resolve_ui_payload(result_content, display_result)
+    ui_result_content: str | list[dict[str, Any]] = _resolve_ui_payload(result_content, display_result)
+    if content_parts is not None and display_result is _UNSET:
+        ui_result_content = content_parts
     snapshot_result_content = _resolve_ui_payload(result_content, snapshot_result)
     message_id = generate_event_id()
+    event_replay_properties: dict[str, Any] = {}
+    if snapshot_result is not _UNSET:
+        event_replay_properties = _mcp_host_history_fields(
+            snapshot_result_content,
+            [{"type": "text", "text": result_content}] if model_items is None else model_items,
+        )
     events.append(
         ToolCallResultEvent(
             message_id=message_id,
             tool_call_id=call_id,
-            content=ui_result_content,
+            content=ui_result_content,  # type: ignore[arg-type]
             role="tool",
+            **event_replay_properties,
         )
     )
 
@@ -889,22 +916,9 @@ def _emit_tool_result_common(
         "id": message_id,
         "role": "tool",
         "toolCallId": call_id,
-        "content": result_content,
+        "content": result_content if content_parts is None else content_parts,
+        **event_replay_properties,
     }
-    event_replay_properties: dict[str, Any] = {}
-    if snapshot_result is not _UNSET:
-        event_replay_properties = _mcp_host_history_fields(
-            snapshot_result_content,
-            [{"type": "text", "text": result_content}] if model_items is None else model_items,
-        )
-        snapshot_message.update(event_replay_properties)
-        events[-1] = ToolCallResultEvent(
-            message_id=message_id,
-            tool_call_id=call_id,
-            content=ui_result_content,
-            role="tool",
-            **event_replay_properties,
-        )
     flow.tool_results.append(snapshot_message)
     # A result closes the current tool-call segment: a later call opens a new
     # one, so `call A -> result A -> call B` snapshots as two call/result pairs
@@ -954,6 +968,9 @@ def _emit_tool_result(
     has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
     if has_host_payload and display_result is _UNSET:
         display_result = host_payload
+    # A result holding media is relayed as content parts (with ag-ui-protocol 1.0); MCP results keep their own
+    # handling, and _function_result_to_agui_content returns text for them.
+    agui_content = raw_result if has_host_payload else _function_result_to_agui_content(content)
     return _emit_tool_result_common(
         content.call_id,
         raw_result,
@@ -965,6 +982,7 @@ def _emit_tool_result(
         model_items=(
             _model_items_for_agui_replay(content, _stringify_tool_result(raw_result)) if has_host_payload else None
         ),
+        content_parts=agui_content if isinstance(agui_content, list) else None,
     )
 
 

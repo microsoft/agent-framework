@@ -16,6 +16,8 @@ from agent_framework import (
     Message,
 )
 
+from ._message_adapters import _tool_content_parts_to_result
+
 logger = logging.getLogger(__name__)
 
 
@@ -261,6 +263,11 @@ class AGUIEventConverter:
         """Handle TOOL_CALL_RESULT event."""
         tool_call_id = self._get_tool_call_id(event) or ""
         result = event.get("result") if event.get("result") is not None else event.get("content")
+        if isinstance(result, list):
+            # An AG-UI 1.0 ContentPart[] result: pass media on as Content items, as for tool messages.
+            converted = _tool_content_parts_to_result(cast(list[Any], result), tool_call_id)
+            if converted is not None:
+                result = converted
 
         return ChatResponseUpdate(
             role="tool",
