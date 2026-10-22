@@ -38,6 +38,12 @@ See the README.md for each sample for the prerequisites for that sample.
 | [Azure OpenAI ChatCompletion](./azure/Agent_With_AzureOpenAIChatCompletion/) | Create an AIAgent using Azure OpenAI ChatCompletion |
 | [Azure OpenAI Responses](./azure/Agent_With_AzureOpenAIResponses/) | Create an AIAgent using Azure OpenAI Responses |
 
+### [Copilot Studio](./copilot-studio/)
+
+| Sample | Description |
+| --- | --- |
+| [Copilot Studio agent](./copilot-studio/Agent_With_CopilotStudio/) | Call a published agent with user authentication, streaming, and reusable sessions |
+
 ### [Custom](./custom/)
 
 | Sample | Description |
