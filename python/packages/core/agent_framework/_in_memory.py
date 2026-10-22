@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any, Callable, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, cast
 from uuid import UUID, uuid4
 
 from typing_extensions import TypeVar
