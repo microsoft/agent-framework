@@ -70,7 +70,10 @@ from openai.types.responses.response_reasoning_text_delta_event import (
 from openai.types.responses.response_reasoning_text_done_event import (
     ResponseReasoningTextDoneEvent,
 )
+from openai.types.responses.response_refusal_delta_event import ResponseRefusalDeltaEvent
+from openai.types.responses.response_refusal_done_event import ResponseRefusalDoneEvent
 from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
+from openai.types.responses.response_text_done_event import ResponseTextDoneEvent
 from pydantic import BaseModel
 from pytest import param
 
@@ -1285,7 +1288,7 @@ def test_streamed_reasoning_text_replays_as_reasoning_content() -> None:
     response = ChatResponse.from_updates([
         client._parse_chunk_from_openai(
             event,
-            {},
+            {"openai": {"logprobs": []}, "logprobs": []},
             function_call_ids,
             seen_reasoning_delta_item_ids,
         )
@@ -1391,7 +1394,10 @@ async def test_streamed_reasoning_text_is_stored_once_and_replayed(event_kind: s
 
         reasoning = response.messages[0].contents[0]
         assert reasoning.text == text
-        assert reasoning.additional_properties == {"reasoning_text": True}
+        assert reasoning.additional_properties == {
+            "openai": {"reasoning_text": True},
+            "reasoning_text": True,
+        }
 
         await client.get_response(
             [
@@ -1472,7 +1478,7 @@ def test_streamed_summary_and_reasoning_text_replay_as_one_provider_item() -> No
     reasoning_contents = response.messages[0].contents
     assert [(content.text, content.additional_properties) for content in reasoning_contents] == [
         ("Visible summary", {}),
-        ("Private reasoning", {"reasoning_text": True}),
+        ("Private reasoning", {"openai": {"reasoning_text": True}, "reasoning_text": True}),
     ]
     assert reasoning_contents[1].protected_data == "encrypted-mixed"
 
@@ -1653,7 +1659,10 @@ def test_response_content_creation_with_refusal() -> None:
     assert len(response.messages[0].contents) == 1
     assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "I cannot provide that information."
-    assert response.messages[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert response.messages[0].contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 def test_streaming_refusal_delta_creates_marked_text() -> None:
@@ -1667,7 +1676,72 @@ def test_streaming_refusal_delta_creates_marked_text() -> None:
     assert len(update.contents) == 1
     assert update.contents[0].type == "text"
     assert update.contents[0].text == "I cannot help with that."
-    assert update.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert update.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
+
+
+@pytest.mark.parametrize(
+    ("delta_event", "done_event", "expected_properties"),
+    [
+        (
+            ResponseTextDeltaEvent(
+                type="response.output_text.delta",
+                content_index=0,
+                item_id="message_1",
+                output_index=0,
+                sequence_number=1,
+                delta="Hello ",
+                logprobs=[],
+            ),
+            ResponseTextDoneEvent(
+                type="response.output_text.done",
+                content_index=0,
+                item_id="message_1",
+                output_index=0,
+                sequence_number=2,
+                text="Hello world",
+                logprobs=[],
+            ),
+            {"openai": {"logprobs": []}, "logprobs": []},
+        ),
+        (
+            ResponseRefusalDeltaEvent(
+                type="response.refusal.delta",
+                content_index=0,
+                item_id="message_2",
+                output_index=0,
+                sequence_number=1,
+                delta="I cannot ",
+            ),
+            ResponseRefusalDoneEvent(
+                type="response.refusal.done",
+                content_index=0,
+                item_id="message_2",
+                output_index=0,
+                sequence_number=2,
+                refusal="I cannot help.",
+            ),
+            {"core": {"model_output_kind": "refusal"}, "model_output_kind": "refusal"},
+        ),
+    ],
+)
+def test_streaming_text_done_events_replace_deltas(
+    delta_event: Any,
+    done_event: Any,
+    expected_properties: dict[str, Any],
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    updates = [client._parse_chunk_from_openai(event, {}, {}) for event in (delta_event, done_event)]
+
+    assert updates[0].contents[0].merge_mode == "append"
+    assert updates[1].contents[0].merge_mode == "replace"
+    assert updates[1].contents[0].additional_properties == expected_properties
+    response = ChatResponse.from_updates(updates)
+    expected_text = done_event.text if hasattr(done_event, "text") else done_event.refusal
+    assert response.messages[0].contents[0].text == expected_text
 
 
 def test_prepare_marked_refusal_text_uses_native_assistant_shape_and_input_text_fallback() -> None:
@@ -1858,7 +1932,10 @@ async def test_non_streaming_reasoning_text_is_stored_once_and_replayed() -> Non
 
         reasoning = response.messages[0].contents[0]
         assert reasoning.text == "Private reasoning text"
-        assert reasoning.additional_properties == {"reasoning_text": True}
+        assert reasoning.additional_properties == {
+            "openai": {"reasoning_text": True},
+            "reasoning_text": True,
+        }
 
         await client.get_response(
             [
@@ -7931,8 +8008,8 @@ async def test_get_response_streaming_with_response_format() -> None:
         await run_streaming()
 
 
-async def test_inner_get_response_streaming_with_response_format_tracks_reasoning_delta_ids() -> None:
-    """The responses.stream path should suppress reasoning done events after deltas."""
+async def test_inner_get_response_streaming_with_response_format_uses_done_snapshot() -> None:
+    """The responses.stream path emits a replace snapshot and finalizes without duplication."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     messages = [Message(role="user", contents=["Test streaming with format"])]
     item_id = "reasoning_stream"
@@ -7970,7 +8047,9 @@ async def test_inner_get_response_streaming_with_response_format_tracks_reasonin
     reasoning_chunks = [
         content.text for update in updates for content in update.contents if content.type == "text_reasoning"
     ]
-    assert reasoning_chunks == ["Hello "]
+    assert reasoning_chunks == ["Hello ", "Hello "]
+    response = ChatResponse.from_updates(updates)
+    assert response.messages[0].contents[0].text == "Hello "
 
 
 def test_prepare_content_for_openai_image_content() -> None:
@@ -8217,8 +8296,9 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].additional_properties["output_index"] == 0
     assert result.contents[0].additional_properties["sequence_number"] == 5
     assert result.contents[0].additional_properties["item_id"] == "ci_456"
-    assert result.contents[0].additional_properties["stream_complete"] is True
-    assert result.contents[0].inputs[0].additional_properties["stream_complete"] is True
+    assert result.contents[0].additional_properties["openai"]["item_id"] == "ci_456"
+    assert result.contents[0].merge_mode == "replace"
+    assert result.contents[0].inputs[0].merge_mode == "replace"
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:
@@ -8295,8 +8375,8 @@ def test_streaming_reasoning_text_delta_event() -> None:
         mock_metadata.assert_called_once_with(event)
 
 
-def test_streaming_reasoning_text_done_event_skipped_after_deltas() -> None:
-    """Test reasoning text done event does not emit content when deltas were already received."""
+def test_streaming_reasoning_text_done_event_replaces_prior_deltas() -> None:
+    """A reasoning text done event is an explicit authoritative snapshot."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -8316,7 +8396,11 @@ def test_streaming_reasoning_text_done_event_skipped_after_deltas() -> None:
             event, chat_options, function_call_ids, seen_reasoning_delta_item_ids
         )  # type: ignore
 
-        assert len(response.contents) == 0
+        assert len(response.contents) == 1
+        assert response.contents[0].type == "text_reasoning"
+        assert response.contents[0].id == "reasoning_456"
+        assert response.contents[0].text == "complete reasoning"
+        assert response.contents[0].merge_mode == "replace"
         mock_metadata.assert_called_once_with(event)
         assert response.additional_properties == {"test": "data"}
 
@@ -8346,6 +8430,7 @@ def test_streaming_reasoning_text_done_event_fallback_without_deltas() -> None:
         assert response.contents[0].type == "text_reasoning"
         assert response.contents[0].id == "reasoning_456"
         assert response.contents[0].text == "complete reasoning"
+        assert response.contents[0].merge_mode == "replace"
         mock_metadata.assert_called_once_with(event)
         assert response.additional_properties == {"test": "data"}
 
@@ -8375,8 +8460,8 @@ def test_streaming_reasoning_summary_text_delta_event() -> None:
         mock_metadata.assert_called_once_with(event)
 
 
-def test_streaming_reasoning_summary_text_done_event_skipped_after_deltas() -> None:
-    """Test reasoning summary text done event does not emit content when deltas were already received."""
+def test_streaming_reasoning_summary_text_done_event_replaces_prior_deltas() -> None:
+    """A reasoning summary done event is an explicit authoritative snapshot."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -8396,7 +8481,11 @@ def test_streaming_reasoning_summary_text_done_event_skipped_after_deltas() -> N
             event, chat_options, function_call_ids, seen_reasoning_delta_item_ids
         )  # type: ignore
 
-        assert len(response.contents) == 0
+        assert len(response.contents) == 1
+        assert response.contents[0].type == "text_reasoning"
+        assert response.contents[0].id == "summary_012"
+        assert response.contents[0].text == "complete summary"
+        assert response.contents[0].merge_mode == "replace"
         mock_metadata.assert_called_once_with(event)
         assert response.additional_properties == {"custom": "meta"}
 
@@ -8426,12 +8515,13 @@ def test_streaming_reasoning_summary_text_done_event_fallback_without_deltas() -
         assert response.contents[0].type == "text_reasoning"
         assert response.contents[0].id == "summary_012"
         assert response.contents[0].text == "complete summary"
+        assert response.contents[0].merge_mode == "replace"
         mock_metadata.assert_called_once_with(event)
         assert response.additional_properties == {"custom": "meta"}
 
 
 def test_streaming_reasoning_deltas_then_done_no_duplication() -> None:
-    """Sending delta events followed by a done event produces content only from deltas."""
+    """A done snapshot replaces prior reasoning deltas during aggregation."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -8463,25 +8553,29 @@ def test_streaming_reasoning_deltas_then_done_no_duplication() -> None:
         text="Hello world",
     )
 
-    all_contents = []
+    updates: list[ChatResponseUpdate] = []
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         for event in cast("tuple[Any, ...]", (delta1, delta2, done)):
-            response = client._parse_chunk_from_openai(
+            update = client._parse_chunk_from_openai(
                 event,
                 chat_options,
                 function_call_ids,
                 seen_reasoning_delta_item_ids,  # type: ignore
             )
-            all_contents.extend(response.contents)
+            updates.append(update)
 
-    assert len(all_contents) == 2
-    assert all_contents[0].text == "Hello "
-    assert all_contents[1].text == "world"
-    assert "".join(c.text or "" for c in all_contents) == "Hello world"
+    assert [content.merge_mode for update in updates for content in update.contents] == [
+        "append",
+        "append",
+        "replace",
+    ]
+    response = ChatResponse.from_updates(updates)
+    assert response.messages[0].contents[0].text == "Hello world"
+    assert response.messages[0].contents[0].merge_mode is None
 
 
-async def test_inner_get_response_streaming_create_tracks_reasoning_delta_ids() -> None:
-    """The responses.create(stream=True) path should suppress reasoning done events after deltas."""
+async def test_inner_get_response_streaming_create_uses_done_snapshot() -> None:
+    """The responses.create(stream=True) path emits a replace snapshot and finalizes without duplication."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     messages = [Message(role="user", contents=["Test streaming"])]
     item_id = "reasoning_create"
@@ -8515,7 +8609,9 @@ async def test_inner_get_response_streaming_create_tracks_reasoning_delta_ids() 
     reasoning_chunks = [
         content.text for update in updates for content in update.contents if content.type == "text_reasoning"
     ]
-    assert reasoning_chunks == ["Hello "]
+    assert reasoning_chunks == ["Hello ", "Hello "]
+    response = ChatResponse.from_updates(updates)
+    assert response.messages[0].contents[0].text == "Hello "
 
 
 def test_streaming_reasoning_events_preserve_metadata() -> None:

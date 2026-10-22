@@ -236,7 +236,11 @@ def _tool_call_id_of(tool_call: ToolCall) -> str:
     return ""
 
 
-def _function_call_content(tool_call: ToolCall) -> Content:
+def _function_call_content(
+    tool_call: ToolCall,
+    *,
+    merge_mode: Literal["append", "replace"] | None = None,
+) -> Content:
     arguments = tool_call.function.arguments
     if isinstance(arguments, str):
         normalized_arguments: str | dict[str, Any] = arguments
@@ -248,6 +252,7 @@ def _function_call_content(tool_call: ToolCall) -> Content:
         call_id=_tool_call_id_of(tool_call),
         name=tool_call.function.name,
         arguments=normalized_arguments,
+        merge_mode=merge_mode,
         raw_representation=tool_call,
     )
 
@@ -272,7 +277,7 @@ class _StreamedToolCalls:
         if pending is not None:
             fragment_id = _tool_call_id_of(fragment)
             if fragment_id and (pending_id := _tool_call_id_of(pending)) and pending_id != fragment_id:
-                flushed.append(_function_call_content(self._pending.pop(key)))
+                flushed.append(_function_call_content(self._pending.pop(key), merge_mode="replace"))
                 pending = None
         if pending is None:
             self._pending[key] = fragment.model_copy(deep=True)
@@ -282,10 +287,10 @@ class _StreamedToolCalls:
 
     def flush_choice(self, choice_index: int) -> list[Content]:
         keys = [key for key in self._pending if key[0] == choice_index]
-        return [_function_call_content(self._pending.pop(key)) for key in keys]
+        return [_function_call_content(self._pending.pop(key), merge_mode="replace") for key in keys]
 
     def flush_all(self) -> list[Content]:
-        contents = [_function_call_content(pending) for pending in self._pending.values()]
+        contents = [_function_call_content(pending, merge_mode="replace") for pending in self._pending.values()]
         self._pending.clear()
         return contents
 
@@ -815,14 +820,14 @@ class RawMistralChatClient(
         finish_reason: FinishReason | None = None
         if chunk.choices:
             choice = chunk.choices[0]
-            contents.extend(self._parse_content_chunks(choice.delta))
+            contents.extend(self._parse_content_chunks(choice.delta, streaming=True))
             for fragment in choice.delta.tool_calls if isinstance(choice.delta.tool_calls, list) else ():
                 contents.extend(tool_calls.add(choice.index, fragment))
             if reason := choice.finish_reason:
                 contents.extend(tool_calls.flush_choice(choice.index))
                 finish_reason = _map_finish_reason(reason)
         if usage := self._parse_usage(chunk.usage):
-            contents.append(Content.from_usage(usage_details=usage, raw_representation=chunk))
+            contents.append(Content.from_usage(usage_details=usage, merge_mode="replace", raw_representation=chunk))
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
@@ -840,20 +845,37 @@ class RawMistralChatClient(
             contents.extend(_function_call_content(tool_call) for tool_call in message.tool_calls)
         return contents
 
-    def _parse_content_chunks(self, message: AssistantMessage | DeltaMessage) -> list[Content]:
+    def _parse_content_chunks(
+        self,
+        message: AssistantMessage | DeltaMessage,
+        *,
+        streaming: bool = False,
+    ) -> list[Content]:
         contents: list[Content] = []
         content = message.content
         if isinstance(content, str):
             if content:
-                contents.append(Content.from_text(text=content))
+                contents.append(Content.from_text(text=content, merge_mode="append" if streaming else None))
         elif isinstance(content, list):
             for chunk in content:
                 if isinstance(chunk, TextChunk):
                     if chunk.text:
-                        contents.append(Content.from_text(text=chunk.text, raw_representation=chunk))
+                        contents.append(
+                            Content.from_text(
+                                text=chunk.text,
+                                merge_mode="append" if streaming else None,
+                                raw_representation=chunk,
+                            )
+                        )
                 elif isinstance(chunk, ThinkChunk):
                     if reasoning := self._thinking_to_text(chunk):
-                        contents.append(Content.from_text_reasoning(text=reasoning, raw_representation=chunk))
+                        contents.append(
+                            Content.from_text_reasoning(
+                                text=reasoning,
+                                merge_mode="append" if streaming else None,
+                                raw_representation=chunk,
+                            )
+                        )
                 else:
                     logger.debug("Skipping unsupported response chunk from Mistral: %s", type(chunk).__name__)
         return contents
@@ -896,7 +918,10 @@ class RawMistralChatClient(
     @staticmethod
     def _parse_response_metadata(usage: UsageInfo | None) -> dict[str, Any] | None:
         if usage and isinstance(usage.service_tier, str):
-            return {"service_tier": usage.service_tier}
+            return {
+                "mistral": {"service_tier": usage.service_tier},
+                "service_tier": usage.service_tier,
+            }
         return None
 
     # endregion

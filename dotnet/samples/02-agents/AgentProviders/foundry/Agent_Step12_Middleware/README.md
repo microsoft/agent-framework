@@ -10,6 +10,13 @@ This sample demonstrates multiple middleware layers working together: PII filter
 - Using `.AsBuilder().Use()` to compose middleware
 - No server-side agent creation or cleanup required
 
+> **Note:** Function invocation middleware applies to tools registered on the agent. This
+> includes tools passed to the `ChatClientAgent` constructor, passed to `AsAIAgent`, configured
+> through `ChatClientAgentOptions.ChatOptions.Tools`, or supplied for an individual run. These
+> tools are passed through `ChatOptions.Tools`. Functions added directly to
+> `FunctionInvokingChatClient.AdditionalTools` bypass this middleware entirely, so don't rely on
+> the middleware to enforce checks for those functions.
+
 ## Prerequisites
 
 - .NET 10 SDK or later
@@ -29,4 +36,3 @@ $env:FOUNDRY_MODEL="gpt-5.4-mini"
 cd dotnet/samples/02-agents/AgentProviders/foundry
 dotnet run --project .\Agent_Step12_Middleware
 ```
-

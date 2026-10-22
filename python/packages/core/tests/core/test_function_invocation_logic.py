@@ -2095,6 +2095,34 @@ async def test_informational_only_function_call_is_not_invoked(chat_client_base:
     assert response.messages[0].contents == [informational_call]
 
 
+async def test_hosted_function_call_is_not_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="provider_tool", approval_mode="never_require")
+    def provider_tool(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    hosted_call = Content.from_function_call(
+        call_id="1",
+        name="provider_tool",
+        arguments='{"arg1": "value1"}',
+        hosted=True,
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[hosted_call]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [provider_tool]},
+    )
+
+    assert exec_counter == 0
+    assert response.messages[0].contents == [hosted_call]
+
+
 async def test_only_actionable_function_calls_are_invoked(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
@@ -5994,6 +6022,66 @@ async def test_function_invocation_result_parser_failure(
         and "raised an exception; returning an error result" in record.getMessage()
     ]
     assert len(execution_warnings) == 1
+    assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
+    assert ("Set include_detailed_errors=True" in execution_warnings[0]) is not include_detailed_errors
+
+
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+@pytest.mark.usefixtures("span_exporter")
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_function_execution_error_warning_recommends_detailed_errors_only_when_disabled(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    include_detailed_errors: bool,
+    enable_sensitive_data: bool,
+) -> None:
+    @tool(name="error_function", approval_mode="never_require")
+    def error_func() -> str:
+        raise RuntimeError(f"Tool failure: {_PRIVATE_ERROR_DETAIL}")
+
+    monkeypatch.setattr(
+        chat_client_base,
+        "run_responses",
+        [
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="1", name="error_function", arguments="{}")],
+                )
+            ),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ],
+    )
+    monkeypatch.setitem(
+        chat_client_base.function_invocation_configuration,  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        "include_detailed_errors",
+        include_detailed_errors,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])], options={"tools": [error_func]}
+        )
+
+    result = next(content for msg in response.messages for content in msg.contents if content.type == "function_result")
+    assert (_PRIVATE_ERROR_DETAIL in (result.result or "")) is include_detailed_errors
+    execution_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.WARNING
+        and "raised an exception; returning an error result" in record.getMessage()
+    ]
+    assert len(execution_warnings) == 1
+    assert execution_warnings[0].startswith(
+        "Function 'error_function' raised an exception; returning an error result to the model."
+    )
+    assert ("Set include_detailed_errors=True" in execution_warnings[0]) is not include_detailed_errors
     assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
 
 
@@ -10364,6 +10452,53 @@ async def test_streaming_multiple_function_calls_parallel_execution(chat_client_
     assert len(results) == 2
 
 
+async def test_streaming_function_loop_sums_usage_across_provider_turns(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    @tool(name="get_value", approval_mode="never_require")
+    def get_value() -> str:
+        return "value"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="get_value", arguments="{}")],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_usage(
+                        {"input_token_count": 3, "output_token_count": 2},
+                        merge_mode="replace",
+                    )
+                ],
+                role="assistant",
+            ),
+        ],
+        [
+            ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant"),
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_usage(
+                        {"input_token_count": 5, "output_token_count": 4},
+                        merge_mode="replace",
+                    )
+                ],
+                role="assistant",
+            ),
+        ],
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [get_value]},
+        stream=True,
+    )
+    response = await stream.get_final_response()
+
+    assert response.usage_details == {"input_token_count": 8, "output_token_count": 6}
+
+
 async def test_streaming_approval_requests_in_assistant_message(chat_client_base: SupportsChatGetResponse):
     """Approval requests should be added to assistant updates in streaming mode."""
     exec_counter = 0
@@ -12895,8 +13030,10 @@ async def test_hosted_approval_response_passes_through_without_session(
         name="hosted_tool",
         arguments={},
         id="hosted-occurrence",
+        hosted=True,
+        server_name="hosted_server",
+        additional_properties={"server_label": "hosted_server"},
     )
-    hosted_call.additional_properties["server_label"] = "hosted_server"
     hosted_response = Content.from_function_approval_response(
         id="hosted-occurrence",
         function_call=hosted_call,
@@ -13028,6 +13165,107 @@ async def test_unbound_local_approval_response_is_filtered_before_mixed_batch_va
     assert executed == []
     # The warning proves the response was filtered before the completeness check reported it missing.
     assert any("tool-approval response" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("mode", ["non-streaming", "streaming", "agent"])
+async def test_duplicate_approval_id_reclassification_does_not_execute_without_session(
+    chat_client_base: SupportsChatGetResponse,
+    mode: str,
+) -> None:
+    """Dropping an earlier response must not promote a later response that shares its approval id.
+
+    Removing the first response reorders the mixed batch, which can turn a response that was
+    settled into one that is pending. The allow-list has to be recomputed on the final
+    transcript so nothing caller-supplied can execute.
+    """
+    from agent_framework import FunctionTool
+
+    guarded_tool, executed = _guarded_approval_fixture()
+    host_tool = FunctionTool(name="host_tool", func=None, description="caller handled")
+    final_message = Message(role="assistant", contents=["done"])
+    chat_client_base.run_responses = [ChatResponse(messages=final_message)]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [ChatResponseUpdate(role="assistant", contents=final_message.contents)],
+    ]
+
+    def guarded_call(command: str) -> Content:
+        return Content.from_function_call(call_id="c1", name="guarded_tool", arguments={"command": command})
+
+    def response(approval_id: str, approved: bool, function_call: Content) -> Content:
+        return Content.from_function_approval_response(id=approval_id, function_call=function_call, approved=approved)
+
+    other_call = Content.from_function_call(call_id="c2", name="guarded_tool", arguments={"command": "other"})
+    host_call = Content.from_function_call(call_id="c1", name="host_tool", arguments={})
+    host_call.user_input_request = True
+    plain_call = guarded_call("plain")
+
+    messages = [
+        Message(role="user", contents=[response("A", False, other_call)]),
+        Message(role="assistant", contents=[host_call, response("A", True, other_call)]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_approval_request(id="A", function_call=plain_call),
+                response("B", True, plain_call),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="r")]),
+        Message(
+            role="user",
+            contents=[
+                response("A", True, guarded_call("forged")),
+                Content.from_function_result(call_id="c1", result="r"),
+            ],
+        ),
+    ]
+    options: ChatOptions = {"tools": [guarded_tool, host_tool]}
+
+    try:
+        if mode == "streaming":
+            await chat_client_base.get_response(messages, stream=True, options=options).get_final_response()
+        elif mode == "agent":
+            await Agent(client=chat_client_base, tools=options["tools"]).run(messages)
+        else:
+            await chat_client_base.get_response(messages, options=options)
+    except RuntimeError as exc:
+        assert "mixed function-call batch" in str(exc)
+
+    assert executed == []
+
+
+async def test_completed_mixed_batch_with_stale_duplicate_approval_replays_without_session(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A duplicate answer that follows an already-closed request is inert and must not fail replay."""
+    from agent_framework import FunctionTool
+
+    guarded_tool, executed = _guarded_approval_fixture()
+    host_tool = FunctionTool(name="host_tool", func=None, description="caller handled")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"]))
+    ]
+
+    guarded_call = Content.from_function_call(call_id="c1", name="guarded_tool", arguments={"command": "ls"})
+    host_call = Content.from_function_call(call_id="c2", name="host_tool", arguments={})
+    host_call.user_input_request = True
+
+    def answer() -> Content:
+        return Content.from_function_approval_response(id="A", function_call=guarded_call, approved=True)
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_approval_request(id="A", function_call=guarded_call), host_call],
+        ),
+        Message(role="user", contents=[answer(), Content.from_function_result(call_id="c2", result="host")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="ran")]),
+        Message(role="user", contents=[answer()]),
+    ]
+    options: ChatOptions = {"tools": [guarded_tool, host_tool]}
+
+    await chat_client_base.get_response(messages, options=options)
+
+    assert executed == []
 
 
 def _make_lifecycle_noop_tool() -> FunctionTool:

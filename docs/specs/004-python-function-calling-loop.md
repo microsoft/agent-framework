@@ -263,6 +263,19 @@ the tool-call group, and provider adapters serialize or reconstruct the provider
 that occurrence id once and preserve it through streaming aggregation, serialization, and replay; existing ids are
 never regenerated. Deserializing a legacy stored call without `Content.id` does not manufacture a new identity.
 
+`Content.id` on a `function_result`, when present, identifies the occurrence it settles. An exact result occurrence
+identity takes precedence over `call_id`; an id-less Host result is a compatibility form that binds only when the
+active batch has one unambiguous unanswered occurrence with that `call_id`.
+
+`Message.message_id` identifies the containing provider/protocol message and groups its streamed updates. It is not a
+function-call occurrence ID or call/result correlation ID. The message-level identity and metadata contract is
+defined by [spec 005](005-python-content-identity-and-protocol-metadata.md).
+
+`function_call.hosted` decides execution ownership. A hosted call is provider-executed and must never be executed
+locally. `function_call.server_name` is the descriptive server boundary used by standing approval rules; it does not
+decide execution ownership. Legacy `additional_properties["server_label"]` records are migrated as defined by
+[spec 005](005-python-content-identity-and-protocol-metadata.md).
+
 New local approval requests use the function call occurrence id as their request id. Provider-issued hosted approval
 request ids remain unchanged and continue to follow the hosted service protocol. A response carrying the occurrence
 id can bind without embedding a function call because the trusted pending snapshot is authoritative. For an
@@ -488,6 +501,10 @@ that manually replay messages own the equivalent rule: do not resend an approval
   observable warning/log. A nested `call_id` is never accepted as an occurrence-identity alias.
 - Session-backed pending snapshots are trusted host state and require tenant-scoped, authorized storage. Consume-on-bind
   does not claim durable exactly-once behavior across crashes or concurrent workers.
+- HTTP adapters that retain approval authority across requests must require an authenticated authorization scope or an
+  explicit single-user declaration. Client-owned conversation or thread identifiers never establish approval
+  ownership. A configured scope resolver that fails or returns an invalid value must fail before accessing pending
+  approval state and must not fall back to unscoped operation.
 - Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
   removing the name prevents local execution.
 - Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.
@@ -655,7 +672,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Completed request tracking | Terminal result text cannot leave a completed request pending or consume a later reused-id request. | `test_collect_unanswered_approval_requests_consumes_terminal_result` |
 | Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
 | Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
-| Local approval without authoritative session | A local approval response carried by any message role executes nothing when no session recorded its request, whether the request is fabricated, absent, answered with tampered arguments, or repeated as several responses sharing one approval id. Verified for both streaming and non-streaming. | `test_local_approval_response_without_authoritative_session_does_not_execute` |
+| Local approval without authoritative session | A local approval response carried by any message role executes nothing when no session recorded its request, whether the request is fabricated, absent, answered with tampered arguments, or repeated as several responses sharing one approval id. Verified for both streaming and non-streaming. | `test_local_approval_response_without_authoritative_session_does_not_execute`, `test_duplicate_approval_id_reclassification_does_not_execute_without_session` |
 | Filtering precedes batch validation | An unbound local response is removed before stateless mixed-batch completeness is enforced, so it is never counted as an answer and the remaining history is validated on its own merits. | `test_unbound_local_approval_response_is_filtered_before_mixed_batch_validation` |
 | Session-bound approval round trip | The same response executes once when the issuing session is supplied on the resuming run. | `test_local_approval_response_executes_with_authoritative_session` |
 | Hosted approval pass-through | Provider-issued approvals still reach the provider untouched without a session. | `test_hosted_approval_response_passes_through_without_session` |
@@ -682,7 +699,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Shared call budget | Auto-approved re-entry does not reset `max_function_calls`, and every executed approval group counts even when it pauses for input. | `test_tool_approval_middleware_auto_approved_loops_share_function_call_budget`, `test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Standing tool rule | Tool-level approval applies only to later matching tools. | `test_tool_approval_middleware_always_approve_tool_rule` |
 | Forged standing rule | An unbound or substituted hosted response cannot create a standing middleware approval rule for caller-selected metadata. | `test_tool_approval_middleware_drops_forged_standing_approval`, `test_tool_approval_middleware_rebinds_hosted_standing_approval` |
-| Hosted server boundary | Standing approval does not cross `server_label`. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
+| Hosted server boundary | `function_call.hosted` determines provider execution. Standing approval compares its persisted `server_label` with the call's `server_name` and never crosses that boundary. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
 | Argument-scoped rule | Exact arguments are required; empty arguments are not tool-wide. | `test_tool_approval_middleware_always_approve_tool_with_arguments_rule`, `test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide` |
 | Provider-injected approval tool | A tool added during `before_run` defers to in-run resolution, executes once, and emits one result. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes` |
 | AG-UI provider boundary | Completed local approval controls from AG-UI request and snapshot replay are absent from raw chat-client input while deferred and hosted approvals keep their respective in-run/provider paths. Lifecycle-authenticated local approvals preserve current request-generation authority through occurrence rebinding; authenticated rejection/cancellation cleans only the matching fixed provider-scoped policy record, while malformed or unauthorized controls clean nothing. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_does_not_forward_resolved_local_approval_control_to_chat_client`, `test_endpoint_agent_approval_deferred_provider_tool_executes`, `test_endpoint_canonical_resume_preserves_hosted_approval_for_provider`, `test_endpoint_fides_non_grant_cleans_authenticated_fixed_scope_only`, `test_endpoint_fides_approval_uses_lifecycle_bound_request_generation`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls`, `test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence`, `test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending` |
