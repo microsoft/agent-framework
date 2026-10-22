@@ -66,6 +66,9 @@ def pre_tool_use_input(tool_name: str) -> PreToolUseHookInput:
         "workingDirectory": ".",
         "toolName": tool_name,
         "toolArgs": {},
+        "agentId": "test-agent",
+        "agentType": "test",
+        "parentAgentId": "test-parent",
     }
 
 

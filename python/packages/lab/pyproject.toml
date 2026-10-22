@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260910"
+version = "1.0.0b261022"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -40,6 +40,7 @@ gaia = [
 # Lightning RL training module dependencies
 lightning = [
   "agentlightning>=0.2.0,<0.4.0",
+  "litellm!=1.82.7,!=1.82.8,!=1.107.0",
 ]
 
 # TAU2 benchmark module dependencies
@@ -58,19 +59,19 @@ math = [
 [dependency-groups]
 dev = [
     "agent-framework-openai>=1.14.2,<2",
-    "uv==0.13.1",
-    "ruff==0.17.0",
+    "uv==0.13.5",
+    "ruff==0.17.1",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "mypy==2.4.0",
     "pyright==1.1.414",
     #tasks
-    "poethepoet==0.48.0",
+    "poethepoet==0.49.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.5.0",
     "tomli-w==1.2.0",
-    "prek==0.5.5",
+    "prek==0.5.7",
 ]
 # tau2 is an executable optional feature fetched from source because it is not available on PyPI.
 tau2 = [
@@ -81,9 +82,14 @@ tau2 = [
 prerelease = "if-necessary"
 # Security floors for transitive dependencies from agentlightning and Tau2.
 # litellm>=1.100.0 drops the `fastapi.dependencies.utils.get_flat_dependant` import removed in FastAPI 0.141.0.
-constraint-dependencies = ["litellm>=1.100.0", "fastapi-sso>=0.19.0"]
+constraint-dependencies = ["litellm>=1.100.0,!=1.107.0", "fastapi-sso>=0.19.0"]
 # python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.
-override-dependencies = ["mcp>=2.2.0,<3", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
+override-dependencies = [
+    "certifi>=2026.10.19",
+    "mcp>=2.2.0,<3",
+    "uvicorn[standard]>=0.34.0",
+    "python-multipart>=0.0.31",
+]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
