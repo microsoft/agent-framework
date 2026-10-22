@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 import math
-import msgspec
+import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, Callable, ClassVar, Generic, cast
 from uuid import UUID, uuid4
 
 from typing_extensions import TypeVar
@@ -21,8 +21,6 @@ from ._telemetry import FeatureIndex, mark_feature_used
 from ._vector_filters import (
     Filter,
     FilterExpression,
-    FilterGroup,
-    Param,
     validate_filter,
 )
 from ._vectors import (
@@ -37,7 +35,6 @@ from ._vectors import (
     Vector,
     VectorStoreCollectionDefinition,
     _evaluate_filter,  # pyright: ignore[reportPrivateUsage]
-    _msgspec_enc_hook,  # pyright: ignore[reportPrivateUsage]
     _validate_vector_dimensions,  # pyright: ignore[reportPrivateUsage]
 )
 from .exceptions import IntegrationException
@@ -156,40 +153,80 @@ def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFun
     return score
 
 
-def _to_stored_filter_value(value: Any) -> Any:
-    """Return a filter operand in the builtin form records are stored in.
+_DURATION_PATTERN = re.compile(
+    r"^(?P<sign>-)?P(?:(?P<days>[0-9]+(?:\.[0-9]+)?)D)?"
+    r"(?:T(?:(?P<hours>[0-9]+(?:\.[0-9]+)?)H)?(?:(?P<minutes>[0-9]+(?:\.[0-9]+)?)M)?"
+    r"(?:(?P<seconds>[0-9]+(?:\.[0-9]+)?)S)?)?$"
+)
+
+
+def _restore_datetime(value: str) -> datetime:
+    """Parse a timestamp the shared serializer wrote."""
+    if value.endswith("Z"):
+        value = f"{value[:-1]}+00:00"
+    return datetime.fromisoformat(value)
+
+
+def _restore_timedelta(value: str) -> timedelta:
+    """Parse the ISO 8601 duration the shared serializer wrote."""
+    match = _DURATION_PATTERN.match(value)
+    if match is None:
+        raise ValueError(f"Unsupported duration '{value}'.")
+    parts = match.groupdict()
+    seconds = (
+        float(parts["days"] or 0) * 86400
+        + float(parts["hours"] or 0) * 3600
+        + float(parts["minutes"] or 0) * 60
+        + float(parts["seconds"] or 0)
+    )
+    delta = timedelta(seconds=seconds)
+    return -delta if parts["sign"] else delta
+
+
+_RESTORE_IN_MEMORY_VALUE_TYPES: dict[str, Callable[[str], Any]] = {
+    "datetime": _restore_datetime,
+    "date": date.fromisoformat,
+    "time": time.fromisoformat,
+    "timedelta": _restore_timedelta,
+    "UUID": UUID,
+    "Decimal": Decimal,
+}
+
+
+def _restore_in_memory_value(value: Any, type_tag: str | None) -> Any:
+    """Return a stored value in the type its field declares.
 
     In-memory records are stored through the shared serializer, so a native
-    scalar such as a datetime is held as its serialized value. An operand is
-    normalized the same way, so that the comparison sees one representation on
-    both sides.
+    scalar such as a datetime is held as its serialized value. A filter
+    operand arrives native, so the stored value is restored before the
+    comparison and the comparison keeps the field's semantics.
     """
-    if isinstance(value, Param):
+    if not isinstance(value, str) or type_tag is None:
+        return value
+    restore = _RESTORE_IN_MEMORY_VALUE_TYPES.get(type_tag)
+    if restore is None:
         return value
     try:
-        return msgspec.to_builtins(
-            value,
-            str_keys=True,
-            builtin_types=(bytes, bytearray),
-            enc_hook=_msgspec_enc_hook,
-        )
+        return restore(value)
     except (TypeError, ValueError):
         return value
 
 
-def _normalize_in_memory_filter(expression: FilterExpression) -> FilterExpression:
-    """Return the filter with its operand values in the stored representation."""
-    if isinstance(expression, Filter):
-        value = expression.value
-        if isinstance(value, Filter | FilterGroup):
-            normalized: Any = _normalize_in_memory_filter(value)
-        else:
-            normalized = _to_stored_filter_value(value)
-        return Filter(expression.field_name, expression.operator, normalized)
-    return FilterGroup(
-        expression.operator,
-        tuple(_normalize_in_memory_filter(item) for item in expression.filters),
-    )
+def _restore_in_memory_record(
+    record: Mapping[str, Any],
+    definition: VectorStoreCollectionDefinition,
+    field_names: set[str],
+) -> dict[str, Any]:
+    """Return the record with the filtered fields restored to their declared type."""
+    restored = dict(record)
+    for field_name in field_names:
+        field = definition.try_get_field(field_name)
+        if field is None:
+            continue
+        storage_name = field.storage_name or field.name
+        if storage_name in restored:
+            restored[storage_name] = _restore_in_memory_value(restored[storage_name], field.type_)
+    return restored
 
 
 def _validate_in_memory_filter_value(value: Any) -> None:
@@ -347,8 +384,16 @@ class InMemoryCollection(
         records = list(self._state.records.values())
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
-            filter = _normalize_in_memory_filter(filter)
-            records = [record for record in records if _evaluate_filter(filter, record, self.definition)]
+            filtered = {item.field_name for item in _walk_filters(filter)}
+            records = [
+                record
+                for record in records
+                if _evaluate_filter(
+                    filter,
+                    _restore_in_memory_record(record, self.definition, filtered),
+                    self.definition,
+                )
+            ]
         if order_by:
             for field_name, ascending in reversed(tuple(order_by.items())):
                 if not isinstance(ascending, bool):
@@ -401,9 +446,10 @@ class InMemoryCollection(
         if vector_field is None:
             raise ValueError("InMemoryCollection vector search requires a vector field.")
         _validate_vector_dimensions(query_vector, vector_field)
+        filtered: set[str] = set()
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
-            filter = _normalize_in_memory_filter(filter)
+            filtered = {item.field_name for item in _walk_filters(filter)}
 
         distance_function = vector_field.distance_function or "DEFAULT"
         if distance_function == "DEFAULT":
@@ -417,7 +463,11 @@ class InMemoryCollection(
         results: list[dict[str, Any]] = []
         key_storage_name = self.definition.key_field_storage_name
         for record in self._state.records.values():
-            if filter is not None and not _evaluate_filter(filter, record, self.definition):
+            if filter is not None and not _evaluate_filter(
+                filter,
+                _restore_in_memory_record(record, self.definition, filtered),
+                self.definition,
+            ):
                 continue
             stored_vector = record.get(storage_name)
             if stored_vector is None:

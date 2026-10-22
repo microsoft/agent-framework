@@ -973,6 +973,49 @@ async def test_in_memory_ordered_filter_compares_a_native_scalar() -> None:
     assert [record.id for record in matched] == ["one"]
 
 
+async def test_in_memory_ordered_filter_compares_decimals_numerically() -> None:
+    """An ordered comparison on a decimal must compare numbers, not digits.
+
+    The stored form of the two values sorts the other way round as text, so a
+    comparison on the serialized form would pick the wrong record.
+    """
+    collection = InMemoryCollection(ScalarFilterRecord)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            ScalarFilterRecord(
+                id="two",
+                created=datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc),
+                day=date(2026, 10, 16),
+                token=UUID("00000000-0000-0000-0000-000000000002"),
+                amount=Decimal("2"),
+                span=timedelta(hours=2),
+                label="small",
+                count=2,
+                flag=True,
+                vector=[1.0, 0.0],
+            ),
+            ScalarFilterRecord(
+                id="ten",
+                created=datetime(2026, 10, 17, 1, 0, tzinfo=timezone.utc),
+                day=date(2026, 10, 17),
+                token=UUID("00000000-0000-0000-0000-000000000010"),
+                amount=Decimal("10"),
+                span=timedelta(hours=10),
+                label="large",
+                count=10,
+                flag=True,
+                vector=[0.0, 1.0],
+            ),
+        ],
+        generate_vectors=False,
+    )
+
+    matched = await collection.get(filter=Filter("amount", "gte", Decimal("10")))
+
+    assert [record.id for record in matched] == ["ten"]
+
+
 async def test_in_memory_filter_does_not_match_a_different_native_scalar() -> None:
     """A different value must still not match."""
     collection = await _scalar_filter_collection()
