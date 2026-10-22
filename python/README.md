@@ -39,8 +39,24 @@ This selective approach is useful when you know which integrations you need, and
 
 Supported Platforms:
 
-- Python: 3.10+
+- Python: 3.10–3.15
 - OS: Windows, macOS, Linux
+
+Python 3.10 remains supported and tested for this release, but it is deprecated
+because upstream Python 3.10 has reached end of life. New environments should
+use Python 3.11 or later. A future Agent Framework release will raise the
+minimum version separately; this release does not remove Python 3.10 from
+package metadata or CI.
+
+### Python 3.15 limitations
+
+`pip install agent-framework` resolves and imports on Python 3.15, but it does
+not provide exactly the same feature set as Python 3.14:
+
+| Area | Python 3.15 impact |
+| --- | --- |
+| Declarative Power Fx | `agent-framework-declarative` is installed, but its `powerfx` dependency is not. YAML values beginning with `=` produce a warning and remain unchanged instead of being evaluated. Declarative agents or workflows that rely on expressions may therefore use invalid literal values or fail later. |
+| Redis | `agent-framework-redis` is omitted from the standard install because RedisVL declares `Requires-Python <3.15`. Redis imports and Redis-backed history, context, and vector storage are unavailable. |
 
 ## 1. Setup API Keys
 

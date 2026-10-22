@@ -15,7 +15,9 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     Message,
+    get_namespaced_value,
     load_settings,
+    with_namespaced_value,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._feature_stage import ExperimentalFeature, experimental
@@ -288,7 +290,12 @@ class RawFoundryChatClient(
         contents: Sequence[Content],
     ) -> dict[str, Any] | None:
         for content in reversed(contents):
-            raw_item = content.additional_properties.get(_FOUNDRY_REASONING_REPLAY_ITEM_KEY)
+            raw_item = get_namespaced_value(
+                content.additional_properties,
+                "foundry",
+                "reasoning_item",
+                content.additional_properties.get(_FOUNDRY_REASONING_REPLAY_ITEM_KEY),
+            )
             if isinstance(raw_item, Mapping):
                 payload = self._prepare_foundry_reasoning_replay_item(raw_item)
                 if payload is not None and payload["id"] == reasoning_id:
@@ -322,7 +329,14 @@ class RawFoundryChatClient(
         reasoning_id = cast(str, payload["id"])
         for content in reversed(contents):
             if content.type == "text_reasoning" and content.id == reasoning_id:
-                content.additional_properties[_FOUNDRY_REASONING_REPLAY_ITEM_KEY] = payload
+                updated = with_namespaced_value(
+                    content.additional_properties,
+                    "foundry",
+                    "reasoning_item",
+                    payload,
+                )
+                updated[_FOUNDRY_REASONING_REPLAY_ITEM_KEY] = payload
+                content.additional_properties = updated
                 return
 
         contents.append(
@@ -330,7 +344,10 @@ class RawFoundryChatClient(
                 id=reasoning_id,
                 text="",
                 raw_representation=item,
-                additional_properties={_FOUNDRY_REASONING_REPLAY_ITEM_KEY: payload},
+                additional_properties={
+                    "foundry": {"reasoning_item": payload},
+                    _FOUNDRY_REASONING_REPLAY_ITEM_KEY: payload,
+                },
             )
         )
 

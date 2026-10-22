@@ -50,6 +50,51 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
 
     #region Input argument binding
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AgentRejectsSensitiveAutoSendAsync(bool value)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(value), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("response");
+        InvokeAzureAgent.Builder builder = this.CreateAutoSendModel(nameof(AgentRejectsSensitiveAutoSendAsync), true).ToBuilder();
+        Assert.NotNull(builder.Output);
+        builder.Output.AutoSend = BoolExpression.Expression("Local.Control").ToBuilder();
+        InvokeAzureAgentExecutor action = new(AssignParent<InvokeAzureAgent>(builder), provider, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("auto send", exception.Message);
+        Assert.Equal(0, provider.InvocationCount);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AgentRejectsSensitiveExternalLoopConditionAsync(bool value)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(value), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("response");
+        InvokeAzureAgent model = this.CreateModel(
+            nameof(AgentRejectsSensitiveExternalLoopConditionAsync), "Brain",
+            externalLoopWhen: "Local.Control");
+        InvokeAzureAgentExecutor action = new(model, provider, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("external loop condition", exception.Message);
+    }
+
     [Fact]
     public async Task MultipleNamedArgumentsAreAllBoundAsync()
     {
