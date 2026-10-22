@@ -1478,6 +1478,33 @@ def test_get_exporters_from_env_env_only_headers_unaffected_by_origin_guard(monk
 # region Test create_resource
 
 
+def test_create_resource_includes_foundry_attribute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resources include the Foundry marker as a string, not a boolean."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+
+    resource = create_resource()
+
+    assert resource.attributes["microsoft.foundry"] == "True"
+
+
+def test_create_resource_foundry_attribute_preserves_override_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default marker follows existing environment and explicit attribute precedence."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "microsoft.foundry=environment")
+
+    assert create_resource().attributes["microsoft.foundry"] == "environment"
+    assert create_resource(attributes={"microsoft.foundry": "explicit"}).attributes["microsoft.foundry"] == "explicit"
+    assert (
+        create_resource(attributes={"microsoft.foundry": "explicit"}, **{"microsoft.foundry": "keyword"}).attributes[
+            "microsoft.foundry"
+        ]
+        == "keyword"
+    )
+
+
 def test_create_resource_from_env(monkeypatch):
     """Test create_resource reads OTEL environment variables."""
     from agent_framework.observability import create_resource
@@ -4416,6 +4443,60 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
 
 
 # region Test _configure_providers
+
+
+def test_configure_providers_share_foundry_resource() -> None:
+    """Exported logs, spans, and metrics carry the same marked resource."""
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader, MetricExporter
+
+    from agent_framework.observability import ObservabilitySettings
+
+    span_exporter = InMemorySpanExporter()
+    log_exporter = InMemoryLogRecordExporter()
+    metric_reader = InMemoryMetricReader()
+    metric_exporter = Mock(spec=MetricExporter)
+    settings = ObservabilitySettings(
+        service_name="foundry-test",
+        resource_attributes={"deployment.environment": "test"},
+    )
+
+    with (
+        patch("opentelemetry.trace.set_tracer_provider") as set_tracer,
+        patch("opentelemetry._logs.set_logger_provider") as set_logger,
+        patch("opentelemetry.metrics.set_meter_provider") as set_meter,
+        patch("opentelemetry.sdk.metrics.export.PeriodicExportingMetricReader", return_value=metric_reader),
+        patch("agent_framework.observability.logger.addHandler"),
+    ):
+        settings._configure_providers([span_exporter, log_exporter, metric_exporter])
+
+    tracer_provider = set_tracer.call_args.args[0]
+    logger_provider = set_logger.call_args.args[0]
+    meter_provider = set_meter.call_args.args[0]
+    try:
+        with tracer_provider.get_tracer("test").start_as_current_span("test"):
+            pass
+        logger_provider.get_logger("test").emit(body="test log")
+        meter_provider.get_meter("test").create_counter("test_counter").add(1)
+        tracer_provider.force_flush()
+        logger_provider.force_flush()
+
+        metrics_data = metric_reader.get_metrics_data()
+        assert metrics_data is not None
+        resources = [
+            span_exporter.get_finished_spans()[0].resource,
+            log_exporter.get_finished_logs()[0].resource,
+            metrics_data.resource_metrics[0].resource,
+        ]
+        for resource in resources:
+            assert resource is resources[0]
+            assert resource.attributes["microsoft.foundry"] == "True"
+            assert resource.attributes["service.name"] == "foundry-test"
+            assert resource.attributes["deployment.environment"] == "test"
+    finally:
+        tracer_provider.shutdown()
+        logger_provider.shutdown()
+        meter_provider.shutdown()
 
 
 def test_configure_providers_with_span_exporters(monkeypatch):
