@@ -33,6 +33,20 @@ public static class AIContextProviderChatClientBuilderExtensions
     /// are retrieved from <see cref="AIAgent.CurrentRunContext"/>. An <see cref="System.InvalidOperationException"/>
     /// is thrown at invocation time if no run context is available.
     /// </para>
+    /// <para>
+    /// Providers can also be registered in other places, such as on the agent itself. The limitations below only apply to
+    /// providers registered on the chat client pipeline with this method.
+    /// </para>
+    /// <para>
+    /// Tools added by a provider registered this way are not supported when function invocation middleware is
+    /// registered on the agent (for example, with <c>AIAgentBuilder.Use</c>). Those tools are not guaranteed to go
+    /// through that middleware, so it cannot be relied on for security or policy checks on them.
+    /// </para>
+    /// <para>
+    /// Separately, tools added by a provider registered this way are only run when a
+    /// <see cref="FunctionInvokingChatClient"/> sits below this decorator in the pipeline. If it sits above,
+    /// it does not know about those tools and will not run them.
+    /// </para>
     /// </remarks>
     public static ChatClientBuilder UseAIContextProviders(this ChatClientBuilder builder, params AIContextProvider[] providers)
     {

@@ -1319,6 +1319,7 @@ async def run_workflow_stream(
         current_message_id = flow.message_id
         flow.message_id = None
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         return [TextMessageEndEvent(message_id=current_message_id)]
 
     def _drain_open_tool_calls() -> list[ToolCallEndEvent]:

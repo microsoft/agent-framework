@@ -212,7 +212,7 @@ jobs:
         run: uv run --directory packages/qdrant poe test-integration --junitxml=${{ github.workspace }}/python/pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-qdrant
           path: ./python/pytest.xml
@@ -266,7 +266,7 @@ jobs:
           title: MongoDB integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-mongodb
           path: ./python/pytest-mongodb.xml
@@ -365,7 +365,7 @@ jobs:
           title: OpenAI integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-openai
           path: ./python/pytest.xml
@@ -435,7 +435,7 @@ jobs:
           title: Azure OpenAI integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-azure-openai
           path: ./python/pytest.xml
@@ -563,7 +563,7 @@ jobs:
           title: Misc integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-misc
           path: ./python/pytest.xml
@@ -630,7 +630,7 @@ jobs:
           title: Test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-foundry
           path: ./python/pytest.xml
@@ -691,7 +691,7 @@ jobs:
           title: Foundry Hosting integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-foundry-hosting
           path: ./python/pytest.xml
@@ -758,7 +758,7 @@ jobs:
           title: Cosmos integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-cosmos
           path: ./python/pytest.xml
@@ -813,7 +813,7 @@ jobs:
           title: GitHub Copilot integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-github-copilot
           path: ./python/pytest.xml
@@ -878,7 +878,7 @@ jobs:
           title: PostgreSQL integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-postgres
           path: ./python/pytest-postgres.xml
@@ -925,7 +925,7 @@ jobs:
           -m integration --timeout=120 --junitxml=pytest-redis.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-redis
           path: ./python/pytest-redis.xml
@@ -964,7 +964,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Download all test results from current run
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: test-results-*
           path: test-results/
@@ -992,7 +992,7 @@ jobs:
           key: integration-report-history-merge-${{ github.run_id }}
       - name: Upload unified trend report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-test-report
           path: |

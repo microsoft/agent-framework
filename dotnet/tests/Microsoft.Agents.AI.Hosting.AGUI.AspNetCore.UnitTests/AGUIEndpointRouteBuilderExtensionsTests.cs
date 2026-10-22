@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -74,16 +75,12 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
-    public void MapAGUIServer_WithAgentName_ResolvesKeyedAgentFromDI()
+    public void MapAGUIServer_WithAgentName_DoesNotResolveAgentAtMapTime()
     {
         // Arrange
         Mock<IEndpointRouteBuilder> endpointsMock = new();
         Mock<IServiceProvider> serviceProviderMock = new();
-        AIAgent agent = new NamedTestAgent();
-
-        serviceProviderMock.As<IKeyedServiceProvider>()
-            .Setup(sp => sp.GetRequiredKeyedService(typeof(AIAgent), "test-agent"))
-            .Returns(agent);
+        serviceProviderMock.As<IKeyedServiceProvider>();
 
         endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
         endpointsMock.Setup(e => e.DataSources).Returns([]);
@@ -94,23 +91,48 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         // Assert
         Assert.NotNull(result);
         serviceProviderMock.As<IKeyedServiceProvider>()
-            .Verify(sp => sp.GetRequiredKeyedService(typeof(AIAgent), "test-agent"), Times.Once);
+            .Verify(sp => sp.GetRequiredKeyedService(typeof(AIAgent), It.IsAny<object?>()), Times.Never);
     }
 
-    [Fact]
-    public void MapAGUIServer_WithHostedAgentBuilder_ResolvesAgentByBuilderName()
+    [Theory]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public void MapAGUIServer_WithNonSingletonHostedAgentBuilder_DoesNotResolveAgentAtMapTime(ServiceLifetime lifetime)
     {
         // Arrange
         Mock<IEndpointRouteBuilder> endpointsMock = new();
         Mock<IServiceProvider> serviceProviderMock = new();
         Mock<IHostedAgentBuilder> agentBuilderMock = new();
-        AIAgent agent = new NamedTestAgent();
+        serviceProviderMock.As<IKeyedServiceProvider>();
 
         agentBuilderMock.Setup(b => b.Name).Returns("test-agent");
+        agentBuilderMock.Setup(b => b.Lifetime).Returns(lifetime);
 
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUIServer(agentBuilderMock.Object, "/api/agent");
+
+        // Assert
+        Assert.NotNull(result);
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Verify(sp => sp.GetRequiredKeyedService(typeof(AIAgent), It.IsAny<object?>()), Times.Never);
+    }
+
+    [Fact]
+    public void MapAGUIServer_WithSingletonHostedAgentBuilder_ResolvesAgentOnceAtMapTime()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        Mock<IHostedAgentBuilder> agentBuilderMock = new();
         serviceProviderMock.As<IKeyedServiceProvider>()
             .Setup(sp => sp.GetRequiredKeyedService(typeof(AIAgent), "test-agent"))
-            .Returns(agent);
+            .Returns(new NamedTestAgent());
+
+        agentBuilderMock.Setup(b => b.Name).Returns("test-agent");
+        agentBuilderMock.Setup(b => b.Lifetime).Returns(ServiceLifetime.Singleton);
 
         endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
         endpointsMock.Setup(e => e.DataSources).Returns([]);
@@ -125,17 +147,13 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
-    public void MapAGUIServer_WithAgent_ResolvesSessionStoreFromDI()
+    public void MapAGUIServer_WithAgent_DoesNotResolveSessionStoreAtMapTime()
     {
         // Arrange
         Mock<IEndpointRouteBuilder> endpointsMock = new();
         Mock<IServiceProvider> serviceProviderMock = new();
-        Mock<AgentSessionStore> sessionStoreMock = new();
         AIAgent agent = new NamedTestAgent();
-
-        serviceProviderMock.As<IKeyedServiceProvider>()
-            .Setup(sp => sp.GetKeyedService(typeof(AgentSessionStore), "test-agent"))
-            .Returns(sessionStoreMock.Object);
+        serviceProviderMock.As<IKeyedServiceProvider>();
 
         endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
         endpointsMock.Setup(e => e.DataSources).Returns([]);
@@ -146,8 +164,43 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         // Assert
         Assert.NotNull(result);
         serviceProviderMock.As<IKeyedServiceProvider>()
-            .Verify(sp => sp.GetKeyedService(typeof(AgentSessionStore), "test-agent"), Times.Once);
-        sessionStoreMock.Verify(s => s.GetService(typeof(IsolationKeyScopedAgentSessionStore), null), Times.Once);
+            .Verify(sp => sp.GetKeyedService(typeof(AgentSessionStore), It.IsAny<object?>()), Times.Never);
+    }
+
+    [Fact]
+    public void MapAGUIServer_WithAgentSelector_DoesNotInvokeSelectorAtMapTime()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+        int selectorInvocations = 0;
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUIServer("/api/{agentId}", _ =>
+        {
+            selectorInvocations++;
+            return new NamedTestAgent();
+        });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(0, selectorInvocations);
+    }
+
+    [Fact]
+    public void MapAGUIServer_WithNullAgentSelector_ThrowsArgumentNullException()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            endpointsMock.Object.MapAGUIServer("/api/agent", (Func<HttpContext, AIAgent?>)null!));
     }
 
     [Fact]

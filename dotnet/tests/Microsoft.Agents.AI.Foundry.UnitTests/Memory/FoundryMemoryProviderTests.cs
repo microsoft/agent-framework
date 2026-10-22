@@ -2,6 +2,7 @@
 
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -88,6 +89,90 @@ public sealed class FoundryMemoryProviderTests
         Assert.Equal(
             "## Memories\nConsider the following memories when answering user questions:\nThe user prefers concise answers.",
             messages[1].Text);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InvokingAsync_WhenRequestIsCanceled_PropagatesOnlyCallerCancellationAsync(bool cancelCaller)
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        using TestableAIProjectClient testClient = new();
+        testClient.Handler.OnSend = cancellationToken =>
+        {
+            if (cancelCaller)
+            {
+                cts.Cancel();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            throw new TaskCanceledException("Request timed out.");
+        };
+        Mock<ILogger> logger = new();
+        logger.Setup(value => value.IsEnabled(LogLevel.Error)).Returns(true);
+        Mock<ILoggerFactory> loggerFactory = new();
+        loggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        FoundryMemoryProvider sut = new(testClient.Client, "store", _ => new(new FoundryMemoryProviderScope("test")), loggerFactory: loggerFactory.Object);
+        var context = CreateInvokingContext();
+
+        // Act & Assert
+        if (cancelCaller)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.InvokingAsync(context, cts.Token).AsTask());
+        }
+        else
+        {
+            var result = await sut.InvokingAsync(context, cts.Token);
+            Assert.Same(Assert.Single(context.AIContext.Messages!), Assert.Single(result.Messages!));
+        }
+
+        Assert.Contains(":search_memories", testClient.Handler.LastRequestUri!);
+        logger.Verify(
+            value => value.Log(LogLevel.Error, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(), It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            cancelCaller ? Times.Never() : Times.Once());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InvokedAsync_WhenRequestIsCanceled_PropagatesOnlyCallerCancellationAsync(bool cancelCaller)
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        using TestableAIProjectClient testClient = new();
+        testClient.Handler.OnSend = cancellationToken =>
+        {
+            if (cancelCaller)
+            {
+                cts.Cancel();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            throw new TaskCanceledException("Request timed out.");
+        };
+        Mock<ILogger> logger = new();
+        logger.Setup(value => value.IsEnabled(LogLevel.Error)).Returns(true);
+        Mock<ILoggerFactory> loggerFactory = new();
+        loggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        FoundryMemoryProvider sut = new(testClient.Client, "store", _ => new(new FoundryMemoryProviderScope("test")), loggerFactory: loggerFactory.Object);
+        var invokingContext = CreateInvokingContext();
+        var context = new AIContextProvider.InvokedContext(invokingContext.Agent, invokingContext.Session, invokingContext.AIContext.Messages!, []);
+
+        // Act & Assert
+        if (cancelCaller)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.InvokedAsync(context, cts.Token).AsTask());
+        }
+        else
+        {
+            await sut.InvokedAsync(context, cts.Token);
+        }
+
+        Assert.Contains(":update_memories", testClient.Handler.LastRequestUri!);
+        logger.Verify(
+            value => value.Log(LogLevel.Error, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(), It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            cancelCaller ? Times.Never() : Times.Once());
     }
 
     [Fact]

@@ -29,7 +29,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "uv==0.13.1",
+    "uv==0.13.5",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
@@ -42,7 +42,7 @@ dev = [
     "agent-hooks-sdk>=0.1.0a4,<0.2",
     "opentelemetry-sdk",
     # Task runtime used by every supported Python version.
-    "poethepoet==0.48.0",
+    "poethepoet==0.49.0",
 ]
 tool-runtime = [
     "packaging==26.3",
@@ -50,7 +50,7 @@ tool-runtime = [
     'tomli==2.5.0; python_version < "3.11"',
 ]
 tool-hooks = [
-    "prek==0.5.5",
+    "prek==0.5.7",
 ]
 tool-markdown = [
     "pygments==2.21.0",
@@ -59,9 +59,10 @@ tool-markdown = [
 [tool.uv]
 package = false
 prerelease = "if-necessary"
-required-version = "==0.13.1"
+required-version = "==0.13.5"
 # Security floors for transitive dependencies.
 override-dependencies = [
+    "certifi>=2026.10.19",
     "mcp>=2.2.0,<3",
     "uvicorn[standard]>=0.34.0",
     "python-multipart>=0.0.31",

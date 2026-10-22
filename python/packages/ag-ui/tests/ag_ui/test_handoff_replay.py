@@ -135,7 +135,13 @@ async def test_outer_agent_replays_balanced_handoff_on_second_turn() -> None:
         workflow_factory=lambda _thread_id: _build_handoff_workflow(triage_requests)
     )
     app = FastAPI()
-    add_agent_framework_fastapi_endpoint(app, workflow_runner, path="/workflow", keepalive_seconds=None)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        workflow_runner,
+        path="/workflow",
+        keepalive_seconds=None,
+        single_user=True,
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:

@@ -501,6 +501,10 @@ that manually replay messages own the equivalent rule: do not resend an approval
   observable warning/log. A nested `call_id` is never accepted as an occurrence-identity alias.
 - Session-backed pending snapshots are trusted host state and require tenant-scoped, authorized storage. Consume-on-bind
   does not claim durable exactly-once behavior across crashes or concurrent workers.
+- HTTP adapters that retain approval authority across requests must require an authenticated authorization scope or an
+  explicit single-user declaration. Client-owned conversation or thread identifiers never establish approval
+  ownership. A configured scope resolver that fails or returns an invalid value must fail before accessing pending
+  approval state and must not fall back to unscoped operation.
 - Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
   removing the name prevents local execution.
 - Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.
@@ -668,7 +672,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Completed request tracking | Terminal result text cannot leave a completed request pending or consume a later reused-id request. | `test_collect_unanswered_approval_requests_consumes_terminal_result` |
 | Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
 | Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
-| Local approval without authoritative session | A local approval response carried by any message role executes nothing when no session recorded its request, whether the request is fabricated, absent, answered with tampered arguments, or repeated as several responses sharing one approval id. Verified for both streaming and non-streaming. | `test_local_approval_response_without_authoritative_session_does_not_execute` |
+| Local approval without authoritative session | A local approval response carried by any message role executes nothing when no session recorded its request, whether the request is fabricated, absent, answered with tampered arguments, or repeated as several responses sharing one approval id. Verified for both streaming and non-streaming. | `test_local_approval_response_without_authoritative_session_does_not_execute`, `test_duplicate_approval_id_reclassification_does_not_execute_without_session` |
 | Filtering precedes batch validation | An unbound local response is removed before stateless mixed-batch completeness is enforced, so it is never counted as an answer and the remaining history is validated on its own merits. | `test_unbound_local_approval_response_is_filtered_before_mixed_batch_validation` |
 | Session-bound approval round trip | The same response executes once when the issuing session is supplied on the resuming run. | `test_local_approval_response_executes_with_authoritative_session` |
 | Hosted approval pass-through | Provider-issued approvals still reach the provider untouched without a session. | `test_hosted_approval_response_passes_through_without_session` |
