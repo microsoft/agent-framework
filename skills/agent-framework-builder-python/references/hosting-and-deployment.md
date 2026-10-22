@@ -45,7 +45,8 @@ Framework. Use current authoritative instructions:
 - [Deploy a hosted agent](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent)
 - [Deploy from source code](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code)
 - [Manage hosted agents](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-agent)
-- [Agent Framework hosted-agent samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents)
+- [Agent Framework hosted-agent SDK samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents)
+- [Foundry-hosted Agent Framework deployment gallery](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework)
 
 Use those sources for `azd`, provisioning, manifests, environment variables, deployment, invocation, RBAC, quota,
 monitoring, and troubleshooting. Do not reconstruct deployment files from memory.

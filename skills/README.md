@@ -11,11 +11,11 @@ These are public distribution artifacts, not contributor instructions for workin
 
 ## Install
 
-Preview and install with GitHub CLI:
+Preview and install the default-branch version with GitHub CLI:
 
 ```bash
-gh skill preview microsoft/agent-framework agent-framework-builder-python
-gh skill install microsoft/agent-framework agent-framework-builder-python
+gh skill preview microsoft/agent-framework agent-framework-builder-python@main
+gh skill install microsoft/agent-framework agent-framework-builder-python@main
 ```
 
 Or use the cross-agent skills CLI:

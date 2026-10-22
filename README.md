@@ -168,7 +168,7 @@ Install the Python Agent Framework builder skill to give a compatible coding age
 building agents, harnesses, workflows, evaluations, integrations, and hosting:
 
 ```bash
-gh skill install microsoft/agent-framework agent-framework-builder-python
+gh skill install microsoft/agent-framework agent-framework-builder-python@main
 ```
 
 The cross-agent `skills` CLI is also supported:

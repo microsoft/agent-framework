@@ -101,4 +101,5 @@ Canonical starting points:
 
 - [Agent Framework overview](https://learn.microsoft.com/agent-framework/overview/)
 - [Your first agent](https://learn.microsoft.com/agent-framework/get-started/your-first-agent)
-- [Python samples](https://github.com/microsoft/agent-framework/tree/main/python/samples)
+- [Python SDK samples](https://github.com/microsoft/agent-framework/tree/main/python/samples)
+- [Foundry-hosted Agent Framework samples](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework)
