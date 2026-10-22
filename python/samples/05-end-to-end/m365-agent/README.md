@@ -8,7 +8,8 @@ This sample demonstrates a simple Weather Forecast Agent built with the Python M
 - [uv](https://github.com/astral-sh/uv) for fast dependency management
 - [devtunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/get-started?tabs=windows)
 - `agentsplayground` for playground/testing
-- Access to OpenAI or Azure OpenAI with a model like `gpt-4o-mini`
+- A Microsoft Foundry project with a deployed model like `gpt-4o-mini`
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), signed in with `az login`
 
 ## Configuration
 
@@ -19,9 +20,9 @@ Set the following environment variables:
 export PORT=3978
 export USE_ANONYMOUS_MODE=True # set to false if using auth
 
-# OpenAI
-export OPENAI_API_KEY="..."
-export OPENAI_CHAT_COMPLETION_MODEL="..."
+# Microsoft Foundry (authenticates with your `az login` session)
+export FOUNDRY_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
+export FOUNDRY_MODEL="gpt-4o-mini"
 ```
 
 ## Installing Dependencies

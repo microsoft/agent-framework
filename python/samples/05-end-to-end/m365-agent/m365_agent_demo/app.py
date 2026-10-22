@@ -11,7 +11,7 @@
 # ///
 # Copyright (c) Microsoft. All rights reserved.
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/demos/m365-agent/m365_agent_demo/app.py
+#   uv run samples/05-end-to-end/m365-agent/m365_agent_demo/app.py
 
 import os
 from dataclasses import dataclass
@@ -22,13 +22,14 @@ from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter, start_agent_process
 from microsoft_agents.hosting.core import (
     AgentApplication,
-    AuthenticationConstants,
+    AgentAuthConfiguration,
     Authorization,
     ClaimsIdentity,
     MemoryStorage,
@@ -55,7 +56,7 @@ Key features:
 - Supports both anonymous and authenticated scenarios.
 - Uses aiohttp for web hosting.
 
-To run, set the appropriate environment variables (check .env.example file) for authentication or use
+To run, set the environment variables listed in the README for authentication or use
 anonymous mode for local testing.
 """
 
@@ -101,51 +102,53 @@ def get_weather(
 
 def build_agent() -> Agent:
     """Create and return the chat agent instance with weather tool registered."""
-    _client = FoundryChatClient()
+    # Reads FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL from the environment; run `az login` first.
+    _client = FoundryChatClient(credential=AzureCliCredential())
     return Agent(
         client=_client, name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
     )
 
 
-def build_connection_manager(config: AppConfig) -> MsalConnectionManager | None:
-    """Build the connection manager unless running in anonymous mode.
+def build_connection_manager(config: AppConfig) -> MsalConnectionManager:
+    """Build the connection manager.
 
     Args:
         config: Application configuration.
     Returns:
-        MsalConnectionManager | None: Connection manager when authenticated mode is enabled.
+        MsalConnectionManager: Connection manager configured from the environment, or an empty
+        placeholder connection in anonymous mode.
     """
     if config.use_anonymous_mode:
-        return None
+        # CloudAdapter requires a connection manager, but anonymous requests never request tokens,
+        # so an empty service connection is enough for local testing.
+        return MsalConnectionManager(connections_configurations={"SERVICE_CONNECTION": AgentAuthConfiguration()})
     return MsalConnectionManager(**config.agents_sdk_config)
 
 
-def build_adapter(connection_manager: MsalConnectionManager | None) -> CloudAdapter:
-    """Instantiate the CloudAdapter with the optional connection manager."""
+def build_adapter(connection_manager: MsalConnectionManager) -> CloudAdapter:
+    """Instantiate the CloudAdapter with the connection manager."""
     return CloudAdapter(connection_manager=connection_manager)
 
 
 def build_authorization(
-    storage: MemoryStorage, connection_manager: MsalConnectionManager | None, config: AppConfig
-) -> Authorization | None:
-    """Create Authorization component if not in anonymous mode.
+    storage: MemoryStorage, connection_manager: MsalConnectionManager, config: AppConfig
+) -> Authorization:
+    """Create the Authorization component.
 
     Args:
         storage: State storage backend.
-        connection_manager: Optional connection manager.
+        connection_manager: Connection manager.
         config: Application configuration.
     Returns:
-        Authorization | None: Authorization component when enabled.
+        Authorization: Authorization component.
     """
-    if config.use_anonymous_mode:
-        return None
     return Authorization(storage, connection_manager, **config.agents_sdk_config)
 
 
 def build_agent_application(
     storage: MemoryStorage,
     adapter: CloudAdapter,
-    authorization: Authorization | None,
+    authorization: Authorization,
     config: AppConfig,
 ) -> AgentApplication[TurnState]:
     """Compose and return the AgentApplication instance.
@@ -153,7 +156,7 @@ def build_agent_application(
     Args:
         storage: Storage implementation.
         adapter: CloudAdapter handling requests.
-        authorization: Optional authorization component.
+        authorization: Authorization component.
         config: App configuration.
     Returns:
         AgentApplication[TurnState]: Configured agent application.
@@ -176,14 +179,8 @@ def build_anonymous_claims_middleware(use_anonymous_mode: bool):
     async def anonymous_claims_middleware(request, handler):
         """Inject claims for anonymous users if anonymous mode is active."""
         if use_anonymous_mode:
-            request["claims_identity"] = ClaimsIdentity(
-                {
-                    AuthenticationConstants.AUDIENCE_CLAIM: "anonymous",
-                    AuthenticationConstants.APP_ID_CLAIM: "anonymous-app",
-                },
-                False,
-                "Anonymous",
-            )
+            # An anonymous identity with no claims makes the adapter skip token acquisition.
+            request["claims_identity"] = ClaimsIdentity(authentication_type="Anonymous")
         return await handler(request)
 
     return anonymous_claims_middleware
@@ -198,7 +195,7 @@ def create_app(config: AppConfig) -> web.Application:
         web.Application: Fully initialized web application.
     """
     middleware_fn = build_anonymous_claims_middleware(config.use_anonymous_mode)
-    app = web.Application(middleware=[middleware_fn])
+    app = web.Application(middlewares=[middleware_fn])
 
     storage = MemoryStorage()
     agent = build_agent()
