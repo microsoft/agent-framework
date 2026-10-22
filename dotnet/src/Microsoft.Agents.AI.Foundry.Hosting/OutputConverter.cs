@@ -15,6 +15,8 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutputResponseItem;
+using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
 using OpenAIContainerFileCitationMessageAnnotation = OpenAI.Responses.ContainerFileCitationMessageAnnotation;
 using OpenAIFileCitationMessageAnnotation = OpenAI.Responses.FileCitationMessageAnnotation;
 using OpenAIFilePathMessageAnnotation = OpenAI.Responses.FilePathMessageAnnotation;
@@ -209,6 +211,63 @@ internal static class OutputConverter
                         yield return fcBuilder.EmitArgumentsDelta(arguments);
                         yield return fcBuilder.EmitArgumentsDone(arguments);
                         yield return fcBuilder.EmitDone();
+                        break;
+                    }
+
+                    // The MEAI OpenAI Responses client has no dedicated content type for computer calls: it yields a
+                    // base ToolCallContent carrying the OpenAI item. Without this case the caller would never see the
+                    // call it is expected to execute.
+                    case ToolCallContent { RawRepresentation: OpenAIComputerCallResponseItem computerCall } computerCallContent:
+                    {
+                        if (computerCallContent.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        accumulatedAnnotations = null;
+                        previousMessageId = null;
+
+                        // Emit a fully populated item through the generic builder. The SDK's OutputItemComputerCall
+                        // convenience method takes a single action and cannot carry the GA actions batch.
+                        var computerCallBuilder = stream.AddOutputItemComputerCall();
+                        var computerCallItem = ComputerToolItemConverter.ToOutputItem(computerCall, computerCallBuilder.ItemId);
+                        yield return computerCallBuilder.EmitAdded(computerCallItem);
+                        yield return computerCallBuilder.EmitDone(computerCallItem);
+                        break;
+                    }
+
+                    // Only an agent that runs the actions itself produces this; the usual caller-executed loop receives
+                    // the output as request input instead. Emitting it keeps the AgentServer history complete.
+                    case ToolResultContent { RawRepresentation: OpenAIComputerCallOutputResponseItem computerCallOutput } computerCallOutputContent:
+                    {
+                        if (computerCallOutputContent.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        accumulatedAnnotations = null;
+                        previousMessageId = null;
+
+                        var computerCallOutputBuilder = stream.AddOutputItemComputerCallOutput();
+                        var computerCallOutputItem = ComputerToolItemConverter.ToOutputItem(computerCallOutput, computerCallOutputBuilder.ItemId);
+                        yield return computerCallOutputBuilder.EmitAdded(computerCallOutputItem);
+                        yield return computerCallOutputBuilder.EmitDone(computerCallOutputItem);
                         break;
                     }
 
