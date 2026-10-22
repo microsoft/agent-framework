@@ -294,6 +294,22 @@ def _has_complete_parquet_snapshot(data_dir: Path) -> bool:
     return all(len(indexes) == total for indexes, total in sharded.values())
 
 
+def _has_usable_local_data(data_dir: Path) -> bool:
+    """Whether the directory holds data that is safe to load without a download.
+
+    A JSONL-only layout is usable when ``metadata.jsonl`` is present, and a parquet
+    layout is usable when every sharded family is complete. A mixed layout must
+    not pass merely because JSONL exists: ``_load_gaia_local`` reads parquet files
+    first and only falls back to JSONL when no parquet file is present, so an
+    incomplete parquet family would silently truncate the task set even though a
+    complete ``metadata.jsonl`` sits beside it. When any metadata parquet file is
+    present, the parquet snapshot must therefore be complete.
+    """
+    if any(data_dir.rglob("metadata*.parquet")):
+        return _has_complete_parquet_snapshot(data_dir)
+    return any(data_dir.rglob("metadata.jsonl"))
+
+
 def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max_n: int | None = None) -> list[Task]:
     """Load GAIA tasks from local repository directory."""
     tasks: list[Task] = []
@@ -435,9 +451,7 @@ class GAIA:
 
     def _ensure_data(self) -> Path:
         """Ensure GAIA data is available locally."""
-        if self.data_dir.exists() and (
-            any(self.data_dir.rglob("metadata.jsonl")) or _has_complete_parquet_snapshot(self.data_dir)
-        ):
+        if self.data_dir.exists() and _has_usable_local_data(self.data_dir):
             return self.data_dir
 
         # Download data if not available
