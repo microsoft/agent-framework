@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections import deque
@@ -15,8 +16,12 @@ from agent_framework._settings import SecretString
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 
-from agent_framework_bedrock import BedrockChatClient, BedrockChatOptions, BedrockEmbeddingClient
-from agent_framework_bedrock._chat_client import BedrockSettings
+from agent_framework_bedrock import (
+    BedrockChatClient,
+    BedrockChatOptions,
+    BedrockEmbeddingClient,
+    BedrockSettings,
+)
 from agent_framework_bedrock._feature_usage import FeatureIndex
 
 
@@ -137,6 +142,10 @@ async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
 
     assert [update.text for update in updates if update.text] == ["Checking", " the weather."]
     assert all(update.role == "assistant" for update in updates)
+    streamed_contents = [content for update in updates for content in update.contents]
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "text")
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "function_call")
+    assert all(content.merge_mode == "replace" for content in streamed_contents if content.type == "usage")
     assert response.text == "Checking the weather."
     function_call = next(content for content in response.messages[0].contents if content.type == "function_call")
     assert function_call.call_id == "call-1"
@@ -146,6 +155,238 @@ async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
     assert response.usage_details and response.usage_details["output_token_count"] == 18
     assert response.model == "us.openai.gpt-6-sol"
     assert stub.stream.closed
+
+
+def test_process_converse_response_parses_reasoning_content() -> None:
+    client = _make_client()
+
+    response = client._process_converse_response({
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"reasoningText": {"text": "Need the weather tool.", "signature": "sig-1"}}},
+                    {"toolUse": {"toolUseId": "call-1", "name": "get_weather", "input": {"city": "Paris"}}},
+                ],
+            }
+        },
+        "stopReason": "tool_use",
+    })
+
+    reasoning, function_call = response.messages[0].contents
+    assert reasoning.type == "text_reasoning"
+    assert reasoning.text == "Need the weather tool."
+    assert reasoning.protected_data == "sig-1"
+    assert function_call.type == "function_call"
+
+
+async def test_stream_merges_reasoning_text_and_signature() -> None:
+    stub = _StubBedrockStreamRuntime([
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Let me "}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "think."}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"text": "Done."}, "contentBlockIndex": 1}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-sonnet-4",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hi")])], options={}, stream=True
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    reasoning = [content for content in response.messages[0].contents if content.type == "text_reasoning"]
+    assert len(reasoning) == 1
+    assert reasoning[0].text == "Let me think."
+    assert reasoning[0].protected_data == "sig-1"
+    assert response.text == "Done."
+
+
+def test_prepare_bedrock_messages_sends_reasoning_back_with_tool_use() -> None:
+    """Extended thinking with tool use fails unless the signed reasoning is replayed before the toolUse block."""
+    client = _make_client()
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="Weather in Paris?")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(text="Need the weather tool.", protected_data="sig-1"),
+                Content.from_function_call(call_id="call-1", name="get_weather", arguments={"city": "Paris"}),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="call-1", result="88F")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert conversation[1]["content"][0] == {
+        "reasoningContent": {"reasoningText": {"text": "Need the weather tool.", "signature": "sig-1"}}
+    }
+    assert "toolUse" in conversation[1]["content"][1]
+
+
+def test_prepare_bedrock_messages_skips_reasoning_outside_assistant_messages() -> None:
+    client = _make_client()
+    messages = [
+        Message(
+            role="user",
+            contents=[Content.from_text(text="hi"), Content.from_text_reasoning(text="not from the model")],
+        )
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert conversation[0]["content"] == [{"text": "hi"}]
+
+
+async def test_stream_keeps_consecutive_reasoning_blocks_separate() -> None:
+    """Each streamed reasoning block must keep its own text and signature when replayed."""
+    stub = _StubBedrockStreamRuntime([
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "First "}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thought."}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Second thought."}}, "contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-2"}}, "contentBlockIndex": 1}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "call-1", "name": "get_weather"}},
+                "contentBlockIndex": 2,
+            }
+        },
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"city": "Paris"}'}}, "contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-sonnet-4",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="Weather in Paris?")])],
+        options={},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    reasoning = [content for content in response.messages[0].contents if content.type == "text_reasoning"]
+    assert [(content.text, content.protected_data) for content in reasoning] == [
+        ("First thought.", "sig-1"),
+        ("Second thought.", "sig-2"),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"][:2] == [
+        {"reasoningContent": {"reasoningText": {"text": "First thought.", "signature": "sig-1"}}},
+        {"reasoningContent": {"reasoningText": {"text": "Second thought.", "signature": "sig-2"}}},
+    ]
+    assert "toolUse" in conversation[0]["content"][2]
+
+
+def test_redacted_reasoning_content_is_replayed_unchanged() -> None:
+    client = _make_client()
+    redacted = b"\x00\x01encrypted-reasoning\xff"
+
+    response = client._process_converse_response({
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"redactedContent": redacted}},
+                    {"toolUse": {"toolUseId": "call-1", "name": "get_weather", "input": {"city": "Paris"}}},
+                ],
+            }
+        },
+        "stopReason": "tool_use",
+    })
+
+    reasoning = response.messages[0].contents[0]
+    assert reasoning.type == "text_reasoning"
+    assert reasoning.text is None
+    assert reasoning.additional_properties["bedrock"]["redacted_reasoning"] is True
+    assert reasoning.additional_properties["bedrock.redacted_reasoning"] is True
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"][0] == {"reasoningContent": {"redactedContent": redacted}}
+    assert "toolUse" in conversation[0]["content"][1]
+
+
+@pytest.mark.parametrize(
+    "additional_properties",
+    [
+        {"bedrock": {"redacted_reasoning": True}},
+        {"bedrock.redacted_reasoning": True},
+    ],
+)
+def test_redacted_reasoning_replay_accepts_canonical_and_legacy_metadata(
+    additional_properties: dict[str, Any],
+) -> None:
+    client = _make_client()
+    redacted = b"encrypted-reasoning"
+    content = Content.from_text_reasoning(
+        protected_data=base64.b64encode(redacted).decode("utf-8"),
+        additional_properties=additional_properties,
+    )
+
+    block = client._convert_content_to_bedrock_block(content)
+
+    assert block == {"reasoningContent": {"redactedContent": redacted}}
+
+
+async def test_stream_redacted_reasoning_content_is_replayed_unchanged() -> None:
+    stub = _StubBedrockStreamRuntime([
+        {
+            "contentBlockDelta": {
+                "delta": {"reasoningContent": {"redactedContent": b"\x00\x01part"}},
+                "contentBlockIndex": 0,
+            }
+        },
+        {
+            "contentBlockDelta": {
+                "delta": {"reasoningContent": {"redactedContent": b"-two\xff"}},
+                "contentBlockIndex": 0,
+            }
+        },
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Visible."}}, "contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 1}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"text": "Done."}, "contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-3-7-sonnet",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hi")])], options={}, stream=True
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"] == [
+        {"reasoningContent": {"redactedContent": b"\x00\x01part-two\xff"}},
+        {"reasoningContent": {"reasoningText": {"text": "Visible.", "signature": "sig-1"}}},
+        {"text": "Done."},
+    ]
 
 
 def test_build_request_requires_non_system_messages() -> None:
@@ -314,18 +555,18 @@ def test_parse_usage_returns_none_when_no_recognized_keys() -> None:
     assert client._parse_usage(None) is None
 
 
+class _FakeSession:
+    def __init__(self, region_name: str | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.region_name = region_name
+
+    def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
+        self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
+        return _StubBedrockRuntime()
+
+
 def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
     """BedrockChatClient should build a runtime client from a provided boto3 session."""
-
-    class _FakeSession:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, Any]] = []
-            self.region_name: str | None = None
-
-        def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
-            self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
-            return _StubBedrockRuntime()
-
     session = _FakeSession()
 
     client = BedrockChatClient(
@@ -342,6 +583,53 @@ def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
             "config": session.calls[0]["config"],
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("region", "env_region", "session_region", "expected_region"),
+    [
+        (None, None, "eu-west-1", "eu-west-1"),
+        ("us-west-2", None, "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        (None, None, None, "us-east-1"),
+    ],
+    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+)
+def test_init_resolves_region_with_boto3_session(
+    monkeypatch: pytest.MonkeyPatch,
+    region: str | None,
+    env_region: str | None,
+    session_region: str | None,
+    expected_region: str,
+) -> None:
+    """A configured region wins, then the provided session's region, then the default region."""
+    if env_region:
+        monkeypatch.setenv("BEDROCK_REGION", env_region)
+    else:
+        monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name=session_region)
+
+    client = BedrockChatClient(model="amazon.titan-text", region=region, boto3_session=cast(Boto3Session, session))
+
+    assert session.calls[0]["region_name"] == expected_region
+    assert client.region == expected_region
+    assert client.service_url() == f"https://bedrock-runtime.{expected_region}.amazonaws.com"
+
+
+def test_init_ignores_boto3_session_region_when_runtime_client_supplied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preconfigured runtime client wins, so the unused session should not change the reported region."""
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name="eu-west-1")
+
+    client = BedrockChatClient(
+        model="amazon.titan-text",
+        client=cast(BaseClient, _StubBedrockRuntime()),
+        boto3_session=cast(Boto3Session, session),
+    )
+
+    assert session.calls == []
+    assert client.region == "us-east-1"
+    assert client.service_url() == "https://bedrock-runtime.us-east-1.amazonaws.com"
 
 
 @pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
@@ -756,3 +1044,36 @@ def test_parse_message_contents_requires_tool_use_name() -> None:
 
     with pytest.raises(ChatClientInvalidResponseException, match="missing required tool name"):
         client._parse_message_contents([{"toolUse": {"toolUseId": "call-1"}}])
+
+
+def test_prepare_options_keeps_per_call_client_kwargs() -> None:
+    """Per-call client kwargs must land in the Converse request, not vanish (#9344)."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(
+        messages,
+        {},
+        guardrailConfig={"guardrailIdentifier": "gr-1", "guardrailVersion": "DRAFT"},
+        requestMetadata={"channel": "test"},
+    )
+
+    assert request["guardrailConfig"] == {"guardrailIdentifier": "gr-1", "guardrailVersion": "DRAFT"}
+    assert request["requestMetadata"] == {"channel": "test"}
+
+
+def test_prepare_options_prompt_cleanup_uses_overridden_model_id() -> None:
+    """A prompt ARN arriving through client kwargs must trigger the ARN cleanup (#9344)."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(
+        messages,
+        {},
+        modelId="arn:aws:bedrock:us-east-1:123456789012:prompt/PROMPT123",
+    )
+
+    assert ":prompt/" in request["modelId"]
+    assert "inferenceConfig" not in request, "prompt ARN requests must not carry inferenceConfig"
+    assert "system" not in request
+    assert "toolConfig" not in request

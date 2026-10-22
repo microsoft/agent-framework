@@ -581,6 +581,74 @@ async def test_standard_manager_progress_ledger_success_and_error():
         await mgr.create_progress_ledger(ctx.clone())
 
 
+async def test_standard_manager_progress_ledger_retries_unknown_next_speaker():
+    mgr = StandardMagenticManager(agent=StubManagerAgent(), progress_ledger_retry_count=2)
+    ctx = MagenticContext(task="task", participant_descriptions={"alice": "desc"})
+    speakers = ["Alice", "alice"]
+
+    async def fake_complete(messages: list[Message], **kwargs: Any) -> Message:
+        json_text = (
+            '{"is_request_satisfied": {"reason": "r", "answer": false}, '
+            '"is_in_loop": {"reason": "r", "answer": false}, '
+            '"is_progress_being_made": {"reason": "r", "answer": true}, '
+            f'"next_speaker": {{"reason": "r", "answer": "{speakers.pop(0)}"}}, '
+            '"instruction_or_question": {"reason": "r", "answer": "do"}}'
+        )
+        return Message("assistant", [json_text])
+
+    mgr._complete = fake_complete  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    ledger = await mgr.create_progress_ledger(ctx.clone())
+
+    assert ledger.next_speaker.answer == "alice"
+    assert not speakers
+
+
+async def test_standard_manager_progress_ledger_returns_unknown_speaker_after_retries():
+    """Exhausted retries on an unknown name end the run instead of triggering another reset."""
+    mgr = StandardMagenticManager(agent=StubManagerAgent(), progress_ledger_retry_count=3)
+    ctx = MagenticContext(task="task", participant_descriptions={"alice": "desc"})
+    calls = 0
+
+    async def fake_complete(messages: list[Message], **kwargs: Any) -> Message:
+        nonlocal calls
+        calls += 1
+        json_text = (
+            '{"is_request_satisfied": {"reason": "r", "answer": false}, '
+            '"is_in_loop": {"reason": "r", "answer": false}, '
+            '"is_progress_being_made": {"reason": "r", "answer": true}, '
+            '"next_speaker": {"reason": "r", "answer": "Alice"}, '
+            '"instruction_or_question": {"reason": "r", "answer": "do"}}'
+        )
+        return Message("assistant", [json_text])
+
+    mgr._complete = fake_complete  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    ledger = await mgr.create_progress_ledger(ctx.clone())
+
+    assert ledger.next_speaker.answer == "Alice"
+    assert calls == 3
+
+
+async def test_standard_manager_progress_ledger_reports_parse_failure_after_unknown_speaker():
+    """A saved unknown-speaker ledger does not hide a parse failure on the final attempt."""
+    mgr = StandardMagenticManager(agent=StubManagerAgent(), progress_ledger_retry_count=3)
+    ctx = MagenticContext(task="task", participant_descriptions={"alice": "desc"})
+    unknown_speaker = (
+        '{"is_request_satisfied": {"reason": "r", "answer": false}, '
+        '"is_in_loop": {"reason": "r", "answer": false}, '
+        '"is_progress_being_made": {"reason": "r", "answer": true}, '
+        '"next_speaker": {"reason": "r", "answer": "Alice"}, '
+        '"instruction_or_question": {"reason": "r", "answer": "do"}}'
+    )
+    replies = [unknown_speaker, "not-json", "not-json"]
+
+    async def fake_complete(messages: list[Message], **kwargs: Any) -> Message:
+        return Message("assistant", [replies.pop(0)])
+
+    mgr._complete = fake_complete  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    with pytest.raises(RuntimeError, match="No JSON object found"):
+        await mgr.create_progress_ledger(ctx.clone())
+
+
 class InvokeOnceManager(MagenticManagerBase):
     def __init__(self) -> None:
         super().__init__(max_round_count=5, max_stall_count=3, max_reset_count=2)
@@ -855,6 +923,56 @@ async def test_magentic_stall_and_reset_reach_limits():
     # Streaming mode: terminal output is AgentResponseUpdate.
     assert isinstance(output_event.data, AgentResponseUpdate)
     assert output_event.data.text == "Workflow terminated due to reaching maximum reset count."
+
+
+async def test_magentic_reset_gives_participants_a_fresh_session():
+    """After a stall forces a reset and replan, participants must not see their earlier history."""
+
+    class RecordingChatClient(BaseChatClient):
+        """Captures the message texts handed to the model on each call."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list[str]] = []
+
+        @override
+        def _inner_get_response(self, *, messages, stream, options, **kwargs):  # type: ignore[override]
+            self.calls.append([m.text for m in messages])
+            reply = f"reply-{len(self.calls)}"
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(messages=Message(role="assistant", contents=[reply]))
+
+            return _get()
+
+    class StallOnceManager(NotProgressingManager):
+        """Asks agentA, stalls once (forcing a reset and replan), asks agentA again, then finishes."""
+
+        def __init__(self) -> None:
+            super().__init__(max_round_count=10, max_stall_count=0)
+            self.rounds = 0
+
+        async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+            self.rounds += 1
+            instruction = "before reset" if self.rounds == 1 else "after reset"
+            progress = self.rounds != 2
+            return MagenticProgressLedger(
+                is_request_satisfied=MagenticProgressLedgerItem(reason="r", answer=self.rounds >= 4),
+                is_in_loop=MagenticProgressLedgerItem(reason="r", answer=not progress),
+                is_progress_being_made=MagenticProgressLedgerItem(reason="r", answer=progress),
+                next_speaker=MagenticProgressLedgerItem(reason="r", answer="agentA"),
+                instruction_or_question=MagenticProgressLedgerItem(reason="r", answer=instruction),
+            )
+
+    client = RecordingChatClient()
+    manager = StallOnceManager()
+    wf = MagenticBuilder(participants=[Agent(name="agentA", client=client)], manager=manager).build()
+
+    await wf.run("test reset")
+
+    assert manager.rounds == 4
+    assert client.calls[0] == ["before reset"]
+    assert client.calls[1] == ["after reset"], "agentA kept its pre-reset session history"
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:
@@ -1438,6 +1556,36 @@ def test_standard_manager_checkpoint_restore_empty_state():
     mgr = StandardMagenticManager(agent=StubManagerAgent())
     mgr.on_checkpoint_restore({})
     assert mgr.task_ledger is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Ledger:\n```json\n{"is_request_satisfied": true}\n```',
+        '```application/json\n{"is_request_satisfied": true}\n```',
+        '```py\nprint(1)\n```\n```json\n{"is_request_satisfied": true}\n```',
+        '```json\n{"is_request_satisfied": true, "note": "use ```py``` here"}\n```',
+        'No fence: {"is_request_satisfied": true} trailing',
+    ],
+)
+def test_extract_json_reads_first_fenced_object(text: str) -> None:
+    from agent_framework_orchestrations._magentic import _extract_json  # type: ignore
+
+    assert _extract_json(text)["is_request_satisfied"] is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"is_request_satisfied": true, "answer": "The f-string is missing its closing } so add it."}',
+        'Ledger: {"is_request_satisfied": true, "answer": "Open the block with { and keep going"} done',
+        '{"is_request_satisfied": true, "answer": "Escaped quote \\" then a brace }"}',
+    ],
+)
+def test_extract_json_ignores_braces_inside_strings(text: str) -> None:
+    from agent_framework_orchestrations._magentic import _extract_json  # type: ignore
+
+    assert _extract_json(text)["is_request_satisfied"] is True
 
 
 # endregion

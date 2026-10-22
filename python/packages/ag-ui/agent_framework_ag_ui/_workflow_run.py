@@ -57,7 +57,7 @@ from ._run_common import (
     _normalize_resume_interrupts,
     _resume_contract_error,
 )
-from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
+from ._utils import _function_call_is_hosted, canonical_function_arguments, generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -327,11 +327,7 @@ def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | N
     ):
         workflow_metadata = _workflow_interrupt_metadata(request_payload, value)["agent_framework"]
         workflow_metadata.pop("type", None)
-        response_schema = (
-            _approval_response_schema()
-            if request_data.function_call.additional_properties.get("server_label")
-            else None
-        )
+        response_schema = _approval_response_schema() if _function_call_is_hosted(request_data.function_call) else None
         return _approval_interrupt_for_function_call(
             interrupt_id=str(request_payload["request_id"]),
             function_call=request_data.function_call,
@@ -599,9 +595,9 @@ def _coerce_compact_approval_response(request_data: Content, candidate: dict[str
     standard_edited_arguments = candidate.get("editedArgs")
     if request_data.function_call is None:
         return None
-    if (
-        direct_edited_arguments or standard_edited_arguments is not None
-    ) and request_data.function_call.additional_properties.get("server_label"):
+    if (direct_edited_arguments or standard_edited_arguments is not None) and _function_call_is_hosted(
+        request_data.function_call
+    ):
         return None
 
     original_arguments = request_data.function_call.parse_arguments() or {}
@@ -630,6 +626,10 @@ def _coerce_compact_approval_response(request_data: Content, candidate: dict[str
         call_id=request_data.function_call.call_id or "",
         name=request_data.function_call.name or "",
         arguments=final_arguments,
+        id=request_data.function_call.id,
+        hosted=request_data.function_call.hosted,
+        server_name=request_data.function_call.server_name,
+        status=request_data.function_call.status,
         informational_only=request_data.function_call.informational_only,
         annotations=request_data.function_call.annotations,
         additional_properties=request_data.function_call.additional_properties,
@@ -874,12 +874,15 @@ def _coerce_responses_for_pending_requests(
 def _coerce_responses_for_pending_requests_strict(
     responses: dict[str, Any],
     pending_events: dict[str, Any],
+    *,
+    on_conversational_responses: Callable[[list[Any]], None] | None = None,
 ) -> tuple[dict[str, Any], RunErrorEvent | None]:
     """Coerce resume responses or return RUN_ERROR for invalid pending response payloads."""
     if not responses or not pending_events:
         return responses, None
 
     normalized: dict[str, Any] = {}
+    conversational_values: list[Any] = []
     pending_by_id: dict[str, Any] = {}
     for request_id, event in pending_events.items():
         pending_by_id[str(request_id)] = event
@@ -920,6 +923,14 @@ def _coerce_responses_for_pending_requests_strict(
                 ),
             )
         normalized[request_key] = coerced_value
+        # Typed execution controls must never become conversational snapshot history.
+        # Use the response execution actually accepts, including JSON-string Content.
+        if not isinstance(coerced_value, bool) and not (
+            isinstance(coerced_value, Content) and coerced_value.type == "function_approval_response"
+        ):
+            conversational_values.append(coerced_value)
+    if on_conversational_responses is not None:
+        on_conversational_responses(conversational_values)
     return normalized, None
 
 
@@ -1136,6 +1147,9 @@ async def run_workflow_stream(
     *,
     checkpoint_storage: CheckpointStorage | None = None,
     checkpoint_id: str | None = None,
+    pending_request_events: dict[str, Any] | None = None,
+    on_conversational_responses: Callable[[list[Any]], None] | None = None,
+    resolved_thread_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run a Workflow and emit AG-UI protocol events.
 
@@ -1153,9 +1167,13 @@ async def run_workflow_stream(
             mirroring ``Workflow.run(checkpoint_id=...)``. Any incoming messages are
             treated as request-info responses (or ignored) rather than a new
             start-executor message, so resume stays consistent with the core API.
+        pending_request_events: Optional effective pending requests already resolved by the wrapper.
+        on_conversational_responses: Optional callback for validated non-control responses.
+        resolved_thread_id: Optional thread id already resolved by the caller, reported in protocol events instead of
+            generating a new one when the request omits it.
     """
     supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-    thread_id = supplied_thread_id or str(uuid.uuid4())
+    thread_id = resolved_thread_id or supplied_thread_id or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     if available_interrupts:
@@ -1179,7 +1197,9 @@ async def run_workflow_stream(
     # persisted pending set instead. Only do so when a resume payload is present, so a
     # pure checkpoint restore still surfaces its pending interrupts instead of tripping
     # the "resume required" contract.
-    if checkpoint_id is not None and resume_payload is not None:
+    if pending_request_events is not None:
+        pending_before_run = pending_request_events
+    elif checkpoint_id is not None and resume_payload is not None:
         # Prefer the explicit AG-UI storage argument; otherwise allow the workflow's
         # builder/runtime storage so builder-emitted pause IDs remain round-trippable.
         if checkpoint_storage is None and not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
@@ -1227,7 +1247,9 @@ async def run_workflow_stream(
         if request_id in pending_interrupt_ids
     }
     responses = _merge_workflow_response_sources(resume_responses, message_responses)
-    responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
+    responses, response_error = _coerce_responses_for_pending_requests_strict(
+        responses, pending_before_run, on_conversational_responses=on_conversational_responses
+    )
     if response_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield response_error
@@ -1297,6 +1319,7 @@ async def run_workflow_stream(
         current_message_id = flow.message_id
         flow.message_id = None
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         return [TextMessageEndEvent(message_id=current_message_id)]
 
     def _drain_open_tool_calls() -> list[ToolCallEndEvent]:

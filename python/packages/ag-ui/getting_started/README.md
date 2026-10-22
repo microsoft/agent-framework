@@ -241,8 +241,10 @@ agent = Agent(
 # Create FastAPI app
 app = FastAPI(title="AG-UI Server")
 
-# Register the AG-UI endpoint
-add_agent_framework_fastapi_endpoint(app, agent, "/")
+# Register the local single-user AG-UI endpoint.
+# For production, replace single_user=True with an authorization_scope_resolver
+# backed by authenticated request context.
+add_agent_framework_fastapi_endpoint(app, agent, "/", single_user=True)
 
 if __name__ == "__main__":
     import uvicorn

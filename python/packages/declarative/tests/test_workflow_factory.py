@@ -359,6 +359,39 @@ actions:
         assert any(f"categorized as: {category}" in str(output) for output in outputs)
 
 
+class TestWorkflowFactorySetValueAlias:
+    """SetValue's 'variable' alias through a real factory run. Literal values, so no PowerFx needed."""
+
+    @pytest.mark.parametrize(
+        "variable_yaml",
+        ["variable: Local.target", "variable:\n      path: Local.target"],
+        ids=["string", "nested"],
+    )
+    async def test_set_value_variable_alias_persists_in_checkpoint(self, variable_yaml: str) -> None:
+        """The builder accepts 'variable' for SetValue, so a real run must write and checkpoint it."""
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        storage = InMemoryCheckpointStorage()
+        workflow = WorkflowFactory(checkpoint_storage=storage).create_workflow_from_yaml(f"""
+name: set-value-variable-alias
+actions:
+  - kind: SetValue
+    {variable_yaml}
+    value: from variable
+""")
+        await workflow.run({})
+
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        assert checkpoints
+        # Early checkpoints are taken before the declarative state exists.
+        saved = [
+            checkpoint.state.get(DECLARATIVE_STATE_KEY, {}).get("Local", {}).get("target") for checkpoint in checkpoints
+        ]
+        assert "from variable" in saved
+
+
 @_requires_powerfx
 class TestWorkflowFactoryExecution:
     """Tests for workflow execution."""

@@ -58,6 +58,7 @@ from agent_framework import (
     executor,
     tool,
 )
+from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions, OpenAIContinuationToken
 from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
@@ -78,8 +79,7 @@ from azure.ai.agentserver.responses.models import (
     ResponseObject,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
-from mcp.types import ErrorData
+from mcp import MCPError
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
@@ -94,6 +94,7 @@ from agent_framework_foundry_hosting._responses import (
     ConsentError,
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
+    _container_file_citations_from_function_result,  # pyright: ignore[reportPrivateUsage]
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
@@ -146,9 +147,129 @@ def _make_function_approval_request_content(
 ) -> Content:
     """Build a function_approval_request Content with an embedded function_call."""
     function_call = Content.from_function_call(
-        call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
+        call_id,
+        name,
+        arguments=arguments,
+        hosted=True,
+        server_name=server_label,
+        additional_properties={"server_label": server_label},
     )
     return Content.from_function_approval_request(request_id, function_call)
+
+
+def _mcp_function_result(call_id: str, *, item_meta: Mapping[str, Any]) -> Content:
+    return Content.from_function_result(
+        call_id,
+        result="Created the requested file.",
+        additional_properties={
+            _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Created the requested file.",
+                        "_meta": dict(item_meta),
+                    }
+                ],
+                "isError": False,
+            }
+        },
+    )
+
+
+def _container_file_result(
+    call_id: str,
+    *,
+    container_id: str = "cntr_123",
+    file_id: str = "cfile_123",
+    filename: str = "result.txt",
+) -> Content:
+    return _mcp_function_result(
+        call_id,
+        item_meta={
+            "container_id": container_id,
+            "container_file_citations": json.dumps([
+                {
+                    "file_id": file_id,
+                    "filename": filename,
+                }
+            ]),
+        },
+    )
+
+
+def _container_file_citation_updates() -> list[AgentResponseUpdate]:
+    return [
+        AgentResponseUpdate(
+            contents=[Content.from_function_call("call_1", "code_interpreter", arguments={})],
+            role="assistant",
+            message_id="msg_call",
+        ),
+        AgentResponseUpdate(
+            contents=[_container_file_result("call_1")],
+            role="tool",
+            message_id="msg_result",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("Preparing the download.")],
+            role="assistant",
+            message_id="msg_preparing",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("Download result.txt")],
+            role="assistant",
+            message_id="msg_final",
+        ),
+    ]
+
+
+def _expected_container_file_citation(
+    *,
+    container_id: str = "cntr_123",
+    file_id: str = "cfile_123",
+    filename: str = "result.txt",
+    start_index: int = 9,
+) -> dict[str, Any]:
+    return {
+        "type": "container_file_citation",
+        "container_id": container_id,
+        "file_id": file_id,
+        "filename": filename,
+        "start_index": start_index,
+        "end_index": start_index + len(filename),
+    }
+
+
+@pytest.mark.parametrize(
+    "raw_citations",
+    [
+        "not-json",
+        [{"file_id": "cfile_123"}],
+        123,
+    ],
+)
+def test_container_file_citations_ignore_malformed_metadata(raw_citations: Any) -> None:
+    function_result = _mcp_function_result(
+        "call_1",
+        item_meta={
+            "container_id": "cntr_123",
+            "container_file_citations": raw_citations,
+        },
+    )
+
+    assert _container_file_citations_from_function_result(function_result) == []
+
+
+def test_container_file_citations_ignore_recursive_json() -> None:
+    function_result = _mcp_function_result(
+        "call_1",
+        item_meta={
+            "container_id": "cntr_123",
+            "container_file_citations": "[]",
+        },
+    )
+
+    with patch("agent_framework_foundry_hosting._responses.json.loads", side_effect=RecursionError):
+        assert _container_file_citations_from_function_result(function_result) == []
 
 
 # region Helpers
@@ -558,7 +679,10 @@ async def test_item_to_message_marks_refusal_text() -> None:
 
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot help."
-    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert message.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 class _CapturingASGITransport:
@@ -2669,7 +2793,7 @@ class TestAgentSessionPersistence:
         assert "private-provider-token" not in str(events)
         assert "private-provider-token" not in caplog.text
         for record in caplog.records:
-            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info is not None:
+            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info:
                 exception = record.exc_info[1]
                 assert exception is not None and exception.__cause__ is None and exception.__context__ is None
 
@@ -3529,6 +3653,7 @@ class TestHealthCheck:
 # region Non-streaming
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestNonStreaming:
     """
     Non-streaming here means that the client requested a non-streaming response, instead of
@@ -3587,6 +3712,153 @@ class TestNonStreaming:
         assert "function_call" in types
         assert "function_call_output" in types
         assert "message" in types
+
+    async def test_function_result_container_file_citation_is_added_to_output_text(self) -> None:
+        resp = await _post(_make_server(_make_agent(stream_updates=_container_file_citation_updates())), stream=False)
+
+        assert resp.status_code == 200
+        messages = [item for item in resp.json()["output"] if item["type"] == "message"]
+        preparing = next(
+            part for message in messages for part in message["content"] if part.get("text") == "Preparing the download."
+        )
+        final = next(
+            part for message in messages for part in message["content"] if part.get("text") == "Download result.txt"
+        )
+        assert preparing["annotations"] == []
+        assert final["annotations"] == [_expected_container_file_citation()]
+
+    async def test_latest_pending_container_file_citation_replaces_same_filename(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "code_interpreter", arguments={})],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[_container_file_result("call_1", container_id="cntr_old", file_id="cfile_old")],
+                    role="tool",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Still working.")],
+                    role="assistant",
+                    message_id="msg_working",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_2", "code_interpreter", arguments={})],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[_container_file_result("call_2", container_id="cntr_new", file_id="cfile_new")],
+                    role="tool",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Download result.txt")],
+                    role="assistant",
+                    message_id="msg_final",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        final_message = next(
+            item
+            for item in resp.json()["output"]
+            if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
+        )
+        assert final_message["content"][0]["annotations"] == [
+            _expected_container_file_citation(container_id="cntr_new", file_id="cfile_new")
+        ]
+
+    async def test_container_file_citations_require_complete_non_overlapping_filename_matches(self) -> None:
+        updates: list[AgentResponseUpdate] = []
+        for suffix, filename in [
+            ("a", "a"),
+            ("data", "data.csv"),
+            ("metadata", "metadata.csv"),
+            ("report", "report.txt"),
+            ("my_report", "my report.txt"),
+        ]:
+            updates.extend([
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call(f"call_{suffix}", "code_interpreter", arguments={})],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        _container_file_result(
+                            f"call_{suffix}",
+                            container_id=f"cntr_{suffix}",
+                            file_id=f"cfile_{suffix}",
+                            filename=filename,
+                        )
+                    ],
+                    role="tool",
+                ),
+            ])
+        for suffix, text in [
+            ("preparing", "Preparing the download."),
+            ("metadata", "Download metadata.csv"),
+            ("data", "Download data.csv"),
+            ("a", "Download a"),
+            ("my_report", "Download my report.txt"),
+            ("report", "Download report.txt"),
+        ]:
+            updates.append(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text)],
+                    role="assistant",
+                    message_id=f"msg_{suffix}",
+                )
+            )
+
+        agent = _make_agent(stream_updates=updates)
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        parts_by_text = {
+            part["text"]: part
+            for item in resp.json()["output"]
+            if item["type"] == "message"
+            for part in item["content"]
+            if part["type"] == "output_text"
+        }
+        assert parts_by_text["Preparing the download."]["annotations"] == []
+        assert parts_by_text["Download metadata.csv"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_metadata",
+                file_id="cfile_metadata",
+                filename="metadata.csv",
+            )
+        ]
+        assert parts_by_text["Download data.csv"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_data",
+                file_id="cfile_data",
+                filename="data.csv",
+            )
+        ]
+        assert parts_by_text["Download a"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_a",
+                file_id="cfile_a",
+                filename="a",
+            )
+        ]
+        assert parts_by_text["Download my report.txt"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_my_report",
+                file_id="cfile_my_report",
+                filename="my report.txt",
+            )
+        ]
+        assert parts_by_text["Download report.txt"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_report",
+                file_id="cfile_report",
+                filename="report.txt",
+            )
+        ]
 
     async def test_native_computer_call_and_result(self) -> None:
         item_id = IdGenerator.new_computer_call_item_id()
@@ -3898,6 +4170,51 @@ class TestNonStreaming:
             "max_output_length": 4096,
         }
 
+    async def test_shell_result_preserves_outcomes(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_shell_tool_result(
+                                call_id="shell_1",
+                                outputs=[
+                                    Content.from_shell_command_output(
+                                        stdout="ok",
+                                        stderr="",
+                                        exit_code=0,
+                                        timed_out=False,
+                                    ),
+                                    Content.from_shell_command_output(
+                                        stdout="",
+                                        stderr="command failed",
+                                        exit_code=3,
+                                        timed_out=False,
+                                    ),
+                                    Content.from_shell_command_output(
+                                        stdout="partial",
+                                        stderr="timeout details",
+                                        timed_out=True,
+                                    ),
+                                ],
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        shell_item = next(item for item in resp.json()["output"] if item["type"] == "shell_call_output")
+        assert shell_item["output"] == [
+            {"stdout": "ok", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}},
+            {"stdout": "", "stderr": "command failed", "outcome": {"type": "exit", "exit_code": 3}},
+            {"stdout": "partial", "stderr": "timeout details", "outcome": {"type": "timeout"}},
+        ]
+
     async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
         agent = _make_agent(
             response=AgentResponse(
@@ -4137,6 +4454,132 @@ class TestStreaming:
         done_events = [e for e in events if e["event"] == "response.output_text.done"]
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
+
+    async def test_text_snapshot_emits_only_missing_delta(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello ", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello ", "world"]
+        assert done["data"]["text"] == "Hello world"
+
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_divergent_or_shrinking_text_snapshot_fails_stream(self, replacement: str) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text(replacement, merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello world"]
+        assert done["data"]["text"] == "Hello world"
+        assert events[-1]["event"] == "response.failed"
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+
+    async def test_container_file_citation_is_consistent_across_stream_events(self) -> None:
+        resp = await _post(
+            _make_server(_make_agent(stream_updates=_container_file_citation_updates())),
+            stream=True,
+        )
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        expected_annotation = _expected_container_file_citation()
+
+        annotation_event = next(event for event in events if event["event"] == "response.output_text.annotation.added")
+        assert annotation_event["data"]["annotation"] == expected_annotation
+        text_done_index = next(
+            index
+            for index, event in enumerate(events)
+            if event["event"] == "response.output_text.done" and event["data"]["text"] == "Download result.txt"
+        )
+        annotation_index = events.index(annotation_event)
+        content_done_index = next(
+            index
+            for index, event in enumerate(events)
+            if event["event"] == "response.content_part.done"
+            and event["data"]["part"].get("text") == "Download result.txt"
+        )
+        assert text_done_index < annotation_index < content_done_index
+
+        content_done = events[content_done_index]
+        assert content_done["data"]["part"]["annotations"] == [expected_annotation]
+
+        output_done = next(
+            event
+            for event in events
+            if event["event"] == "response.output_item.done"
+            and event["data"]["item"].get("type") == "message"
+            and event["data"]["item"]["content"][0].get("text") == "Download result.txt"
+        )
+        assert output_done["data"]["item"]["content"][0]["annotations"] == [expected_annotation]
+
+        completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        final_message = next(
+            item
+            for item in completed["output"]
+            if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
+        )
+        assert final_message["content"][0]["annotations"] == [expected_annotation]
+
+    async def test_pending_container_file_citation_survives_tracker_recovery(self) -> None:
+        stream = ResponseEventStream(response_id="resp_container_file")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+
+        function_call = Content.from_function_call("call_1", "code_interpreter", arguments={})
+        _ = [event async for event in tracker.handle(function_call)]
+        _ = [event async for event in tracker.handle(_container_file_result("call_1"))]
+        _ = list(tracker.close())
+        _ = stream.checkpoint()
+
+        recovered = _OutputItemTracker(stream)
+        events = [
+            event
+            async for event in recovered.handle(
+                Content.from_text("Download result.txt"),
+                message_id="msg_final",
+            )
+        ]
+        events.extend(recovered.close())
+
+        annotation_event = next(event for event in events if event["type"] == "response.output_text.annotation.added")
+        assert annotation_event["annotation"] == _expected_container_file_citation()
+        final_message = next(
+            item
+            for item in stream.response["output"]
+            if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
+        )
+        assert final_message["content"][0]["annotations"] == [_expected_container_file_citation()]
 
     async def test_computer_call_streaming_emits_complete_items_once(self) -> None:
         item_id = "cu_" + "a" * 32
@@ -4681,6 +5124,9 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -4859,14 +5305,13 @@ class TestOutputItemToMessage:
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContent,
-            FunctionShellCallOutputExitOutcome,
             OutputItemFunctionShellCallOutput,
         )
 
         output: FunctionShellCallOutputContent = {
             "stdout": "file.txt",
-            "stderr": "",
-            "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
+            "stderr": "warning",
+            "outcome": {"type": "exit", "exit_code": 3},
         }
         item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
@@ -4880,6 +5325,39 @@ class TestOutputItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "file.txt"
+        assert msg.contents[0].outputs[0].stderr == "warning"
+        assert msg.contents[0].outputs[0].exit_code == 3
+        assert msg.contents[0].outputs[0].timed_out is False
+
+    async def test_shell_call_output_preserves_timeout(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            FunctionShellCallOutputContent,
+            OutputItemFunctionShellCallOutput,
+        )
+
+        output: FunctionShellCallOutputContent = {
+            "stdout": "partial",
+            "stderr": "timeout details",
+            "outcome": {"type": "timeout"},
+        }
+        item: OutputItemFunctionShellCallOutput = {
+            "type": "shell_call_output",
+            "id": "sco-timeout",
+            "call_id": "call_timeout",
+            "status": "completed",
+            "output": [output],
+            "max_output_length": 1024,
+        }
+
+        msg = await _output_item_to_message(item)
+
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "partial"
+        assert msg.contents[0].outputs[0].stderr == "timeout details"
+        assert msg.contents[0].outputs[0].exit_code is None
+        assert msg.contents[0].outputs[0].timed_out is True
 
     async def test_local_shell_call(self) -> None:
         from azure.ai.agentserver.responses.models import LocalShellExecAction, OutputItemLocalShellToolCall
@@ -4929,6 +5407,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
@@ -4944,6 +5423,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -4963,6 +5443,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -5056,6 +5537,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         item = cast(
@@ -5122,6 +5604,7 @@ class TestOutputItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
@@ -5151,6 +5634,8 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "oauth_consent_request"
         assert msg.contents[0].consent_link == "https://example.com/consent"
+        assert msg.contents[0].additional_properties["openai"]["server_label"] == "my_server"
+        assert msg.contents[0].additional_properties["server_label"] == "my_server"
 
     async def test_structured_outputs_dict(self) -> None:
         from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
@@ -5267,6 +5752,9 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
         assert msg.contents[0].arguments == '{"city": "NYC"}'
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5457,14 +5945,13 @@ class TestItemToMessage:
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContentParam,
-            FunctionShellCallOutputExitOutcomeParam,
             FunctionShellCallOutputItemParam,
         )
 
         output: FunctionShellCallOutputContentParam = {
             "stdout": "file.txt",
-            "stderr": "",
-            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"exit_code": 0}),
+            "stderr": "warning",
+            "outcome": {"type": "exit", "exit_code": 3},
         }
         item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
@@ -5477,6 +5964,37 @@ class TestItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "file.txt"
+        assert msg.contents[0].outputs[0].stderr == "warning"
+        assert msg.contents[0].outputs[0].exit_code == 3
+        assert msg.contents[0].outputs[0].timed_out is False
+
+    async def test_shell_call_output_preserves_timeout(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            FunctionShellCallOutputContentParam,
+            FunctionShellCallOutputItemParam,
+        )
+
+        output: FunctionShellCallOutputContentParam = {
+            "stdout": "partial",
+            "stderr": "timeout details",
+            "outcome": {"type": "timeout"},
+        }
+        item: FunctionShellCallOutputItemParam = {
+            "type": "shell_call_output",
+            "call_id": "call_timeout",
+            "output": [output],
+            "max_output_length": 1024,
+        }
+
+        msg = await _item_to_message(item)
+
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "partial"
+        assert msg.contents[0].outputs[0].stderr == "timeout details"
+        assert msg.contents[0].outputs[0].exit_code is None
+        assert msg.contents[0].outputs[0].timed_out is True
 
     async def test_local_shell_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemLocalShellToolCall, LocalShellExecAction
@@ -5529,6 +6047,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
@@ -5547,6 +6066,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -5567,6 +6087,7 @@ class TestItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -5647,6 +6168,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
@@ -5734,6 +6256,7 @@ class TestItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
@@ -5818,6 +6341,7 @@ def _make_multi_response_agent(
     return agent
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestMultiTurnMixedContent:
     """End-to-end multi-turn tests with mixed text and non-text content types."""
 
@@ -6791,6 +7315,7 @@ class TestFunctionApprovalConversion:
         assert c.approved is False
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestFunctionApprovalRoundTrip:
     """End-to-end round-trip tests for the function approval flow.
 
@@ -7045,12 +7570,12 @@ def _make_consent_error(
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
     Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
-    which catches connection-time ``McpError``s and re-raises them as a
+    which catches connection-time ``MCPError``s and re-raises them as a
     ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
     original error attached via ``inner_exception``. ``consent_url_from_error``
-    then finds the wrapped ``McpError`` in ``exc.args``.
+    then finds the wrapped ``MCPError`` in ``exc.args``.
 
-    The McpError message uses the structured Foundry MCP gateway format:
+    The MCPError message uses the structured Foundry MCP gateway format:
     a human-readable prefix followed by a JSON document describing each
     failed tool source and its consent URL.
     """
@@ -7069,7 +7594,7 @@ def _make_consent_error(
         ]
     })
     message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
+    inner = MCPError(CONSENT_ERROR_CODE, message)
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
@@ -7092,21 +7617,21 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(Exception("boom")) is None
 
     def test_returns_none_when_mcp_error_has_different_code(self) -> None:
-        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        inner = MCPError(-32000, "some other error")
         exc = Exception("wrapped", inner)
         assert consent_url_from_error(exc) is None
 
     def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
-        # `args` of a bare McpError holds the message string, not an McpError
+        # `args` of a bare MCPError holds the message string, not an MCPError
         # instance, so it does not match the wrapping pattern produced by the
         # MCP client when it bubbles consent errors up.
-        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        bare = MCPError(CONSENT_ERROR_CODE, "https://x")
         assert consent_url_from_error(bare) is None
 
     def test_returns_none_when_message_has_no_json(self) -> None:
         from agent_framework.exceptions import ToolExecutionException
 
-        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        inner = MCPError(CONSENT_ERROR_CODE, "no json here")
         exc = ToolExecutionException("MCP consent required", inner_exception=inner)
         assert consent_url_from_error(exc) is None
 
@@ -7241,6 +7766,7 @@ class TestAgentLifecycle:
         assert agent.__aenter__.await_count == 2
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestOAuthConsentSurfacing:
     async def test_explicit_none_origin_allowlist_accepts_any_safe_https_consent(self) -> None:
         agent = _make_agent(
@@ -7430,7 +7956,7 @@ class TestOAuthConsentSurfacing:
 
         duplicate = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
         assert [event async for event in tracker.handle(duplicate)] == []
 
@@ -7469,7 +7995,7 @@ class TestOAuthConsentSurfacing:
     async def test_streaming_mid_run_consent_is_emitted_once_and_can_be_retried(self) -> None:
         consent = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
 
         async def consent_updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -8223,7 +8749,7 @@ def _build_multi_update_workflow_agent(
 @asynccontextmanager
 async def _pending_workflow_event(
     handler: AsyncGenerator[Any], started: asyncio.Event
-) -> AsyncIterator[asyncio.Future[Any]]:
+) -> AsyncGenerator[asyncio.Future[Any]]:
     pending = asyncio.ensure_future(anext(handler))
     started_wait = asyncio.ensure_future(started.wait())
     try:

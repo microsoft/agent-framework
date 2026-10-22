@@ -17,7 +17,7 @@ See the README.md for each sample for the prerequisites for that sample.
 |[A2A Agent Skills](./A2AAgent_Skills/)|This sample demonstrates how to expose each skill advertised by an A2A agent as a separate function tool.|
 |[A2A Agent Polling For Task Completion](./A2AAgent_PollingForTaskCompletion/)|This sample demonstrates how to poll for long-running task completion using continuation tokens with an A2A agent.|
 |[A2A Agent Stream Reconnection](./A2AAgent_StreamReconnection/)|This sample demonstrates how to reconnect to an A2A agent's streaming response using continuation tokens, allowing recovery from stream interruptions.|
-|[A2A Agent Protocol Selection](./A2AAgent_ProtocolSelection/)|This sample demonstrates how to select the A2A protocol binding (HTTP+JSON vs JSON-RPC) when creating an AIAgent from an A2A agent card using A2AClientOptions.|
+|[A2A Agent Protocol Selection](./A2AAgent_ProtocolSelection/)|This sample demonstrates how to select HTTP+JSON, JSON-RPC, or gRPC when creating an AIAgent from an A2A agent card using A2AClientOptions.|
 
 ## Running the samples from the console
 

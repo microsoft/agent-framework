@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._settings import load_settings
-from agent_framework._telemetry import mark_feature_used
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 
 from ._feature_usage import FeatureIndex
 
@@ -111,7 +112,8 @@ class CosmosMemoryContextProvider(ContextProvider):
             cosmos_database: Cosmos DB database name.
                 Can be set via ``COSMOS_DATABASE``.
             foundry_endpoint: Azure AI Foundry project endpoint for LLM and embeddings.
-                Can be set via ``FOUNDRY_ENDPOINT``.
+                Can be set via ``FOUNDRY_PROJECT_ENDPOINT``. The legacy
+                ``FOUNDRY_ENDPOINT`` name remains supported as a fallback.
             embedding_model: Embedding model deployment name. Required (no default) when the
                 provider builds the client; can be set via ``EMBEDDING_MODEL``. There is no safe
                 long-term default, so an unset value raises rather than silently targeting a model
@@ -148,12 +150,20 @@ class CosmosMemoryContextProvider(ContextProvider):
             SettingNotFoundError: If ``cosmos_endpoint``, ``foundry_endpoint``, ``embedding_model``,
                 or ``chat_model`` cannot be resolved from arguments or the environment (only when
                 ``memory_client`` is not supplied).
+            ValueError: If ``top_k`` is not positive, or ``min_confidence`` is outside 0.0-1.0.
         """
         super().__init__(source_id)
 
         # Track whether we created the client (and thus should close it in __aexit__)
         # vs. received a pre-created client (which the caller owns and should close)
         self._should_close_client = False
+        # Both values reach the toolkit on every retrieval, where bad ones fail silently: a
+        # non-positive top_k makes the toolkit raise (logged per turn, no memories), and a
+        # min_confidence outside 0.0-1.0 either matches nothing or drops the filter entirely.
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than 0")
+        if not 0.0 <= min_confidence <= 1.0:
+            raise ValueError("min_confidence must be between 0.0 and 1.0")
         self.top_k = top_k
         self.min_confidence = min_confidence
         self.memory_types: list[MemoryType] = list(memory_types) if memory_types else ["fact", "procedural"]
@@ -194,7 +204,9 @@ class CosmosMemoryContextProvider(ContextProvider):
                 CosmosMemorySettings,
                 cosmos_endpoint=cosmos_endpoint,
                 cosmos_database=cosmos_database,
-                foundry_endpoint=foundry_endpoint,
+                # Prefer the repository-wide project endpoint name. ``load_settings`` still
+                # resolves the legacy FOUNDRY_ENDPOINT variable when this override is absent.
+                foundry_endpoint=foundry_endpoint or os.getenv("FOUNDRY_PROJECT_ENDPOINT"),
                 embedding_model=embedding_model,
                 chat_model=chat_model,
                 required_fields=["cosmos_endpoint", "foundry_endpoint", "embedding_model", "chat_model"],
@@ -206,6 +218,11 @@ class CosmosMemoryContextProvider(ContextProvider):
             # toolkit client, whose deployment-name parameters are non-optional ``str``.
             embedding_model = cast("str", settings.get("embedding_model"))
             chat_model = cast("str", settings.get("chat_model"))
+
+            # Defer the import because the package exports this provider before setting its version.
+            from . import __version__
+
+            user_agent = f"{get_user_agent()} agent-framework-azure-cosmos-memory/{__version__}"
 
             # Authentication: if the caller supplies a credential, wire it into both the Cosmos
             # and AI Foundry clients and disable the toolkit's default-credential creation.
@@ -222,6 +239,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     cosmos_credential=credential,
                     ai_foundry_credential=credential,
                     use_default_credential=False,
+                    user_agent=user_agent,
                     cadence_thresholds=cadence_thresholds or None,
                 )
             else:
@@ -232,6 +250,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     embedding_deployment_name=embedding_model,
                     chat_deployment_name=chat_model,
                     use_default_credential=True,
+                    user_agent=user_agent,
                     cadence_thresholds=cadence_thresholds or None,
                 )
             self._should_close_client = True

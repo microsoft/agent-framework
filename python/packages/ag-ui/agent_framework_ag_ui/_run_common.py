@@ -41,6 +41,7 @@ from ._utils import (
     _approval_interrupt_id,
     _extract_mcp_tool_result_host_payload,
     _extract_tool_result_marker_values,
+    _function_call_is_hosted,
     _mcp_host_history_fields,
     _model_items_for_agui_replay,
     _stringify_tool_result,
@@ -537,6 +538,9 @@ class FlowState:
     waiting_for_approval: bool = False
     current_state: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     accumulated_text: str = ""
+    # Number of text deltas emitted for the currently open message. Used to tell a
+    # genuine repeated token apart from a full-message replay chunk (#9336).
+    text_delta_count: int = 0
     pending_tool_calls: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     tool_results: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
@@ -609,24 +613,52 @@ def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
     flow.snapshot_segments.append({"kind": "reasoning", "id": message_id})
 
 
+def _offset_annotation_text_spans(annotations: list[dict[str, Any]], offset: int) -> None:
+    """Rebase text spans from a delta to the accumulated message."""
+    if offset == 0:
+        return
+    for annotation in annotations:
+        regions = annotation.get("annotated_regions")
+        if not isinstance(regions, list):
+            continue
+        for region in regions:
+            if not isinstance(region, dict) or region.get("type") != "text_span":
+                continue
+            start_index = region.get("start_index")
+            end_index = region.get("end_index")
+            if isinstance(start_index, int):
+                region["start_index"] = start_index + offset
+            if isinstance(end_index, int):
+                region["end_index"] = end_index + offset
+
+
 def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> list[BaseEvent]:
-    """Emit TextMessage events for TextContent."""
-    if not content.text:
+    """Emit text deltas and message-linked annotation batches."""
+    if not content.text and not content.annotations:
         return []
 
     if skip_text or flow.waiting_for_approval:
         return []
 
     events: list[BaseEvent] = []
+    duplicate_text = False
     if not flow.message_id:
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
-    elif flow.accumulated_text and content.text == flow.accumulated_text:
+    elif flow.accumulated_text and content.text == flow.accumulated_text and (flow.text_delta_count > 1):
         # Guard against full-message replay chunks that can appear after streaming deltas.
+        # A duplicate equal to the whole accumulated text is only a safe replay signal when
+        # the text already streamed in more than one chunk. With a single prior chunk the
+        # duplicate is indistinguishable from a genuine repeated token, annotated or not,
+        # so the one-chunk policy stays the same as the unannotated path: keep the text
+        # (issue #9336) and let the annotation emission reconcile occurrences.
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
-        return []
+        if not content.annotations:
+            return []
+        duplicate_text = True
 
     # A tool-only response may pre-open a message before its tool-call segment
     # is tracked. If that segment claims the pre-opened ID, rotate to a fresh
@@ -638,6 +670,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     ):
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         events.append(TextMessageEndEvent(message_id=current_message_id))
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
 
@@ -648,9 +681,42 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if segment is None:
         segment = _open_text_segment(flow, flow.message_id)
 
-    events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
-    flow.accumulated_text += content.text
+    annotation_offset = len(flow.accumulated_text)
+    if content.text and not duplicate_text:
+        events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
+        flow.accumulated_text += content.text
+        flow.text_delta_count += 1
     segment["text"] = flow.accumulated_text
+    if content.annotations:
+        annotations = cast(
+            "list[dict[str, Any]]",
+            make_json_safe(
+                [
+                    {key: value for key, value in annotation.items() if key != "raw_representation"}
+                    for annotation in content.annotations
+                ]
+            ),
+        )
+        if content.text and not duplicate_text:
+            _offset_annotation_text_spans(annotations, annotation_offset)
+        new_annotations = annotations
+        if duplicate_text:
+            # Reconcile replay by occurrence count, not source URL or dictionary uniqueness.
+            remaining_annotations = list(segment.get("annotations", []))
+            new_annotations = []
+            for annotation in annotations:
+                if annotation in remaining_annotations:
+                    remaining_annotations.remove(annotation)
+                else:
+                    new_annotations.append(annotation)
+        if new_annotations:
+            segment.setdefault("annotations", []).extend(new_annotations)
+            events.append(
+                CustomEvent(
+                    name="annotations",
+                    value={"messageId": flow.message_id, "annotations": new_annotations},
+                )
+            )
     return events
 
 
@@ -867,6 +933,7 @@ def _emit_tool_result_common(
         events.append(TextMessageEndEvent(message_id=flow.message_id))
     flow.message_id = None
     flow.accumulated_text = ""
+    flow.text_delta_count = 0
 
     return events
 
@@ -943,7 +1010,7 @@ def _emit_approval_request(
         )
     )
     if interrupt_id:
-        response_schema = _approval_response_schema() if func_call.additional_properties.get("server_label") else None
+        response_schema = _approval_response_schema() if _function_call_is_hosted(func_call) else None
         flow.interrupts.append(
             _approval_interrupt_for_function_call(
                 interrupt_id=str(interrupt_id),

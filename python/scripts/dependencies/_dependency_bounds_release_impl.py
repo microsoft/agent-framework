@@ -15,13 +15,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-import tomli
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 from rich import print
 
+from scripts._toml import tomllib
 from scripts.task_runner import discover_projects, project_filter_matches
 
 _PROBE_RESULT_PREFIX = "DEPENDENCY_BOUNDS_RELEASE_RESULT="
@@ -34,6 +34,7 @@ class ReleaseProject:
 
     project_path: Path
     package_name: str
+    version: str
     requires_python: str
     dependencies: tuple[str, ...]
     optional_dependencies: dict[str, tuple[str, ...]]
@@ -116,12 +117,15 @@ def _discover_import_modules(project_path: Path, config: dict[str, Any]) -> tupl
 def _load_release_project(workspace_root: Path, project_path: Path) -> ReleaseProject:
     pyproject_file = workspace_root / project_path / "pyproject.toml"
     with pyproject_file.open("rb") as file:
-        config = tomli.load(file)
+        config = tomllib.load(file)
 
     project = cast(dict[str, Any], config.get("project", {}) or {})
     package_name = str(project.get("name", "")).strip()
     if not package_name:
         raise RuntimeError(f"Missing project.name in {pyproject_file}")
+    version = str(project.get("version", "")).strip()
+    if not version:
+        raise RuntimeError(f"Missing project.version in {pyproject_file}")
     requires_python = str(project.get("requires-python", "")).strip()
     if not requires_python:
         raise RuntimeError(f"Missing project.requires-python in {pyproject_file}")
@@ -134,6 +138,7 @@ def _load_release_project(workspace_root: Path, project_path: Path) -> ReleasePr
     return ReleaseProject(
         project_path=project_path,
         package_name=package_name,
+        version=version,
         requires_python=requires_python,
         dependencies=_string_requirements(project.get("dependencies", [])),
         optional_dependencies=optional_dependencies,
@@ -151,6 +156,57 @@ def _build_release_project_map(workspace_root: Path) -> dict[str, ReleaseProject
         project = _load_release_project(workspace_root, project_path)
         projects[canonicalize_name(project.package_name)] = project
     return projects
+
+
+def _validate_core_all_dependency_bounds(projects: dict[str, ReleaseProject]) -> None:
+    """Require the Core all-extra to select the current integration cohort."""
+    core = projects.get("agent-framework-core")
+    if core is None:
+        return
+
+    all_requirements = core.optional_dependencies.get("all")
+    if not all_requirements:
+        raise RuntimeError("agent-framework-core[all] dependency bounds are incomplete:\n- all must not be missing or empty")
+
+    errors: list[str] = []
+    for requirement_text in all_requirements:
+        try:
+            requirement = Requirement(requirement_text)
+        except InvalidRequirement as exc:
+            errors.append(f"{requirement_text!r} is invalid: {exc}")
+            continue
+
+        dependency_name = canonicalize_name(requirement.name)
+        if not dependency_name.startswith("agent-framework-"):
+            continue
+
+        specifiers = tuple(requirement.specifier)
+        if not specifiers:
+            errors.append(f"{requirement.name} must declare lower and upper bounds")
+            continue
+        if not any(specifier.operator in {"<", "<="} for specifier in specifiers):
+            errors.append(f"{requirement.name} must declare an upper bound")
+
+        dependency = projects.get(dependency_name)
+        if dependency is None:
+            if not any(specifier.operator in {">=", "=="} for specifier in specifiers):
+                errors.append(f"{requirement.name} must declare a lower bound")
+            continue
+
+        expected_version = Version(dependency.version)
+        release_floors = {
+            Version(specifier.version)
+            for specifier in specifiers
+            if specifier.operator in {">=", "=="} and "*" not in specifier.version
+        }
+        if expected_version not in release_floors:
+            errors.append(
+                f"{requirement.name} must use the current workspace version {dependency.version} as its release floor"
+            )
+
+    if errors:
+        details = "\n".join(f"- {error}" for error in errors)
+        raise RuntimeError(f"agent-framework-core[all] dependency bounds are incomplete:\n{details}")
 
 
 def _changed_release_project_paths(workspace_root: Path, base_ref: str) -> set[Path]:
@@ -537,6 +593,12 @@ def run_release_mode(
     if not selected:
         print(f"[red]No changed package pyproject.toml files found relative to {base_ref}.[/red]")
         return 1
+    if any(project.package_name == "agent-framework-core" for project in selected):
+        try:
+            _validate_core_all_dependency_bounds(projects)
+        except RuntimeError as exc:
+            print(f"[red]{exc}[/red]")
+            return 1
 
     lock_result = _refresh_lockfile(workspace_root=workspace_root, deadline=deadline, dry_run=dry_run)
     if lock_result["status"] == "failed":

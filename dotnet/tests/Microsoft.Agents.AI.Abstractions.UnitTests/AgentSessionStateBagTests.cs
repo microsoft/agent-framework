@@ -280,8 +280,10 @@ public sealed class AgentSessionStateBagTests
         Assert.Equal("newValue", result);
     }
 
-    [Fact]
-    public void SerializeDeserialize_WithNullValue_SerializesAsNull()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SerializeDeserialize_WithNullValue_Roundtrips(bool useJsonSerializer)
     {
         // Arrange
         var stateBag = new AgentSessionStateBag();
@@ -289,11 +291,42 @@ public sealed class AgentSessionStateBagTests
 
         // Act
         var json = stateBag.Serialize();
+        var restored = useJsonSerializer
+            ? JsonSerializer.Deserialize<AgentSessionStateBag>(
+                JsonSerializer.Serialize(stateBag, AgentAbstractionsJsonUtilities.DefaultOptions),
+                AgentAbstractionsJsonUtilities.DefaultOptions)!
+            : AgentSessionStateBag.Deserialize(json);
 
-        // Assert - null values are serialized as JSON null
+        // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
         Assert.True(json.TryGetProperty("nullKey", out var nullElement));
         Assert.Equal(JsonValueKind.Null, nullElement.ValueKind);
+        Assert.Equal(1, restored.Count);
+        Assert.True(restored.TryGetValue<string>("nullKey", out var value));
+        Assert.Null(value);
+        Assert.Null(restored.GetValue<string>("nullKey"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SerializeDeserialize_WithNullValue_CanOverwrite(bool useJsonSerializer)
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        stateBag.SetValue<string>("nullKey", null);
+        var restored = useJsonSerializer
+            ? JsonSerializer.Deserialize<AgentSessionStateBag>(
+                JsonSerializer.Serialize(stateBag, AgentAbstractionsJsonUtilities.DefaultOptions),
+                AgentAbstractionsJsonUtilities.DefaultOptions)!
+            : AgentSessionStateBag.Deserialize(stateBag.Serialize());
+
+        // Act
+        restored.SetValue("nullKey", "replacement");
+
+        // Assert
+        Assert.Equal("replacement", restored.GetValue<string>("nullKey"));
+        Assert.Equal(1, restored.Count);
     }
 
     #endregion

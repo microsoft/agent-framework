@@ -962,7 +962,7 @@ def test_tool_approval_accepted_requires_real_boolean(accepted: Any, expected: b
     assert response.approved is expected
 
 
-def test_agui_tool_approval_updates_tool_call_arguments():
+def test_agui_tool_approval_updates_tool_call_arguments(caplog: pytest.LogCaptureFixture):
     """Tool approval updates matching tool call arguments for snapshots and agent context.
 
     The LLM context (Message) should contain only enabled steps, so the LLM
@@ -985,7 +985,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
                             "steps": [
                                 {"description": "Boil water", "status": "enabled"},
                                 {"description": "Brew coffee", "status": "enabled"},
-                                {"description": "Serve coffee", "status": "enabled"},
+                                {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
                             ]
                         },
                     },
@@ -1000,7 +1000,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
                     "accepted": True,
                     "steps": [
                         {"description": "Boil water", "status": "enabled"},
-                        {"description": "Serve coffee", "status": "enabled"},
+                        {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
                     ],
                 }
             ),
@@ -1009,7 +1009,8 @@ def test_agui_tool_approval_updates_tool_call_arguments():
         },
     ]
 
-    messages = agui_messages_to_agent_framework(messages_input)
+    with caplog.at_level(logging.INFO, logger="agent_framework_ag_ui._message_adapters"):
+        messages = agui_messages_to_agent_framework(messages_input)
 
     assert len(messages) == 2
     assistant_msg = messages[0]
@@ -1018,7 +1019,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     assert func_call.arguments == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
     # Raw messages (for MESSAGES_SNAPSHOT) should have all steps with status
@@ -1026,7 +1027,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
         "steps": [
             {"description": "Boil water", "status": "enabled"},
             {"description": "Brew coffee", "status": "disabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
 
@@ -1038,15 +1039,16 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     assert approval_content.function_call.parse_arguments() == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
+    assert "SECRET-ARGUMENT" not in caplog.text
     assert approval_content.additional_properties is not None
     assert approval_content.additional_properties.get("ag_ui_state_args") == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
             {"description": "Brew coffee", "status": "disabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
 
@@ -2274,6 +2276,32 @@ def test_sanitize_pending_tool_skip_on_user_followup():
     assert "skipped" in str(tool_results[0].contents[0].result).lower()
 
 
+def test_sanitize_skips_abandoned_later_turn_reusing_completed_call_id():
+    """A result from an earlier turn does not stop a later abandoned call reusing its ID from being skipped."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    def call() -> Message:
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="reused", name="get_weather", arguments="{}")],
+        )
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="First")]),
+        call(),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="sunny")]),
+        Message(role="user", contents=[Content.from_text(text="Second")]),
+        call(),
+        Message(role="user", contents=[Content.from_text(text="Actually, never mind")]),
+    ]
+
+    result = _sanitize_tool_history(messages)
+
+    assert [msg.role for msg in result] == ["user", "assistant", "tool", "user", "assistant", "tool", "user"]
+    assert result[2].contents[0].result == "sunny"
+    assert "skipped" in str(result[5].contents[0].result).lower()
+
+
 def test_sanitize_pending_tool_does_not_skip_server_owned_approval_call():
     """Server-owned approval state means a pending tool call is not abandoned."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
@@ -2360,6 +2388,60 @@ def test_sanitize_history_ending_with_tool_call_closes_pending_call():
     assert all("skipped" in str(msg.contents[0].result).lower() for msg in result[1:])
 
 
+def test_sanitize_history_keeps_every_result_for_reused_call_id():
+    """Each function call occurrence sharing a provider call ID keeps its own result."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    for call_ids in [("shared",) * 3, ("call-a", "call-b", "call-c")]:
+        messages = [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(id=f"occurrence-{n}", call_id=call_id, name=f"tool_{n}", arguments="{}")
+                    for n, call_id in enumerate(call_ids)
+                ],
+            )
+        ]
+        messages += [
+            Message(role="tool", contents=[Content.from_function_result(call_id=call_id, result=f"result-{n}")])
+            for n, call_id in enumerate(call_ids)
+        ]
+        messages.append(Message(role="user", contents=[Content.from_text(text="Thanks")]))
+
+        result = _sanitize_tool_history(messages)
+
+        assert [msg.role for msg in result] == ["assistant", "tool", "tool", "tool", "user"]
+        assert [content.result for msg in result for content in msg.contents if content.type == "function_result"] == [
+            "result-0",
+            "result-1",
+            "result-2",
+        ]
+
+
+def test_sanitize_history_drops_results_beyond_reused_call_id_occurrences():
+    """Results for a reused call ID beyond the declared occurrences are still dropped."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="shared", name="tool_a", arguments="{}"),
+            Content.from_function_call(call_id="shared", name="tool_b", arguments="{}"),
+        ],
+    )
+    tool_msgs = [
+        Message(role="tool", contents=[Content.from_function_result(call_id="shared", result=f"result-{n}")])
+        for n in range(3)
+    ]
+
+    result = _sanitize_tool_history([assistant_msg, *tool_msgs])
+
+    assert [content.result for msg in result for content in msg.contents if content.type == "function_result"] == [
+        "result-0",
+        "result-1",
+    ]
+
+
 def test_sanitize_tool_result_clears_pending_confirm():
     """Tool result for pending confirm_changes call_id clears pending state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
@@ -2433,6 +2515,63 @@ def test_deduplicate_tool_results():
 
     result = _deduplicate_messages([msg1, msg2])
     assert len(result) == 1
+
+
+def test_deduplicate_keeps_one_tool_result_per_reused_call_id_occurrence():
+    """Results for a call ID reused by several function calls are kept once per occurrence."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="shared", name=f"tool_{n}", arguments="{}") for n in range(3)],
+    )
+    tool_msgs = [
+        Message(role="tool", contents=[Content.from_function_result(call_id="shared", result=f"result-{n}")])
+        for n in range(3)
+    ]
+    replayed = Message(role="tool", contents=[Content.from_function_result(call_id="shared", result="result-0")])
+
+    result = _deduplicate_messages([assistant_msg, *tool_msgs, replayed])
+
+    assert [content.result for msg in result for content in msg.contents if content.type == "function_result"] == [
+        "result-0",
+        "result-1",
+        "result-2",
+    ]
+
+
+def test_deduplicate_keeps_later_turn_reusing_call_id():
+    """A later turn reusing a completed call ID keeps its own call and result; a replay is still dropped."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    def call(message_id: str) -> Message:
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="reused", name="lookup", arguments="{}")],
+            message_id=message_id,
+        )
+
+    def result(message_id: str, value: str) -> Message:
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="reused", result=value)],
+            message_id=message_id,
+        )
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="First")], message_id="user-1"),
+        call("call-1"),
+        result("result-1", "first"),
+        Message(role="user", contents=[Content.from_text(text="Second")], message_id="user-2"),
+        call("call-2"),
+        result("result-2", "second"),
+        call("call-2"),
+        result("result-2-replayed", "second"),
+    ]
+
+    deduplicated = _deduplicate_messages(messages)
+
+    assert [msg.message_id for msg in deduplicated] == ["user-1", "call-1", "result-1", "user-2", "call-2", "result-2"]
 
 
 def test_deduplicate_assistant_tool_calls():
@@ -2610,6 +2749,21 @@ def test_convert_agui_content_unknown_source_type_fallback():
     assert result.uri == "https://example.com/img.png"
 
 
+@pytest.mark.parametrize("uri", ["file:///etc/passwd", "ftp://example.com/file", "custom://resource", "/relative"])
+def test_convert_agui_content_rejects_unsafe_uri_schemes(uri: str) -> None:
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    with pytest.raises(ValueError, match="Unsupported AG-UI multimodal URI scheme"):
+        _parse_multimodal_media_part({"type": "image", "source": {"type": "url", "url": uri}})
+
+
+def test_convert_agui_content_rejects_malformed_uri() -> None:
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    with pytest.raises(ValueError, match="Invalid AG-UI multimodal URI"):
+        _parse_multimodal_media_part({"type": "image", "source": {"type": "url", "url": "http://[::1"}})
+
+
 def test_convert_agui_content_data_uri_prefix():
     """base64 data starting with 'data:' is treated as data URI."""
     from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
@@ -2623,17 +2777,18 @@ def test_convert_agui_content_data_uri_prefix():
     assert result.uri == "data:image/png;base64,abc"
 
 
-def test_convert_agui_content_binary_id():
-    """Source with 'id' field creates ag-ui:// URI."""
-    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
-
-    part = {
-        "type": "image",
-        "source": {"type": "id", "id": "file123"},
-    }
-    result = _parse_multimodal_media_part(part)
-    assert result is not None
-    assert result.uri == "ag-ui://binary/file123"
+@pytest.mark.parametrize(
+    "part",
+    [
+        {"type": "image", "source": {"type": "id", "id": "file123"}},
+        {"type": "image", "source": {"type": "file", "id": "file123"}},
+        {"type": "image", "id": "file123"},
+    ],
+)
+def test_convert_agui_content_rejects_unresolved_binary_id(part: dict[str, Any]) -> None:
+    """Client-owned binary references require application resolution."""
+    with pytest.raises(ValueError, match="Unresolved AG-UI multimodal binary references"):
+        agui_messages_to_agent_framework([{"role": "user", "content": [part]}])
 
 
 def test_convert_agui_content_string_items_in_list():

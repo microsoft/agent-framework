@@ -523,6 +523,130 @@ def test_execute_code_tool_updates_approval_with_managed_tools() -> None:
     assert execute_code.approval_mode == "always_require"
 
 
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("register_later", [False, True])
+@pytest.mark.parametrize(
+    "properties",
+    [
+        {"source_integrity": "untrusted"},
+        {"confidentiality": "private"},
+        {"max_allowed_confidentiality": "public"},
+        {"max_allowed_confidentiality": None},
+        {"accepts_untrusted": False},
+        {"standing_guidance": []},
+        {"agent_framework.security.principals": []},
+        {"_agent_framework_internal_security_tool": object()},
+        {"_mcp_trust_server_ifc": False},
+    ],
+)
+def test_codeact_warns_for_fides_tool_metadata(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    register_later: bool,
+    properties: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties=properties)
+    def annotated_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=None if register_later else annotated_tool, _registry=_FakeRuntime())
+        if register_later:
+            codeact.add_tools(annotated_tool)
+
+    records = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.message
+    ]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert records[0].args == ("annotated_tool",)
+    assert codeact.get_tools()[0] is annotated_tool
+    assert annotated_tool.additional_properties == properties
+    assert annotated_tool.invocation_count == annotated_tool.invocation_exception_count == 0
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("properties", [None, {}, {"custom_property": False}])
+def test_codeact_does_not_warn_for_unannotated_tools(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    properties: dict[str, Any] | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties=properties)
+    def plain_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=plain_tool, _registry=_FakeRuntime())
+
+    assert "FIDES" not in caplog.text
+    assert codeact.get_tools()[0] is plain_tool
+
+
+def test_run_snapshot_warns_for_fides_metadata_added_after_registration(caplog: pytest.LogCaptureFixture) -> None:
+    @tool
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["accepts_untrusted"] = False
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+    assert annotated_tool.invocation_count == annotated_tool.invocation_exception_count == 0
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_codeact_does_not_repeat_fides_warning_for_unrelated_registration(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    @tool
+    def plain_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=annotated_tool, _registry=_FakeRuntime())
+        caplog.clear()
+        codeact.add_tools(plain_tool)
+
+    assert "FIDES" not in caplog.text
+    assert codeact.get_tools() == [annotated_tool, plain_tool]
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_codeact_warns_once_for_annotated_tool_replacement(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(name="shared")
+    def original_tool(value: int) -> int:
+        return value
+
+    @tool(name="shared", additional_properties={"accepts_untrusted": False})
+    def replacement_tool(value: int) -> int:
+        return value
+
+    codeact = entry_point(tools=original_tool, _registry=_FakeRuntime())
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.add_tools(replacement_tool)
+
+    records = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.message
+    ]
+    assert len(records) == 1
+    assert records[0].args == ("shared",)
+    assert codeact.get_tools() == [replacement_tool]
+
+
 def test_execute_code_tool_replaces_tools_with_the_same_name() -> None:
     execute_code = HyperlightExecuteCodeTool(tools=[compute], _registry=_FakeRuntime())
 

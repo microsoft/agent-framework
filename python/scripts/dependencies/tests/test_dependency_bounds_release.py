@@ -15,6 +15,7 @@ from scripts.dependencies._dependency_bounds_release_impl import (
     _build_release_project_map,
     _changed_release_project_paths,
     _parse_probe_payload,
+    _validate_core_all_dependency_bounds,
     run_release_mode,
 )
 from scripts.dependencies.validate_dependency_bounds import main
@@ -23,6 +24,153 @@ from scripts.dependencies.validate_dependency_bounds import main
 def _write_project(path: Path, content: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "pyproject.toml").write_text(content)
+
+
+def test_core_all_dependencies_are_bounded_to_the_current_workspace_versions(tmp_path: Path) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        """
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+all = [
+  "agent-framework-connector>=1.0.0,<2",
+  "agent-framework-external>=1.0.0b1,<2",
+]
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/connector",
+        """
+[project]
+name = "agent-framework-connector"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core>=1,<2"]
+
+[tool.flit.module]
+name = "agent_framework_connector"
+""",
+    )
+
+    _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
+
+
+@pytest.mark.parametrize("all_config", ["", "[project.optional-dependencies]\nall = []"])
+def test_core_all_dependency_bounds_reject_missing_or_empty_extra(tmp_path: Path, all_config: str) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        f"""
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.10"
+
+{all_config}
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+
+    with pytest.raises(RuntimeError, match="all must not be missing or empty"):
+        _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "agent-framework-connector",
+        "agent-framework-connector>=0.9.0,<2",
+        "agent-framework-connector>=1.0.0",
+    ],
+)
+def test_core_all_dependency_bounds_reject_unbounded_or_stale_cohorts(tmp_path: Path, requirement: str) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        f"""
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+all = [{requirement!r}]
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/connector",
+        """
+[project]
+name = "agent-framework-connector"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core>=1,<2"]
+
+[tool.flit.module]
+name = "agent_framework_connector"
+""",
+    )
+
+    with pytest.raises(RuntimeError, match=r"core\[all\] dependency bounds are incomplete"):
+        _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
 
 
 def test_release_probe_uses_only_the_required_internal_dependency_closure(tmp_path: Path) -> None:
@@ -229,6 +377,21 @@ members = ["packages/*"]
 
 [tool.flit.module]
 name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        """
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+all = []
+
+[tool.flit.module]
+name = "agent_framework"
 """,
     )
     _write_project(

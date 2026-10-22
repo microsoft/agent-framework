@@ -58,7 +58,10 @@ Defenses (in priority order):
   Disabling this requires `acknowledge_unsafe=True`. Direct calls to
   `run()` do not request approval, regardless of the configured approval mode.
 - **Process-tree termination on timeout** via `psutil`, so child
-  processes (`make`, watchers, network tools) cannot survive the timeout.
+  processes (`make`, watchers, network tools) cannot survive the timeout. On
+  Windows, a timed-out persistent session is closed even if the interrupted
+  command emits its completion marker. The next command starts a fresh shell;
+  shell-local variables and working-directory changes from that session are lost.
 - **Output truncation** to 64 KiB (head + tail with marker).
 - **Audit hook** (`on_command=…`) for SIEM / append-only logs.
 - **Optional command-pattern filter** via `ShellPolicy(denylist=[...],
@@ -168,6 +171,19 @@ Defaults applied to every container:
 To expose a host directory, pass `host_workdir="/path"` (mounted
 read-only by default; `mount_readonly=False` to allow writes). Swap the
 container runtime with `docker_binary="podman"`.
+
+Applications that must pass additional Docker options can use
+`unsafe_extra_run_args`. These trusted setup options are appended verbatim
+and must come only from developer-controlled configuration. Never use values
+from users, model output, or other untrusted sources. These options can weaken
+or completely remove isolation. Review every option carefully. In particular,
+avoid `--privileged`, `--network=host`, host-path volume mounts, and added
+capabilities unless the application explicitly requires and secures them.
+
+Arbitrary Docker configuration is trusted application setup. The
+model-facing function accepts only a shell command and cannot choose Docker
+options, but the restrictive profile is effective only when the complete
+application configuration preserves it.
 
 ## Sandbox tiers at a glance
 
