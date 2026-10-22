@@ -3,16 +3,16 @@ revision = 5
 requires-python = ">=3.11, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
-    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
-    "python_full_version < '3.12' and sys_platform == 'darwin'",
     "python_full_version >= '3.14' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and sys_platform == 'linux'",
-    "python_full_version < '3.12' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.13.*' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'darwin'",
+    "python_full_version < '3.12' and sys_platform == 'linux'",
     "python_full_version < '3.12' and sys_platform == 'win32'",
 ]
 supported-markers = [
@@ -116,7 +116,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.22.0"
+version = "1.23.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"] },
@@ -176,7 +176,7 @@ tool-runtime = [
 
 [[package]]
 name = "agent-framework-a2a"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/a2a" }
 dependencies = [
     { name = "a2a-sdk" },
@@ -191,7 +191,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.6.0"
+version = "1.7.0"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -217,7 +217,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-a2ui-toolkit", marker = "extra == 'a2ui'", specifier = ">=0.0.4" },
+    { name = "ag-ui-a2ui-toolkit", marker = "extra == 'a2ui'", specifier = ">=0.0.5" },
     { name = "ag-ui-protocol", specifier = ">=0.1.19,<0.2" },
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "fastapi", specifier = ">=0.121.0,<0.142.0" },
@@ -233,7 +233,7 @@ test = [{ name = "agent-framework-orchestrations", editable = "packages/orchestr
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -315,7 +315,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-cosmos-memory"
-version = "1.0.0a261015"
+version = "1.0.0a261022"
 source = { editable = "packages/azure-cosmos-memory" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -376,7 +376,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-bedrock"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/bedrock" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -442,7 +442,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.22.0"
+version = "1.23.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "msgspec" },
@@ -518,7 +518,7 @@ requires-dist = [
     { name = "agent-framework-foundry-local", marker = "extra == 'all'", editable = "packages/foundry_local" },
     { name = "agent-framework-gemini", marker = "extra == 'all'", editable = "packages/gemini" },
     { name = "agent-framework-github-copilot", marker = "python_full_version >= '3.11' and extra == 'all'", editable = "packages/github_copilot" },
-    { name = "agent-framework-hyperlight", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'all') or (python_full_version < '3.15' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'all')", editable = "packages/hyperlight" },
+    { name = "agent-framework-hyperlight", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'all') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'all')", editable = "packages/hyperlight" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-mistral", marker = "extra == 'all'", editable = "packages/mistral" },
     { name = "agent-framework-monty", marker = "extra == 'all'", editable = "packages/monty" },
@@ -550,7 +550,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-declarative"
-version = "1.3.0"
+version = "1.4.0"
 source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -579,7 +579,7 @@ dev = [{ name = "types-pyyaml", specifier = "==6.0.12.20260906" }]
 
 [[package]]
 name = "agent-framework-devui"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/devui" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -617,7 +617,7 @@ provides-extras = ["dev", "all"]
 
 [[package]]
 name = "agent-framework-duckdb"
-version = "1.0.0a261015"
+version = "1.0.0a261022"
 source = { editable = "packages/duckdb" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -628,7 +628,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "duckdb", specifier = ">=1.4.1,<1.6" },
+    { name = "duckdb", marker = "python_full_version < '3.15'", specifier = ">=1.4.1,<1.6" },
+    { name = "duckdb", marker = "python_full_version >= '3.15'", specifier = ">=2.0.0,<3" },
     { name = "pytz", specifier = ">=2024.1,<2027" },
 ]
 
@@ -672,7 +673,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -714,7 +715,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -772,7 +773,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-mcp"
-version = "1.0.0a261015"
+version = "1.0.0a261022"
 source = { editable = "packages/hosting-mcp" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -835,7 +836,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hyperlight"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/hyperlight" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -847,9 +848,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "hyperlight-sandbox", specifier = ">=0.7.0,<0.8" },
-    { name = "hyperlight-sandbox-backend-wasm", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.15' and platform_machine == 'AMD64' and sys_platform == 'win32')", specifier = ">=0.7.0,<0.8" },
-    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.7.0,<0.8" },
+    { name = "hyperlight-sandbox", specifier = ">=0.8.0,<0.9" },
+    { name = "hyperlight-sandbox-backend-wasm", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", specifier = ">=0.8.0,<0.9" },
+    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.8.0,<0.9" },
 ]
 
 [[package]]
@@ -914,7 +915,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ollama"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/ollama" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -959,7 +960,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-orchestrations"
-version = "1.3.2"
+version = "1.4.0"
 source = { editable = "packages/orchestrations" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1020,7 +1021,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-redis"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/redis" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1055,7 +1056,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-tools"
-version = "1.0.0b261015"
+version = "1.0.0b261022"
 source = { editable = "packages/tools" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1065,7 +1066,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "psutil", specifier = ">=5.9" },
+    { name = "psutil", specifier = ">=5.9.6" },
 ]
 
 [[package]]
@@ -2669,35 +2670,35 @@ wheels = [
 
 [[package]]
 name = "hyperlight-sandbox"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/80/50/31d35922c87c648fbce8c51fef2d2b0ef277fa09acd58eb74227c90c3343/hyperlight_sandbox-0.7.0.tar.gz", hash = "sha256:c272dc483c69cbd3f8e96b963af8a3038c8df8a20a0c8228bbd5d821a0037dfa", size = 10864, upload-time = "2026-09-12T00:16:41.182Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/ee/3d97cd3ca57addeae74eaf82a1d64475f151f884e4bb8dca874b01ba3788/hyperlight_sandbox-0.8.0.tar.gz", hash = "sha256:3a7c9f4a3e3c41ddd8bd2b9f48db6ece652b2c18be384f459d6b168d33c063ee", size = 11861, upload-time = "2026-10-17T17:19:57.639Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/80/0a62893dbec00955aad63739ced80167eac476fce73bb110e6cfeee655e2/hyperlight_sandbox-0.7.0-py3-none-any.whl", hash = "sha256:7f4e52c7ef6013f461d19db60ec537c18e9cf41045ac819d4af1bb9cb72bdca3", size = 6372, upload-time = "2026-09-12T00:16:40.115Z" },
+    { url = "https://files.pythonhosted.org/packages/98/22/522d2c6b186b66a5335e0fff99fe3ffdd82ce32b4968f9c9e951dd0a398b/hyperlight_sandbox-0.8.0-py3-none-any.whl", hash = "sha256:7aac916fa4dc1f630a72787d22082a1c1eed058ff866cb1d5ed53d2e9801f312", size = 6374, upload-time = "2026-10-17T17:19:56.869Z" },
 ]
 
 [[package]]
 name = "hyperlight-sandbox-backend-wasm"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/35/1ef748c7af301edcd83c83a0e65acb5816dea9dd02c0243ec80ed2007613/hyperlight_sandbox_backend_wasm-0.7.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:c8cab776e20fd57a394e9a6839debd04a69a455af31d785ea1f6f7483c33e23d", size = 3965726, upload-time = "2026-09-12T00:15:50.399Z" },
-    { url = "https://files.pythonhosted.org/packages/e5/bc/4255f7d8c2718d53f4f62e377a5d065bcaf52469d94ad8cb53fc8a7689b5/hyperlight_sandbox_backend_wasm-0.7.0-cp311-cp311-win_amd64.whl", hash = "sha256:52f8681915b41b0a00a6358b9aa4ac60b305a82564c9d254d8691f208178f7bb", size = 3368999, upload-time = "2026-09-12T00:15:52.005Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/72/a8136c87e00d9f59a9b7f8e483013e6b6f1ab48c9c79e380750b8c0b1d13/hyperlight_sandbox_backend_wasm-0.7.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:0f525aa236f2a846a44f9f303baece11d78c635ef82acd6422ae3f6a9d47cedd", size = 3959525, upload-time = "2026-09-12T00:15:53.508Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/6e/18bd4e207e57c1570da6d1d0a3d131177bed3b8e8fa1ff2a106bdce14a35/hyperlight_sandbox_backend_wasm-0.7.0-cp312-cp312-win_amd64.whl", hash = "sha256:eb3316d4789adec2d872170f1f86f3b7c9cf10777ca050dd68a0806b193d62d2", size = 3366405, upload-time = "2026-09-12T00:15:55.068Z" },
-    { url = "https://files.pythonhosted.org/packages/9f/73/1754d3fe6d5201547e83efa24876ca414ee5145beb3ece614635a4a5fb7f/hyperlight_sandbox_backend_wasm-0.7.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:9f432799c2275bf57c0da32db922ff52855d83e587fda2128b76b65419065f30", size = 3959746, upload-time = "2026-09-12T00:15:56.648Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/9e/86eaf3afa60b7fff0c7f016724e6c5bd3efe98a9893104c9f9b52cca4af4/hyperlight_sandbox_backend_wasm-0.7.0-cp313-cp313-win_amd64.whl", hash = "sha256:aa5b71886e322b4796130214cfd0227590589e174345063837d12b81769d8881", size = 3366407, upload-time = "2026-09-12T00:15:58.267Z" },
-    { url = "https://files.pythonhosted.org/packages/82/52/47012514f883d3ac4f5577cdf659e322764c8b7d54ba8cdf1c7bf529990d/hyperlight_sandbox_backend_wasm-0.7.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:9591101a79240713de52bd2f320f538dddfa1de1ff067a93318c9e22f4cd84c8", size = 3960909, upload-time = "2026-09-12T00:15:59.822Z" },
-    { url = "https://files.pythonhosted.org/packages/83/92/2d4fc2a4434c3deb2da74776618fc598a84d0a840f4bfbb928df623a34ac/hyperlight_sandbox_backend_wasm-0.7.0-cp314-cp314-win_amd64.whl", hash = "sha256:fa2c15690592dd9c08433a680bf4eeb7bac415a50231c74e1a78c30d053e3e31", size = 3366641, upload-time = "2026-09-12T00:16:01.631Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/8a/8f6f4dd003d0a84474844020c48ef7bc2996d77833d66b48b4959297bef6/hyperlight_sandbox_backend_wasm-0.8.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:412ebf5925e8caac3c367daa5bc5791c12a07260f1fb822d3d7e3806a74324ff", size = 3962518, upload-time = "2026-10-17T17:19:15.6Z" },
+    { url = "https://files.pythonhosted.org/packages/91/80/640d247c206e38f24c5084e6d743ceb985d2e1a1e750f5806f29ba5bbe70/hyperlight_sandbox_backend_wasm-0.8.0-cp311-cp311-win_amd64.whl", hash = "sha256:1c25db63ba5cdbcc8b68538f299c9634f59df4bfc5bedbdfcb321f0444a2c2dd", size = 3371142, upload-time = "2026-10-17T17:19:16.823Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/80/00af27dd716c60bfdbe999bf7ccf62e0b99fbcea0289350d98d0f1e747c5/hyperlight_sandbox_backend_wasm-0.8.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:5ef64125c744ee81efe33a19065b71ee5466dce001db4e7789cd7d570bfc3f93", size = 3955761, upload-time = "2026-10-17T17:19:18.343Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/4b/acd51ca60f3461ec592959579705df86577e2c208233f34fcb493a77c67d/hyperlight_sandbox_backend_wasm-0.8.0-cp312-cp312-win_amd64.whl", hash = "sha256:57b7c08091facc5451abec629a24864ca47d9d3ebafc5982052a1e29beae898a", size = 3367625, upload-time = "2026-10-17T17:19:19.948Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/30/9c5d4cbdb166d4cdd15d08f0de5dc5ef230d8cb055122eee9c6b2624d651/hyperlight_sandbox_backend_wasm-0.8.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:6428ba7aa50d2a667d8579e1642a99da345fd8c3d7ae86a3dfb5dabad910bcf0", size = 3955707, upload-time = "2026-10-17T17:19:21.416Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/db/23c3e469b6d0a76a49f85a522aff08368abbffa87e47a2b0d76a18deb618/hyperlight_sandbox_backend_wasm-0.8.0-cp313-cp313-win_amd64.whl", hash = "sha256:971605186775ba6004e50d91122c1c390e54f0e09e840e9e32587a2dff1d72ba", size = 3367557, upload-time = "2026-10-17T17:19:22.689Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/d9/176b9af30202bbf00bba12ca5df496dbee7ef402112c88b5c381359de5ef/hyperlight_sandbox_backend_wasm-0.8.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:bb71af32d64850f95a469f70922edcc151d524698d19e29e05af7a13075f711d", size = 3957485, upload-time = "2026-10-17T17:19:24.192Z" },
+    { url = "https://files.pythonhosted.org/packages/90/77/92df8d875e4959092c6800027c1b058e73e515c76bbe1d1ab50bd09cc9e9/hyperlight_sandbox_backend_wasm-0.8.0-cp314-cp314-win_amd64.whl", hash = "sha256:dfb927d2527057f6d21163c6e220a224e772a074cc5226a9bc6856dde5be462a", size = 3369173, upload-time = "2026-10-17T17:19:25.758Z" },
 ]
 
 [[package]]
 name = "hyperlight-sandbox-python-guest"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3f/5a/c780fd545374371176cb1bc02a5e4ec2bafbf4bae14794e4b0a738be3ca8/hyperlight_sandbox_python_guest-0.7.0.tar.gz", hash = "sha256:c64df2516370ead8efc64a2e19c8520838c5200340a05076e10da7116c028a9f", size = 21628728, upload-time = "2026-09-12T00:16:28.081Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/4d/3ffdfbe8c504f1cb1efd074c115117f3949316022152f4ef47065530348b/hyperlight_sandbox_python_guest-0.8.0.tar.gz", hash = "sha256:a0df229d2178cba3c04f7470958191ba17e00d2e18ce14500580dd8d179f7925", size = 21774726, upload-time = "2026-10-17T17:19:48.604Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/81/fde74f43f899c7100246a973e2c87e258e9c170a969418142143ec175a8b/hyperlight_sandbox_python_guest-0.7.0-py3-none-any.whl", hash = "sha256:9eff31341b61830b9b699dbd4fba65f5d62e878050db5db331f688ee0e561367", size = 21789808, upload-time = "2026-09-12T00:16:23.975Z" },
+    { url = "https://files.pythonhosted.org/packages/89/65/a4629fceaa4b2a0f721ba26d7cc5a92123c046715dca3452d479a62680bb/hyperlight_sandbox_python_guest-0.8.0-py3-none-any.whl", hash = "sha256:fb2f27a2123e6368659540c3d845baf4b44d5493cbdb30bafa88287dbda46bbc", size = 21774618, upload-time = "2026-10-17T17:19:46.039Z" },
 ]
 
 [[package]]
@@ -3564,13 +3565,13 @@ version = "2.5.4"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
-    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
     "python_full_version >= '3.14' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.13.*' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/95/b0/c7453d0b6e2073c3264468b106ee1563750cecc910965e67357e3698c83e/numpy-2.5.4.tar.gz", hash = "sha256:9a94cf751c9ad8ebaa835bcd3d40dacf8534ad086b88c38029b65123c7999d2a", size = 20866315, upload-time = "2026-10-10T20:05:31.422Z" }
