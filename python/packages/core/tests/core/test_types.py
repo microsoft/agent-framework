@@ -4660,6 +4660,44 @@ def test_parse_result_pydantic_models_in_list_and_dict_with_non_utf8_bytes():
     assert json.loads(parsed[0].text) == {"items": [expected_inner], "by_name": {"a": expected_inner}}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
+def test_parse_result_pydantic_field_serializer_output_with_non_utf8_bytes():
+    """A JSON-only serializer whose output has bytes JSON mode cannot encode still runs; only the bytes fall back."""
+    from pydantic import field_serializer
+
+    class Result(BaseModel):
+        info: dict[str, Any]
+        created: datetime
+
+        @field_serializer("info", when_used="json")
+        def _redact(self, value: dict[str, Any]) -> dict[str, Any]:
+            return {**value, "token": "***"}
+
+    result = Result(info={"token": "secret", "data": b"\xff\xfe"}, created=datetime(2024, 1, 1, 12))
+    parsed = FunctionTool.parse_result(result)
+
+    assert json.loads(parsed[0].text) == {  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        "info": {"token": "***", "data": str(b"\xff\xfe")},
+        "created": "2024-01-01T12:00:00",
+    }
+
+
+def test_parse_result_pydantic_field_serializer_output_that_cannot_be_encoded_is_left_out():
+    """A field whose serializer output JSON mode cannot encode is left out instead of sent without the serializer."""
+    from pydantic import field_serializer
+
+    class Result(BaseModel):
+        token: str
+        created: datetime
+
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> bytes:
+            return b"\xff***"
+
+    parsed = FunctionTool.parse_result(Result(token="secret", created=datetime(2024, 1, 1, 12)))
+
+    assert json.loads(parsed[0].text) == {"created": "2024-01-01T12:00:00"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
 # region FunctionTool.parse_result with MCP TextContent-like objects
 
 

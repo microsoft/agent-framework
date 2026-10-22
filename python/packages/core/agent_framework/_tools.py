@@ -517,6 +517,24 @@ def _has_field_serializer(model_type: type[BaseModel], name: str) -> bool:
     )
 
 
+def _escape_invalid_utf8(value: Any) -> Any:
+    """Replace bytes that aren't valid UTF-8 with their str() form, inside models, dicts and sequences too."""
+    if isinstance(value, bytes):
+        try:
+            value.decode("utf-8")
+        except UnicodeDecodeError:
+            return str(value).encode()
+        return value
+    if isinstance(value, BaseModel):
+        return value.model_copy(update={name: _escape_invalid_utf8(item) for name, item in value.__dict__.items()})
+    if isinstance(value, dict):
+        dict_value = cast(dict[object, object], value)
+        return {key: _escape_invalid_utf8(item) for key, item in dict_value.items()}
+    if type(value) in (list, tuple, set, frozenset):
+        return type(value)(_escape_invalid_utf8(item) for item in value)
+    return value
+
+
 def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
     value: object,
 ) -> _NormalizedToolDescriptionFormat:
@@ -1402,7 +1420,9 @@ class FunctionTool(SerializationMixin):
         fails (bytes that aren't valid UTF-8, or an arbitrary type on Pydantic versions without
         ``fallback``), each field is dumped in JSON mode on its own and only a failing field falls
         back. Models inside a failing field, directly or in a list or dict, are dumped the same way,
-        so their JSON serializers and excluded fields still apply. Excluded fields stay out either
+        so their JSON serializers and excluded fields still apply. A failing field with its own
+        serializer is dumped in JSON mode again with its invalid UTF-8 bytes escaped, so the
+        serializer still runs, and is left out if that fails too. Excluded fields stay out either
         way, unlike the str(result) fallback in invoke.
         """
         try:
@@ -1422,11 +1442,21 @@ class FunctionTool(SerializationMixin):
                 continue
             except ValueError:
                 pass
+            value = getattr(model, name, None)
+            if _has_field_serializer(model_type, name):
+                # The python-mode value would skip the field's serializer, and with it any redaction it does.
+                escaped = model.model_copy(update={name: _escape_invalid_utf8(value)})
+                try:
+                    dumped.update(escaped.model_dump(mode="json", include={name}, **_MODEL_DUMP_JSON_FALLBACK))
+                except ValueError:
+                    logger.warning(
+                        "Leaving %s.%s out of the tool result: its serializer's output can't be encoded as JSON.",
+                        model_type.__name__,
+                        name,
+                    )
+                continue
             for key, python_value in model.model_dump(include={name}).items():
-                value = getattr(model, name, None)
-                if isinstance(value, (BaseModel, dict, list, tuple, set, frozenset)) and not _has_field_serializer(
-                    model_type, name
-                ):
+                if isinstance(value, (BaseModel, dict, list, tuple, set, frozenset)):
                     dumped[key] = FunctionTool._dump_fallback_value(value)
                 else:
                     dumped[key] = python_value
