@@ -897,28 +897,46 @@ class MemoryFileStore(MemoryStore):
         state_path = self._get_state_path(session, source_id=source_id)
         if not state_path.exists():
             return _default_state()
-        try:
-            raw_state = self.loads(state_path.read_text(encoding="utf-8"))
-        except ValueError as exc:
-            quarantine_path = state_path.with_name(f".{state_path.name}.{uuid.uuid4().hex}.corrupt")
+        failing_text = state_path.read_text(encoding="utf-8")
+        while True:
             try:
-                state_path.rename(quarantine_path)
-            except OSError as rename_error:
-                LOGGER.warning(
-                    "Memory state file %s is unreadable (%s) and could not be moved aside (%s); "
-                    "using a clean state.",
-                    state_path,
-                    exc,
-                    rename_error,
-                )
-            else:
-                LOGGER.warning(
-                    "Memory state file %s is unreadable (%s); moved aside to %s, using a clean state.",
-                    state_path,
-                    exc,
-                    quarantine_path,
-                )
-            return _default_state()
+                raw_state = self.loads(failing_text)
+            except ValueError as exc:
+                # Another process can atomically replace the file with a valid
+                # one after our read; only quarantine when the payload is still
+                # the exact text that failed to parse (mirrors the session
+                # store's _quarantine_corrupt_snapshot), otherwise the valid
+                # replacement would be moved aside and its metadata lost.
+                try:
+                    current_text = state_path.read_text(encoding="utf-8")
+                except OSError:
+                    current_text = None
+                if current_text is None:
+                    # the file is gone (replaced by nothing): nothing to quarantine
+                    return _default_state()
+                if current_text != failing_text:
+                    failing_text = current_text
+                    continue
+                quarantine_path = state_path.with_name(f".{state_path.name}.{uuid.uuid4().hex}.corrupt")
+                try:
+                    state_path.rename(quarantine_path)
+                except OSError as rename_error:
+                    LOGGER.warning(
+                        "Memory state file %s is unreadable (%s) and could not be moved aside (%s); "
+                        "using a clean state.",
+                        state_path,
+                        exc,
+                        rename_error,
+                    )
+                else:
+                    LOGGER.warning(
+                        "Memory state file %s is unreadable (%s); moved aside to %s, using a clean state.",
+                        state_path,
+                        exc,
+                        quarantine_path,
+                    )
+                return _default_state()
+            break
         if not isinstance(raw_state, dict):
             raise ValueError("Memory state file must contain a JSON object.")
         state = {**_default_state(), **cast(dict[str, Any], raw_state)}
