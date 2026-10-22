@@ -589,7 +589,9 @@ class Workflow(DictConvertible):
                 if not is_continuation:
                     self._runner.reset_iteration_count()
 
-                # Pending writes here come from a superstep or checkpoint save that never committed; do not commit them.
+                # Pending writes here come from a superstep or checkpoint save that never committed; do not
+                # commit them, and ignore later writes from that superstep's executors if it is still finalizing.
+                self._runner.state.begin_epoch()
                 self._runner.state.discard()
 
                 # Store run kwargs in State so executors can access them.

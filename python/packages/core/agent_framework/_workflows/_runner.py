@@ -80,9 +80,6 @@ class RunnerImpl:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._state = state
-        # Identifies the superstep or checkpoint preparation that owns pending state writes, so a
-        # stale run's finalizer does not discard writes staged by a newer run on the same shared State.
-        self._superstep_token: object | None = None
 
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
@@ -128,11 +125,10 @@ class RunnerImpl:
             yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
             committed = False
-            superstep_token = object()
-            self._superstep_token = superstep_token
+            superstep_epoch = self._state.begin_epoch()
             try:
                 # Wake on either a live event or iteration completion, including silent supersteps.
-                iteration_task = asyncio.create_task(self._run_iteration())
+                iteration_task = self._state.bound_context().run(asyncio.create_task, self._run_iteration())
                 event_task: asyncio.Task[WorkflowEvent] | None = None
                 try:
                     while not iteration_task.done():
@@ -172,7 +168,8 @@ class RunnerImpl:
                 self._state.commit()
                 committed = True
             finally:
-                if not committed and self._superstep_token is superstep_token:
+                # A stale run's finalizer must not discard pending writes owned by a newer superstep.
+                if not committed and self._state.epoch is superstep_epoch:
                     self._state.discard()
 
             # Create checkpoint after each superstep iteration
@@ -248,7 +245,7 @@ class RunnerImpl:
         This is used by checkpoint capture paths that need a complete, restorable
         state payload without necessarily writing to a checkpoint storage backend.
         """
-        self._superstep_token = object()
+        self._state.begin_epoch()
         await self._save_executor_states()
         self._save_edge_runner_states()
         self._state.commit()
