@@ -39,7 +39,7 @@ internal static class McpConsentContext
 {
     /// <summary>
     /// Holds the shared <see cref="RequestConsentState"/> for the current request.
-    /// Set once by the handler; read and mutated by the tool wrapper.
+    /// Bound while advancing or disposing the agent stream; read and mutated by the tool wrapper.
     /// </summary>
     internal static readonly AsyncLocal<RequestConsentState?> Current = new();
 }
