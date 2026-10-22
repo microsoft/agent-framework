@@ -137,14 +137,13 @@ async def test_get_response_reports_the_requested_model(client_model: str | None
 class _StubConverseAndStreamWithoutModelId(_StubConverseWithoutModelId):
     def converse_stream(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
-        return {
-            "stream": _StubEventStream([
-                {"messageStart": {"role": "assistant"}},
-                {"contentBlockDelta": {"delta": {"text": "hi"}, "contentBlockIndex": 0}},
-                {"contentBlockStop": {"contentBlockIndex": 0}},
-                {"messageStop": {"stopReason": "end_turn"}},
-            ])
-        }
+        events: list[dict[str, Any]] = [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "hi"}, "contentBlockIndex": 0}},
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+        return {"stream": _StubEventStream(events)}
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -157,13 +156,12 @@ async def test_streaming_and_non_streaming_report_the_same_model(stream: bool) -
         client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
     messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
-    options = {"model": "us.openai.gpt-6-sol"}
 
     if stream:
-        response_stream = client.get_response(messages=messages, options=options, stream=True)
+        response_stream = client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"}, stream=True)
         response = await response_stream.get_final_response()
     else:
-        response = await client.get_response(messages=messages, options=options)
+        response = await client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"})
 
     assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
     assert response.text == "hi"
