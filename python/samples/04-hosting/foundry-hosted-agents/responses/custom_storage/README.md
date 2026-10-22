@@ -78,7 +78,7 @@ calls use `AzureCliCredential` (`az login`); they do not require Cosmos.
 
 ## Run
 
-Set `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME`, then follow
+Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, then follow
 the [parent local-host instructions](../../README.md#running-the-agent-host-locally).
 
 ```bash

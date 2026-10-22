@@ -280,6 +280,88 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         Assert.NotNull(server);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AddA2AServer_WithServerOptions_RejectsUnsupportedRequestsAsync(bool registerByName)
+    {
+        // Arrange
+        const string AgentName = "text-only-agent";
+        var services = new ServiceCollection();
+        var agentMock = CreateAgentMock(AgentName);
+        void configureOptions(A2AServerRegistrationOptions options) => options.ServerOptions = new A2AServerOptions
+        {
+            SupportsStreaming = false,
+            SupportedInputModes = ["text/plain"]
+        };
+
+        if (registerByName)
+        {
+            services.AddKeyedSingleton(AgentName, agentMock.Object);
+            services.AddA2AServer(AgentName, configureOptions);
+        }
+        else
+        {
+            services.AddA2AServer(agentMock.Object, configureOptions);
+        }
+
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+        var imageRequest = CreateTestSendMessageRequest();
+        imageRequest.Message.Parts = [Part.FromRaw([1, 2, 3], "image/png")];
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var streamingException = await Assert.ThrowsAsync<A2AException>(async () =>
+        {
+            await foreach (var _ in server.SendStreamingMessageAsync(CreateTestSendMessageRequest(), cts.Token))
+            {
+                Assert.Fail("A server with streaming disabled must not return stream events.");
+            }
+        });
+        var inputException = await Assert.ThrowsAsync<A2AException>(() => server.SendMessageAsync(imageRequest, cts.Token));
+
+        // Assert
+        Assert.Equal(A2AErrorCode.UnsupportedOperation, streamingException.ErrorCode);
+        Assert.Equal(A2AErrorCode.ContentTypeNotSupported, inputException.ErrorCode);
+        agentMock.Protected().Verify("RunCoreStreamingAsync", Times.Never(),
+            ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+            ItExpr.IsAny<AgentSession?>(),
+            ItExpr.IsAny<AgentRunOptions?>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AddA2AServer_WithServerOptions_DoesNotChangeOtherRegistrationsDefaultsAsync()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddA2AServer(CreateAgentMock("text-only-agent").Object, options => options.ServerOptions = new A2AServerOptions
+        {
+            SupportsStreaming = false,
+            SupportedInputModes = ["text/plain"]
+        });
+        services.AddA2AServer(CreateAgentMock("default-agent").Object);
+        await using var provider = services.BuildServiceProvider();
+        var textOnlyServer = provider.GetRequiredKeyedService<A2AServer>("text-only-agent");
+        var defaultServer = provider.GetRequiredKeyedService<A2AServer>("default-agent");
+        var imageRequest = CreateTestSendMessageRequest();
+        imageRequest.Message.Parts = [Part.FromRaw([1, 2, 3], "image/png")];
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var textResponse = await textOnlyServer.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+        var imageResponses = new List<StreamResponse>();
+        await foreach (var response in defaultServer.SendStreamingMessageAsync(imageRequest, cts.Token))
+        {
+            imageResponses.Add(response);
+        }
+
+        // Assert
+        Assert.Equal("Test response", Assert.Single(textResponse.Message!.Parts).Text);
+        Assert.Equal("Test response", Assert.Single(Assert.Single(imageResponses).Message!.Parts).Text);
+    }
+
     /// <summary>
     /// Verifies that AddA2AServer throws when the agent name is null.
     /// </summary>

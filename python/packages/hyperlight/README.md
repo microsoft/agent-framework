@@ -2,6 +2,23 @@
 
 Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
 
+## FIDES compatibility
+
+> [!WARNING]
+> **FIDES integration is not supported with CodeAct providers.** Host-tool calls
+> made inside generated code bypass the agent's function middleware, so FIDES
+> policy enforcement and label tracking do not apply to those nested calls or
+> intermediate code values. Checks on the outer `execute_code` invocation do not
+> enforce the policies of individual tools called inside it.
+>
+> Registering tools with recognized FIDES `additional_properties` logs a warning,
+> but does not block execution. This is a best-effort diagnostic: FIDES also uses
+> defaults for unannotated tools, so no warning does not imply support or safety.
+> Keep tools that require FIDES as direct agent tools, not Hyperlight-managed tools,
+> and enforce authorization and destination restrictions inside host functions.
+> Sandbox isolation does not supply FIDES enforcement.
+> See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
+
 ## Installation
 
 ```bash
@@ -10,9 +27,9 @@ pip install agent-framework-hyperlight --pre
 
 This package depends on `hyperlight-sandbox`, the packaged Python guest, and the
 Wasm backend package on supported platforms. The backend is currently installed
-for Python 3.10 through 3.14. If a compatible backend is not published for your
-current platform and Python version, `execute_code` will fail at runtime when it
-tries to create the sandbox.
+for Python 3.10 through 3.15 on Linux x86_64 and Windows AMD64. If a compatible
+backend is not published for your current platform and Python version,
+`execute_code` will fail at runtime when it tries to create the sandbox.
 
 ## Quick start
 

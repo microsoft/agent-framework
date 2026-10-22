@@ -6,13 +6,19 @@ namespace Microsoft.Agents.AI.DevUI;
 /// Options that control the security posture of the DevUI HTTP surface.
 /// </summary>
 /// <remarks>
+/// DevUI is intended for trusted development environments and is not
+/// recommended as a production hosting surface.
+/// <para>
 /// DevUI exposes agent metadata that is sensitive in production contexts:
 /// system instructions, tool definitions, model identifiers, and workflow
-/// structure. By default, DevUI rejects any request whose remote endpoint
-/// is not a loopback address. Hosts that intentionally expose DevUI on a
-/// non-loopback interface must opt in via <see cref="AllowRemoteAccess"/>
-/// and should also configure <see cref="AuthToken"/> or
-/// <see cref="ConfigureEndpoints"/> to attach an authorization policy.
+/// structure. By default, DevUI requires a loopback peer and loopback Host,
+/// and rejects cross-site state-changing browser requests. Hosts that
+/// intentionally expose DevUI directly on a non-loopback interface must opt in
+/// via <see cref="AllowRemoteAccess"/>. The built-in local checks are not a
+/// production or public reverse-proxy authentication boundary. Reverse-proxied
+/// exposure requires host-owned authentication and network policy, normally
+/// together with <see cref="AllowRemoteAccess"/> set to <see langword="true"/>.
+/// </para>
 /// </remarks>
 public sealed class DevUIOptions
 {
@@ -27,18 +33,28 @@ public sealed class DevUIOptions
     /// non-loopback callers. Defaults to <see langword="false"/>.
     /// </summary>
     /// <remarks>
-    /// When <see langword="false"/>, any request whose
-    /// <see cref="ConnectionInfo.RemoteIpAddress"/> is
-    /// not a loopback address (or is missing) is rejected with HTTP 403 before
-    /// reaching the DevUI handlers. Enable only when the host is responsible
-    /// for fronting DevUI with its own authentication, network policy, or both.
+    /// When <see langword="false"/>, requests require a loopback
+    /// <see cref="ConnectionInfo.RemoteIpAddress"/> and a localhost or loopback
+    /// IP Host header. State-changing requests with a mismatched or invalid
+    /// Origin, or with <c>Sec-Fetch-Site: cross-site</c>, are also rejected.
+    /// These checks apply to the DevUI endpoints and the standard
+    /// <c>/v1/responses</c> and <c>/v1/conversations</c> paths. Enable only
+    /// when the host is responsible for its own network and browser-request
+    /// protections. In particular, these checks do not authenticate the
+    /// original caller when a reverse proxy makes the connection appear local.
+    /// Public or production reverse-proxy exposure requires host-owned
+    /// authentication and network policy, normally with this option set to
+    /// <see langword="true"/>.
     /// </remarks>
     public bool AllowRemoteAccess { get; set; }
 
     /// <summary>
-    /// Gets or sets a shared bearer token required on every DevUI request.
-    /// When <see langword="null"/> or empty, the value of the
-    /// <c>DEVUI_AUTH_TOKEN</c> environment variable is used instead.
+    /// Gets or sets a shared bearer token required on the UI and entity
+    /// endpoints mapped by <c>MapDevUI()</c>. The token is not automatically
+    /// imposed on separately mapped standard <c>/v1/responses</c> or
+    /// <c>/v1/conversations</c> routes. When <see langword="null"/> or empty,
+    /// the value of the <c>DEVUI_AUTH_TOKEN</c> environment variable is used
+    /// instead.
     /// </summary>
     /// <remarks>
     /// When a token is configured, requests must include the header
@@ -55,5 +71,10 @@ public sealed class DevUIOptions
     /// conventions (for example
     /// <c>group.RequireAuthorization("DevUIPolicy")</c>).
     /// </summary>
+    /// <remarks>
+    /// This callback does not apply to separately mapped OpenAI endpoints.
+    /// Hosts that need custom authorization on those endpoints must attach it
+    /// when mapping them.
+    /// </remarks>
     public Action<IEndpointConventionBuilder>? ConfigureEndpoints { get; set; }
 }

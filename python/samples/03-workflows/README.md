@@ -56,6 +56,7 @@ Write workflows as plain Python async functions — no graph concepts, no execut
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
 | Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
 | Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @tool tools |
+| MCP Client Lifecycle                   | [agents/mcp_client_lifecycle.py](./agents/mcp_client_lifecycle.py)                                             | Keep a caller-owned MCP Client alive for an entire sequential workflow run                            |
 
 ### checkpoint
 
@@ -119,6 +120,10 @@ Additional builder-based tool approval samples are maintained in the orchestrati
 For additional observability samples in Agent Framework, see the [observability concept samples](../02-agents/observability/README.md). The [workflow observability sample](../02-agents/observability/workflow_observability.py) demonstrates integrating observability into workflows.
 
 ### orchestration
+
+See [group chat message filtering](./orchestrations/group_chat_message_filtering.py)
+for a custom orchestrator that filters participant responses before other agents
+receive them.
 
 Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magentic), including builder-based
 `workflow.as_agent(...)` variants, are documented in the [orchestrations](./orchestrations/README.md) directory.

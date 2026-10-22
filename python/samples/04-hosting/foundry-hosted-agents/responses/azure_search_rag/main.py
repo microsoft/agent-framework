@@ -34,7 +34,7 @@ from dotenv import load_dotenv
 def create_agent() -> Agent:
     """Allocate a new Search provider and close its transports after this request."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
     credential = (

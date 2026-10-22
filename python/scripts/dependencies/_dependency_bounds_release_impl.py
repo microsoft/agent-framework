@@ -15,13 +15,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-import tomli
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 from rich import print
 
+from scripts._toml import tomllib
 from scripts.task_runner import discover_projects, project_filter_matches
 
 _PROBE_RESULT_PREFIX = "DEPENDENCY_BOUNDS_RELEASE_RESULT="
@@ -117,7 +117,7 @@ def _discover_import_modules(project_path: Path, config: dict[str, Any]) -> tupl
 def _load_release_project(workspace_root: Path, project_path: Path) -> ReleaseProject:
     pyproject_file = workspace_root / project_path / "pyproject.toml"
     with pyproject_file.open("rb") as file:
-        config = tomli.load(file)
+        config = tomllib.load(file)
 
     project = cast(dict[str, Any], config.get("project", {}) or {})
     package_name = str(project.get("name", "")).strip()

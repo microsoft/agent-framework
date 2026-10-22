@@ -190,7 +190,7 @@ class AGUIEventConverter:
         return ChatResponseUpdate(
             role="assistant",
             message_id=self.current_message_id,
-            contents=[Content.from_text(text=delta)],
+            contents=[Content.from_text(text=delta, merge_mode="append")],
         )
 
     def _handle_text_message_end(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
@@ -210,6 +210,7 @@ class AGUIEventConverter:
                     call_id=self.current_tool_call_id or "",
                     name=self.current_tool_name or "",
                     arguments="",
+                    merge_mode="append",
                 )
             ],
         )
@@ -238,6 +239,7 @@ class AGUIEventConverter:
                     call_id=self.current_tool_call_id or "",
                     name=self.current_tool_name or "",
                     arguments=delta,
+                    merge_mode="append",
                 )
             ],
         )
@@ -350,5 +352,11 @@ class AGUIEventConverter:
             else:
                 update.message_id = message_id
                 if annotations:
-                    update.contents = [Content.from_text(text="", annotations=cast("list[Annotation]", annotations))]
+                    update.contents = [
+                        Content.from_text(
+                            text="",
+                            merge_mode="append",
+                            annotations=cast("list[Annotation]", annotations),
+                        )
+                    ]
         return update
