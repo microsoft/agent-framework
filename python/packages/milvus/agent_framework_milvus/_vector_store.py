@@ -189,6 +189,31 @@ def _check_numeric_field(field: VectorStoreField) -> None:
         )
 
 
+# Maximum magnitude representable as float32; Milvus dense vectors are float32.
+_FLOAT32_MAX: Final[float] = 3.4028234663852886e38
+
+
+def _validate_dense_vector(value: Any, name: str) -> list[float]:
+    """Validate and materialize a dense float32 vector.
+
+    Core only checks dimensions, so the connector validates the element values here. Rejects
+    non-sequences and strings/bytes (so a query like ``"123"`` is not read as ``[1, 2, 3]``),
+    booleans, non-numbers, and NaN/infinity or out-of-float32-range values. Used for both stored
+    vectors and query vectors so the two paths share identical semantics.
+    """
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise TypeError(f"Milvus vector '{name}' must be a dense numeric sequence, not {type(value).__name__}.")
+    result: list[float] = []
+    for item in cast("Sequence[Any]", value):
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise TypeError(f"Milvus vector '{name}' must contain numbers, not {type(item).__name__}.")
+        number = float(item)
+        if not math.isfinite(number) or abs(number) > _FLOAT32_MAX:
+            raise ValueError(f"Milvus vector '{name}' must contain finite float32 values.")
+        result.append(number)
+    return result
+
+
 class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT, ModelT], Generic[KeyT, ModelT]):
     """Store and search records with the official async Milvus client.
 
@@ -374,8 +399,21 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             except Exception:
                 raise exc from None
 
+    @staticmethod
+    def _check_field_type(existing: Mapping[str, Any], expected: DataType, name: str) -> None:
+        actual = existing.get("type")
+        if actual is not None and DataType(actual) != expected:
+            raise ValueError(
+                f"Existing Milvus field '{name}' has type {DataType(actual).name}, expected {expected.name}."
+            )
+
     async def _validate_existing_collection(self) -> None:
-        """Validate an existing collection's fields, vector dimensions and metrics."""
+        """Validate an existing collection against the data model.
+
+        Checks the primary key (presence, type), every data field's scalar type, and each vector
+        field's type, dimensions, metric and (non-auto) index kind, so a same-named but incompatible
+        collection is rejected up front instead of failing later CRUD/search calls.
+        """
         info = cast("Mapping[str, Any]", await self._client.describe_collection(self.collection_name))
         raw_fields = cast("Sequence[Mapping[str, Any]]", info.get("fields") or [])
         fields: dict[str, Mapping[str, Any]] = {str(field["name"]): field for field in raw_fields}
@@ -385,12 +423,17 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 f"Existing Milvus collection '{self.collection_name}' has no primary key "
                 f"'{self._key_storage_name}' matching the data model."
             )
+        self._check_field_type(
+            key,
+            DataType.INT64 if self.definition.key_field.type_ == "int" else DataType.VARCHAR,
+            self._key_storage_name,
+        )
         for field in self.definition.data_fields:
-            if (field.storage_name or field.name) not in fields:
-                raise ValueError(
-                    f"Existing Milvus collection '{self.collection_name}' is missing field "
-                    f"'{field.storage_name or field.name}'."
-                )
+            name = field.storage_name or field.name
+            existing = fields.get(name)
+            if existing is None:
+                raise ValueError(f"Existing Milvus collection '{self.collection_name}' is missing field '{name}'.")
+            self._check_field_type(existing, _SCALAR_TYPES[field.type_ or "str"], name)
         for field in self.definition.vector_fields:
             name = field.storage_name or field.name
             existing = fields.get(name)
@@ -398,16 +441,27 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 raise ValueError(
                     f"Existing Milvus collection '{self.collection_name}' is missing vector field '{name}'."
                 )
+            self._check_field_type(existing, DataType.FLOAT_VECTOR, name)
             dimensions = cast("Mapping[str, Any]", existing.get("params") or {}).get("dim")
             if dimensions is not None and int(dimensions) != int(cast(int, field.dimensions)):
                 raise ValueError(
                     f"Existing Milvus vector field '{name}' has dimension {dimensions}, expected {field.dimensions}."
                 )
             index = await self._client.describe_index(self.collection_name, name)
-            metric = cast("Mapping[str, Any]", index).get("metric_type") if isinstance(index, Mapping) else None
-            expected = _METRICS[cast(str, field.distance_function)]
-            if metric is not None and metric != expected:
-                raise ValueError(f"Existing Milvus vector field '{name}' uses metric {metric}, expected {expected}.")
+            index_info: Mapping[str, Any] = cast("Mapping[str, Any]", index) if isinstance(index, Mapping) else {}
+            metric = index_info.get("metric_type")
+            expected_metric = _METRICS[cast(str, field.distance_function)]
+            if metric is not None and metric != expected_metric:
+                raise ValueError(
+                    f"Existing Milvus vector field '{name}' uses metric {metric}, expected {expected_metric}."
+                )
+            index_type = index_info.get("index_type")
+            expected_index = _INDEX_KINDS[cast(str, field.index_kind)]
+            # AUTOINDEX lets the server pick a concrete type, so only enforce an explicit index kind.
+            if expected_index != "AUTOINDEX" and index_type is not None and index_type != expected_index:
+                raise ValueError(
+                    f"Existing Milvus vector field '{name}' uses index {index_type}, expected {expected_index}."
+                )
 
     async def ensure_collection_deleted(self, *, operation_options: Mapping[str, Any] | None = None) -> None:
         """Delete this collection if it exists."""
@@ -441,7 +495,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 name = field.storage_name or field.name
                 value = record.get(name)
                 if value is not None:
-                    model[name] = [float(component) for component in value]
+                    model[name] = _validate_dense_vector(value, name)
             models.append(model)
         return models
 
@@ -563,7 +617,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             search_params["offset"] = skip
         hits = await self._client.search(
             collection_name=self.collection_name,
-            data=[[float(component) for component in vector]],
+            data=[_validate_dense_vector(vector, field.storage_name or field.name)],
             anns_field=field.storage_name or field.name,
             limit=top,
             filter=self._prepare_filter(filter),

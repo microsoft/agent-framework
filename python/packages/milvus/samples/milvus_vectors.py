@@ -3,13 +3,14 @@
 """Store and search dense vectors in a disposable Milvus collection.
 
 Run from python/:
-    export MILVUS_URI=http://localhost:19530   # or a local ".db" path for Milvus Lite
+    export MILVUS_URI=http://localhost:19530   # a server address (not a file path)
     uv run --package agent-framework-milvus python packages/milvus/samples/milvus_vectors.py
 
-Use a development server or a local Milvus Lite file, not production. A local ".db" path
-requires the Milvus Lite extra: pip install "pymilvus[milvus_lite]" (Linux/macOS only).
-No embedding model, inference service, or OpenAI credentials are used: the vectors are
-deliberately small and deterministic.
+Use a development server, not production. To run against Milvus Lite instead, install the
+extra (pip install "pymilvus[milvus_lite]", Linux/macOS only) and pass a local ".db" path as
+the uri argument, e.g. MilvusStore(uri="milvus.db") — the MILVUS_URI env var must be a server
+address. No embedding model, inference service, or OpenAI credentials are used: the vectors
+are deliberately small and deterministic.
 """
 
 from __future__ import annotations

@@ -92,6 +92,90 @@ async def test_ensure_collection_exists_rejects_metric_mismatch(collection, mock
         await collection.ensure_collection_exists()
 
 
+def _describe(point_key_type, price_type=DataType.DOUBLE, dense_type=DataType.FLOAT_VECTOR, dim=3):
+    return {
+        "fields": [
+            {"name": "point_key", "type": point_key_type, "is_primary": True, "params": {"max_length": 65535}},
+            {"name": "body", "type": DataType.VARCHAR, "params": {"max_length": 65535}},
+            {"name": "price", "type": price_type, "params": {}},
+            {"name": "flag", "type": DataType.BOOL, "params": {}},
+            {"name": "dense", "type": dense_type, "params": {"dim": dim}},
+        ]
+    }
+
+
+async def test_validate_rejects_key_type_mismatch(collection, mock_client):
+    mock_client.has_collection.return_value = True
+    mock_client.describe_collection.return_value = _describe(DataType.VARCHAR)  # model key is int -> INT64
+    with pytest.raises(ValueError, match="type"):
+        await collection.ensure_collection_exists()
+
+
+async def test_validate_rejects_data_type_mismatch(collection, mock_client):
+    mock_client.has_collection.return_value = True
+    mock_client.describe_collection.return_value = _describe(DataType.INT64, price_type=DataType.VARCHAR)
+    with pytest.raises(ValueError, match="type"):
+        await collection.ensure_collection_exists()
+
+
+async def test_validate_rejects_vector_type_mismatch(collection, mock_client):
+    mock_client.has_collection.return_value = True
+    mock_client.describe_collection.return_value = _describe(DataType.INT64, dense_type=DataType.INT64)
+    with pytest.raises(ValueError, match="type"):
+        await collection.ensure_collection_exists()
+
+
+async def test_validate_rejects_index_kind_mismatch(mock_client):
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int", storage_name="point_key"),
+        VectorStoreField(
+            "vector",
+            name="embedding",
+            storage_name="dense",
+            dimensions=3,
+            distance_function="cosine_similarity",
+            index_kind="hnsw",
+        ),
+    ])
+    col = MilvusCollection(dict, definition=definition, collection_name="docs", client=mock_client)
+    mock_client.has_collection.return_value = True
+    mock_client.describe_collection.return_value = {
+        "fields": [
+            {"name": "point_key", "type": DataType.INT64, "is_primary": True, "params": {}},
+            {"name": "dense", "type": DataType.FLOAT_VECTOR, "params": {"dim": 3}},
+        ]
+    }
+    mock_client.describe_index.return_value = {"metric_type": "COSINE", "index_type": "FLAT"}
+    with pytest.raises(ValueError, match="index"):
+        await col.ensure_collection_exists()
+
+
+async def test_upsert_rejects_boolean_vector_element(collection):
+    with pytest.raises(TypeError, match="must contain numbers"):
+        await collection.upsert(
+            [{"id": 1, "text": "x", "number": 1.0, "flag": True, "embedding": [1.0, True, 3.0]}],
+            generate_vectors=False,
+        )
+
+
+async def test_upsert_rejects_non_finite_vector(collection):
+    with pytest.raises(ValueError, match="finite float32"):
+        await collection.upsert(
+            [{"id": 1, "text": "x", "number": 1.0, "flag": True, "embedding": [1.0, float("nan"), 3.0]}],
+            generate_vectors=False,
+        )
+
+
+async def test_search_rejects_string_vector(collection):
+    with pytest.raises(TypeError, match="dense numeric sequence"):
+        await collection.search(vector="123")
+
+
+async def test_search_rejects_non_finite_vector(collection):
+    with pytest.raises(ValueError, match="finite float32"):
+        await collection.search(vector=[1.0, float("inf"), 3.0])
+
+
 async def test_ensure_collection_deleted(collection, mock_client):
     mock_client.has_collection.return_value = True
     await collection.ensure_collection_deleted()

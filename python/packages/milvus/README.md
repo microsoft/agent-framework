@@ -30,8 +30,10 @@ definition = VectorStoreCollectionDefinition([
     VectorStoreField("vector", name="embedding", dimensions=3, distance_function="cosine_similarity"),
 ])
 
-# Connects to a Milvus server; set MILVUS_URI or pass uri=...
-# A local ".db" path uses Milvus Lite (requires the pymilvus[milvus_lite] extra).
+# Connects to a Milvus server; set the MILVUS_URI env var or pass uri=...
+# For Milvus Lite, pass a local ".db" path as the uri argument, e.g.
+# MilvusStore(uri="milvus.db") (requires the pymilvus[milvus_lite] extra). The
+# MILVUS_URI env var must be a server address, not a file path.
 async with MilvusStore(uri="http://localhost:19530") as store:
     collection = store.get_collection(dict, definition=definition, collection_name="docs")
     await collection.ensure_collection_exists()
@@ -49,7 +51,7 @@ environment variables prefixed with `MILVUS_`:
 
 | Setting    | Environment variable | Notes                                              |
 | ---------- | -------------------- | -------------------------------------------------- |
-| `uri`      | `MILVUS_URI`         | Server URI, or a local `.db` path (Milvus Lite extra). |
+| `uri`      | `MILVUS_URI`         | Server URI (e.g. `http://localhost:19530`). For Milvus Lite, pass a local `.db` path as the `uri=` argument instead — the `MILVUS_URI` env var must be a server address. |
 | `token`    | `MILVUS_TOKEN`       | Access token (API key or `user:password`).         |
 | `user`     | `MILVUS_USER`        | Username.                                          |
 | `password` | `MILVUS_PASSWORD`    | Password.                                          |
