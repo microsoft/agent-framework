@@ -1037,10 +1037,12 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
-    assert OtelAttr.TOOL_ARGUMENTS not in attributes
-    assert OtelAttr.TOOL_RESULT not in attributes
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "telemetry_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "telemetry_test_tool",
+    }
     assert expression not in attributes.values()
 
 
@@ -1085,8 +1087,12 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "telemetry_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "telemetry_test_tool",
+    }
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -1228,9 +1234,13 @@ async def test_tool_invoke_telemetry_with_exception(
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
-    assert OtelAttr.TOOL_ARGUMENTS not in attributes
-    assert OtelAttr.TOOL_RESULT not in attributes
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "exception_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "exception_test_tool",
+        OtelAttr.ERROR_TYPE: ValueError.__name__,
+    }
 
 
 async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):
@@ -1268,7 +1278,12 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "async_telemetry_test"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "async_telemetry_test",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "async_telemetry_test",
+    }
 
 
 async def test_tool_invoke_invalid_pydantic_args():
