@@ -8,7 +8,7 @@
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/demos/chatkit-integration/app.py
+#   uv run samples/05-end-to-end/chatkit-integration/app.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
