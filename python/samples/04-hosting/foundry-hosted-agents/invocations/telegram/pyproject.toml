@@ -56,3 +56,4 @@ typeCheckingMode = "basic"
 [tool.uv]
 package = false
 prerelease = "if-necessary"
+override-dependencies = ["certifi>=2026.10.19"]
