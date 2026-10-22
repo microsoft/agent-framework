@@ -139,6 +139,10 @@ class InMemoryCacheProvider:
         expiry = time.time() + ttl
         size = self._estimate_size(value)
 
+        if size > self._max_size_bytes:
+            await self.remove(key)
+            return
+
         # Remove old entry if exists
         if key in self._cache:
             old_size = self._cache[key][2]
