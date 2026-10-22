@@ -191,6 +191,9 @@ _RESTORE_IN_MEMORY_VALUE_TYPES: dict[str, Callable[[str], Any]] = {
     "UUID": UUID,
     "Decimal": Decimal,
 }
+_SERIALIZED_SCALAR_TYPE_NAMES = frozenset(_RESTORE_IN_MEMORY_VALUE_TYPES)
+_COMPARISON_OPERATORS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte"})
+_SEQUENCE_OPERAND_OPERATORS = frozenset({"between", "in", "not_in"})
 
 
 def _restore_in_memory_value(value: Any, type_tag: str | None) -> Any:
@@ -384,6 +387,7 @@ class InMemoryCollection(
         records = list(self._state.records.values())
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
+            _reject_incompatible_filter_operands(filter, self.definition)
             filtered = {item.field_name for item in _walk_filters(filter)}
             records = [
                 record
@@ -449,6 +453,7 @@ class InMemoryCollection(
         filtered: set[str] = set()
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
+            _reject_incompatible_filter_operands(filter, self.definition)
             filtered = {item.field_name for item in _walk_filters(filter)}
 
         distance_function = vector_field.distance_function or "DEFAULT"
@@ -524,6 +529,53 @@ def _validate_in_memory_filter(
         if "." in item.field_name:
             raise NotImplementedError("InMemoryCollection does not support nested filter field paths.")
         _validate_in_memory_filter_value(item.value)
+
+
+def _filter_operand_values(item: Filter) -> tuple[Any, ...]:
+    """Return the operands a filter compares against the field value."""
+    if item.operator in _COMPARISON_OPERATORS:
+        return (item.value,)
+    if item.operator in _SEQUENCE_OPERAND_OPERATORS:
+        value = item.value
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return tuple(cast(Sequence[Any], value))
+        return (value,)
+    return ()
+
+
+def _operand_matches_field_type(field_type: str, operand: Any) -> bool:
+    """Return True when the operand can be compared in the type the field declares."""
+    if operand is None:
+        return True
+    operand_type = type(operand).__name__
+    if field_type in _SERIALIZED_SCALAR_TYPE_NAMES:
+        return operand_type == field_type
+    return operand_type not in _SERIALIZED_SCALAR_TYPE_NAMES
+
+
+def _reject_incompatible_filter_operands(
+    expression: FilterExpression,
+    definition: VectorStoreCollectionDefinition,
+) -> None:
+    """Reject an operand that cannot be compared in the type the field declares.
+
+    A record is stored through the shared serializer, so the scalar types it
+    writes as text are restored before the comparison. An operand of another
+    type cannot be compared in the field's own semantics, so it is rejected
+    instead of quietly matching no record.
+    """
+    for item in _walk_filters(expression):
+        field = definition.try_get_field(item.field_name)
+        if field is None or field.type_ is None:
+            continue
+        for operand in _filter_operand_values(item):
+            if _operand_matches_field_type(field.type_, operand):
+                continue
+            raise TypeError(
+                f"InMemoryCollection cannot compare field '{item.field_name}' of type '{field.type_}' "
+                f"with a filter operand of type '{type(operand).__name__}'. The in-memory connector "
+                "compares native scalars in the type the field declares."
+            )
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)

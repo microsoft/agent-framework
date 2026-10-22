@@ -973,19 +973,15 @@ async def test_in_memory_ordered_filter_compares_a_native_scalar() -> None:
     assert [record.id for record in matched] == ["one"]
 
 
-async def test_in_memory_ordered_filter_compares_decimals_numerically() -> None:
-    """An ordered comparison on a decimal must compare numbers, not digits.
-
-    The stored form of the two values sorts the other way round as text, so a
-    comparison on the serialized form would pick the wrong record.
-    """
+async def _scalar_amount_collection() -> InMemoryCollection[str, ScalarFilterRecord]:
+    """Two records whose amounts and timestamps sort the other way round as text."""
     collection = InMemoryCollection(ScalarFilterRecord)
     await collection.ensure_collection_exists()
     await collection.upsert(
         [
             ScalarFilterRecord(
                 id="two",
-                created=datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc),
+                created=datetime(2026, 10, 16, 23, 0, tzinfo=timezone(timedelta(hours=2))),
                 day=date(2026, 10, 16),
                 token=UUID("00000000-0000-0000-0000-000000000002"),
                 amount=Decimal("2"),
@@ -1010,6 +1006,16 @@ async def test_in_memory_ordered_filter_compares_decimals_numerically() -> None:
         ],
         generate_vectors=False,
     )
+    return collection
+
+
+async def test_in_memory_ordered_filter_compares_decimals_numerically() -> None:
+    """An ordered comparison on a decimal must compare numbers, not digits.
+
+    The stored form of the two values sorts the other way round as text, so a
+    comparison on the serialized form would pick the wrong record.
+    """
+    collection = await _scalar_amount_collection()
 
     matched = await collection.get(filter=Filter("amount", "gte", Decimal("10")))
 
@@ -1023,3 +1029,118 @@ async def test_in_memory_filter_does_not_match_a_different_native_scalar() -> No
     matched = await collection.get(filter=Filter("created", "eq", datetime(2025, 1, 1, tzinfo=timezone.utc)))
 
     assert matched == []
+
+
+async def test_in_memory_filter_does_not_match_a_different_decimal() -> None:
+    """A different decimal must not match the stored one."""
+    collection = await _scalar_amount_collection()
+
+    matched = await collection.get(filter=Filter("amount", "eq", Decimal("2")))
+
+    assert [record.id for record in matched] == ["two"]
+
+
+async def test_in_memory_filter_matches_the_same_instant_written_in_another_offset() -> None:
+    """The same instant written with another UTC offset is still the same value."""
+    collection = await _scalar_filter_collection()
+    value = datetime(2026, 10, 16, 3, 0, tzinfo=timezone(timedelta(hours=2)))
+
+    matched = await collection.get(filter=Filter("created", "eq", value))
+
+    assert [record.id for record in matched] == ["one"]
+
+
+async def test_in_memory_ordered_filter_compares_timestamps_written_in_another_offset() -> None:
+    """The order of two timestamps must not depend on their UTC offsets.
+
+    The stored form of the earlier timestamp sorts after the later one as text,
+    so a comparison on the serialized form would pick the wrong record.
+    """
+    collection = await _scalar_amount_collection()
+    value = datetime(2026, 10, 16, 22, 0, tzinfo=timezone.utc)
+
+    matched = await collection.get(filter=Filter("created", "gte", value))
+
+    assert [record.id for record in matched] == ["ten"]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("created", "2026-10-16T01:00:00+00:00"),
+        ("day", datetime(2026, 10, 16)),
+        ("amount", 1.5),
+        ("span", 7200),
+        ("token", "00000000-0000-0000-0000-000000000001"),
+    ],
+)
+async def test_in_memory_filter_rejects_an_operand_of_another_type(field_name: str, value: Any) -> None:
+    """An operand that cannot be compared in the field's own type is rejected.
+
+    The operand validator accepts every one of these operands, so without a
+    rejection the filter would quietly match no record at all.
+    """
+    collection = await _scalar_filter_collection()
+
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.get(filter=Filter(field_name, "eq", value))
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("label", datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc)),
+        ("count", Decimal("5")),
+    ],
+)
+async def test_in_memory_filter_rejects_a_native_scalar_operand_for_another_field_type(
+    field_name: str,
+    value: Any,
+) -> None:
+    """A native scalar operand only fits the field that declares it."""
+    collection = await _scalar_filter_collection()
+
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.get(filter=Filter(field_name, "eq", value))
+
+
+async def test_in_memory_search_rejects_an_operand_of_another_type() -> None:
+    """The search path rejects the operands the get path rejects."""
+    collection = await _scalar_filter_collection()
+
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.search(vector=[1.0, 0.0], filter=Filter("created", "eq", "2026-10-16"), top=10)
+
+
+async def test_in_memory_filter_rejects_an_incompatible_operand_inside_a_collection() -> None:
+    """Every operand of a collection filter is checked."""
+    collection = await _scalar_filter_collection()
+    value = datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.get(filter=Filter("created", "in", (value, "2026-10-16")))
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.get(filter=Filter("created", "between", (value, "2026-10-17")))
+
+
+async def test_in_memory_filter_rejects_an_incompatible_operand_inside_a_group() -> None:
+    """Every operand of a filter group is checked."""
+    collection = await _scalar_filter_collection()
+
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.get(
+            filter=FilterGroup(
+                "and",
+                (Filter("label", "eq", "featured"), Filter("created", "eq", "2026-10-16")),
+            )
+        )
+
+
+async def test_in_memory_filter_still_matches_a_collection_of_native_scalars() -> None:
+    """A collection of operands that fit the field still matches."""
+    collection = await _scalar_filter_collection()
+    value = datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc)
+
+    matched = await collection.get(filter=Filter("created", "in", (value,)))
+
+    assert [record.id for record in matched] == ["one"]
