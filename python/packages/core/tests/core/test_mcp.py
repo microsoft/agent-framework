@@ -1280,10 +1280,10 @@ def test_parse_tool_result_from_mcp_structured_content_only():
 
 
 def test_parse_tool_result_from_mcp_structured_content_unicode_unescaped():
-    """Test that non-ASCII unicode characters in structuredContent are not escaped to \\uXXXX."""
+    """Test that non-ASCII unicode characters in structured_content are not escaped to \\uXXXX."""
     mcp_result = types.CallToolResult(
         content=[],
-        structuredContent={"columns": ["Año", "Género", "Categoría"]},
+        structured_content={"columns": ["Año", "Género", "Categoría"]},
     )
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
