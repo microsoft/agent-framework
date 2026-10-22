@@ -121,6 +121,7 @@ dependencies = [
     { name = "azure-identity" },
     { name = "azure-keyvault-secrets" },
     { name = "azure-monitor-opentelemetry" },
+    { name = "certifi" },
     { name = "httpx" },
     { name = "python-dotenv" },
 ]
@@ -143,6 +144,7 @@ requires-dist = [
     { name = "azure-identity" },
     { name = "azure-keyvault-secrets" },
     { name = "azure-monitor-opentelemetry" },
+    { name = "certifi", specifier = ">=2026.10.19" },
     { name = "httpx" },
     { name = "python-dotenv" },
 ]
