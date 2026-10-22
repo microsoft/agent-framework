@@ -1796,8 +1796,8 @@ async def test_response_format_sets_json_mime_type() -> None:
     assert config.response_mime_type == "application/json"
 
 
-async def test_response_format_pydantic_model_sets_response_schema() -> None:
-    """A Pydantic model response_format must reach Gemini as response_schema, not just JSON mode.
+async def test_response_format_pydantic_model_sets_response_json_schema() -> None:
+    """A Pydantic model response_format must reach Gemini as response_json_schema, not just JSON mode.
 
     Without the schema, the model is asked for JSON but is not constrained by it, so it can
     return arbitrary JSON that then fails to parse into the requested model - the failure mode
@@ -1818,7 +1818,7 @@ async def test_response_format_pydantic_model_sets_response_schema() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == Reply.model_json_schema()
+    assert config.response_json_schema == Reply.model_json_schema()
 
 
 async def test_response_schema_option_wins_over_pydantic_response_format() -> None:
@@ -1908,7 +1908,7 @@ async def test_response_format_raw_json_schema_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_agent_default_options_response_format_raw_schema_added_to_config() -> None:
@@ -1922,7 +1922,7 @@ async def test_agent_default_options_response_format_raw_schema_added_to_config(
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_complex_raw_json_schema_preserved() -> None:
@@ -1965,7 +1965,7 @@ async def test_response_format_complex_raw_json_schema_preserved() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_json_schema_envelope_added_to_config() -> None:
@@ -1981,7 +1981,7 @@ async def test_response_format_json_schema_envelope_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_format_envelope_added_to_config() -> None:
@@ -1997,7 +1997,7 @@ async def test_response_format_format_envelope_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_direct_schema_key_added_to_config() -> None:
@@ -2013,7 +2013,7 @@ async def test_response_format_direct_schema_key_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_json_schema_envelope_preserves_empty_schema() -> None:
@@ -2028,7 +2028,7 @@ async def test_response_format_json_schema_envelope_preserves_empty_schema() -> 
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_anyof_raw_schema_added_to_config() -> None:
@@ -2043,7 +2043,7 @@ async def test_response_format_anyof_raw_schema_added_to_config() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_union_type_raw_schema_added_to_config() -> None:
@@ -2058,7 +2058,7 @@ async def test_response_format_union_type_raw_schema_added_to_config() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_json_object_does_not_set_schema() -> None:
@@ -2125,7 +2125,7 @@ async def test_response_format_raw_schema_kept_with_tools() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
     assert config.tools is not None
     assert _first_function_declaration(config).name == "calculator"
 
@@ -2147,7 +2147,7 @@ async def test_streaming_response_format_raw_schema_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content_stream.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_streaming_response_format_mapping_populates_final_value() -> None:

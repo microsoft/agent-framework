@@ -164,6 +164,12 @@ def _connected_client(tool: MCPTool) -> Any:
     return connection.client
 
 
+def _set_framework_owned_session(tool: MCPTool, session: ClientSession) -> None:
+    """Model the pre-v2 framework-owned session fixtures used by reconnect tests."""
+    tool.session = session
+    tool._require_connection().is_framework_owned = True
+
+
 class _TransportBoundClientContext:
     """Model SDK-owned transport entry and exit without running a protocol dispatcher."""
 
@@ -2885,7 +2891,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
         async def connect(self, *, reset: bool = False) -> None:
             self.connect_count += 1
             mock_session = Mock(spec=ClientSession)
-            self.session = mock_session
+            _set_framework_owned_session(self, mock_session)
             self.sessions.append(self.session)
             if self.connect_count == 1:
                 mock_session.call_tool = AsyncMock(side_effect=MCPError(-32000, "Session terminated"))
@@ -7039,14 +7045,14 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         async def restore_session(*, reset=False):
             if reset:
                 await original_exit_stack.aclose()
-            tool.session = mock_session
+            _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
             tool._tools_loaded = True
 
         mock_connect.side_effect = restore_session
 
         # Simulate initial connection
-        tool.session = mock_session
+        _set_framework_owned_session(tool, mock_session)
         tool.is_connected = True
         tool._tools_loaded = True
 
@@ -7137,14 +7143,14 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         async def restore_session(*, reset=False):
             if reset:
                 await original_exit_stack.aclose()
-            tool.session = mock_session
+            _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
             tool._prompts_loaded = True
 
         mock_connect.side_effect = restore_session
 
         # Simulate initial connection
-        tool.session = mock_session
+        _set_framework_owned_session(tool, mock_session)
         tool.is_connected = True
         tool._prompts_loaded = True
 
@@ -7265,7 +7271,10 @@ async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> Non
     from anyio.streams.memory import ClosedResourceError
 
     tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()]))
+    _set_framework_owned_session(
+        tool,
+        Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
+    )
 
     with (
         patch.object(tool, "connect", AsyncMock()) as mock_connect,
@@ -7282,7 +7291,10 @@ async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> No
     from anyio.streams.memory import ClosedResourceError
 
     tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = Mock(get_prompt=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()]))
+    _set_framework_owned_session(
+        tool,
+        Mock(get_prompt=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
+    )
 
     with (
         patch.object(tool, "connect", AsyncMock()) as mock_connect,
@@ -8527,6 +8539,172 @@ async def test_mcp_tool_reset_preserves_supplied_client() -> None:
         assert client.session is session
 
 
+def _caller_owned_mcp_tool(connection_type: str) -> tuple[MCPStdioTool, Any]:
+    protocol_version = "2026-07-28" if connection_type == "modern_client" else "2025-11-25"
+    client = _mock_sdk_client(protocol_version=protocol_version)
+    session = client.session
+
+    if connection_type != "session":
+        return (
+            MCPStdioTool(
+                name="test",
+                command="unused",
+                mcp_client=client,
+                load_tools=True,
+                load_prompts=True,
+            ),
+            client,
+        )
+
+    return (
+        MCPStdioTool(
+            name="test",
+            command="unused",
+            session=session,
+            load_tools=True,
+            load_prompts=True,
+        ),
+        session,
+    )
+
+
+@pytest.mark.parametrize("connection_type", ["legacy_client", "modern_client", "session"])
+@pytest.mark.parametrize(
+    ("operation_name", "load_method", "capability_attribute"),
+    [
+        ("list_tools", "load_tools", "_supports_tools"),
+        ("list_prompts", "load_prompts", "_supports_prompts"),
+    ],
+)
+async def test_caller_owned_connection_loss_during_discovery_does_not_reconnect(
+    connection_type: str,
+    operation_name: str,
+    load_method: str,
+    capability_attribute: str,
+) -> None:
+    from anyio import ClosedResourceError
+
+    tool, connection = _caller_owned_mcp_tool(connection_type)
+    operation = AsyncMock(side_effect=ClosedResourceError())
+    setattr(connection, operation_name, operation)
+    setattr(tool, capability_attribute, True)
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as reconnect,
+        pytest.raises(ToolExecutionException, match=r"caller-owned and cannot be recreated"),
+    ):
+        await getattr(tool, load_method)()
+
+    operation.assert_awaited_once()
+    reconnect.assert_not_awaited()
+
+
+@pytest.mark.parametrize("connection_type", ["client", "session"])
+async def test_caller_owned_connection_loss_during_liveness_check_does_not_reconnect(
+    connection_type: str,
+) -> None:
+    from anyio import ClosedResourceError
+
+    tool, connection = _caller_owned_mcp_tool("legacy_client" if connection_type == "client" else connection_type)
+    connection.send_ping = AsyncMock(side_effect=ClosedResourceError())
+    tool._ping_available = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as reconnect,
+        pytest.raises(ToolExecutionException, match=r"caller-owned and cannot be recreated"),
+    ):
+        await tool._ensure_connected()
+
+    connection.send_ping.assert_awaited_once()
+    reconnect.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", [MCPError(-32000, "server busy"), RuntimeError("temporary failure")])
+async def test_ambiguous_caller_owned_liveness_failure_does_not_require_replacement(
+    failure: Exception,
+) -> None:
+    tool, connection = _caller_owned_mcp_tool("legacy_client")
+    connection.send_ping = AsyncMock(side_effect=failure)
+    tool._ping_available = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as reconnect,
+        pytest.raises(ToolExecutionException, match=r"liveness check failed"),
+    ):
+        await tool._ensure_connected()
+
+    connection.send_ping.assert_awaited_once()
+    reconnect.assert_not_awaited()
+
+
+async def test_modern_caller_owned_liveness_check_does_not_ping() -> None:
+    tool, connection = _caller_owned_mcp_tool("modern_client")
+    connection.send_ping = AsyncMock()
+
+    await tool._ensure_connected()
+
+    connection.send_ping.assert_not_awaited()
+
+
+@pytest.mark.parametrize("connection_type", ["legacy_client", "modern_client", "session"])
+async def test_caller_owned_connection_loss_during_tool_call_does_not_reconnect(
+    connection_type: str,
+) -> None:
+    from anyio import ClosedResourceError
+
+    tool, connection = _caller_owned_mcp_tool(connection_type)
+    connection.call_tool = AsyncMock(side_effect=ClosedResourceError())
+
+    with (
+        patch.object(tool, "connect", new_callable=AsyncMock) as reconnect,
+        pytest.raises(ToolExecutionException, match=r"caller-owned and cannot be recreated"),
+    ):
+        await tool.call_tool("mutating_tool")
+
+    connection.call_tool.assert_awaited_once()
+    reconnect.assert_not_awaited()
+
+
+@pytest.mark.parametrize("connection_type", ["legacy_client", "modern_client", "session"])
+async def test_caller_owned_connection_loss_during_prompt_call_does_not_reconnect(
+    connection_type: str,
+) -> None:
+    from anyio import ClosedResourceError
+
+    tool, connection = _caller_owned_mcp_tool(connection_type)
+    connection.get_prompt = AsyncMock(side_effect=ClosedResourceError())
+
+    with (
+        patch.object(tool, "connect", new_callable=AsyncMock) as reconnect,
+        pytest.raises(ToolExecutionException, match=r"caller-owned and cannot be recreated"),
+    ):
+        await tool.get_prompt("test_prompt")
+
+    connection.get_prompt.assert_awaited_once()
+    reconnect.assert_not_awaited()
+
+
+async def test_framework_owned_discovery_reconnects_before_connect_and_after_close() -> None:
+    tool = MCPTool(name="test", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tools_session = Mock(spec=ClientSession)
+    tools_session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    prompts_session = Mock(spec=ClientSession)
+    prompts_session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+    replacement_sessions = iter([tools_session, prompts_session])
+
+    async def reconnect() -> None:
+        _set_framework_owned_session(tool, next(replacement_sessions))
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_tools()
+        await tool.close()
+        await tool.load_prompts()
+
+    assert mock_reconnect.await_count == 2
+    tools_session.list_tools.assert_awaited_once()
+    prompts_session.list_prompts.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_version"),
     [
@@ -8754,7 +8932,7 @@ async def test_ensure_connected_skips_future_pings_when_ping_is_not_available() 
 
 async def test_ensure_connected_reconnects_on_failed_ping() -> None:
     tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))
+    _set_framework_owned_session(tool, Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed"))))
 
     with patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_reconnect:
         await tool._ensure_connected()
@@ -8764,11 +8942,11 @@ async def test_ensure_connected_reconnects_on_failed_ping() -> None:
 
 async def test_ensure_connected_wraps_reconnect_failure() -> None:
     tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))
+    _set_framework_owned_session(tool, Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed"))))
 
     with (
         patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=RuntimeError("still closed"))),
-        pytest.raises(ToolExecutionException, match="Failed to establish MCP connection"),
+        pytest.raises(ToolExecutionException, match="Failed to reconnect to MCP server"),
     ):
         await tool._ensure_connected()
 
@@ -8781,7 +8959,7 @@ async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable
 
     first_session = Mock()
     first_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
-    tool.session = first_session
+    _set_framework_owned_session(tool, first_session)
 
     page = Mock()
     page.tools = []
@@ -8810,7 +8988,7 @@ async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailab
 
     first_session = Mock()
     first_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
-    tool.session = first_session
+    _set_framework_owned_session(tool, first_session)
 
     page = Mock()
     page.prompts = []

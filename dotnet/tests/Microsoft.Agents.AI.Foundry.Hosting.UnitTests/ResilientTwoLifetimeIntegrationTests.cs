@@ -596,6 +596,15 @@ public sealed class ResilientTwoLifetimeIntegrationTests
                 agent,
                 key,
                 cancellationToken);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            inner.DeleteSessionAsync(
+                agent,
+                key,
+                cancellationToken);
     }
 
     private sealed class RecoveryCoordinator
