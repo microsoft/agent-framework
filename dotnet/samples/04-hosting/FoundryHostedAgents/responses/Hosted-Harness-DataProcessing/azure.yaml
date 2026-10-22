@@ -1,0 +1,30 @@
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: hosted-harness-data-processing
+services:
+    ai-project:
+        host: azure.ai.project
+    hosted-harness-data-processing:
+        project: .
+        host: azure.ai.agent
+        language: csharp
+        uses:
+            - ai-project
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: HostedHarnessDataProcessing.dll
+            runtime: dotnet_10
+        env:
+            ASPNETCORE_URLS: http://+:8088
+            AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        description: |
+            A data-processing harness that reads sales data and writes reports with explicit approval.
+        kind: hosted
+        name: hosted-harness-data-processing
+        protocols:
+            - protocol: responses
+              version: 2.0.0

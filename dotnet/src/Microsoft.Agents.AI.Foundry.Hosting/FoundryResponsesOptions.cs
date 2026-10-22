@@ -29,6 +29,10 @@ public sealed class FoundryResponsesOptions
     /// setting exactly as the container configured it, in which case hosting neither changes it nor
     /// checks it.
     /// </para>
+    /// <para>
+    /// A local conversation marker used by the framework to persist chat history in the agent
+    /// session does not count as service-stored output and does not require this option.
+    /// </para>
     /// </remarks>
     /// <value>
     /// Default is <see langword="false"/>.
