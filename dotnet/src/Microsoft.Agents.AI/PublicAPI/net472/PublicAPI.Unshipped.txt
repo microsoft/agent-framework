@@ -24,3 +24,12 @@ Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeSetTool.set -> void
 [MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
 [MAAI001]Microsoft.Agents.AI.FunctionInvocationContextExtensions
 [MAAI001]static Microsoft.Agents.AI.FunctionInvocationContextExtensions.WrapWithPendingMiddleware(this Microsoft.Extensions.AI.FunctionInvocationContext! context, Microsoft.Extensions.AI.AIFunction! function) -> Microsoft.Extensions.AI.AIFunction!
+[MAAI001]Microsoft.Agents.AI.LoopExitReason
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.AdditionalPropertiesKey = "loop_exit_reason" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.TokenBudgetExceeded = "token_budget_exceeded" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.TimeBudgetExceeded = "time_budget_exceeded" -> string!
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxTokens.get -> long?
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxTokens.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxDuration.get -> System.TimeSpan?
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxDuration.set -> void
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.IterationCapReached = "iteration_cap_reached" -> string!
