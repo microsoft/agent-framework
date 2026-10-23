@@ -22,7 +22,9 @@ from agent_framework.exceptions import (
 from pydantic import BaseModel
 from typesafe_sdk import (
     AsyncTypeSafeClient,
+    Box,
     Choice,
+    Image,
     Noul,
     Questions,
     SystemOneResponse,
@@ -396,7 +398,163 @@ async def test_non_text_content_is_rejected() -> None:
     client = make_client()
     message = Message("user", [Content.from_uri("https://example.com/image.png", media_type="image/png")])
 
-    with pytest.raises(ChatClientInvalidRequestException, match="only supports text, reasoning summaries"):
+    with pytest.raises(ChatClientInvalidRequestException, match="only supports text, inline images"):
+        await client.get_response([message], options={"response_format": questions()})
+
+
+_PNG_1X1 = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\x0bIDATx\x9cc`\x00\x02\x00\x00\x05\x00\x01z^\xab?\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def test_png_fixture_is_a_decodable_image() -> None:
+    import struct
+    import zlib
+
+    assert _PNG_1X1.startswith(b"\x89PNG\r\n\x1a\n")
+    offset = 8
+    chunk_types: list[bytes] = []
+    while offset < len(_PNG_1X1):
+        (length,) = struct.unpack(">I", _PNG_1X1[offset : offset + 4])
+        chunk_type = _PNG_1X1[offset + 4 : offset + 8]
+        data = _PNG_1X1[offset + 8 : offset + 8 + length]
+        (crc,) = struct.unpack(">I", _PNG_1X1[offset + 8 + length : offset + 12 + length])
+        assert zlib.crc32(chunk_type + data) & 0xFFFFFFFF == crc
+        if chunk_type == b"IDAT":
+            assert zlib.decompress(data) == b"\x00\x00\x00\x00\x00"
+        chunk_types.append(chunk_type)
+        offset += 12 + length
+    assert offset == len(_PNG_1X1)
+    assert chunk_types == [b"IHDR", b"IDAT", b"IEND"]
+
+
+async def test_inline_image_content_is_sent_as_image_asset_with_opt_in_header() -> None:
+    stub = StubTypeSafeClient()
+    client = make_client(stub)
+    message = Message(
+        "user",
+        ["Is the form signed?", Content.from_data(data=_PNG_1X1, media_type="image/png")],
+    )
+
+    await client.get_response([message], options={"response_format": questions()})
+
+    contents = stub.calls[0]["state"]["messages"][0]["contents"]
+    assert contents[0] == {"type": "text", "text": "Is the form signed?"}
+    assert contents[1]["type"] == "image"
+    assert isinstance(contents[1]["image"], Image)
+    assert stub.calls[0]["extra_headers"] == {"TypeSafe-Danger-Zone-Images": "true"}
+
+
+@pytest.mark.parametrize(
+    ("box_question", "with_image"),
+    [
+        (Box(instructions="the signature"), False),
+        ({"type": "box", "instructions": "the signature"}, False),
+        (Box(instructions="the signature"), True),
+        ({"type": "box", "instructions": "the signature"}, True),
+    ],
+    ids=["sdk-object-text-only", "mapping-text-only", "sdk-object-with-image", "mapping-with-image"],
+)
+async def test_box_question_alone_triggers_opt_in_header(box_question: Any, with_image: bool) -> None:
+    stub = StubTypeSafeClient(
+        response=make_response({
+            "signature": {
+                "type": "box",
+                "box": {"top": 0.1, "bottom": 0.2, "left": 0.3, "right": 0.4},
+                "confidence": 0.5,
+            }
+        })
+    )
+    client = make_client(stub)
+    contents: list[Any] = ["Locate the signature."]
+    if with_image:
+        contents.append(Content.from_data(data=_PNG_1X1, media_type="image/png"))
+
+    await client.get_response(
+        [Message("user", contents)],
+        options={"response_format": {"signature": box_question}},
+    )
+
+    assert stub.calls[0]["extra_headers"] == {"TypeSafe-Danger-Zone-Images": "true"}
+
+
+async def test_box_question_sends_opt_in_header_and_returns_box_answer() -> None:
+    stub = StubTypeSafeClient(
+        response=make_response({
+            "signature": {
+                "type": "box",
+                "box": {"top": 0.7, "bottom": 0.9, "left": 0.5, "right": 0.95},
+                "confidence": 0.88,
+            }
+        })
+    )
+    client = make_client(stub, model="jev-1.14.0")
+    message = Message("user", [Content.from_data(data=_PNG_1X1, media_type="image/png")])
+
+    response = await client.get_response(
+        [message],
+        options={"response_format": {"signature": Box(instructions="the signature on the form")}},
+    )
+
+    assert stub.calls[0]["extra_headers"] == {"TypeSafe-Danger-Zone-Images": "true"}
+    assert isinstance(response.value, SystemOneResponse)
+    answer = response.value.answers["signature"]
+    assert answer.type == "box"
+    assert answer.box.right == pytest.approx(0.95)
+
+
+async def test_text_only_requests_do_not_send_images_header() -> None:
+    stub = StubTypeSafeClient()
+    client = make_client(stub)
+
+    await client.get_response([Message("user", ["hello"])], options={"response_format": questions()})
+
+    assert stub.calls[0]["extra_headers"] is None
+
+
+async def test_owned_client_sends_images_header_and_image_part() -> None:
+    received: list[tuple[dict[str, str], bytes]] = []
+    body = make_response().model_dump_json().encode()
+
+    async def handle_request(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readline()
+        headers: dict[str, str] = {}
+        while (line := await reader.readline()) not in (b"\r\n", b""):
+            name, _, value = line.decode("latin-1").partition(":")
+            headers[name.strip().lower()] = value.strip()
+        payload = await reader.readexactly(int(headers.get("content-length", "0")))
+        received.append((headers, payload))
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nx-typesafe-request-id: request-123\r\n"
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle_request, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    async with (
+        server,
+        TypeSafeChatClient(api_key="configured-api-key", base_url=f"http://127.0.0.1:{port}") as client,
+    ):
+        await client.get_response(
+            [Message("user", ["Is the form signed?", Content.from_data(data=_PNG_1X1, media_type="image/png")])],
+            options={"response_format": questions()},
+        )
+
+    headers, payload = received[0]
+    assert headers.get("typesafe-danger-zone-images") == "true"
+    assert _PNG_1X1 in payload
+
+
+async def test_remote_image_uri_is_rejected() -> None:
+    client = make_client()
+    message = Message("user", [Content.from_uri("https://example.com/image.png", media_type="image/png")])
+
+    with pytest.raises(ChatClientInvalidRequestException, match="inline images"):
         await client.get_response([message], options={"response_format": questions()})
 
 
@@ -559,6 +717,7 @@ async def test_request_and_response_mapping() -> None:
             "questions": questions(),
             "model": "jev-preview",
             "response_model": SystemOneResponse,
+            "extra_headers": None,
         }
     ]
     assert response.response_id == "request-123"

@@ -74,12 +74,45 @@ honored.
 
 | Option | Description |
 | --- | --- |
-| `response_format` | Required non-empty TypeSafe `Questions` mapping containing `Noul`, `Choice`, or `Score` questions. |
+| `response_format` | Required non-empty TypeSafe `Questions` mapping containing `Noul`, `Choice`, `Score`, or `Box` questions. |
 | `model` | Optional per-call model override. |
 | `instructions` | Agent instructions included in the structured state sent to TypeSafe. |
 
-Streaming, non-text message content, and generative settings such as `temperature`
-are rejected.
+Streaming, non-text message content other than inline images, and generative
+settings such as `temperature` are rejected.
+
+## Images and Box questions (experimental)
+
+Jev 1.14 adds image inputs and the `Box` question type, which locates one target
+in an image and returns its bounding box. TypeSafe marks both as experimental
+("Danger Zone") features that are not yet recommended for production. See
+[Images](https://docs.typesafe.ai/go/images) and
+[Box](https://docs.typesafe.ai/go/box).
+
+Pass images as inline data content. The connector sends them as TypeSafe image
+assets and adds the required `TypeSafe-Danger-Zone-Images: true` header to any
+request that contains an image or a `Box` question. Remote image URLs are
+rejected; download the image and pass its bytes instead.
+
+```python
+from agent_framework import Content, Message
+from typesafe_sdk import Box, Noul
+
+response = await client.get_response(
+    [Message("user", ["The scanned form:", Content.from_data(data=png_bytes, media_type="image/png")])],
+    options={
+        "model": "jev-1.14.0",
+        "response_format": {
+            "signed": Noul(instructions="Is the form signed?"),
+            "signature": Box(instructions="the signature on the form"),
+        },
+    },
+)
+signature = response.value.answers["signature"]  # BoxAnswer with top/bottom/left/right fractions
+```
+
+A `Box` answer always contains a box, even when the target is absent. Pair it
+with a `Noul` question, as above, and ignore the box when that answer is low.
 
 `TypeSafeChatClient` is the recommended client and layers function invocation,
 middleware, and telemetry over `RawTypeSafeChatClient`. Use the raw client only
