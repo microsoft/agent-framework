@@ -81,7 +81,7 @@ Open your browser to: http://localhost:4318
 #### Step 3: Run the Console Application
 
 ```powershell
-cd dotnet/demos/AgentOpenTelemetry
+cd dotnet/samples/02-agents/AgentOpenTelemetry
 $env:OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 dotnet run
 ```
