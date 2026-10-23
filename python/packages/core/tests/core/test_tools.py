@@ -893,6 +893,25 @@ async def test_method_tool_owner_without_weakref_support(has_dict: bool) -> None
         await bound_tool.invoke(skip_parsing=True)
 
 
+@pytest.mark.parametrize("existing_value", [None, {}, {"application_state": "keep"}, "keep"])
+def test_method_tool_cache_preserves_existing_owner_attribute(existing_value: Any) -> None:
+    class Tools:
+        def __init__(self) -> None:
+            self._agent_framework_bound_tools = existing_value
+
+        @tool
+        def ping(self) -> str:
+            return "pong"
+
+    owner = Tools()
+
+    with pytest.raises(ValueError, match="_agent_framework_bound_tools"):
+        owner.ping()
+
+    assert owner._agent_framework_bound_tools is existing_value
+    assert vars(owner) == {"_agent_framework_bound_tools": existing_value}
+
+
 def test_method_tool_cache_releases_owner() -> None:
     owner = _PickleableToolOwner()
     owner_ref = weakref.ref(owner)

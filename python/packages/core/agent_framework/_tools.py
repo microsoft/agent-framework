@@ -842,6 +842,10 @@ class FunctionTool(SerializationMixin):
 
         Returns:
             A FunctionTool with the instance bound to the wrapped function.
+
+        Raises:
+            ValueError: If the instance already stores a non-cache value in
+                ``_agent_framework_bound_tools``.
         """
         if obj is None:
             # Accessed from the class, not an instance
@@ -855,6 +859,11 @@ class FunctionTool(SerializationMixin):
                 instance_dict: dict[str, Any] | None = getattr(obj, "__dict__", None)
                 if isinstance(instance_dict, dict):
                     cache = instance_dict.get("_agent_framework_bound_tools")
+                    if "_agent_framework_bound_tools" in instance_dict and not isinstance(cache, _BoundToolCache):
+                        raise ValueError(
+                            "Cannot cache bound tools: '_agent_framework_bound_tools' is already in use. "
+                            "Rename the existing instance attribute to use method tools."
+                        )
                     # A shallow-copied owner must not reuse the original owner's bindings.
                     if not isinstance(cache, _BoundToolCache) or cache.owner is not obj:
                         cache = instance_dict["_agent_framework_bound_tools"] = _BoundToolCache(obj)
