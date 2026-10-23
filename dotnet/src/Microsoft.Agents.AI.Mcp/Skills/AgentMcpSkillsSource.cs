@@ -87,7 +87,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
     private readonly TimeProvider _timeProvider;
-    private readonly McpSkillsCache _cache;
+    private readonly McpSkillsLoader _skillsLoader;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
@@ -114,7 +114,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
-        this._cache = new McpSkillsCache(this._timeProvider, this.DiscoverCoreAsync);
+        this._skillsLoader = new McpSkillsLoader(this._timeProvider, this.DiscoverCoreAsync);
     }
 
     /// <inheritdoc/>
@@ -132,7 +132,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return [];
         }
 
-        IList<AgentSkill> skills = await this._cache.GetOrCreateAsync(cancellationToken).ConfigureAwait(false);
+        IList<AgentSkill> skills = await this._skillsLoader.GetOrCreateAsync(cancellationToken).ConfigureAwait(false);
 
         LogSkillsLoadedTotal(this._logger, skills.Count);
 
@@ -144,7 +144,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     {
         if (disposing)
         {
-            this._cache.Dispose();
+            this._skillsLoader.Dispose();
         }
 
         base.Dispose(disposing);

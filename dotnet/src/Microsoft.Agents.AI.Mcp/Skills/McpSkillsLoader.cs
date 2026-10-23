@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Caches MCP-listed skills until any page's TTL expires.
 /// </summary>
-internal sealed class McpSkillsCache : IDisposable
+internal sealed class McpSkillsLoader : IDisposable
 {
     private readonly TimeProvider _timeProvider;
     private readonly Func<CancellationToken, Task<McpSkillsSnapshot>> _discoverSkills;
@@ -24,7 +24,7 @@ internal sealed class McpSkillsCache : IDisposable
     /// </summary>
     /// <param name="timeProvider">The clock for checking page freshness.</param>
     /// <param name="discoverSkills">Discovers and validates all pages, including their receipt timestamps and TTLs.</param>
-    public McpSkillsCache(TimeProvider timeProvider, Func<CancellationToken, Task<McpSkillsSnapshot>> discoverSkills)
+    public McpSkillsLoader(TimeProvider timeProvider, Func<CancellationToken, Task<McpSkillsSnapshot>> discoverSkills)
     {
         this._timeProvider = Throw.IfNull(timeProvider);
         this._discoverSkills = Throw.IfNull(discoverSkills);
