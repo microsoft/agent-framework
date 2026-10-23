@@ -26,13 +26,12 @@ remain stable. `store=False` is one-shot and cannot expose a resumable pause.
 Run locally from this directory with the current workspace:
 
 ```bash
-export PYTHONNOUSERSITE=1
 uv run --no-sync python main.py
 # or:
 uv run --no-sync python approval.py
 ```
 
-For other shells and deployment settings, see the
+For deployment environment settings, see the
 [Python startup configuration](../../README.md#python-startup-configuration).
 
 Example typed request:

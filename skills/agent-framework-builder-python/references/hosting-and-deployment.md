@@ -37,10 +37,9 @@ the deployment package.
 
 For Python Foundry hosted agents, configure `PYTHONNOUSERSITE=1` in the
 deployment environment before Python starts, and in the Dockerfile for images
-also launched without that deployment definition. Set it in the launching
-shell for local runs; setting it inside application code or a `.env` file
-loaded by Python is too late for startup. Install dependencies in a virtual
-environment or image system site-packages, not with `pip install --user`.
+also launched without that deployment definition. Setting it inside application
+code or a `.env` file loaded by Python is too late for startup. Install dependencies
+in a virtual environment or image system site-packages, not with `pip install --user`.
 This customer-configured setting disables Python user-site loading, not all
 code execution or other language runtimes. Redeploy a new agent version to
 apply it to existing deployments. See the

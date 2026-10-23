@@ -5,6 +5,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 > [IMPORTANT] Migrating from Protocol version 1.0.0 to 2.0.0: Foundry Hosting Agents service has been updated to use Protocol version 2.0.0. If your application is using Protocol version 1.0.0, please upgrade to Protocol version 2.0.0 in your `agent.manifest.yaml` or `agent.yaml` and upgrade to the latest `agent-framework-foundry-hosting` package. `agent-framework-foundry-hosting==1.0.0a260625` is the last version that supports Protocol version 1.0.0.
 >
 > The `agent-framework-foundry-hosting` Python API surface is intended to remain stable, but protocol 1.0.0 and 2.0.0 are incompatible.
+
 ## Python startup configuration
 
 The deployment YAML files in these samples explicitly configure
@@ -24,25 +25,9 @@ Install dependencies in a virtual environment or the container image's
 system site-packages, not with `pip install --user`. The samples' `pip` and
 `uv` installation paths do not require user-site packages.
 
-For **all local entry points and their restarts**, set the variable in the
-launching shell before running Python, `uv run`, or `azd ai agent run`:
-
-```bash
-# bash/zsh
-export PYTHONNOUSERSITE=1
-```
-
-```powershell
-$env:PYTHONNOUSERSITE = "1"
-```
-
-```cmd
-set PYTHONNOUSERSITE=1
-```
-
-Repeat this setup in each new terminal. Setting `os.environ` or loading a
-`.env` file from application code is too late for Python startup. Local shell
-configuration does not replace the remote deployment's environment variables.
+Keep this setting in the deployment environment or Python Dockerfile, rather
+than adding it to individual run commands. Setting `os.environ` or loading a
+`.env` file from application code is too late for Python startup.
 
 ## Samples
 
@@ -178,7 +163,6 @@ This will create the following Azure resources:
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 export FOUNDRY_MODEL="<your-model-deployment-name>"
-export PYTHONNOUSERSITE=1
 # And any other environment variables required by the sample
 ```
 
@@ -187,7 +171,6 @@ Or in PowerShell:
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 $env:FOUNDRY_MODEL="<your-model-deployment-name>"
-$env:PYTHONNOUSERSITE="1"
 # And any other environment variables required by the sample
 ```
 
@@ -275,9 +258,6 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses/bas
    ```
 
 #### Running the Agent Host
-
-First apply the [shell startup configuration](#python-startup-configuration)
-in the current terminal, including when using `uv run` instead of `python`:
 
 ```bash
 python main.py
