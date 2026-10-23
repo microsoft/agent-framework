@@ -130,10 +130,9 @@ class ToolApprovalRule(SerializationMixin):
             server_label: Optional hosted-tool server boundary. Hosted approvals
                 only match future approvals from the same server label.
         """
-        normalized_name = tool_name.strip()
-        if not normalized_name:
+        if not tool_name.strip():
             raise ValueError("Tool approval rule tool_name must be a non-empty string.")
-        self.tool_name = normalized_name
+        self.tool_name = tool_name
         self.arguments = dict(arguments) if arguments is not None else None
         self.server_label = server_label
 
