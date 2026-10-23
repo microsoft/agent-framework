@@ -29,5 +29,9 @@ internal sealed class ConfigureAGUIJsonOptions : IConfigureOptions<JsonOptions>
         // Agent Framework abstractions follow so that M.E.AI types are handled via its resolver.
         chain.Insert(0, AGUIJsonUtilities.DefaultTypeInfoResolver);
         chain.Insert(1, AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+
+        // AG-UI interrupt request/response content is polymorphic AIContent that M.E.AI does not know
+        // about, so it must be registered explicitly or ChatMessage round-trips drop it.
+        AGUIJsonUtilities.RegisterInterruptContentTypes(options.SerializerOptions);
     }
 }
