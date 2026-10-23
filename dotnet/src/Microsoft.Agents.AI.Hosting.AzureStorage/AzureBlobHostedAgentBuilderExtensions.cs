@@ -4,6 +4,7 @@ using System;
 using Azure.Storage.Blobs;
 using Microsoft.Agents.AI.Hosting.AzureStorage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
@@ -77,7 +78,11 @@ public static class AzureBlobHostedAgentBuilderExtensions
             {
                 BlobContainerClient containerClient =
                     Throw.IfNull(createBlobContainerClient(serviceProvider, agentName));
-                return new AzureBlobAgentSessionStore(containerClient, agentName, options);
+                return new AzureBlobAgentSessionStore(
+                    containerClient,
+                    agentName,
+                    options,
+                    serviceProvider.GetService<ILoggerFactory>());
             },
             lifetime,
             withIsolation);
