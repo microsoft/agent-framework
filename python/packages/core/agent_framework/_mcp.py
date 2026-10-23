@@ -193,6 +193,7 @@ _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_IS_TOOL_KEY = "_mcp_is_tool"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = "_mcp_tool_result_host_payload"
+_MCP_TOOL_RESULT_SECURITY_META_KEY = "_mcp_tool_result_security_meta"
 _MCP_PROGRESSIVE_LIST_TOOL_NAME = "list_mcp_tools"
 _MCP_PROGRESSIVE_LOAD_TOOL_NAME = "load_tool"
 _MCP_PROGRESSIVE_UNLOAD_TOOL_NAME = "unload_tool"
@@ -239,6 +240,7 @@ MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY = 0.1
 _MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
+_MAX_MCP_SECURITY_META_SIZE_BYTES = 4096
 
 
 @dataclass
@@ -250,8 +252,45 @@ class _MCPHostPayloadCapture:
     apply_server_meta_to_model_items: bool
     host_payload: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
+    security_meta: dict[str, Any] | None = None
     recorded: bool = False
     meta_prepared: bool = False
+    security_meta_prepared: bool = False
+
+    def prepare_security_meta(self, mcp_type: Any) -> dict[str, Any] | None:
+        """Retain security-relevant MCP metadata outside generic payload budgets."""
+        if self.security_meta_prepared:
+            return self.security_meta
+        self.security_meta_prepared = True
+
+        raw_meta = getattr(mcp_type, "meta", None)
+        if not isinstance(raw_meta, Mapping) or "ifc" not in raw_meta:
+            return None
+
+        raw_meta_mapping = cast(Mapping[str, Any], raw_meta)
+        raw_security_meta: dict[str, Any] = {"ifc": raw_meta_mapping["ifc"]}
+        if _json_size_exceeds(raw_security_meta, _MAX_MCP_SECURITY_META_SIZE_BYTES):
+            logger.warning("MCP result _meta.ifc exceeds the independent security metadata limit.")
+            self.security_meta = {"retained": False}
+            return self.security_meta
+
+        try:
+            copied = cast(
+                dict[str, Any],
+                to_jsonable_python(raw_security_meta, fallback=str),
+            )
+        except (TypeError, ValueError):
+            logger.warning("MCP result _meta.ifc could not be retained safely.")
+            self.security_meta = {"retained": False}
+            return self.security_meta
+
+        if len(json.dumps(copied).encode("utf-8")) > _MAX_MCP_SECURITY_META_SIZE_BYTES:
+            logger.warning("MCP result _meta.ifc exceeds the independent security metadata limit.")
+            self.security_meta = {"retained": False}
+            return self.security_meta
+
+        self.security_meta = {"retained": True, "meta": copied}
+        return self.security_meta
 
     def prepare_meta(self, mcp_type: Any) -> dict[str, Any] | None:
         if self.meta_prepared:
@@ -281,6 +320,7 @@ class _MCPHostPayloadCapture:
         if self.recorded:
             return
         self.recorded = True
+        self.prepare_security_meta(mcp_type)
         self.prepare_meta(mcp_type)
 
         effective_limit = self.max_size_bytes
@@ -314,7 +354,7 @@ class _MCPHostPayloadCapture:
             additional_properties=additional_properties,
             item_additional_properties=item_additional_properties,
             exclusive_outer_keys=frozenset({_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY}),
-            exclusive_item_keys=frozenset({"_meta"}),
+            exclusive_item_keys=frozenset({"_meta", _MCP_TOOL_RESULT_SECURITY_META_KEY}),
             result_already_parsed=True,
         )
 
@@ -326,8 +366,11 @@ class _MCPHostPayloadCapture:
             updated_item.additional_properties = dict(updated_item.additional_properties)
             updated_item.additional_properties.pop(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY, None)
             updated_item.additional_properties.pop("_meta", None)
+            updated_item.additional_properties.pop(_MCP_TOOL_RESULT_SECURITY_META_KEY, None)
             if self.apply_server_meta_to_model_items and self.meta is not None:
                 updated_item.additional_properties["_meta"] = self.meta
+            if self.security_meta is not None:
+                updated_item.additional_properties[_MCP_TOOL_RESULT_SECURITY_META_KEY] = self.security_meta
             items[index] = updated_item
         return items
 
@@ -1342,6 +1385,7 @@ class MCPTool:
 
         capture = _mcp_host_payload_capture.get()
         if capture is not None:
+            capture.prepare_security_meta(mcp_type)
             meta = capture.prepare_meta(mcp_type)
         else:
             raw_meta = mcp_type.meta
