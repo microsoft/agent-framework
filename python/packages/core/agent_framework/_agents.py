@@ -1732,6 +1732,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 providers=per_service_call_history_providers,
                 service_stores_history=service_stores_history,
             )
+        if per_service_call_history_middleware is not None:
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                per_service_call_history_middleware,
+            ]
+
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             # Providers may only contribute chat/function middleware (enforced by
@@ -1750,15 +1759,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     *_as_middleware_list(existing_middleware),
                     *provider_function_chat_middleware,
                 ]
-
-        if per_service_call_history_middleware is not None:
-            existing_middleware = cast(
-                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
-            )
-            effective_client_kwargs["middleware"] = [
-                *_as_middleware_list(existing_middleware),
-                per_service_call_history_middleware,
-            ]
 
         return {
             "session": active_session,
