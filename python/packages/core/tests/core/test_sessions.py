@@ -673,7 +673,9 @@ class TestHistoryProviderBase:
                 contents=[
                     Content.from_code_interpreter_tool_call(
                         call_id="ci_123",
+                        # Final snapshot: authoritative full value.
                         inputs=[Content.from_text(text="import pandas as pd")],
+                        merge_mode="replace",
                         additional_properties={"sequence_number": 3},
                     )
                 ],

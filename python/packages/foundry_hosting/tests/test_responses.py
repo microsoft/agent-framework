@@ -60,6 +60,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions, OpenAIContinuationToken
 from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
@@ -79,8 +80,7 @@ from azure.ai.agentserver.responses.models import (
     ResponseObject,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
-from mcp.types import ErrorData
+from mcp import MCPError
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
@@ -116,6 +116,7 @@ from agent_framework_foundry_hosting._state_store import (
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
+_SESSION_STORAGE_ERROR_DETAIL = "session-storage-secret at C:\\sensitive\\session_store.py"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -148,7 +149,12 @@ def _make_function_approval_request_content(
 ) -> Content:
     """Build a function_approval_request Content with an embedded function_call."""
     function_call = Content.from_function_call(
-        call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
+        call_id,
+        name,
+        arguments=arguments,
+        hosted=True,
+        server_name=server_label,
+        additional_properties={"server_label": server_label},
     )
     return Content.from_function_approval_request(request_id, function_call)
 
@@ -563,7 +569,7 @@ class _FailingSessionStore(SessionStore):
     async def set(self, session_id: str, session: AgentSession) -> None:
         del session_id, session
         self.set_attempts += 1
-        raise OSError("session storage is full")
+        raise OSError(_SESSION_STORAGE_ERROR_DETAIL)
 
 
 class _ConflictingConversationStore(SessionStore):
@@ -675,7 +681,10 @@ async def test_item_to_message_marks_refusal_text() -> None:
 
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot help."
-    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert message.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 class _CapturingASGITransport:
@@ -1755,6 +1764,31 @@ class TestAgentSessionPersistence:
         assert "host-controlled" in response.json()["error"]["message"]
         agent.run.assert_not_called()
 
+    async def test_prepare_options_failure_is_sanitized(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        private_error_detail = "prepare-options-secret at C:\\sensitive\\prepare_options.py"
+
+        def prepare_options(_request: Any, _options: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError(private_error_detail)
+
+        agent = _make_agent()
+        server = _make_server(agent, prepare_options=prepare_options)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            response = await _post_json(server, {"input": "one shot", "store": False})
+
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in response.text
+        assert private_error_detail not in caplog.text
+        assert "phase=request preparation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        agent.run.assert_not_called()
+
     async def test_nested_extra_body_cannot_override_unstored_openai_request(self) -> None:
         outbound: list[dict[str, Any]] = []
 
@@ -2786,7 +2820,7 @@ class TestAgentSessionPersistence:
         assert "private-provider-token" not in str(events)
         assert "private-provider-token" not in caplog.text
         for record in caplog.records:
-            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info is not None:
+            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info:
                 exception = record.exc_info[1]
                 assert exception is not None and exception.__cause__ is None and exception.__context__ is None
 
@@ -2964,7 +2998,7 @@ class TestAgentSessionPersistence:
             failed = await collect("failed-dispatch")
             blocked = await collect("retry-after-failure")
 
-        assert "provider timed out" in _failure_message(failed)
+        assert _failure_message(failed) == "An internal server error occurred."
         assert "in-flight turn" in _failure_message(blocked)
         agent.run.assert_called_once()
         head = await store.get(conversation_id)
@@ -3184,7 +3218,10 @@ class TestAgentSessionPersistence:
             response = await _post(server, input_text="first")
 
         assert response.json()["status"] == "failed"
-        assert "stored this turn server-side" in caplog.text
+        assert "stored this turn server-side" not in caplog.text
+        assert "phase=stored output validation" in caplog.text
+        assert f"response_id={response.json()['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
         assert await store.get(response.json()["id"]) is None
 
     async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
@@ -3324,9 +3361,11 @@ class TestAgentSessionPersistence:
         assert event_types.count("response.failed") == 1
         assert "response.completed" not in event_types
         error = failed_events[0]["data"]["response"]["error"]
-        assert "agent failed" in error["message"]
-        assert "session storage is full" in error["message"]
-        assert "Failed to produce response for agent" in caplog.text
+        assert error["message"] == "An internal server error occurred."
+        assert "agent failed" not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in caplog.text
+        assert "phase=agent execution" in caplog.text
         assert "Failed to persist the Agent Framework session after an agent failure" in caplog.text
 
     async def test_cancellation_is_preserved_when_best_effort_save_fails(
@@ -3646,6 +3685,7 @@ class TestHealthCheck:
 # region Non-streaming
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestNonStreaming:
     """
     Non-streaming here means that the client requested a non-streaming response, instead of
@@ -4447,6 +4487,55 @@ class TestStreaming:
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
 
+    async def test_text_snapshot_emits_only_missing_delta(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello ", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello ", "world"]
+        assert done["data"]["text"] == "Hello world"
+
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_divergent_or_shrinking_text_snapshot_fails_stream(self, replacement: str) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text(replacement, merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello world"]
+        assert done["data"]["text"] == "Hello world"
+        assert events[-1]["event"] == "response.failed"
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+
     async def test_container_file_citation_is_consistent_across_stream_events(self) -> None:
         resp = await _post(
             _make_server(_make_agent(stream_updates=_container_file_citation_updates())),
@@ -5067,6 +5156,9 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5347,6 +5439,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
@@ -5362,6 +5455,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -5381,6 +5475,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -5474,6 +5569,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         item = cast(
@@ -5540,6 +5636,7 @@ class TestOutputItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
@@ -5569,6 +5666,8 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "oauth_consent_request"
         assert msg.contents[0].consent_link == "https://example.com/consent"
+        assert msg.contents[0].additional_properties["openai"]["server_label"] == "my_server"
+        assert msg.contents[0].additional_properties["server_label"] == "my_server"
 
     async def test_structured_outputs_dict(self) -> None:
         from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
@@ -5685,6 +5784,9 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
         assert msg.contents[0].arguments == '{"city": "NYC"}'
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5977,6 +6079,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
@@ -5995,6 +6098,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -6015,6 +6119,7 @@ class TestItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -6095,6 +6200,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
@@ -6182,6 +6288,7 @@ class TestItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
@@ -6266,6 +6373,7 @@ def _make_multi_response_agent(
     return agent
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestMultiTurnMixedContent:
     """End-to-end multi-turn tests with mixed text and non-text content types."""
 
@@ -7239,6 +7347,7 @@ class TestFunctionApprovalConversion:
         assert c.approved is False
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestFunctionApprovalRoundTrip:
     """End-to-end round-trip tests for the function approval flow.
 
@@ -7493,12 +7602,12 @@ def _make_consent_error(
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
     Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
-    which catches connection-time ``McpError``s and re-raises them as a
+    which catches connection-time ``MCPError``s and re-raises them as a
     ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
     original error attached via ``inner_exception``. ``consent_url_from_error``
-    then finds the wrapped ``McpError`` in ``exc.args``.
+    then finds the wrapped ``MCPError`` in ``exc.args``.
 
-    The McpError message uses the structured Foundry MCP gateway format:
+    The MCPError message uses the structured Foundry MCP gateway format:
     a human-readable prefix followed by a JSON document describing each
     failed tool source and its consent URL.
     """
@@ -7517,7 +7626,7 @@ def _make_consent_error(
         ]
     })
     message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
+    inner = MCPError(CONSENT_ERROR_CODE, message)
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
@@ -7540,21 +7649,21 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(Exception("boom")) is None
 
     def test_returns_none_when_mcp_error_has_different_code(self) -> None:
-        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        inner = MCPError(-32000, "some other error")
         exc = Exception("wrapped", inner)
         assert consent_url_from_error(exc) is None
 
     def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
-        # `args` of a bare McpError holds the message string, not an McpError
+        # `args` of a bare MCPError holds the message string, not an MCPError
         # instance, so it does not match the wrapping pattern produced by the
         # MCP client when it bubbles consent errors up.
-        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        bare = MCPError(CONSENT_ERROR_CODE, "https://x")
         assert consent_url_from_error(bare) is None
 
     def test_returns_none_when_message_has_no_json(self) -> None:
         from agent_framework.exceptions import ToolExecutionException
 
-        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        inner = MCPError(CONSENT_ERROR_CODE, "no json here")
         exc = ToolExecutionException("MCP consent required", inner_exception=inner)
         assert consent_url_from_error(exc) is None
 
@@ -7689,6 +7798,7 @@ class TestAgentLifecycle:
         assert agent.__aenter__.await_count == 2
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestOAuthConsentSurfacing:
     async def test_explicit_none_origin_allowlist_accepts_any_safe_https_consent(self) -> None:
         agent = _make_agent(
@@ -7730,7 +7840,11 @@ class TestOAuthConsentSurfacing:
 
         assert body["status"] == "failed"
         assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
-        assert "must include an allowed safe HTTPS consent link" in caplog.text
+        assert "must include an allowed safe HTTPS consent link" in body["error"]["message"]
+        assert "must include an allowed safe HTTPS consent link" not in caplog.text
+        assert "phase=OAuth consent validation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=ValueError" in caplog.text
         agent.run.assert_not_called()
 
     async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
@@ -7878,7 +7992,7 @@ class TestOAuthConsentSurfacing:
 
         duplicate = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
         assert [event async for event in tracker.handle(duplicate)] == []
 
@@ -7917,7 +8031,7 @@ class TestOAuthConsentSurfacing:
     async def test_streaming_mid_run_consent_is_emitted_once_and_can_be_retried(self) -> None:
         consent = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
 
         async def consent_updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -8169,13 +8283,12 @@ class TestIncompleteFinishReasonSurfacing:
 
 class TestResponseFailedSurfacing:
     """Tests that exceptions raised by the hosted agent are converted into
-    terminal ``response.failed`` events carrying the exception message,
-    rather than propagating as 5xx HTTP errors or being replaced by the
-    orchestrator's generic ``"An internal server error occurred."``
-    fallback.
+    terminal ``response.failed`` events carrying a stable public message,
+    rather than propagating as 5xx HTTP errors or exposing exception details.
     """
 
     async def test_non_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "non-stream-secret at C:\\sensitive\\non_stream.py"
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
@@ -8183,7 +8296,7 @@ class TestResponseFailedSurfacing:
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("non-stream kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -8196,12 +8309,15 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "non-stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "stream-secret at C:\\sensitive\\stream.py"
+
         async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
-            raise RuntimeError("stream kaboom")
+            raise RuntimeError(private_error_detail)
 
         agent = _RawAgentMock()
         agent.id = "test-agent"
@@ -8240,7 +8356,9 @@ class TestResponseFailedSurfacing:
         assert len(failed) == 1
         response_payload: dict[str, Any] = failed[0]["data"].get("response") or {}
         error: dict[str, Any] = response_payload.get("error") or {}
-        assert error.get("message") == "stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert response_payload["id"] == events[0]["data"]["response"]["id"]
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_drains_pending_output_item(self) -> None:
         """If a streaming output item was open when the failure happens, the
@@ -8333,11 +8451,12 @@ class TestResponseFailedSurfacing:
         agent path.
         """
         workflow_agent = _build_text_workflow_agent("ignored")
+        private_error_detail = "workflow-secret at C:\\sensitive\\workflow.py"
 
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("workflow kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -8352,7 +8471,52 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "workflow kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+
+    @pytest.mark.parametrize("sensitive_data", [False, True])
+    async def test_failure_diagnostics_respect_sensitive_data(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        sensitive_data: bool,
+    ) -> None:
+        private_error_detail = "foundry-diagnostic-secret at C:\\sensitive\\foundry.py"
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_sensitive_data", sensitive_data)
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("unused")])])
+        )
+
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(
+                _raising_updates(private_error_detail),
+                finalizer=AgentResponse.from_updates,
+            )
+
+        agent.run = MagicMock(side_effect=run_failure)
+        server = _make_server(agent)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            resp = await _post(server, input_text="hello", stream=True)
+
+        body = _parse_sse_events(resp.text)[-1]["data"]["response"]
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "phase=response production" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        assert (private_error_detail in caplog.text) is sensitive_data
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "agent_framework_foundry_hosting._responses"
+            and "phase=response production" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert bool(records[0].exc_info) is sensitive_data
 
 
 # endregion

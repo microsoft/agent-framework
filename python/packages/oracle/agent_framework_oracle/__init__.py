@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Oracle Database 23ai native-vector collections and stores."""
+"""Oracle AI Database 26ai native-vector collections and stores."""
 
 from __future__ import annotations
 

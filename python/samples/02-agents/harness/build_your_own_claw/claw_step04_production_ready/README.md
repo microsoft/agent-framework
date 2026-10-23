@@ -51,7 +51,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 > likely reason a Toolbox skill fails to load, and the failure actively misleads you: connecting to
 > the toolbox and **discovering** skills both succeed (`skill://index.json` is toolbox metadata, which
 > needs no role), so the skill is advertised to the model exactly as expected. Only the first
-> `load_skill` fails — with `McpError('Failed to read resource.')` — because reading a skill's *body*
+> `load_skill` fails — with `MCPError('Failed to read resource.')` — because reading a skill's *body*
 > dereferences the project-level skill resource, which does require the role. The toolbox answers
 > with a bare JSON-RPC `-32603` and no `data`, so nothing in the error names the cause.
 >

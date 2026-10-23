@@ -48,10 +48,12 @@ from agent_framework import (
     Workflow,
     WorkflowAgent,
     add_usage_details,
+    get_namespaced_value,
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
@@ -97,7 +99,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
+from mcp import MCPError
 from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
@@ -141,9 +143,53 @@ _HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
 _HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
 _PENDING_CONTAINER_FILE_CITATIONS_KEY = "_foundry_pending_container_file_citations"
 _CONTAINER_FILE_CITATIONS_KEY = "container_file_citations"
+_PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 
 _HistorySource = Literal["agent_server", "agent", "service"]
 _AGENT_SOURCE_UNSET = object()
+
+
+class _PublicResponseFailure(Exception):
+    """Mark a vetted failure message as safe for client-visible serialization."""
+
+    def __init__(self, error: Exception, public_message: str | None = None) -> None:
+        super().__init__(public_message or str(error) or type(error).__name__)
+        self.error = error
+        self.public_message = public_message or str(error) or type(error).__name__
+
+
+async def _set_agent_session(store: SessionStore, session_id: str, session: AgentSession) -> None:
+    """Persist a session while preserving the established public conflict contract."""
+    try:
+        await store.set(session_id, session)
+    except RuntimeError as exc:
+        if str(exc) == "Another request advanced this agent session; reload before writing.":
+            raise _PublicResponseFailure(exc) from None
+        raise
+
+
+def _log_response_failure(phase: str, response_id: str, exc: BaseException) -> None:
+    """Log a correlated hosted response failure under the sensitive-data policy."""
+    diagnostic_exception = exc.error if isinstance(exc, _PublicResponseFailure) else exc
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        logger.error(
+            "Hosted Responses failure (phase=%s, response_id=%s, error_type=%s).",
+            phase,
+            response_id,
+            type(diagnostic_exception).__name__,
+            exc_info=(
+                type(diagnostic_exception),
+                diagnostic_exception,
+                diagnostic_exception.__traceback__,
+            ),
+        )
+    else:
+        logger.error(
+            "Hosted Responses failure (phase=%s, response_id=%s, error_type=%s).",
+            phase,
+            response_id,
+            type(diagnostic_exception).__name__,
+        )
 
 
 @dataclass(frozen=True)
@@ -227,7 +273,33 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
 
 
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
+
+
+def _refusal_additional_properties() -> dict[str, Any]:
+    return {
+        "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        _MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL,
+    }
+
+
+def _openai_value(content: Content, key: str, *legacy_keys: str, default: Any = None) -> Any:
+    value = get_namespaced_value(content.additional_properties, "openai", key, None)
+    if value is not None:
+        return value
+    for legacy_key in legacy_keys:
+        if legacy_key in content.additional_properties:
+            return content.additional_properties[legacy_key]
+    return default
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -241,7 +313,7 @@ def _validate_checkpoint_context_id(context_id: str) -> None:
         or os.path.isabs(context_id)
         or os.path.splitdrive(context_id)[0]
     ):
-        raise RuntimeError(f"Invalid context id: {context_id!r}")
+        raise _PublicResponseFailure(RuntimeError(f"Invalid context id: {context_id!r}"))
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -258,10 +330,12 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
 
 def _reject_busy_conversation(session: AgentSession) -> None:
     if session.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is not None:
-        raise RuntimeError(
-            "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
-            "if it failed or was cancelled after dispatch, start a new conversation rather than "
-            "reusing a possibly changed provider thread."
+        raise _PublicResponseFailure(
+            RuntimeError(
+                "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
+                "if it failed or was cancelled after dispatch, start a new conversation rather than "
+                "reusing a possibly changed provider thread."
+            )
         )
 
 
@@ -574,8 +648,8 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     Returns:
         The consent URL(s) extracted from the error, or ``None`` if no consent error was found.
     """
-    inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
-    if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
+    inner_exception = next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
+    if inner_exception is not None and inner_exception.code == CONSENT_ERROR_CODE:
         # Parse the error message
         # The error message is structured with the following format:
         # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
@@ -1061,15 +1135,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         terminal_event: ResponseStreamEvent | None = None
         try:
-            scope = FoundryRequestScope.from_context(
-                self.config, get_request_context(), local_session_id=context.response_id
-            )
+            try:
+                scope = FoundryRequestScope.from_context(
+                    self.config, get_request_context(), local_session_id=context.response_id
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise _PublicResponseFailure(exc) from None
             if self._agent_source is None:
                 raise RuntimeError("The hosted agent source is not configured.")
             agent = await resolve_agent(self._agent_source)
-            configuration = self._configuration or _validate_agent_configuration(
-                agent, self._history_source, self._host_options, background_source=self._background_source
-            )
+            try:
+                configuration = self._configuration or _validate_agent_configuration(
+                    agent, self._history_source, self._host_options, background_source=self._background_source
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise _PublicResponseFailure(exc) from None
             if self._configuration is None:
                 _initialize_agent_history(agent, configuration)
             if configuration.workflow:
@@ -1077,14 +1157,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             hosted_request: HostedResponseRequest | None = None
             if configuration.workflow:
                 if self._prepare_options is not None:
-                    raise ValueError("prepare_options is only supported for regular agents.")
+                    raise _PublicResponseFailure(ValueError("prepare_options is only supported for regular agents."))
             else:
-                hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
+                try:
+                    hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
                 await prepare_response_options(hosted_request, self._prepare_options)
-                validate_request_options(hosted_request.options)
+                try:
+                    validate_request_options(hosted_request.options)
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
         except Exception as exc:
-            logger.error("Failed to prepare hosted Responses request", exc_info=(type(exc), exc, exc.__traceback__))
-            for event in self._emit_failure(response_event_stream, None, exc):
+            for event in self._emit_failure(
+                context.response_id,
+                "request preparation",
+                response_event_stream,
+                None,
+                exc,
+            ):
                 yield event
             return
 
@@ -1138,8 +1229,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         except AgentFrameworkException as ex:
             consent_errors_to_emit = consent_url_from_error(ex)
             if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
-                logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
-                for event in self._emit_failure(response_event_stream, None, ex):
+                for event in self._emit_failure(
+                    context.response_id,
+                    "agent initialization",
+                    response_event_stream,
+                    None,
+                    ex,
+                ):
                     yield event
                 return
 
@@ -1158,14 +1254,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     f"OAuth consent request for tool '{invalid_consent.name}' must include an allowed safe HTTPS "
                     "consent link."
                 )
-                logger.error("%s", validation_error)
-                for event in self._emit_failure(response_event_stream, None, validation_error):
+                for event in self._emit_failure(
+                    context.response_id,
+                    "OAuth consent validation",
+                    response_event_stream,
+                    None,
+                    _PublicResponseFailure(validation_error),
+                ):
                     yield event
                 return
 
             if request.get("store") is False:
+                validation_error = ValueError("OAuth consent continuation requires store=true.")
                 for event in self._emit_failure(
-                    response_event_stream, None, ValueError("OAuth consent continuation requires store=true.")
+                    context.response_id,
+                    "OAuth consent validation",
+                    response_event_stream,
+                    None,
+                    _PublicResponseFailure(validation_error),
                 ):
                     yield event
                 return
@@ -1181,9 +1287,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     session = await session_storage.get(session_load_id) if session_load_id is not None else None
                     if session is None:
                         if previous_response_id is not None and context.conversation_id is None:
-                            raise RuntimeError(
-                                "Cannot find an existing agent session for "
-                                f"previous_response_id={previous_response_id}."
+                            raise _PublicResponseFailure(
+                                RuntimeError(
+                                    "Cannot find an existing agent session for "
+                                    f"previous_response_id={previous_response_id}."
+                                )
                             )
                         session = agent.create_session()
                     if context.conversation_id is not None:
@@ -1192,19 +1300,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if session.service_session_id is not None and session.state.get(
                             _HOSTED_SOURCE_CONVERSATION_KEY
                         ):
-                            raise ValueError("A service-managed downstream conversation cannot be forked.")
+                            raise _PublicResponseFailure(
+                                ValueError("A service-managed downstream conversation cannot be forked.")
+                            )
                         session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
-                    await session_storage.set(context.response_id, session)
+                    await _set_agent_session(session_storage, context.response_id, session)
                     if context.conversation_id is not None:
-                        await session_storage.set(context.conversation_id, session)
+                        await _set_agent_session(session_storage, context.conversation_id, session)
                 except Exception as save_error:
-                    logger.error(
-                        "Failed to persist the Agent Framework session for OAuth consent",
-                        exc_info=(type(save_error), save_error, save_error.__traceback__),
-                    )
-                    for event in self._emit_failure(response_event_stream, None, save_error):
+                    for event in self._emit_failure(
+                        context.response_id,
+                        "OAuth consent session persistence",
+                        response_event_stream,
+                        None,
+                        save_error,
+                    ):
                         yield event
                     return
 
@@ -1287,11 +1399,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
-            logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
             for event in tracker.close():
                 yield event
 
-            for event in self._emit_failure(response_event_stream, tracker, ex):
+            for event in self._emit_failure(
+                context.response_id,
+                "response production",
+                response_event_stream,
+                tracker,
+                ex,
+            ):
                 yield event
 
     async def _load_request_messages(
@@ -1370,15 +1487,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         conversation_already_committed = False
         try:
             if isinstance(agent, RawAgent):
-                validate_default_transport_options(
-                    agent.default_options,
-                    allow_agent_store=self._history_source == "agent" and stored,
-                )
+                try:
+                    validate_default_transport_options(
+                        agent.default_options,
+                        allow_agent_store=self._history_source == "agent" and stored,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
             if not stored:
                 if not isinstance(agent, RawAgent):
-                    raise RuntimeError(
-                        "store=false cannot guarantee that a custom agent will disable inner storage; "
-                        "use a RawAgent or store=true."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "store=false cannot guarantee that a custom agent will disable inner storage; "
+                            "use a RawAgent or store=true."
+                        )
                     )
                 continuation_defaults = [
                     name
@@ -1402,9 +1524,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     and (provider.store_inputs or provider.store_context_messages or provider.store_outputs)
                     for provider in agent.context_providers
                 ):
-                    raise RuntimeError(
-                        "store=false cannot prevent an external HistoryProvider from persisting responses. "
-                        "Use an InMemoryHistoryProvider or store=true."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "store=false cannot prevent an external HistoryProvider from persisting responses. "
+                            "Use an InMemoryHistoryProvider or store=true."
+                        )
                     )
                 if self._history_source == "agent":
                     stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
@@ -1460,10 +1584,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             if session is None:
                 if context.is_recovery and provider_background:
-                    raise RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                    raise _PublicResponseFailure(
+                        RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                    )
                 if stored and previous_response_id is not None and context.conversation_id is None:
-                    raise RuntimeError(
-                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                        )
                     )
                 session = agent.create_session()
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
@@ -1482,16 +1610,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     if not conversation_already_committed and (
                         head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != context.response_id
                     ):
-                        raise RuntimeError(
-                            "Cannot recover provider background: the service-backed conversation claim "
-                            "is no longer held by this response."
+                        raise _PublicResponseFailure(
+                            RuntimeError(
+                                "Cannot recover provider background: the service-backed conversation claim "
+                                "is no longer held by this response."
+                            )
                         )
                 else:
                     _reject_busy_conversation(session)
             if not stored and self._history_source == "agent" and session.service_session_id is not None:
-                raise ValueError(
-                    "store=false cannot continue agent-managed downstream service history; "
-                    "start a new one-shot request or use store=true."
+                raise _PublicResponseFailure(
+                    ValueError(
+                        "store=false cannot continue agent-managed downstream service history; "
+                        "start a new one-shot request or use store=true."
+                    )
                 )
             if (
                 not context.is_recovery
@@ -1501,17 +1633,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     or cast(Mapping[str, Any], provider_state).get("completed") is not True
                 )
             ):
-                raise ValueError("A provider background response must complete before the next turn.")
+                raise _PublicResponseFailure(
+                    ValueError("A provider background response must complete before the next turn.")
+                )
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
-                    raise ValueError("A service-managed downstream conversation cannot be forked.")
+                    raise _PublicResponseFailure(
+                        ValueError("A service-managed downstream conversation cannot be forked.")
+                    )
                 if (
                     stored
                     and self._history_source in ("service", "agent")
                     and session.service_session_id is not None
                     and session.state.get(_HOSTED_SERVICE_CHILD_KEY)
                 ):
-                    raise ValueError("A service-managed downstream response cannot be forked.")
+                    raise _PublicResponseFailure(ValueError("A service-managed downstream response cannot be forked."))
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -1521,7 +1657,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 with suppress(BaseException):
                     await request_messages_task
             if isinstance(ex, Exception):
-                logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
+                _log_response_failure("state storage preparation", context.response_id, ex)
             raise
 
         request_failure: Exception | None = None
@@ -1569,7 +1705,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 run_kwargs["options"] = chat_options
             elif are_options_set:
                 if self._unsupported_options == "error":
-                    raise TypeError("The hosted agent does not accept caller runtime options.")
+                    raise _PublicResponseFailure(TypeError("The hosted agent does not accept caller runtime options."))
                 if self._unsupported_options == "warn":
                     logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
@@ -1579,7 +1715,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         raise RuntimeError("Service history requires agent session storage.")
                     session.state[_HOSTED_SERVICE_CHILD_KEY] = context.response_id
                     try:
-                        await session_storage.set(previous_response_id, session)
+                        await _set_agent_session(session_storage, previous_response_id, session)
                     finally:
                         session.state.pop(_HOSTED_SERVICE_CHILD_KEY, None)
                 session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
@@ -1600,7 +1736,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # mutate its linear thread; a losing turn never reaches agent.run().
                 session.state[_HOSTED_CONVERSATION_CLAIM_KEY] = context.response_id
                 try:
-                    await session_storage.set(context.conversation_id, session)
+                    await _set_agent_session(session_storage, context.conversation_id, session)
                 finally:
                     session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
 
@@ -1662,10 +1798,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise
         except Exception as ex:
             request_failure = ex
-            logger.error(
-                "Failed to produce response for agent",
-                exc_info=(type(ex), ex, ex.__traceback__),
-            )
+            _log_response_failure("agent execution", context.response_id, ex)
         finally:
             if configuration.hosted_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
@@ -1682,9 +1815,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "The agent's chat client stored this turn server-side despite store=False for the inner model. "
                     "Configure the client to honor store=False, or use history_source='service' with store=true."
                 )
-                logger.error("%s", misconfigured)
+                _log_response_failure("stored output validation", context.response_id, misconfigured)
                 if request_failure is None and not request_interrupted:
-                    request_failure = misconfigured
+                    request_failure = _PublicResponseFailure(misconfigured)
             if (
                 self._history_source == "service"
                 and stored
@@ -1717,7 +1850,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if stored and session_storage is not None and not stored_output_violation and final_provider_state:
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
-                    await session_storage.set(context.response_id, session)
+                    await _set_agent_session(session_storage, context.response_id, session)
                     if (
                         context.conversation_id is not None
                         and not conversation_already_committed
@@ -1732,7 +1865,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if provider_background:
                             session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
                         session.state[_HOSTED_CONVERSATION_COMMITTED_KEY] = context.response_id
-                        await session_storage.set(context.conversation_id, session)
+                        await _set_agent_session(session_storage, context.conversation_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1741,7 +1874,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     message = "Failed to persist the Agent Framework session after an agent failure"
                 else:
                     message = "Failed to persist the Agent Framework session after a successful request"
-                logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+                _log_response_failure(message, context.response_id, save_error)
 
         if request_failure is not None and save_failure is not None:
             raise RuntimeError(
@@ -1781,8 +1914,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     await context.exit_for_recovery()
                 if has_token:
                     raise RuntimeError("Provider background recovery requires resilient_background=True.")
-                raise RuntimeError(
-                    "Provider background submission stopped before its token was saved; cannot safely retry it."
+                raise _PublicResponseFailure(
+                    RuntimeError(
+                        "Provider background submission stopped before its token was saved; cannot safely retry it."
+                    )
                 )
             if cancellation_signal.is_set():
                 raise RuntimeError("Provider background was interrupted without a client cancellation.")
@@ -1849,10 +1984,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if context.is_recovery:
             saved = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if not isinstance(saved, Mapping):
-                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                raise _PublicResponseFailure(
+                    RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                )
             saved_payload = cast(Mapping[str, Any], saved)
             if saved_payload.get("outer_response_id") != context.response_id:
-                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                raise _PublicResponseFailure(
+                    RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                )
             token = saved_payload.get("continuation_token")
             if not isinstance(token, Mapping):
                 raise RuntimeError("The stored provider continuation token is invalid.")
@@ -2061,8 +2200,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
                 if latest_checkpoint is None and previous_response_id is not None:
                     # A previous_response_id must have a prior workflow checkpoint to resume from
-                    raise RuntimeError(
-                        f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "Cannot find an existing workflow checkpoint for "
+                            f"previous_response_id={previous_response_id}."
+                        )
                     )
 
                 if latest_checkpoint is not None:
@@ -2160,8 +2302,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # recovery after this point does not replay the last superstep.
                 for event in snapshot_response(await latest_checkpoint_id()):
                     yield event
-        except Exception:
-            logger.exception("Failed to produce response for workflow agent")
+        except Exception as exc:
+            _log_response_failure("workflow execution", context.response_id, exc)
             raise
 
     async def _resume_workflow_from_checkpoint(
@@ -2196,26 +2338,36 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
     @staticmethod
     def _emit_failure(
+        response_id: str,
+        phase: str,
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker | None,
         ex: BaseException,
+        *,
+        public_message: str | None = None,
     ) -> Generator[ResponseStreamEvent]:
-        """Yield a terminal ``response.failed`` event for ``ex``.
+        """Log ``ex`` and yield a terminal ``response.failed`` event.
 
         Drains any in-progress streaming output item first so the resulting
-        SSE stream stays well-formed, then emits ``response.failed`` carrying
-        the exception's message (falling back to the exception type name when
-        ``str(ex)`` is empty). Any error raised while draining the tracker is
-        logged and otherwise ignored so that the original failure is always
-        what the client sees.
+        SSE stream stays well-formed, then emits ``response.failed`` carrying a
+        stable public message unless the caller explicitly supplies a safe
+        validation message. Any error raised while draining the tracker is
+        logged and otherwise ignored so that the original failure remains the
+        terminal failure.
         """
+        _log_response_failure(phase, response_id, ex)
         if tracker is not None:
             try:
                 yield from tracker.close()
-            except Exception:
-                logger.exception("Error while closing streaming tracker after failure")
+            except Exception as close_error:
+                _log_response_failure("failed tracker cleanup", response_id, close_error)
             tracker.discard_pending_container_file_citations()
-        message = str(ex) or type(ex).__name__
+        if public_message is not None:
+            message = public_message
+        elif isinstance(ex, _PublicResponseFailure):
+            message = ex.public_message
+        else:
+            message = _PUBLIC_STREAM_FAILURE_MESSAGE
         yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
 
@@ -2380,6 +2532,23 @@ class _OutputItemTracker:
             return
         self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
 
+    def _consume_text_update(self, text: str, merge_mode: Literal["append", "replace"] | None) -> str:
+        """Update the authoritative text buffer and return the wire delta still needed."""
+        if merge_mode != "replace":
+            self._accumulated.append(text)
+            return text
+
+        previous = "".join(self._accumulated)
+        if text.startswith(previous):
+            self._accumulated[:] = [text]
+            return text[len(previous) :]
+        if not previous:
+            self._accumulated[:] = [text]
+            return text
+        raise _PublicResponseFailure(
+            RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
+        )
+
     async def handle_update(
         self,
         update: AgentResponseUpdate,
@@ -2418,17 +2587,17 @@ class _OutputItemTracker:
             for event in self._ensure_message_content("refusal", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._refusal_content is not None:
-                yield self._refusal_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(delta)
 
         elif content.type == "text" and content.text is not None:
             for event in self._ensure_message_content("text", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._text_content is not None:
-                yield self._text_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._text_content is not None:
+                yield self._text_content.emit_delta(delta)
 
         elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
@@ -2439,9 +2608,9 @@ class _OutputItemTracker:
             if encrypted_content := _reasoning_encrypted_content(content):
                 self._reasoning_encrypted_content = encrypted_content
             if content.text:
-                self._accumulated.append(content.text)
-                if self._summary_part is not None:
-                    yield self._summary_part.emit_text_delta(content.text)
+                delta = self._consume_text_update(content.text, content.merge_mode)
+                if delta and self._summary_part is not None:
+                    yield self._summary_part.emit_text_delta(delta)
 
         elif content.type == "function_call" and content.call_id is not None:
             # Declaration-only calls replay request metadata after the streamed call. Scope suppression to the
@@ -2606,7 +2775,7 @@ class _OutputItemTracker:
                 pending_safety_checks=cast(list[ComputerCallSafetyCheckParam], content.pending_safety_checks or []),
                 status=status,
             )
-            if content.additional_properties.get("computer_action_format") == "single":
+            if _openai_value(content, "computer_action_format", "computer_action_format") == "single":
                 if len(content.actions) != 1:
                     raise ValueError("A preview computer call requires exactly one action.")
                 item.pop("actions")
@@ -2617,7 +2786,7 @@ class _OutputItemTracker:
 
         elif content.type == "computer_tool_result":
             if not content.call_id or content.screenshot is None:
-                raise ValueError("A computer result requires a call_id and screenshot.")
+                raise _PublicResponseFailure(ValueError("A computer result requires a call_id and screenshot."))
             for event in self._close():
                 yield event
             if content.id and IdGenerator.is_valid(content.id)[0]:
@@ -2648,7 +2817,7 @@ class _OutputItemTracker:
             for event in self._close():
                 yield event
             function_call: Content = content.function_call  # type: ignore
-            server_label = function_call.additional_properties.get("server_label", "agent_framework")
+            server_label = function_call.server_name or "agent_framework"
             request_saved = False
             async for event in self._stream.output_item_mcp_approval_request(
                 server_label,
@@ -2683,7 +2852,12 @@ class _OutputItemTracker:
             if not _is_allowed_oauth_consent_link(consent_link, self._allowed_oauth_consent_origins):
                 raise ValueError("OAuth consent request content must include an allowed safe HTTPS consent link.")
 
-            server_label = content.additional_properties.get("server_label")
+            server_label = get_namespaced_value(
+                content.additional_properties,
+                "openai",
+                "server_label",
+                content.additional_properties.get("server_label"),
+            )
             if not isinstance(server_label, str) or not server_label:
                 server_label = getattr(content.raw_representation, "server_label", None)
             if not isinstance(server_label, str) or not server_label:
@@ -3051,13 +3225,24 @@ def _computer_screenshot_from_output(output: Mapping[str, Any]) -> Content:
         raise ValueError("Computer call output must contain a computer screenshot.")
     image_url = output.get("image_url")
     file_id = output.get("file_id")
-    additional_properties: dict[str, Any] = {}
+    openai_properties: dict[str, Any] = {}
+    legacy_properties: dict[str, Any] = {}
     if detail := output.get("detail"):
-        additional_properties["detail"] = detail
+        openai_properties["image_detail"] = detail
+        legacy_properties["detail"] = detail
+    additional_properties = {
+        "openai": openai_properties,
+        **legacy_properties,
+    }
     if isinstance(image_url, str) and image_url:
-        if file_id is not None:
-            additional_properties["file_id"] = file_id
-        return Content.from_uri(image_url, additional_properties=additional_properties)
+        return Content.from_uri(
+            image_url,
+            file_id=file_id if isinstance(file_id, str) else None,
+            additional_properties={
+                **additional_properties,
+                **({"file_id": file_id} if isinstance(file_id, str) else {}),
+            },
+        )
     if isinstance(file_id, str) and file_id:
         return Content.from_hosted_file(file_id, additional_properties=additional_properties)
     raise ValueError("Computer screenshot is missing its image URL or file ID.")
@@ -3067,13 +3252,13 @@ def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
     output: dict[str, Any] = {"type": "computer_screenshot"}
     if screenshot.type in ("data", "uri") and screenshot.uri:
         output["image_url"] = screenshot.uri
-        if file_id := screenshot.additional_properties.get("file_id"):
+        if file_id := screenshot.file_id or screenshot.additional_properties.get("file_id"):
             output["file_id"] = file_id
     elif screenshot.type == "hosted_file" and screenshot.file_id:
         output["file_id"] = screenshot.file_id
     else:
         raise ValueError("A computer screenshot requires image data, a URI, or a hosted file.")
-    if detail := screenshot.additional_properties.get("detail"):
+    if detail := _openai_value(screenshot, "image_detail", "detail"):
         output["detail"] = detail
     return output
 
@@ -3118,6 +3303,14 @@ async def _item_to_message(
         return Message(role=item["role"], contents=[_convert_output_message_content(part) for part in item["content"]])
 
     if item["type"] == "function_call":
+        item_data = cast("Mapping[str, Any]", item)
+        item_id = item_data.get("id")
+        status = item_data.get("status")
+        additional_properties: dict[str, Any] = {}
+        if isinstance(item_id, str):
+            additional_properties.update({"openai": {"item_id": item_id}, "fc_id": item_id})
+        if status is not None:
+            additional_properties["status"] = status
         return Message(
             role="assistant",
             contents=[
@@ -3125,6 +3318,8 @@ async def _item_to_message(
                     item["call_id"],
                     item["name"],
                     arguments=item["arguments"],
+                    status=status if isinstance(status, str) else None,
+                    additional_properties=additional_properties,
                 )
             ],
         )
@@ -3133,9 +3328,25 @@ async def _item_to_message(
         call_id = item.get("call_id")
         if call_id is None:
             raise ValueError("Function call output item is missing a call_id.")
+        item_id = item.get("id")
+        result_additional_properties = (
+            {
+                "openai": {"item_id": item_id},
+                "item_id": item_id,
+            }
+            if isinstance(item_id, str) and item_id
+            else None
+        )
         return Message(
             role="tool",
-            contents=[Content.from_function_result(call_id, result=_json_safe_to_str(item["output"]))],
+            contents=[
+                Content.from_function_result(
+                    call_id,
+                    result=_json_safe_to_str(item["output"]),
+                    status=item.get("status"),
+                    additional_properties=result_additional_properties,
+                )
+            ],
         )
 
     if item["type"] == "reasoning":
@@ -3159,7 +3370,10 @@ async def _item_to_message(
 
     if item["type"] == "mcp_approval_request":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(item["id"])
+            try:
+                function_approval_request_content = await approval_storage.load_approval_request(item["id"])
+            except (KeyError, ValueError) as exc:
+                raise _PublicResponseFailure(exc) from None
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -3169,9 +3383,12 @@ async def _item_to_message(
 
     if item["type"] == "mcp_approval_response":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(
-                item["approval_request_id"]
-            )
+            try:
+                function_approval_request_content = await approval_storage.load_approval_request(
+                    item["approval_request_id"]
+                )
+            except (KeyError, ValueError) as exc:
+                raise _PublicResponseFailure(exc) from None
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -3252,6 +3469,7 @@ async def _item_to_message(
                     "file_search",
                     arguments=_json_safe_to_str({"queries": item["queries"]}),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3259,7 +3477,7 @@ async def _item_to_message(
     if item["type"] == "web_search_call":
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True)],
+            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True, hosted=True)],
         )
 
     if item["type"] == "computer_call":
@@ -3268,7 +3486,14 @@ async def _item_to_message(
         actions = plural_actions or ([singular_action] if singular_action is not None else [])
         if not actions:
             raise ValueError("Computer call is missing its ordered actions.")
-        props = {"computer_action_format": "single"} if not plural_actions and singular_action is not None else None
+        props = (
+            {
+                "openai": {"computer_action_format": "single"},
+                "computer_action_format": "single",
+            }
+            if not plural_actions and singular_action is not None
+            else None
+        )
         return Message(
             role="assistant",
             contents=[
@@ -3306,6 +3531,7 @@ async def _item_to_message(
                     item["name"],
                     arguments=item["input"],
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3338,6 +3564,7 @@ async def _item_to_message(
                     "apply_patch",
                     arguments=_json_safe_to_str(item["operation"]),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3389,9 +3616,24 @@ async def _output_item_to_message(
         ValueError: If the OutputItem type is not supported.
     """
     if item["type"] == "oauth_consent_request":
+        item_data = cast("Mapping[str, Any]", item)
+        server_label = item_data.get("server_label")
+        additional_properties = (
+            {
+                "openai": {"server_label": server_label},
+                "server_label": server_label,
+            }
+            if isinstance(server_label, str) and server_label
+            else None
+        )
         return Message(
             role="assistant",
-            contents=[Content.from_oauth_consent_request(item["consent_link"])],
+            contents=[
+                Content.from_oauth_consent_request(
+                    item["consent_link"],
+                    additional_properties=additional_properties,
+                )
+            ],
         )
 
     if item["type"] == "structured_outputs":
@@ -3421,7 +3663,7 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "refusal":
         return Content.from_text(
             content["refusal"],
-            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            additional_properties=_refusal_additional_properties(),
         )
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
@@ -3450,8 +3692,19 @@ def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
             else:
                 prefix = f"[File: {filename}]\n" if filename else ""
                 return Content.from_text(f"{prefix}{decoded_text}")
-    additional_properties = {"filename": filename} if filename else None
-    return Content.from_uri(data_uri, additional_properties=additional_properties)
+    additional_properties = (
+        {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+            "filename": filename,
+        }
+        if filename
+        else {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+        }
+    )
+    return Content.from_uri(data_uri, name=filename, additional_properties=additional_properties)
 
 
 def _convert_message_content(content: MessageContent) -> Content:
@@ -3477,22 +3730,45 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "refusal":
         return Content.from_text(
             content["refusal"],
-            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            additional_properties=_refusal_additional_properties(),
         )
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":
+        detail = content.get("detail")
+        additional_properties = {
+            "openai": {
+                "content_type": "input_image",
+                **({"image_detail": detail} if isinstance(detail, str) else {}),
+            },
+            "openai_content_type": "input_image",
+            **({"detail": detail} if isinstance(detail, str) else {}),
+        }
         if image_url := content.get("image_url"):
             if image_url.startswith("data:"):
-                return Content.from_uri(image_url)
-            return Content.from_uri(image_url, media_type="image/*")
+                return Content.from_uri(image_url, additional_properties=additional_properties)
+            return Content.from_uri(image_url, media_type="image/*", additional_properties=additional_properties)
         if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id)
+            return Content.from_hosted_file(file_id, additional_properties=additional_properties)
     if content["type"] == "input_file":
+        filename = content.get("filename")
+        additional_properties = {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+            **({"filename": filename} if isinstance(filename, str) else {}),
+        }
         if file_url := content.get("file_url"):
-            return Content.from_uri(file_url)
+            return Content.from_uri(
+                file_url,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties=additional_properties,
+            )
         if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id, name=content.get("filename"))
+            return Content.from_hosted_file(
+                file_id,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties=additional_properties,
+            )
         if file_data := content.get("file_data"):
             return _convert_file_data(file_data, content.get("filename"))
     if content["type"] == "computer_screenshot":

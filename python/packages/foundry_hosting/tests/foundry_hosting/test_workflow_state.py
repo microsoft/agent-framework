@@ -194,10 +194,10 @@ async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
         await resolver.resolve(object())
 
     executor = _Counter()
-    resolver = WorkflowResolver[object](lambda request: _workflow(executor))
-    first = await resolver.resolve(object())
+    executor_resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: _workflow(executor))
+    first = await executor_resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
-        await resolver.resolve(object())
+        await executor_resolver.resolve(object())
     assert first.get_start_executor() is executor
 
     def zero_argument_factory() -> Workflow:
@@ -209,9 +209,9 @@ async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
     def builder_factory(request: object) -> Any:
         return WorkflowBuilder(start_executor=_Counter())
 
-    resolver = WorkflowResolver[object](builder_factory)
+    builder_resolver: WorkflowResolver[object] = WorkflowResolver(builder_factory)
     with pytest.raises(TypeError, match="built Workflow"):
-        await resolver.resolve(object())
+        await builder_resolver.resolve(object())
     stored_resolver: WorkflowResolver[object] = WorkflowResolver(
         WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
     )
@@ -226,7 +226,7 @@ async def test_request_aware_async_factory() -> None:
         requests.append(request)
         return _workflow()
 
-    resolver = WorkflowResolver(create)
+    resolver: WorkflowResolver[object] = WorkflowResolver(create)
     one, two = object(), object()
     first, second = await resolver.resolve(one), await resolver.resolve(two)
     assert first is not second
@@ -251,7 +251,7 @@ async def test_resolver_rejects_reused_local_and_mcp_tools(mcp: bool) -> None:
         agent = Agent(client=_UnusedClient(), name="agent", tools=[shared])
         return _workflow(AgentExecutor(agent, id="agent"))
 
-    resolver = WorkflowResolver(create)
+    resolver: WorkflowResolver[object] = WorkflowResolver(create)
     first = await resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())

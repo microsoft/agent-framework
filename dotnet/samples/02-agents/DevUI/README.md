@@ -42,6 +42,11 @@ builder.AddAIAgent("my-agent", "You are a helpful assistant.");
 builder.Services.AddOpenAIResponses();
 builder.Services.AddOpenAIConversations();
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.AddDevUI();
+}
+
 var app = builder.Build();
 
 // Map endpoints for OpenAI responses and conversations (also required for DevUI)

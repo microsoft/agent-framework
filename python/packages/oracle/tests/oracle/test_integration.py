@@ -20,7 +20,10 @@ pytestmark = [
     pytest.mark.flaky,
     pytest.mark.skipif(
         not _oracle_test_database_configured(),
-        reason="Set ORACLE_TEST_DSN, ORACLE_TEST_USER, and ORACLE_TEST_PASSWORD for a disposable Oracle 23ai+ schema.",
+        reason=(
+            "Set ORACLE_TEST_DSN, ORACLE_TEST_USER, and ORACLE_TEST_PASSWORD "
+            "for a disposable Oracle AI Database 26ai schema."
+        ),
     ),
 ]
 

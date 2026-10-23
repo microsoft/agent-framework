@@ -24,3 +24,9 @@ the Agent Framework Python SDK. Entries are reviewed against the
 | Name | Brief description | Scenarios | Project | Issues |
 | --- | --- | --- | --- | --- |
 | MemorySync | A context provider that recalls and captures user memory around agent runs. | Per-user cross-session memory; instruction-layer recall; automatic fact capture | [agent-framework-memorysync](https://pypi.org/project/agent-framework-memorysync/) | [Open an issue](https://github.com/memorysyncio/memorysync-plugins/issues/new/choose) |
+
+## Middleware
+
+| Name | Brief description | Scenarios | Project | Issues |
+| --- | --- | --- | --- | --- |
+| Tracekit | Function middleware that checks each function call against a policy before it runs and records calls and results in a signed, hash-chained log. | Allow or deny function calls by policy; human approval of held calls; offline-verifiable run records | [tracekit-ai](https://github.com/Cygnux-Labs/Tracekit/blob/main/docs/integrations/microsoft-agent-framework.md) | [Open an issue](https://github.com/Cygnux-Labs/Tracekit/issues/new/choose) |

@@ -12,7 +12,7 @@ import struct
 import sys
 import typing
 import warnings
-from collections import deque
+from collections import Counter, deque
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -23,7 +23,10 @@ from collections.abc import (
 )
 from contextlib import suppress
 from dataclasses import dataclass
-from functools import partial, wraps
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import time as datetime_time
+from decimal import Decimal
+from functools import cache, partial, wraps
 from time import perf_counter, time, time_ns
 from typing import (
     TYPE_CHECKING,
@@ -40,11 +43,13 @@ from typing import (
     get_origin,
     overload,
 )
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import BaseModel, Field, ValidationError, create_model
+from opentelemetry.util.types import AttributeValue
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
+from pydantic_core import to_jsonable_python
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -167,6 +172,71 @@ class _OpaqueArgumentToken:
     identity: int
 
 
+@cache
+def _pydantic_tzinfo_type() -> type:
+    """Return the fixed-offset time zone type pydantic parses UTC offsets into."""
+    # pydantic-core only exports this type from 2.10, so take it from a parsed value.
+    return type(TypeAdapter(datetime).validate_python("2000-01-01T00:00:00Z").tzinfo)
+
+
+def _timedelta_token(value: timedelta) -> tuple[Any, ...]:
+    return (timedelta, value.days, value.seconds, value.microseconds)
+
+
+def _time_zone_token(zone: tzinfo | None) -> tuple[Any, ...] | None:
+    """Return a token for no time zone or a fixed-offset one, or None for any other time zone."""
+    if zone is None:
+        return (None,)
+    if type(zone) is timezone:
+        # A timezone holds its offset and, when one was given, its name (repr() shows it).
+        offset, *name = cast(Any, zone).__getinitargs__()
+        if type(offset) is timedelta and all(type(part) is str for part in name):
+            return (timezone, _timedelta_token(offset), *name)
+        return None
+    if type(zone) is _pydantic_tzinfo_type():
+        # pydantic's time zone holds only its offset.
+        return (type(zone), _timedelta_token(cast(timedelta, zone.utcoffset(None))))
+    return None
+
+
+def _immutable_scalar_token(value: Any) -> tuple[Any, ...] | None:
+    """Return a token for an immutable value an input model produces, or None for any other value.
+
+    These are the values an input model converts JSON arguments to (for example
+    "2026-01-02" -> date). Only the exact types are trusted, because a subclass can add
+    mutable state. A token lists every field of the value that a tool can observe, so two
+    values share a token only when a tool cannot tell them apart. Neither ``==`` nor
+    ``str()`` does that: Decimal("1.0") equals Decimal("1.00"), equal instants in different
+    time zones compare equal, and ``str()`` leaves out a datetime's ``fold``, a UUID's
+    ``is_safe`` and a time zone's name.
+    """
+    value_type = cast(type[object], type(value))
+    if value_type is date:
+        return (date, value.year, value.month, value.day)
+    if value_type is datetime or value_type is datetime_time:
+        zone = _time_zone_token(value.tzinfo)
+        if zone is None:
+            return None
+        date_fields = (value.year, value.month, value.day) if value_type is datetime else ()
+        return (value_type, *date_fields, value.hour, value.minute, value.second, value.microsecond, value.fold, zone)
+    if value_type is timedelta:
+        return _timedelta_token(value)
+    if value_type is Decimal:
+        return (Decimal, value.as_tuple())
+    if value_type is UUID:
+        return (UUID, value.int, value.is_safe)
+    return None
+
+
+def _unordered_token(tokens: Iterable[Any]) -> frozenset[tuple[Any, int]]:
+    """Return an order-free token that keeps how many items share each token.
+
+    A plain frozenset would merge distinct items that share a token: a set or dict can hold
+    several NaNs, because NaN is not equal to itself, and every NaN gets the same token.
+    """
+    return frozenset(Counter(tokens).items())
+
+
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
     if isinstance(value, BaseModel):
@@ -174,7 +244,7 @@ def _argument_comparison_token(value: Any) -> Any:
     if isinstance(value, dict):
         return (
             "dict",
-            frozenset(
+            _unordered_token(
                 (_argument_comparison_token(key), _argument_comparison_token(item))
                 for key, item in cast(dict[Any, Any], value).items()
             ),
@@ -183,10 +253,17 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("list", tuple(_argument_comparison_token(item) for item in cast(list[Any], value)))
     if isinstance(value, tuple):
         return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
+    if isinstance(value, frozenset):
+        return ("frozenset", _unordered_token(_argument_comparison_token(item) for item in cast(frozenset[Any], value)))
+    if isinstance(value, set):
+        return ("set", _unordered_token(_argument_comparison_token(item) for item in cast(set[Any], value)))
     if isinstance(value, float):
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
+    scalar_token = _immutable_scalar_token(value)
+    if scalar_token is not None:
+        return scalar_token
     value_type = cast(type[object], type(value))
     return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
 
@@ -844,6 +921,7 @@ class FunctionTool(SerializationMixin):
         if arguments is None:
             return {}
 
+        validated_by_model = False
         try:
             if isinstance(arguments, Mapping):
                 parsed_arguments = dict(arguments)
@@ -855,6 +933,7 @@ class FunctionTool(SerializationMixin):
                     # parameter the model deliberately set to null, failing the
                     # invocation on the missing argument (#5934).
                     parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
             elif isinstance(arguments, BaseModel):
                 if (
                     self.input_model is not None
@@ -862,7 +941,17 @@ class FunctionTool(SerializationMixin):
                     and not isinstance(arguments, self.input_model)
                 ):
                     raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                parsed_arguments = arguments.model_dump(exclude_unset=True)
+                if self.input_model is not None and not self._schema_supplied:
+                    # An instance can skip validation (model_construct) or be changed after it,
+                    # so its data is validated like mapping arguments and the function receives
+                    # the annotated types (#8661). Checking its JSON form is not enough: a date
+                    # in a datetime field serializes to a valid string. Validation reports any
+                    # mismatch, so the dump skips pydantic's serializer warnings.
+                    parsed_arguments = arguments.model_dump(exclude_unset=True, warnings=False)
+                    parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
+                else:
+                    parsed_arguments = arguments.model_dump(exclude_unset=True)
             else:
                 raise TypeError(
                     f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -877,6 +966,12 @@ class FunctionTool(SerializationMixin):
                 str(exc),
                 redacted_message=f"Invalid arguments for '{self.name}'.",
             ) from exc
+
+        if validated_by_model:
+            # The input model already enforced the full schema and converted JSON values
+            # to the annotated Python types (e.g. datetime, set, tuple), which the
+            # lightweight JSON type checks below would wrongly reject (#8661).
+            return parsed_arguments
 
         try:
             return _validate_arguments_against_schema(
@@ -1136,7 +1231,14 @@ class FunctionTool(SerializationMixin):
                 logger.debug("Function result: None")
             return parsed
 
-        attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
+        span_attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
+        # Keep metric dimensions explicit so span-only attributes cannot flow into the histogram.
+        metric_attributes: dict[str, AttributeValue] = {
+            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+            OtelAttr.TOOL_NAME: self.name,
+            OtelAttr.TOOL_TYPE: "function",
+            OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: self.name,
+        }
         # Filter out framework kwargs that are not JSON serializable.
         serializable_kwargs = {
             k: v
@@ -1156,13 +1258,12 @@ class FunctionTool(SerializationMixin):
         # as span attributes when that semconv version is active.
         emit_tool_call_attrs = OBSERVABILITY_SETTINGS.emit_tool_call_attributes
         if emit_tool_call_attrs:
-            attributes.update({
+            span_attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
                     json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
                 )
             })
-        with get_function_span(attributes=attributes) as span:
-            attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
+        with get_function_span(attributes=span_attributes) as span:
             logger.info(f"Function name: {self.name}")
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                 logger.debug(f"Function arguments: {serializable_kwargs}")
@@ -1173,9 +1274,12 @@ class FunctionTool(SerializationMixin):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
-                attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                metric_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
-                logger.error(f"Function failed. Error: {exception}")
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                    logger.error("Function failed. Error: %s", exception)
+                else:
+                    logger.error("Function %s failed (%s).", self.name, type(exception).__name__)
                 raise
             else:
                 if skip_parsing:
@@ -1200,7 +1304,7 @@ class FunctionTool(SerializationMixin):
                         parsed = configured_parser(result)
                     except Exception as exception:
                         self.invocation_exception_count += 1
-                        attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                        metric_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                             capture_exception(span=span, exception=exception, timestamp=time_ns())
                             logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
@@ -1227,7 +1331,7 @@ class FunctionTool(SerializationMixin):
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
-                self._invocation_duration_histogram.record(duration, attributes=attributes)
+                self._invocation_duration_histogram.record(duration, attributes=metric_attributes)
                 logger.info("Function duration: %fs", duration)
 
     @property
@@ -1335,7 +1439,7 @@ class FunctionTool(SerializationMixin):
     @override
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        if (exclude and "input_model" in exclude) or not self.input_model:
+        if exclude and "input_model" in exclude:
             return as_dict
         as_dict["input_model"] = self.parameters()  # Use cached parameters()
         return as_dict
@@ -1894,24 +1998,27 @@ def _function_execution_error_result(
 ) -> Content:
     from .observability import OBSERVABILITY_SETTINGS
 
+    include_detailed_errors = config.get("include_detailed_errors", False)
+    recommendation = "" if include_detailed_errors else " Set include_detailed_errors=True for the full detail."
     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
         logger.warning(
-            "Function '%s' raised an exception; returning an error result to the model. "
-            "Set include_detailed_errors=True for the full detail. Exception: %r",
+            "Function '%s' raised an exception; returning an error result to the model.%s Exception: %r",
             tool_name,
+            recommendation,
             exception,
         )
     else:
         logger.warning(
-            "Function '%s' raised an exception; returning an error result to the model. "
-            "Set include_detailed_errors=True for the full detail.",
+            "Function '%s' raised an exception; returning an error result to the model.%s",
             tool_name,
+            recommendation,
         )
     message = "Error: Function failed."
-    if config.get("include_detailed_errors", False):
+    if include_detailed_errors:
         message = f"{message} Exception: {exception}"
     return _finalize_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
+        id=function_call.id,
         result=message,
         exception=str(exception),
         base_additional_properties=function_call.additional_properties,
@@ -1938,15 +2045,53 @@ def _function_argument_validation_error_result(
         message = f"{message} Exception: {exception_message}"
     return Content.from_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
+        id=function_call.id,
         result=message,
         exception=exception_message,
         additional_properties=function_call.additional_properties,
     )
 
 
+def _replacement_arguments(tool: FunctionTool, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Return middleware-repaired arguments in the JSON form a replacement approval request holds.
+
+    The request is persisted with the session, so its arguments must be JSON-native. Approving it
+    prepares the JSON arguments again, so they must reproduce the repaired values exactly. JSON
+    cannot carry a datetime's ``fold`` or a UUID's ``is_safe``, and offsets parse into pydantic's
+    own time zone type; for such values every approval would only lead to another replacement.
+    """
+    from ._middleware import MiddlewareFailure
+
+    message = (
+        "Function arguments changed after approval to values a replacement approval request cannot "
+        "represent exactly. Middleware should produce the values the tool's input model parses from JSON."
+    )
+    try:
+        json_arguments = cast(dict[str, Any], to_jsonable_python(dict(arguments)))
+    except Exception as exc:
+        # Not only PydanticSerializationError: bytes that are not UTF-8 raise UnicodeDecodeError, a
+        # circular value raises ValueError, and a value that runs code while it is serialized can
+        # raise anything. None of them can be represented, so all of them fail closed the same way.
+        raise MiddlewareFailure(message) from exc
+    try:
+        repaired = tool._prepare_arguments(arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError:
+        # Arguments that do not validate (such as approval-visible security placeholders, or a
+        # short-circuited repair) produce no values to reproduce.
+        return json_arguments
+    try:
+        reproduced = tool._prepare_arguments(json_arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError as exc:
+        raise MiddlewareFailure(message) from exc
+    if _argument_comparison_token(reproduced) != _argument_comparison_token(repaired):
+        raise MiddlewareFailure(message)
+    return json_arguments
+
+
 def _replacement_approval_request(
     function_call: Content,
     arguments: Mapping[str, Any],
+    tool: FunctionTool,
 ) -> Content:
     """Create a new approval generation for middleware-repaired arguments."""
     from ._types import Content
@@ -1959,7 +2104,7 @@ def _replacement_approval_request(
     repaired_call = Content.from_function_call(
         call_id=call_id,
         name=function_call.name,  # type: ignore[arg-type]
-        arguments=copy.deepcopy(dict(arguments)),
+        arguments=_replacement_arguments(tool, arguments),
         id=occurrence_id,
         annotations=copy.deepcopy(function_call.annotations),
         additional_properties=copy.deepcopy(function_call.additional_properties),
@@ -1978,13 +2123,14 @@ def _replacement_approval_request(
 def _finalize_function_result(
     *,
     call_id: str,
+    id: str | None = None,
     result: Any,
     base_additional_properties: Mapping[str, Any] | None = None,
     exception: str | None = None,
     context: FunctionInvocationContext | None = None,
 ) -> Content:
     """Build the stable function-result wrapper and apply private Host metadata."""
-    from ._types import Content
+    from ._types import Content, merge_additional_properties
 
     carrier: _FunctionResultCarrier | None = None
     if context is not None:
@@ -1996,10 +2142,14 @@ def _finalize_function_result(
     if carrier is not None:
         for key in carrier.exclusive_outer_keys:
             additional_properties.pop(key, None)
-        additional_properties.update(carrier.additional_properties)
+        additional_properties = merge_additional_properties(
+            additional_properties,
+            carrier.additional_properties,
+        )
 
     function_result = Content.from_function_result(
         call_id=call_id,
+        id=id,
         result=result,
         exception=exception,
         additional_properties=additional_properties,
@@ -2013,7 +2163,10 @@ def _finalize_function_result(
         updated_item.additional_properties = dict(updated_item.additional_properties)
         for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
             updated_item.additional_properties.pop(key, None)
-        updated_item.additional_properties.update(carrier.item_additional_properties)
+        updated_item.additional_properties = merge_additional_properties(
+            updated_item.additional_properties,
+            carrier.item_additional_properties,
+        )
         updated_items[index] = updated_item
     function_result.items = updated_items
     return function_result
@@ -2152,6 +2305,7 @@ async def _auto_invoke_function(
             )
             return _finalize_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                id=function_call_content.id,
                 result=function_result,
                 base_additional_properties=function_call_content.additional_properties,
                 context=direct_context,
@@ -2252,6 +2406,7 @@ async def _auto_invoke_function(
 
         return _finalize_function_result(
             call_id=call_id,
+            id=function_call_content.id,
             result=function_result,
             base_additional_properties=function_call_content.additional_properties,
             context=middleware_context,
@@ -2263,7 +2418,7 @@ async def _auto_invoke_function(
             except _FunctionArgumentsChangedAfterApproval as exc:
                 raise MiddlewareTermination(
                     "Function arguments changed after approval.",
-                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                    result=_replacement_approval_request(function_call_content, exc.arguments, tool),
                 ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -2278,6 +2433,7 @@ async def _auto_invoke_function(
                 # Store result in exception for caller to extract
                 term_exc.result = _finalize_function_result(
                     call_id=call_id,
+                    id=function_call_content.id,
                     result=middleware_context.result,
                     base_additional_properties=function_call_content.additional_properties,
                     context=middleware_context,
@@ -2286,7 +2442,7 @@ async def _auto_invoke_function(
     except _FunctionArgumentsChangedAfterApproval as exc:
         raise MiddlewareTermination(
             "Function arguments changed after approval.",
-            result=_replacement_approval_request(function_call_content, exc.arguments),
+            result=_replacement_approval_request(function_call_content, exc.arguments, tool),
         ) from exc
     except _FunctionArgumentValidationError as exc:
         return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)
@@ -2310,7 +2466,11 @@ def _get_tool_map(
 
 
 def _is_actionable_function_call(content: Content) -> bool:
-    return content.type == "function_call" and not content.informational_only
+    """Return whether core may execute the call locally.
+
+    ``server_name`` is descriptive and intentionally does not imply hosted ownership.
+    """
+    return content.type == "function_call" and not content.informational_only and not content.hosted
 
 
 def _underlying_function_call(content: Content) -> Content:
@@ -2375,6 +2535,7 @@ async def _execute_single_function_call(
         return [
             Content.from_function_result(
                 call_id=source_function_call.call_id,  # type: ignore[arg-type]
+                id=source_function_call.id,
                 result=exc.result,
             )
         ], True
@@ -2385,12 +2546,13 @@ async def _execute_single_function_call(
         for item in propagated_contents:
             item.call_id = call_id
             if not item.id:
-                item.id = call_id
+                item.id = source_function_call.id or call_id
         if propagated_contents:
             return propagated_contents, False
         return [
             Content.from_function_result(
                 call_id=call_id,  # type: ignore[arg-type]
+                id=source_function_call.id,
                 result="Tool requires user input but no request details were provided.",
                 exception="UserInputRequiredException",
             )
@@ -2730,14 +2892,11 @@ def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse
 def _is_hosted_tool_approval(content: Any) -> bool:
     """Check if a function_approval_request/response is for a hosted tool (e.g. MCP).
 
-    Hosted tool approvals have a server_label in function_call.additional_properties
-    and should be passed through to the API untouched rather than processed locally.
+    Hosted tool approvals are provider-executed and should be passed through to
+    the API untouched rather than processed locally.
     """
     fc = getattr(content, "function_call", None)
-    if fc is None:
-        return False
-    ap = getattr(fc, "additional_properties", None)
-    return bool(ap and ap.get("server_label"))
+    return bool(fc is not None and getattr(fc, "hosted", False))
 
 
 def _is_approval_granted(value: Any) -> bool:
@@ -3351,6 +3510,8 @@ def _match_mixed_pause_responses(
                 host_items_by_occurrence[request.id] = index
 
     matched_content_ids: set[int] = set()
+    preexisting_response_indexes = {index for index, item in enumerate(items) if item.get("response") is not None}
+    current_idless_response_indexes: set[int] = set()
     for match_idless_host_results in (False, True):
         for response in responses:
             is_idless_host_result = response.type == "function_result" and response.id is None
@@ -3391,6 +3552,18 @@ def _match_mixed_pause_responses(
                         if items[pending_index].get("response") is None
                     ]
                     if len(unanswered_indexes) == 1:
+                        if any(
+                            pending_index in preexisting_response_indexes
+                            and isinstance(items[pending_index].get("response"), Mapping)
+                            and _same_mixed_pause_response(
+                                cast(Mapping[str, Any], items[pending_index]["response"]),
+                                response.to_dict(),
+                            )
+                            for pending_index in host_items_by_call[response.call_id]
+                        ):
+                            raise RuntimeError(
+                                f"Ambiguous id-less Host response for mixed pause call_id {response.call_id!r}."
+                            )
                         item_index = unanswered_indexes[0]
                     elif not unanswered_indexes and allow_idless_host_duplicates:
                         duplicate_indexes = [
@@ -3404,6 +3577,13 @@ def _match_mixed_pause_responses(
                         ]
                         if len(duplicate_indexes) == 1:
                             item_index = duplicate_indexes[0]
+                        elif any(
+                            pending_index in current_idless_response_indexes
+                            for pending_index in host_items_by_call[response.call_id]
+                        ):
+                            raise RuntimeError(
+                                f"Conflicting id-less Host responses for mixed pause call_id {response.call_id!r}."
+                            )
             else:
                 continue
 
@@ -3418,6 +3598,8 @@ def _match_mixed_pause_responses(
                 raise RuntimeError(f"Conflicting response for mixed pause occurrence {candidate.id!r}.")
             items[item_index]["response"] = candidate_state
             matched_content_ids.add(id(response))
+            if is_idless_host_result:
+                current_idless_response_indexes.add(item_index)
 
     if any(item.get("response") is None for item in items):
         return matched_content_ids, True, [], set()
@@ -3464,22 +3646,177 @@ def _stage_pending_mixed_pause_responses(
             consume=False,
         )
 
-    responses = [
-        content
-        for message in messages
-        for content in message.contents
-        if content.type in {"function_approval_response", "function_result"}
+    def attributed_staged_replay_item_index(
+        content: Content,
+        reserved_item_indexes: set[int],
+    ) -> int | None:
+        if content.type == "function_approval_response":
+            candidate = bind_approval_response(content)
+        elif content.type == "function_result":
+            candidate = content
+        else:
+            return None
+        if candidate is None:
+            return None
+
+        candidate_state = candidate.to_dict()
+        for item_index, item in enumerate(items):
+            if item_index in reserved_item_indexes:
+                continue
+            stored_response = item.get("response")
+            if not isinstance(stored_response, Mapping) or not _same_mixed_pause_response(
+                cast(Mapping[str, Any], stored_response),
+                candidate_state,
+            ):
+                continue
+            request = _content_from_state(item.get("request"))
+            if request is None:
+                continue
+            if item.get("kind") == "approval" and candidate.type == "function_approval_response":
+                request_ids = {
+                    str(identity)
+                    for identity in (
+                        request.id,
+                        request.function_call.id if request.function_call is not None else None,
+                    )
+                    if identity is not None
+                }
+                candidate_ids = {
+                    str(identity)
+                    for identity in (
+                        candidate.additional_properties.get(_APPROVAL_REQUEST_ID_KEY),
+                        candidate.id,
+                    )
+                    if identity is not None
+                }
+                if request_ids.intersection(candidate_ids):
+                    return item_index
+            elif (
+                item.get("kind") == "host"
+                and candidate.type == "function_result"
+                and candidate.call_id == request.call_id
+                and (candidate.id is None or candidate.id == request.id)
+            ):
+                return item_index
+        return None
+
+    host_requests = [
+        request
+        for item in items
+        if item.get("kind") == "host"
+        and item.get("response") is None
+        and (request := _content_from_state(item.get("request"))) is not None
+        and request.call_id is not None
     ]
+    approval_request_ids = {
+        str(identity)
+        for item in items
+        if item.get("kind") == "approval"
+        and item.get("response") is None
+        and (request := _content_from_state(item.get("request"))) is not None
+        for identity in (
+            request.id,
+            request.function_call.id if request.function_call is not None else None,
+        )
+        if identity is not None
+    }
+    host_call_ids = {request.call_id for request in host_requests if request.call_id is not None}
+    host_occurrences = {
+        (request.call_id, request.id)
+        for request in host_requests
+        if request.call_id is not None and request.id is not None
+    }
+    approval_anchor: int | None = None
+    host_anchor: int | None = None
+    idless_host_anchor: int | None = None
+    indexed_contents: list[tuple[int, Content]] = []
+    content_positions: dict[int, tuple[int, int]] = {}
+    current_input_indexes: set[int] = set()
+    content_index = -1
+    for message_index, message in enumerate(messages):
+        message_start = content_index + 1
+        is_current_input = "_attribution" not in message.additional_properties
+        for message_content_index, content in enumerate(message.contents):
+            content_index += 1
+            indexed_contents.append((content_index, content))
+            content_positions[content_index] = (message_index, message_content_index)
+            if not is_current_input:
+                continue
+            current_input_indexes.add(content_index)
+            if content.type == "function_approval_response" and approval_anchor is None:
+                bound_approval = bind_approval_response(content)
+                if bound_approval is not None and approval_request_ids.intersection(
+                    str(identity)
+                    for identity in (
+                        bound_approval.additional_properties.get(_APPROVAL_REQUEST_ID_KEY),
+                        bound_approval.id,
+                    )
+                    if identity is not None
+                ):
+                    approval_anchor = message_start
+            elif (
+                content.type == "function_result"
+                and content.call_id is not None
+                and content.id is not None
+                and (content.call_id, content.id) in host_occurrences
+                and host_anchor is None
+            ):
+                host_anchor = message_start
+            elif (
+                content.type == "function_result"
+                and content.id is None
+                and content.call_id in host_call_ids
+                and idless_host_anchor is None
+            ):
+                idless_host_anchor = message_start
+    response_start = min(
+        (anchor for anchor in (approval_anchor, host_anchor, idless_host_anchor) if anchor is not None),
+        default=None,
+    )
+    attributed_contents = [
+        (message_index, content_index, content)
+        for message_index, message in enumerate(messages)
+        if "_attribution" in message.additional_properties
+        for content_index, content in enumerate(message.contents)
+    ]
+    attributed_replay_occurrences: set[tuple[int, int]] = set()
+    reserved_replay_item_indexes: set[int] = set()
+    for match_idless_host_results in (False, True):
+        for message_index, content_index, content in attributed_contents:
+            is_idless_host_result = content.type == "function_result" and content.id is None
+            if is_idless_host_result != match_idless_host_results:
+                continue
+            item_index = attributed_staged_replay_item_index(content, reserved_replay_item_indexes)
+            if item_index is not None:
+                reserved_replay_item_indexes.add(item_index)
+                attributed_replay_occurrences.add((message_index, content_index))
+    response_entries = [
+        (index, content)
+        for index, content in indexed_contents
+        if response_start is not None
+        and index >= response_start
+        and index in current_input_indexes
+        and content.type in {"function_approval_response", "function_result"}
+    ]
+    responses = [content for _, content in response_entries]
     matched_content_ids, incomplete, ordered_responses, host_result_ids = _match_mixed_pause_responses(
         items,
         responses,
         approval_response_binder=bind_approval_response,
     )
+    matched_current_occurrences = {
+        content_positions[index] for index, content in response_entries if id(content) in matched_content_ids
+    }
 
-    if matched_content_ids:
+    if matched_current_occurrences or attributed_replay_occurrences:
         filtered_messages: list[Message] = []
-        for message in messages:
-            message.contents = [content for content in message.contents if id(content) not in matched_content_ids]
+        for message_index, message in enumerate(messages):
+            message.contents = [
+                content
+                for content_index, content in enumerate(message.contents)
+                if (message_index, content_index) not in matched_current_occurrences
+                and (message_index, content_index) not in attributed_replay_occurrences
+            ]
             if message.contents:
                 filtered_messages.append(message)
         messages[:] = filtered_messages
@@ -3714,12 +4051,24 @@ def _stateless_mixed_pause_batch_status(
                 matched_host_result_ids.add(response_id)
                 host_result_content_indices[response_id] = response_content_indices[response_id]
 
+    # The collected mapping keeps one response per approval id, so an earlier response would hide a
+    # later one sharing its id. Every unsettled response object must count as pending instead.
+    settled_approval_response_ids: set[int] = set()
+    _collect_approval_responses(
+        messages,
+        non_approval_result_ids=matched_host_result_ids,
+        settled_response_ids=settled_approval_response_ids,
+    )
     pending_approval_response_ids = {
-        id(response)
-        for response in _collect_approval_responses(
-            messages,
-            non_approval_result_ids=matched_host_result_ids,
-        ).values()
+        id(content)
+        for message in messages
+        for content in message.contents
+        if content.type == "function_approval_response"
+        and not _is_hosted_tool_approval(content)
+        and content.id is not None
+        and content.function_call is not None
+        and content.function_call.call_id is not None
+        and id(content) not in settled_approval_response_ids
     }
     pending_approval_batch_indices = {
         batch_index
@@ -3819,6 +4168,8 @@ def _collect_approval_responses(
                 request = latest_requests_by_id.get(request_id) if request_id is not None else None
                 is_protected = protected_response_ids is not None and id(content) in protected_response_ids
                 if not is_protected and request is not None and id(request) in closed_request_occurrences:
+                    # Closed already, so it can never execute; mark it settled so replay stays inert.
+                    resolved_response_ids.add(id(content))
                     continue
                 approval_responses.append(content)
                 if content.id is not None:
@@ -4225,6 +4576,7 @@ def _replace_approval_contents_with_results(
                     replacements = [
                         Content.from_function_result(
                             call_id=call_id,
+                            id=occurrence.function_call.id if occurrence is not None else content.function_call.id,
                             result="Error: Tool call invocation was rejected by user.",
                             additional_properties=content.function_call.additional_properties,
                         )
@@ -4780,6 +5132,7 @@ async def _resolve_deferred_mixed_pause_calls(
             [
                 Content.from_function_result(
                     call_id=function_call.call_id,  # type: ignore[arg-type]
+                    id=function_call.id,
                     result="Error: Function invocation limit reached before the deferred tool could run.",
                     exception="FunctionInvocationLimit",
                     additional_properties=function_call.additional_properties,
@@ -4888,22 +5241,34 @@ async def _resolve_approval_responses(
             # rather than raising. Settled occurrences are identified by the same correlation used
             # to execute approvals, so replaying a completed conversation is unaffected and only
             # responses that could still authorize an execution are removed.
+            # Dropping responses changes which calls in the batch are still awaiting an answer, so the batch
+            # is reclassified. Reclassification reorders the transcript and can change which responses are
+            # settled, so repeat until nothing more is dropped; each pass removes at least one response.
             settled_response_ids: set[int] = set()
             _collect_approval_responses(
                 prepared_messages,
                 non_approval_result_ids=host_result_ids,
                 settled_response_ids=settled_response_ids,
             )
-            if _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
+
+            dropped_any = False
+            while _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
+                dropped_any = True
+                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+
+                settled_response_ids = set()
+                _collect_approval_responses(
+                    prepared_messages,
+                    non_approval_result_ids=host_result_ids,
+                    settled_response_ids=settled_response_ids,
+                )
+            if dropped_any:
                 logger.warning(
                     "Ignored one or more local tool-approval responses because this run has no authoritative "
                     "AgentSession holding the matching approval request. Pass the same AgentSession back on the "
                     "run that resumes an approval, or set the 'disable_approval_response_binding' function "
                     "invocation configuration option to restore the previous unbound behavior."
                 )
-                # Dropping responses changes which calls in the batch are still awaiting an answer,
-                # so the batch must be reclassified before deciding whether it is incomplete.
-                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
         if partial_mixed_batch:
             raise RuntimeError(
                 "A mixed function-call batch requires responses for every approval and Host-owned request."
@@ -5305,6 +5670,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 error_results.append(
                     Content.from_function_result(
                         call_id=underlying_call.call_id,
+                        id=underlying_call.id,
                         result=error_result,
                         exception=error_exception,
                         additional_properties=underlying_call.additional_properties,
@@ -5594,6 +5960,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
+        from ._types import ChatResponseUpdate, Content, add_usage_details
 
         errors_in_a_row = 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
@@ -5601,8 +5968,64 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_duration_seconds = self.function_invocation_configuration.get("max_duration_seconds")
         prepared_messages = _copy_messages_for_function_invocation(messages)
         response: ChatResponse[Any] | None = None
+        completed_usage: UsageDetails | None = None
+        turn_usage: UsageDetails | None = None
+        last_projected_usage: UsageDetails | None = None
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
+
+        def project_cumulative_usage(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            """Project one provider turn's usage as a cumulative outer-stream snapshot."""
+            nonlocal turn_usage, last_projected_usage
+            projected_contents: list[Content] | None = None
+            for index, content in enumerate(update.contents):
+                if content.type != "usage":
+                    continue
+                if content.merge_mode == "replace":
+                    turn_usage = copy.deepcopy(content.usage_details)
+                else:
+                    turn_usage = add_usage_details(turn_usage, content.usage_details)
+                if completed_usage is None:
+                    continue
+                if projected_contents is None:
+                    projected_contents = list(update.contents)
+                cumulative_usage = add_usage_details(completed_usage, turn_usage)
+                # Copy only the objects mutated below. Other fields stay read-only, and raw provider objects may not
+                # support deepcopy.
+                projected_content = copy.copy(content)
+                projected_content.usage_details = copy.deepcopy(cumulative_usage)
+                projected_content.merge_mode = "replace"
+                projected_contents[index] = projected_content
+                last_projected_usage = cumulative_usage
+            if projected_contents is None:
+                return update
+            projected_update = copy.copy(update)
+            projected_update.contents = projected_contents
+            return projected_update
+
+        def finish_usage_turn(final_usage: UsageDetails | None) -> ChatResponseUpdate | None:
+            """Complete one provider turn and emit a correction if its final usage was not streamed."""
+            nonlocal completed_usage, turn_usage, last_projected_usage
+            turn_total = final_usage if final_usage is not None else turn_usage
+            if turn_total is None:
+                turn_usage = None
+                last_projected_usage = None
+                return None
+            had_completed_usage = completed_usage is not None
+            completed_usage = add_usage_details(completed_usage, turn_total)
+            correction = None
+            if had_completed_usage and completed_usage != last_projected_usage:
+                correction = ChatResponseUpdate(
+                    contents=[
+                        Content.from_usage(
+                            copy.deepcopy(completed_usage),
+                            merge_mode="replace",
+                        )
+                    ]
+                )
+            turn_usage = None
+            last_projected_usage = None
+            return correction
 
         async def settle_approval_replay_calls(function_calls: Sequence[Content]) -> None:
             await self._settle_dangling_service_function_calls(
@@ -5741,9 +6164,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         update = _drop_unexecutable_tool_contents_from_update(update)
                         if update is None:
                             continue
-                    yield update
+                    yield project_cumulative_usage(update)
 
                 response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
+            if usage_correction := finish_usage_turn(response.usage_details):
+                yield usage_correction
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
@@ -5839,13 +6264,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
+        turn_usage = None
+        last_projected_usage = None
         async with final_inner_stream:
             async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
                 update = _drop_unexecutable_tool_contents_from_update(update)
                 if update is None:
                     continue
-                yield update
+                yield project_cumulative_usage(update)
             final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
+        if usage_correction := finish_usage_turn(final_response.usage_details):
+            yield usage_correction
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         self._update_function_invocation_continuation_state(
             request_kwargs,

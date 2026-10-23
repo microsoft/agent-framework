@@ -44,7 +44,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
 
     private int? GetLimit()
     {
-        long limit = this.Evaluator.GetValue(this.Model.Limit).Value;
+        long limit = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.Limit), "message limit");
         return Convert.ToInt32(Math.Min(limit, 100));
     }
 
@@ -60,7 +60,8 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
 
     private bool IsDescending()
     {
-        AgentMessageSortOrderWrapper sortOrderWrapper = this.Evaluator.GetValue(this.Model.SortOrder).Value;
+        AgentMessageSortOrderWrapper sortOrderWrapper = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.SortOrder), "message sort order");
 
         return sortOrderWrapper.Value == AgentMessageSortOrder.NewestFirst;
     }

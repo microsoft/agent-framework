@@ -62,6 +62,7 @@ def test_core_ag_ui_lazy_exports_include_snapshot_primitives() -> None:
     """Core facade must expose snapshot primitives needed for endpoint configuration."""
     from agent_framework import ag_ui
 
+    assert hasattr(ag_ui, "AuthorizationScopeResolver")
     assert hasattr(ag_ui, "AGUIThreadSnapshot")
     assert hasattr(ag_ui, "AGUIThreadSnapshotStore")
     assert hasattr(ag_ui, "InMemoryAGUIThreadSnapshotStore")

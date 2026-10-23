@@ -465,6 +465,8 @@ class TestClaudeAgentRunStream:
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+            assert updates[0].contents[0].merge_mode == "append"
+            assert updates[1].contents[0].merge_mode == "append"
 
     async def test_run_stream_final_response_captures_usage_and_finish_reason(self) -> None:
         """Test run(stream=True) final response includes ResultMessage metadata."""
@@ -500,10 +502,11 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             stream = agent.run("Hello", stream=True)
-            async for _ in stream:
-                pass
+            updates = [update async for update in stream]
             response = await stream.get_final_response()
 
+        usage_content = next(content for update in updates for content in update.contents if content.type == "usage")
+        assert usage_content.merge_mode == "replace"
         assert response.finish_reason == "length"
         assert response.usage_details == {
             "input_token_count": 7,
@@ -1156,6 +1159,25 @@ class TestPrepareClientOptions:
             call_kwargs = mock_opts.call_args[1]
             assert call_kwargs.get("model") == "opus"
             assert call_kwargs.get("max_turns") == 15
+
+    def test_prepare_client_options_preserves_explicit_zero_limits(self) -> None:
+        """Test that explicit zero limit values are preserved."""
+        agent = ClaudeAgent(
+            default_options={
+                "max_turns": 0,
+                "max_budget_usd": 0.0,
+            }
+        )
+
+        with patch("agent_framework_claude._agent.SDKOptions") as mock_opts:
+            mock_opts.return_value = MagicMock()
+            agent._prepare_client_options()  # type: ignore[reportPrivateUsage]
+            call_kwargs = mock_opts.call_args[1]
+
+            assert "max_turns" in call_kwargs
+            assert call_kwargs["max_turns"] == 0
+            assert "max_budget_usd" in call_kwargs
+            assert call_kwargs["max_budget_usd"] == 0.0
 
     def test_prepare_client_options_with_instructions(self) -> None:
         """Test building options with instructions parameter."""
