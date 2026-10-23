@@ -584,6 +584,21 @@ def _format_tool_parameters(  # pyright: ignore[reportUnusedFunction]
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 
 
+class _BoundToolCache:
+    """Keep bound tools on their owner without serializing runtime bindings."""
+
+    def __init__(self, owner: Any = None) -> None:
+        self.owner = owner
+        self.tools: dict[FunctionTool, FunctionTool] = {}
+
+    def __reduce__(self) -> tuple[type[_BoundToolCache], tuple[()]]:
+        return type(self), ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Exclude runtime bindings when the owner is converted to JSON."""
+        return {}
+
+
 class FunctionTool(SerializationMixin):
     """A tool that wraps a Python function to make it callable by AI models.
 
@@ -644,6 +659,7 @@ class FunctionTool(SerializationMixin):
         "_schema_supplied",
         "_invoke_sync_on_event_loop",
     }
+    _PICKLE_OMIT_FIELDS = SerializationMixin._PICKLE_OMIT_FIELDS | {"_invocation_duration_histogram"}
 
     def __init__(
         self,
@@ -766,6 +782,11 @@ class FunctionTool(SerializationMixin):
         self.type: Literal["function_tool"] = "function_tool"
         self.result_parser = result_parser
 
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Restore pickle state and recreate runtime-only metrics."""
+        super().__setstate__(state)
+        self._invocation_duration_histogram = _default_histogram()
+
     def _discover_injected_parameters(self) -> None:
         """Inspect the wrapped function for runtime injection parameters."""
         func = self.func.func if isinstance(self.func, FunctionTool) else self.func
@@ -812,14 +833,20 @@ class FunctionTool(SerializationMixin):
         """Implement the descriptor protocol to support bound methods.
 
         When a FunctionTool is accessed as an attribute of a class instance,
-        this method is called to bind the instance to the function.
+        this method is called to bind the instance to the function. Instances
+        with a ``__dict__`` cache their bound tools across attribute accesses.
+        For slots-only instances, retain the returned tool to preserve its counters.
 
         Args:
             obj: The instance that owns the descriptor, or None for class access.
             objtype: The type that owns the descriptor.
 
         Returns:
-            A new FunctionTool with the instance bound to the wrapped function.
+            A FunctionTool with the instance bound to the wrapped function.
+
+        Raises:
+            ValueError: If the instance already stores a non-cache value in
+                ``_agent_framework_bound_tools``.
         """
         if obj is None:
             # Accessed from the class, not an instance
@@ -830,9 +857,24 @@ class FunctionTool(SerializationMixin):
             sig = inspect.signature(self.func)
             params = list(sig.parameters.keys())
             if params and params[0] in {"self", "cls"}:
-                # Create a new FunctionTool with the bound method
-                import copy
+                instance_dict: dict[str, Any] | None = getattr(obj, "__dict__", None)
+                if isinstance(instance_dict, dict):
+                    cache = instance_dict.get("_agent_framework_bound_tools")
+                    if "_agent_framework_bound_tools" in instance_dict and not isinstance(cache, _BoundToolCache):
+                        raise ValueError(
+                            "Cannot cache bound tools: '_agent_framework_bound_tools' is already in use. "
+                            "Rename the existing instance attribute to use method tools."
+                        )
+                    # A shallow-copied owner must not reuse the original owner's bindings.
+                    if not isinstance(cache, _BoundToolCache) or cache.owner is not obj:
+                        cache = instance_dict["_agent_framework_bound_tools"] = _BoundToolCache(obj)
+                    if self not in cache.tools:
+                        bound_func = copy.copy(self)
+                        bound_func._instance = obj
+                        cache.tools[self] = bound_func
+                    return cache.tools[self]
 
+                # shortcut: slots-only owners cannot store bindings; retain the returned tool for persistent limits.
                 bound_func = copy.copy(self)
                 bound_func._instance = obj
                 return bound_func
