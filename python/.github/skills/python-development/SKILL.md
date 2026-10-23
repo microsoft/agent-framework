@@ -1,127 +1,48 @@
 ---
 name: python-development
 description: >
-  Coding standards, conventions, and patterns for developing Python code in the
-  Agent Framework repository. Use this when writing or modifying Python source
-  files in the python/ directory.
+  Workflow guidance for developing Python code in the Agent Framework
+  repository. Use this when writing or modifying Python source files under
+  python/.
 ---
 
-# Python Development Standards
+# Python Development Workflow
 
-## File Header
+The canonical engineering rules are in
+[`python/CODING_STANDARD.md`](../../../CODING_STANDARD.md). Read and apply that
+document before changing Python source. Do not create or maintain a competing
+copy of the standards in this skill.
 
-Every `.py` file must start with:
+## Before Editing
 
-```python
-# Copyright (c) Microsoft. All rights reserved.
-```
+1. Read `python/AGENTS.md` and the nearest package `AGENTS.md`.
+2. Identify whether the change affects package source, tests, samples, public
+   exports, package governance, or more than one of those surfaces.
+3. Read the task-specific skill when applicable:
+   - `python-testing` for test design, integration markers, and test commands.
+   - `python-code-quality` for formatting, linting, and type checking.
+   - `python-package-management` for package creation, dependencies, public
+     lazy exports, and package lifecycle.
+   - `python-feature-lifecycle` for staged API decorators and promotion.
 
-## Type Annotations
+## Implementing Changes
 
-- Always specify return types and parameter types
-- Use `Type | None` instead of `Optional[Type]`
-- Use `from __future__ import annotations` to enable postponed evaluation
-- Use suffix `T` for TypeVar names: `ChatResponseT = TypeVar("ChatResponseT", bound=ChatResponse)`
-- Use `Mapping` instead of `MutableMapping` for read-only input parameters
-- Prefer `# type: ignore[...]` over unnecessary casts, or `isinstance` checks, when these are internally called and executed methods
-    But make sure the ignore is specific for both mypy and pyright so that we don't miss other mistakes
-- Internal private helpers may be used across `agent_framework*` modules when intentional; use a targeted
-  `# pyright: ignore[reportPrivateUsage]` instead of making the helper public just to satisfy pyright.
-- Do not add trivial pass-through or one-line helper functions solely to appease typing. Prefer targeted ignores,
-  casts, or clearer annotations over adding runtime overhead without a design benefit.
+- Follow established patterns in the owning package unless they conflict with
+  `python/CODING_STANDARD.md`.
+- Keep the common public path import-light and review public API changes for
+  compatibility and ergonomics.
+- Update source, typing surfaces, tests, samples, and documentation together
+  when they represent the same contract.
+- For root `agent_framework` export changes, follow the synchronized runtime,
+  `__all__`, and `.pyi` workflow in `python-package-management`.
+- Do not broaden a change into unrelated cleanup solely because nearby code
+  predates the current standard.
 
-## Function Parameters
+## Validation
 
-- Positional parameters: up to 3 fully expected parameters
-- Use keyword-only arguments (after `*`) for optional parameters
-- Provide string-based overrides to avoid requiring extra imports:
+Run the smallest relevant commands from `python/`. Use
+`python-code-quality` and `python-testing` to select package-scoped syntax,
+typing, and test commands before escalating to broader checks.
 
-```python
-def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | ChatToolMode) -> Agent:
-    if isinstance(tool_mode, str):
-        tool_mode = ChatToolMode(tool_mode)
-```
-
-- Avoid shadowing built-ins (use `next_handler` instead of `next`)
-- Avoid `**kwargs` unless needed for subclass extensibility; prefer named parameters
-
-## Docstrings
-
-Use Google-style docstrings for all public APIs:
-
-```python
-def equal(arg1: str, arg2: str) -> bool:
-    """Compares two strings and returns True if they are the same.
-
-    Args:
-        arg1: The first string to compare.
-        arg2: The second string to compare.
-
-    Returns:
-        True if the strings are the same, False otherwise.
-
-    Raises:
-        ValueError: If one of the strings is empty.
-    """
-```
-
-- Always document Agent Framework specific exceptions
-- Explicitly use `Keyword Args` when applicable
-- Only document standard Python exceptions when the condition is non-obvious
-
-## Import Structure
-
-```python
-# Core
-from agent_framework import Agent, Message, tool
-
-# Components
-from agent_framework.observability import enable_sensitive_telemetry
-
-# Connectors (lazy-loaded)
-from agent_framework.openai import OpenAIChatClient
-from agent_framework.foundry import FoundryChatClient
-```
-
-## Public API and Exports
-
-In `__init__.py` files that define package-level public APIs, use direct re-export imports plus an explicit
-`__all__`. Avoid identity aliases like `from ._agents import Agent as Agent`, and avoid
-`from module import *`.
-
-Do not define `__all__` in internal non-`__init__.py` modules. Exception: modules intentionally exposed as a
-public import surface (for example, `agent_framework.observability`) should define `__all__`.
-
-```python
-__all__ = ["Agent", "Message", "ChatResponse"]
-
-from ._agents import Agent
-from ._types import Message, ChatResponse
-```
-
-Special case: the root `agent_framework/__init__.py` uses lazy runtime exports. For root public API changes:
-- Add the symbol to `_LAZY_MODULE_EXPORTS` and keep `_LAZY_EXPORTS` derived from it.
-- Keep the explicit runtime `__all__` synchronized; it is still required for `from agent_framework import *`.
-- Add the same public symbol to `agent_framework/__init__.pyi` so pyright, mypy, and editors see the typed surface.
-- Put runtime deprecation behavior in the owning module via that module's `__getattr__`; avoid root-level
-  special-case branches for individual deprecated exports.
-- Identity aliases are appropriate in `.pyi` stubs because they mark re-exported names for type checkers; avoid them
-  in runtime `.py` modules unless there is a specific compatibility reason.
-
-## Performance Guidelines
-
-- Cache expensive computations (e.g., JSON schema generation)
-- Prefer `match/case` on `.type` attribute over `isinstance()` in hot paths
-- Avoid redundant serialization — compute once, reuse
-
-## Style
-
-- Line length: 120 characters
-- Format only files you changed, not the entire codebase
-- Prefer attributes over inheritance when parameters are mostly the same
-- Async by default — assume everything is asynchronous
-
-## Naming Conventions for Connectors
-
-- `_prepare_<object>_for_<purpose>` for methods that prepare data for external services
-- `_parse_<object>_from_<source>` for methods that process data from external services
+When a convention, command, or workflow changes, update the canonical document
+or owning task-specific skill rather than duplicating the new guidance here.

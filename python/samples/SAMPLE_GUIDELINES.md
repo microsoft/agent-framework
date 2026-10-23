@@ -6,22 +6,25 @@ Samples are extremely important for developers to get started with Agent Framewo
 
 Every sample file should follow this order:
 
-1. PEP 723 inline script metadata (if external dependencies are needed)
-2. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
-3. Required imports (including `from dotenv import load_dotenv`)
-4. Environment variable loading: `load_dotenv()`
-5. Module docstring: `"""This sample demonstrates..."""`
-6. Helper functions
-7. Main function(s) demonstrating functionality
-8. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+1. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
+2. PEP 723 inline script metadata (if external dependencies are needed)
+3. Module docstring: `"""This sample demonstrates..."""`
+4. `from __future__ import annotations` when applicable
+5. Required imports (including `from dotenv import load_dotenv`)
+6. Environment variable loading: `load_dotenv()`
+7. Helper functions
+8. Main function(s) demonstrating functionality
+9. Entry point: `if __name__ == "__main__": asyncio.run(main())`
 
 When modifying samples, update associated README files in the same or parent folders.
 
 ## External Dependencies
 
-When samples depend on external packages not included in the dev environment (e.g., `semantic-kernel`, `autogen-agentchat`, `pandas`), declare them using [PEP 723](https://peps.python.org/pep-0723/) inline script metadata at the top of the file, before the copyright header:
+When samples depend on external packages not included in the dev environment (e.g., `semantic-kernel`, `autogen-agentchat`, `pandas`), declare them using [PEP 723](https://peps.python.org/pep-0723/) inline script metadata immediately after the copyright header and before the module docstring:
 
 ```python
+# Copyright (c) Microsoft. All rights reserved.
+
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -31,7 +34,7 @@ When samples depend on external packages not included in the dev environment (e.
 # Run with any PEP 723 compatible runner, e.g.:
 #   uv run samples/path/to/script.py
 
-# Copyright (c) Microsoft. All rights reserved.
+"""Demonstrate a feature that requires a sample-only dependency."""
 ```
 
 This makes samples self-contained and runnable without installing extra packages into the dev environment. Do not add sample-only dependencies to the root `pyproject.toml` dev group.
@@ -55,15 +58,13 @@ For getting started samples (`01-get-started/`) and `basic` samples, use **expli
 ```python
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Demonstrate a basic Foundry-backed agent."""
+
 import asyncio
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-
-"""
-Sample docstring explaining what the sample does.
-"""
 
 
 async def main() -> None:
@@ -86,21 +87,24 @@ For advanced samples that require real credentials or multiple configuration val
 ```python
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Demonstrate advanced feature X.
+
+Environment variables:
+    FOUNDRY_PROJECT_ENDPOINT - Microsoft Foundry project endpoint.
+    FOUNDRY_MODEL - Model deployment name, for example `gpt-4o`.
+"""
+
 import asyncio
 import os
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-
-"""
-Advanced sample demonstrating feature X.
-
-Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint
-    FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
-"""
 ```
+
+When a change adds, removes, or renames a sample-facing environment variable in repo-level samples or package-local
+sample documentation for a package included by `agent-framework-core[all]`, update the consolidated inventory in
+`samples/README.md` in the same change.
 
 ### Default Client for Samples
 
