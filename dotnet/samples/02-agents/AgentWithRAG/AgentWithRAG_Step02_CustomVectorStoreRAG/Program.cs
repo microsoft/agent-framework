@@ -15,8 +15,9 @@ using Qdrant.Client;
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 var embeddingDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL") ?? "text-embedding-3-large";
-var afOverviewUrl = "https://raw.githubusercontent.com/MicrosoftDocs/semantic-kernel-docs/refs/heads/main/agent-framework/overview/index.md";
-var afMigrationUrl = "https://raw.githubusercontent.com/MicrosoftDocs/semantic-kernel-docs/refs/heads/main/agent-framework/migration-guide/from-semantic-kernel/index.md";
+// The documentation pages at a fixed commit, since they can move or be removed on the main branch of the documentation repository.
+var afOverviewUrl = "https://raw.githubusercontent.com/MicrosoftDocs/semantic-kernel-docs/caf5bacdc2d38864cb3cf6e7d6c0e0a1e5dea9a3/agent-framework/overview/index.md";
+var afMigrationUrl = "https://raw.githubusercontent.com/MicrosoftDocs/semantic-kernel-docs/caf5bacdc2d38864cb3cf6e7d6c0e0a1e5dea9a3/agent-framework/migration-guide/from-semantic-kernel/index.md";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
