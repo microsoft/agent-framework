@@ -24,6 +24,7 @@ the Agent Framework Python SDK. Entries are reviewed against the
 | Name | Brief description | Scenarios | Project | Issues |
 | --- | --- | --- | --- | --- |
 | MemorySync | A context provider that recalls and captures user memory around agent runs. | Per-user cross-session memory; instruction-layer recall; automatic fact capture | [agent-framework-memorysync](https://pypi.org/project/agent-framework-memorysync/) | [Open an issue](https://github.com/memorysyncio/memorysync-plugins/issues/new/choose) |
+| OpenViking | Persistent context and memory for agents. | Cross-session recall; run capture; memory extraction | [OpenViking integration](https://github.com/volcengine/OpenViking/tree/main/integrations/frameworks/microsoft-agent-framework) | [Open an issue](https://github.com/volcengine/OpenViking/issues/new/choose) |
 
 ## Middleware
 
