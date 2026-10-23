@@ -28,6 +28,11 @@ dependencies = [
     "a2a-sdk>=1.0.0,<2",
 ]
 
+[dependency-groups]
+test = [
+    "agent-framework-orchestrations",
+]
+
 [tool.uv]
 prerelease = "if-necessary"
 environments = [
