@@ -525,6 +525,28 @@ def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
     return normalized
 
 
+def _canonicalize_schema(schema: Any) -> Any:
+    """Recursively sort schema dictionary keys deterministically to preserve prompt cache stability.
+
+    Sorts all object-level keyword keys alphabetically, and recursively canonicalizes nested
+    schemas in mappings (properties, patternProperties, $defs, definitions, dependentSchemas)
+    and sequences (items, allOf, anyOf, oneOf). Non-dict/list values are returned unmodified.
+    """
+    if isinstance(schema, dict):
+        schema_dict = cast(dict[str, Any], schema)
+        result: dict[str, Any] = {}
+        for key, val in sorted(schema_dict.items(), key=lambda pair: pair[0]):
+            if isinstance(val, (dict, list)):
+                result[key] = _canonicalize_schema(val)
+            else:
+                result[key] = val
+        return result
+    if isinstance(schema, list):
+        schema_list = cast(list[Any], schema)
+        return [_canonicalize_schema(item) for item in schema_list]
+    return schema
+
+
 def _format_tool_parameters(  # pyright: ignore[reportUnusedFunction]
     parameters: dict[str, Any],
     *,
@@ -1351,11 +1373,14 @@ class FunctionTool(SerializationMixin):
         """Create the JSON schema of the parameters.
 
         Returns:
-            A dictionary containing the JSON schema for the function's parameters.
+            A dictionary containing the JSON schema for the function's parameters,
+            with deterministic recursive sorting to preserve prompt cache stability.
             The result is cached after the first call for performance.
         """
         if self._cached_parameters is None:
-            self._cached_parameters = self._input_schema
+            raw_schema = self._input_schema
+            canonical = _canonicalize_schema(raw_schema) if isinstance(raw_schema, dict) else raw_schema
+            self._cached_parameters = canonical if isinstance(canonical, dict) else {}
         return self._cached_parameters
 
     @staticmethod
