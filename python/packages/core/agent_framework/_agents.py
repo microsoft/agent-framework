@@ -277,7 +277,7 @@ class _RunContext(TypedDict):
     agent_name: str
     suppress_response_id: bool
     chat_options: MutableMapping[str, Any]
-    evaluation_tools: list[FunctionTool]
+    evaluation_tools: dict[str, dict[str, Any]]
     compaction_strategy: CompactionStrategy | None
     tokenizer: TokenizerProtocol | None
     client_kwargs: Mapping[str, Any]
@@ -399,7 +399,8 @@ class SupportsAgentRun(Protocol):
             messages: The message(s) to send to the agent.
 
         Keyword Args:
-            stream: Whether to stream the response. Defaults to False.
+            stream: Whether to stream the response. Defaults to False. Streams
+                may include response metadata updates without message contents.
             session: The conversation session associated with the message(s).
             function_invocation_kwargs: Keyword arguments forwarded to tool invocation.
             client_kwargs: Additional client-specific keyword arguments.
@@ -1409,7 +1410,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             response_format=context["chat_options"].get("response_format"),
             suppress_response_id=context["suppress_response_id"],
         )
-        agent_response._set_evaluation_tools(context["evaluation_tools"])  # pyright: ignore[reportPrivateUsage]
+        agent_response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = context["evaluation_tools"]
         session_context = context["session_context"]
         session_context._response = agent_response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
@@ -1446,7 +1447,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session_context = context["session_context"]
             if context["suppress_response_id"]:
                 response.response_id = None
-            response._set_evaluation_tools(context["evaluation_tools"])  # pyright: ignore[reportPrivateUsage]
+            response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = context["evaluation_tools"]
             session_context._response = response  # type: ignore[assignment]
             # Result hooks run during finalization, outside the per-pull identity
             # scope registered below, so re-stamp this run's identity around its
@@ -1454,21 +1455,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             with _run_identity_scope(run_identity):
                 await self._run_after_providers(session=session, context=session_context)
 
-        last_evaluation_tools: tuple[FunctionTool, ...] | None = None
-
         def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
-            """Propagate continuation state and publish snapshots when exposed tools change."""
-            nonlocal last_evaluation_tools
+            """Eagerly propagate conversation_id to session as updates arrive."""
             self._update_session_from_chat_response_update(context["session"], update)
-            tools = tuple(context["evaluation_tools"])
-            if tools != last_evaluation_tools:
-                snapshot = AgentResponse()
-                snapshot._set_evaluation_tools(tools)  # pyright: ignore[reportPrivateUsage]
-                update.additional_properties = {
-                    **(update.additional_properties or {}),
-                    **snapshot.additional_properties,
-                }
-                last_evaluation_tools = tools
             return update
 
         def _suppress_response_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -1506,14 +1495,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 async for update in stream:
                     yield update
                 response = await stream.get_final_response()
-                if tuple(context["evaluation_tools"]) != last_evaluation_tools:
-                    yield AgentResponseUpdate(
-                        additional_properties={
-                            _EVALUATION_TOOLS_METADATA_KEY: deepcopy(
-                                response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
-                            )
-                        }
-                    )
+                yield AgentResponseUpdate(
+                    additional_properties={
+                        _EVALUATION_TOOLS_METADATA_KEY: deepcopy(
+                            response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
+                        )
+                    }
+                )
 
         async def _finalize_with_metadata(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
             return await stream.get_final_response()
@@ -1796,7 +1784,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 per_service_call_history_middleware,
             ]
 
-        evaluation_tools: list[FunctionTool] = []
+        evaluation_tools: dict[str, dict[str, Any]] = {}
         _capture_evaluation_tools(evaluation_tools, co.get("tools"))
         if isinstance(self.client, BaseChatClient):
             effective_client_kwargs["_evaluation_tool_capture"] = partial(_capture_evaluation_tools, evaluation_tools)

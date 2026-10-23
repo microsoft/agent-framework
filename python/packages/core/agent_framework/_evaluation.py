@@ -56,7 +56,11 @@ from typing import (
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._tools import FunctionTool, normalize_tools
-from ._types import AgentResponse, Message
+from ._types import (
+    _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    AgentResponse,
+    Message,
+)
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
@@ -874,12 +878,28 @@ def _to_eval_item(
     typed_tools: list[FunctionTool] = []
     if tools is not None:
         typed_tools = [tool for tool in normalize_tools(tools) if isinstance(tool, FunctionTool)]
-    elif (response_tools := response._get_evaluation_tools()) is not None:  # pyright: ignore[reportPrivateUsage]
-        seen: set[str] = set()
-        for tool in response_tools:
-            if tool.name not in seen:
-                typed_tools.append(tool)
-                seen.add(tool.name)
+    elif _EVALUATION_TOOLS_METADATA_KEY in response.additional_properties:
+        definitions = response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
+        if not isinstance(definitions, dict):
+            raise ValueError("Invalid agent_framework.evaluation metadata: expected tool definitions keyed by name.")
+        for name, definition in cast(dict[str, Any], definitions).items():
+            if not isinstance(name, str) or not name or not isinstance(definition, dict):
+                raise ValueError("Invalid agent_framework.evaluation metadata: expected named tool definition objects.")
+            definition = cast(dict[str, Any], definition)
+            description = definition.get("description")
+            schema = definition.get("input_schema")
+            if not isinstance(description, str) or not isinstance(schema, dict):
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation definition for {name!r}: "
+                    "expected a string description and an input_schema object."
+                )
+            try:
+                schema = json.loads(json.dumps(schema, allow_nan=False))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation input_schema for {name!r}: expected JSON-serializable data."
+                ) from exc
+            typed_tools.append(FunctionTool(name=name, description=description, input_model=schema))
     elif agent:
         raw_tools = getattr(agent, "default_options", {}).get("tools", [])
         typed_tools = [tool for tool in normalize_tools(raw_tools) if isinstance(tool, FunctionTool)]

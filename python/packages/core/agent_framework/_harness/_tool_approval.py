@@ -8,23 +8,19 @@ import inspect
 import json
 from asyncio import sleep
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from .._middleware import AgentContext, AgentMiddleware
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession
 from .._telemetry import FeatureIndex, mark_feature_used
 from .._types import (
-    _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentResponse,
     AgentResponseUpdate,
     Content,
     Message,
     ResponseStream,
 )
-
-if TYPE_CHECKING:
-    from .._tools import FunctionTool
 
 DEFAULT_TOOL_APPROVAL_SOURCE_ID = "tool_approval"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY = "_function_invocation_budget_state"
@@ -502,27 +498,9 @@ class ToolApprovalMiddleware(AgentMiddleware):
         # the outer aggregation coalesces into the JSON message cannot mask it
         # (#7418).
         holder: dict[str, AgentResponse | None] = {"final": None}
-        evaluation_tools: dict[str, FunctionTool] | None = None
         response_format = _structured_response_format(context)
 
-        def _with_evaluation_tools(update: AgentResponseUpdate) -> AgentResponseUpdate:
-            nonlocal evaluation_tools
-            metadata = update.additional_properties or {}
-            if _EVALUATION_TOOLS_METADATA_KEY not in metadata:
-                return update
-            snapshot = AgentResponse(additional_properties=metadata)
-            tools = snapshot._get_evaluation_tools()  # pyright: ignore[reportPrivateUsage]
-            if tools is not None:
-                if evaluation_tools is None:
-                    evaluation_tools = {}
-                evaluation_tools.update({tool.name: tool for tool in tools})
-                snapshot._set_evaluation_tools(list(evaluation_tools.values()))  # pyright: ignore[reportPrivateUsage]
-                update = copy.copy(update)
-                update.additional_properties = snapshot.additional_properties
-            return update
-
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
-            nonlocal evaluation_tools
             if context.session is None:
                 raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
             while True:
@@ -541,7 +519,6 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 streamed_user_input_contents: list[Content] = []
                 buffering = False
                 async for update in context.result:
-                    update = _with_evaluation_tools(update)
                     update_approval_requests = [
                         content for content in update.contents if content.type == "function_approval_request"
                     ]
@@ -559,10 +536,6 @@ class ToolApprovalMiddleware(AgentMiddleware):
                     buffered_update.contents = list(update.contents)
                     buffered_approval_updates.append(buffered_update)
                 holder["final"] = await context.result.get_final_response()
-                if (tools := holder["final"]._get_evaluation_tools()) is not None:  # pyright: ignore[reportPrivateUsage]
-                    if evaluation_tools is None:
-                        evaluation_tools = {}
-                    evaluation_tools.update({tool.name: tool for tool in tools})
                 if not approval_requests:
                     return
 
@@ -589,6 +562,8 @@ class ToolApprovalMiddleware(AgentMiddleware):
                         remaining_update = copy.copy(update)
                         remaining_update.contents = remaining_contents
                         yield remaining_update
+                    elif update.additional_properties:
+                        yield AgentResponseUpdate(additional_properties=update.additional_properties)
                 if not all_auto_approved or has_other_user_input:
                     return
                 context.messages = []
@@ -611,10 +586,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 # malformed ``response_format`` in the terminal inner response.
                 with contextlib.suppress(ValueError, TypeError):
                     value = final.value
-            response = AgentResponse.from_updates(updates, output_format_type=response_format, value=value)
-            if evaluation_tools is not None:
-                response._set_evaluation_tools(list(evaluation_tools.values()))  # pyright: ignore[reportPrivateUsage]
-            return response
+            return AgentResponse.from_updates(updates, output_format_type=response_format, value=value)
 
         return ResponseStream(_stream(), finalizer=_finalize)
 
