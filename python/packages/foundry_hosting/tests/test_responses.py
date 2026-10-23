@@ -393,6 +393,37 @@ def test_framework_annotations_convert_all_responses_citation_variants() -> None
     ]
 
 
+@pytest.mark.parametrize(
+    ("coordinate_space", "expected"),
+    [
+        pytest.param(None, [_expected_url_citation()], id="unmarked"),
+        pytest.param("response", [_expected_url_citation()], id="response"),
+        pytest.param("source", [], id="source"),
+    ],
+)
+def test_framework_annotations_respect_coordinate_space_without_raw_representation(
+    coordinate_space: str | None, expected: list[dict[str, Any]]
+) -> None:
+    annotation = _url_citation()
+    if coordinate_space is not None:
+        annotation["additional_properties"] = {"annotated_regions_coordinate_space": coordinate_space}
+    annotations = json.loads(json.dumps([annotation]))
+    original_annotations = copy.deepcopy(annotations)
+
+    assert _annotations_to_output_text(annotations) == expected
+    assert annotations == original_annotations
+
+
+def test_framework_annotations_preserve_file_citations_with_source_regions() -> None:
+    annotation = _file_citation()
+    annotation["annotated_regions"] = [{"type": "text_span", "start_index": 1, "end_index": 3}]
+    annotation["additional_properties"]["annotated_regions_coordinate_space"] = "source"
+    original_annotation = copy.deepcopy(annotation)
+
+    assert _annotations_to_output_text([annotation]) == [_expected_file_citation()]
+    assert annotation == original_annotation
+
+
 def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
     annotations = cast(
         Any,
@@ -2199,6 +2230,69 @@ class TestAgentSessionPersistence:
         assert len(updates) == 1
         assert updates[0].contents == []
         assert updates[0].finish_reason == "content_filter"
+
+    @pytest.mark.parametrize("annotate_prefix", [False, True])
+    async def test_provider_background_preserves_completed_text_part_citation_offsets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, annotate_prefix: bool
+    ) -> None:
+        response = AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text(
+                            "See ", annotations=[_url_citation(end_index=3)] if annotate_prefix else None
+                        ),
+                        Content.from_text("Python", annotations=[_url_citation()]),
+                    ],
+                )
+            ],
+            finish_reason="stop",
+        )
+        original_response = copy.deepcopy(response.to_dict())
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(messages: Any = None, *, session: AgentSession, **kwargs: Any) -> AgentResponse:
+            del messages, kwargs
+            session.service_session_id = "private-service-conversation"
+            return response
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="service",
+            background_source="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_response(request, context, asyncio.Event())
+                if isinstance(event, Mapping)
+            ]
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        message = next(item for item in completed["output"] if item["type"] == "message")
+        parts = [part for part in message["content"] if part["type"] == "output_text"]
+        assert len(parts) == len(message["content"])
+        assert [part["text"] for part in parts] == ["See ", "Python"]
+        assert parts[0]["annotations"] == ([_expected_url_citation(end_index=3)] if annotate_prefix else [])
+        assert parts[1]["annotations"] == [_expected_url_citation()]
+        annotation_events = [event for event in events if event["type"] == "response.output_text.annotation.added"]
+        assert [event["content_index"] for event in annotation_events] == ([0, 1] if annotate_prefix else [1])
+        assert annotation_events[-1]["annotation"] == _expected_url_citation()
+        content_done = next(
+            event for event in events if event["type"] == "response.content_part.done" and event["content_index"] == 1
+        )
+        assert content_done["part"] == parts[1]
+        output_done = next(event for event in events if event["type"] == "response.output_item.done")
+        assert output_done["item"] == message
+        assert response.to_dict() == original_response
 
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4020,13 +4114,15 @@ class TestNonStreaming:
         assert final["annotations"] == [_expected_container_file_citation()]
 
     async def test_framework_url_and_file_citations_are_added_to_output_text(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["additional_properties"] = {"annotated_regions_coordinate_space": "source"}
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(
                     contents=[
                         Content.from_text(
                             "Python sources",
-                            annotations=[_url_citation(), _file_citation()],
+                            annotations=[source_citation, _url_citation(), _file_citation()],
                         )
                     ],
                     role="assistant",
@@ -4868,10 +4964,12 @@ class TestStreaming:
         assert final_message["content"][0]["annotations"] == [expected_annotation]
 
     async def test_framework_url_citation_is_consistent_across_stream_events(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["additional_properties"] = {"annotated_regions_coordinate_space": "source"}
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(
-                    contents=[Content.from_text("See ")],
+                    contents=[Content.from_text("See ", annotations=[source_citation])],
                     role="assistant",
                     message_id="msg_citation",
                 ),
