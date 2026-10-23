@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 
@@ -200,6 +201,87 @@ async def test_file_save_rejects_case_variant_checkpoint_id(tmp_path: Path) -> N
     first.state["marker"] = "first-updated"
     assert await storage.save(first) == "Round-A"
     assert (await storage.load("Round-A")).state["marker"] == "first-updated"
+
+
+
+async def test_file_load_rejects_case_variant_checkpoint_id(tmp_path: Path) -> None:
+    """A variant ID must not read another checkpoint's data (#9466 review).
+
+    On a folding filesystem ``load("round-a")`` resolves to the stored
+    ``Round-A.json``; under fail-closed it names no checkpoint at all.
+    """
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("case-variant collision only occurs on case-insensitive filesystems")
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    first = WorkflowCheckpoint(
+        workflow_name="first-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id="Round-A",
+        state={"marker": "first"},
+    )
+    await storage.save(first)
+
+    with pytest.raises(WorkflowCheckpointException, match="spelled 'Round-A'"):
+        await storage.load("round-a")
+
+    # The stored checkpoint is untouched and still reachable under its own ID.
+    restored = await storage.load("Round-A")
+    assert restored.state["marker"] == "first"
+
+
+async def test_file_delete_rejects_case_variant_checkpoint_id(tmp_path: Path) -> None:
+    """A variant ID must not delete another checkpoint (#9466 review)."""
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("case-variant collision only occurs on case-insensitive filesystems")
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    first = WorkflowCheckpoint(
+        workflow_name="first-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id="Round-A",
+        state={"marker": "first"},
+    )
+    await storage.save(first)
+
+    with pytest.raises(WorkflowCheckpointException, match="spelled 'Round-A'"):
+        await storage.delete("round-a")
+
+    assert (await storage.load("Round-A")).state["marker"] == "first"
+    assert await storage.list_checkpoint_ids(workflow_name="first-workflow") == ["Round-A"]
+
+
+async def test_concurrent_variant_saves_do_not_overwrite(tmp_path: Path) -> None:
+    """Two first-time variant saves must not both pass the guard (#9466 review).
+
+    The collision check used to run before the write was queued, so both saves
+    observed "no destination" and the second atomic replace silently won.
+    """
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("case-variant collision only occurs on case-insensitive filesystems")
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    upper = WorkflowCheckpoint(
+        workflow_name="upper-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id="Round-B",
+        state={"marker": "upper"},
+    )
+    lower = WorkflowCheckpoint(
+        workflow_name="lower-workflow",
+        graph_signature_hash="topology-b",
+        checkpoint_id="round-b",
+        state={"marker": "lower"},
+    )
+
+    results = await asyncio.gather(storage.save(upper), storage.save(lower), return_exceptions=True)
+    errors = [r for r in results if isinstance(r, WorkflowCheckpointException)]
+    saved_ids = [r for r in results if isinstance(r, str)]
+    assert len(errors) == 1, f"expected exactly one save to be rejected, got {results!r}"
+    assert "collides" in str(errors[0])
+    assert len(saved_ids) == 1
+
+    # Whichever spelling won keeps its own data; nothing is silently replaced.
+    stored = await storage.list_checkpoint_ids(workflow_name=f"{'upper' if saved_ids[0] == 'Round-B' else 'lower'}-workflow")
+    assert stored == [saved_ids[0]]
+    assert (await storage.load(saved_ids[0])).state["marker"] == ("upper" if saved_ids[0] == "Round-B" else "lower")
 
 
 def _filesystem_folds_unicode_normalization(path: Path) -> bool:

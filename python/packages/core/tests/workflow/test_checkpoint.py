@@ -2277,7 +2277,8 @@ async def test_file_checkpoint_storage_cancel_before_submission_writes_nothing(m
         # queued behind the holder before cancelling, or this would be testing a
         # cancellation that raced the enqueue instead.
         registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
-        canonical = (Path(temp_dir) / "shared-id.json").resolve()
+        # The destination queue is keyed by the filesystem-folded name (#9466).
+        canonical = checkpoint_module._destination_key((Path(temp_dir) / "shared-id.json").resolve())
         for _ in range(400):
             entry = registry.get(canonical)
             if entry is not None and entry.pending == 3:
@@ -2507,7 +2508,7 @@ def test_release_write_tolerates_an_already_dropped_entry():
     # No entry was ever created for this path.
     checkpoint_module._release_write(ticket)  # pyright: ignore[reportPrivateUsage]
     assert ticket.completion.done()
-    assert path not in checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+    assert checkpoint_module._destination_key(path) not in checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
 
 
 def test_file_checkpoint_storage_abandoned_loop_does_not_own_destination_forever(monkeypatch, tmp_path):
@@ -2675,7 +2676,8 @@ async def test_file_checkpoint_storage_cancelling_a_queued_save_does_not_let_the
         third = asyncio.create_task(storage.save(make("third")))
 
         registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
-        canonical = (Path(temp_dir) / "shared-id.json").resolve()
+        # The destination queue is keyed by the filesystem-folded name (#9466).
+        canonical = checkpoint_module._destination_key((Path(temp_dir) / "shared-id.json").resolve())
         for _ in range(400):
             entry = registry.get(canonical)
             if entry is not None and entry.pending == 3:
@@ -2734,7 +2736,8 @@ def test_file_checkpoint_storage_cancelled_worker_task_does_not_release_early(mo
 
     monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
 
-    canonical = (tmp_path / "shared-id.json").resolve()
+    # The destination queue is keyed by the filesystem-folded name (#9466).
+    canonical = checkpoint_module._destination_key((tmp_path / "shared-id.json").resolve())
     observed: dict[str, bool] = {}
 
     async def main() -> None:
@@ -2790,7 +2793,8 @@ def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(
 
     from agent_framework._workflows import _checkpoint as checkpoint_module
 
-    canonical = (tmp_path / "shared-id.json").resolve()
+    # The destination queue is keyed by the filesystem-folded name (#9466).
+    canonical = checkpoint_module._destination_key((tmp_path / "shared-id.json").resolve())
     outcome: dict[str, object] = {}
 
     # Hold the submitted write at its first syscall. Without this the count below races the
@@ -3075,7 +3079,8 @@ def test_file_checkpoint_storage_abandoned_loop_while_queued_releases_the_destin
     def make(name: str) -> WorkflowCheckpoint:
         return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
 
-    canonical = (tmp_path / "shared-id.json").resolve()
+    # The destination queue is keyed by the filesystem-folded name (#9466).
+    canonical = checkpoint_module._destination_key((tmp_path / "shared-id.json").resolve())
     registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
 
     holder_loop = asyncio.new_event_loop()
@@ -3172,7 +3177,8 @@ def test_file_checkpoint_storage_graceful_shutdown_releases_a_queued_save(tmp_pa
     def make(name: str) -> WorkflowCheckpoint:
         return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
 
-    canonical = (tmp_path / "shared-id.json").resolve()
+    # The destination queue is keyed by the filesystem-folded name (#9466).
+    canonical = checkpoint_module._destination_key((tmp_path / "shared-id.json").resolve())
     registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
 
     holder_loop = asyncio.new_event_loop()
@@ -3265,7 +3271,8 @@ def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(t
     def make(name: str) -> WorkflowCheckpoint:
         return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
 
-    canonical = (tmp_path / "shared-id.json").resolve()
+    # The destination queue is keyed by the filesystem-folded name (#9466).
+    canonical = checkpoint_module._destination_key((tmp_path / "shared-id.json").resolve())
     registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
 
     def wait_for_pending(count: int, timeout: float = 20.0) -> None:
