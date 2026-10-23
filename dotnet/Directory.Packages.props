@@ -7,7 +7,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <!-- Aspire -->
-    <AspireAppHostSdkVersion>13.5.3</AspireAppHostSdkVersion>
+    <AspireAppHostSdkVersion>13.6.1</AspireAppHostSdkVersion>
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
@@ -21,8 +21,8 @@
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.5.0" />
-    <PackageVersion Include="MessagePack" Version="3.1.7" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.6.0" />
+    <PackageVersion Include="MessagePack" Version="3.1.12" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.29" />
     <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.6" />
@@ -120,8 +120,9 @@
     <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.9.35-beta" />
     <PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.9.35-beta" />
     <!-- A2A -->
-    <PackageVersion Include="A2A" Version="1.0.0-preview2" />
-    <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview2" />
+    <PackageVersion Include="A2A" Version="1.0.0-preview3" />
+    <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview3" />
+    <PackageVersion Include="A2A.Grpc" Version="1.0.0-preview3" />
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0" />

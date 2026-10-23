@@ -137,7 +137,14 @@ def _map_content(content: Content) -> ContentBase | None:
 
 def _map_message_contents(message: Message) -> list[ContentBase]:
     """Map every non-empty content item of a message to Purview content entries."""
-    return [purview_content for content in message.contents if (purview_content := _map_content(content))]
+    mapped: list[ContentBase] = []
+    for content in message.contents:
+        if purview_content := _map_content(content):
+            mapped.append(purview_content)
+        # Annotations (for example citations) are not part of the text, so they are evaluated separately.
+        if content.type in ("text", "text_reasoning") and content.annotations:
+            mapped.extend(PurviewTextContent(data=_serialize_for_evaluation(a)) for a in content.annotations)
+    return mapped
 
 
 def _is_blocking_action(action_info: DlpActionInfo) -> bool:

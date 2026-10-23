@@ -45,10 +45,9 @@ async def run_agent_framework() -> None:
     from agent_framework.microsoft import CopilotStudioAgent
 
     # AF exposes an equivalent CopilotStudioAgent wrapper.
-    agent = CopilotStudioAgent(
-        name="PhysicsAgent",
-        instructions="Answer physics questions concisely.",
-    )
+    # AF connects to an already-published Copilot Studio agent, so its instructions
+    # are configured in Copilot Studio rather than passed to the wrapper.
+    agent = CopilotStudioAgent(name="PhysicsAgent")
     reply = await agent.run("Why is the sky blue?")
     print("[AF]", reply.text)
 

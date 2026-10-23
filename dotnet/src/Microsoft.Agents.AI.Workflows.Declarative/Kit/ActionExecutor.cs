@@ -64,6 +64,7 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettable
         : base(id)
     {
         this._session = session;
+        this.RegisterCheckpointRestoringCallback(session.State, session.State.RestoreCheckpointAsync);
     }
 
     /// <inheritdoc/>

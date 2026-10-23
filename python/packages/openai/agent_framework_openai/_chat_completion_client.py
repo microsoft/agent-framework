@@ -41,6 +41,7 @@ from agent_framework._types import (
     Message,
     ResponseStream,
     UsageDetails,
+    get_namespaced_value,
 )
 from agent_framework.exceptions import (
     ChatClientException,
@@ -67,7 +68,9 @@ from ._shared import (
     PROMPT_CACHE_BREAKPOINT_KEY,
     AzureTokenProvider,
     _attach_prompt_cache_breakpoint,  # pyright: ignore[reportPrivateUsage]
+    _get_openai_metadata,  # pyright: ignore[reportPrivateUsage]
     _is_mp3_media_type,  # pyright: ignore[reportPrivateUsage]
+    _openai_additional_properties,  # pyright: ignore[reportPrivateUsage]
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -106,7 +109,24 @@ _MODEL_OUTPUT_REFUSAL = "refusal"
 
 
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
+
+
+def _refusal_additional_properties() -> dict[str, Any]:
+    """Return the generic refusal marker plus its legacy compatibility form."""
+    return {
+        "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        _MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL,
+    }
 
 
 # Error message shared with tests — extracted to a constant to keep the
@@ -919,7 +939,11 @@ class RawOpenAIChatCompletionClient(
         # See https://github.com/microsoft/agent-framework/issues/3434
         if chunk.usage:
             contents.append(
-                Content.from_usage(usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk)
+                Content.from_usage(
+                    usage_details=self._parse_usage_from_openai(chunk.usage),
+                    merge_mode="replace",
+                    raw_representation=chunk,
+                )
             )
 
         for choice in chunk.choices:
@@ -942,7 +966,12 @@ class RawOpenAIChatCompletionClient(
             if refusal_content := self._parse_refusal_from_openai(choice):
                 choice_contents.append(refusal_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                choice_contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+                choice_contents.append(
+                    Content.from_text_reasoning(
+                        protected_data=json.dumps(reasoning_details),
+                        merge_mode="append",
+                    )
+                )
             if self.response_parser is not None:
                 choice_contents = list(self.response_parser(choice.delta, choice_contents))
             contents.extend(choice_contents)
@@ -992,7 +1021,11 @@ class RawOpenAIChatCompletionClient(
         if message.content:
             if not isinstance(message.content, str):
                 return None
-            return Content.from_text(text=message.content, raw_representation=choice)
+            return Content.from_text(
+                text=message.content,
+                merge_mode="append" if isinstance(choice, ChunkChoice) else None,
+                raw_representation=choice,
+            )
         return None
 
     def _parse_refusal_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
@@ -1001,7 +1034,8 @@ class RawOpenAIChatCompletionClient(
         if hasattr(message, "refusal") and message.refusal:
             return Content.from_text(
                 text=message.refusal,
-                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                merge_mode="append" if isinstance(choice, ChunkChoice) else None,
+                additional_properties=_refusal_additional_properties(),
                 raw_representation=choice,
             )
         return None
@@ -1036,6 +1070,7 @@ class RawOpenAIChatCompletionClient(
                         call_id=tool.id if tool.id else "",
                         name=tool.function.name if tool.function.name else "",
                         arguments=tool.function.arguments if tool.function.arguments else "",
+                        merge_mode="append" if isinstance(choice, ChunkChoice) else None,
                         raw_representation=tool.function,
                     )
                     # Preserve the streaming tool-call index. Parallel calls interleave
@@ -1045,10 +1080,16 @@ class RawOpenAIChatCompletionClient(
                     # function, not the tool call).
                     tool_index = getattr(tool, "index", None)
                     if tool_index is not None:
-                        fcc.additional_properties["tool_call_index"] = tool_index
+                        openai_properties: dict[str, Any] = {"tool_call_index": tool_index}
+                        legacy_properties: dict[str, Any] = {"tool_call_index": tool_index}
                         choice_index = getattr(choice, "index", None)
                         if choice_index is not None:
-                            fcc.additional_properties["tool_call_choice_index"] = choice_index
+                            openai_properties["tool_call_choice_index"] = choice_index
+                            legacy_properties["tool_call_choice_index"] = choice_index
+                        fcc.additional_properties = _openai_additional_properties(
+                            openai_properties,
+                            legacy=legacy_properties,
+                        )
                     resp.append(fcc)
 
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
@@ -1138,8 +1179,10 @@ class RawOpenAIChatCompletionClient(
             }
             if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
                 args["name"] = author_name
-            if "reasoning_details" in message.additional_properties and (
-                details := message.additional_properties["reasoning_details"]
+            if details := _get_openai_metadata(
+                message.additional_properties,
+                "reasoning_details",
+                "reasoning_details",
             ):
                 args["reasoning_details"] = details
 
@@ -1312,7 +1355,11 @@ class RawOpenAIChatCompletionClient(
                 }
             case "data" | "uri" if content.has_top_level_media_type("image"):
                 image_url_obj: dict[str, Any] = {"url": content.uri}
-                detail = content.additional_properties.get("detail")
+                detail = _get_openai_metadata(
+                    content.additional_properties,
+                    "image_detail",
+                    "detail",
+                )
                 if isinstance(detail, str):
                     image_url_obj["detail"] = detail
                 return _attach_prompt_cache_breakpoint(
@@ -1349,7 +1396,7 @@ class RawOpenAIChatCompletionClient(
                 )
             case "data" | "uri" if content.has_top_level_media_type("application") and content.uri.startswith("data:"):  # type: ignore[union-attr]
                 # All application/* media types should be treated as files for OpenAI
-                filename = getattr(content, "filename", None) or (
+                filename = content.name or (
                     content.additional_properties.get("filename")
                     if hasattr(content, "additional_properties") and content.additional_properties
                     else None

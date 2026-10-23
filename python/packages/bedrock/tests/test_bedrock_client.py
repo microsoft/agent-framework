@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections import deque
@@ -102,6 +103,71 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
     assert response.usage_details and response.usage_details["input_token_count"] == 10
 
 
+class _StubConverseWithoutModelId(_StubBedrockRuntime):
+    """Returns the real Converse response shape, which does not echo the model id."""
+
+    def converse(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4},
+        }
+
+
+@pytest.mark.parametrize("client_model", ["amazon.titan-text", None])
+async def test_get_response_reports_the_requested_model(client_model: str | None) -> None:
+    """A per-call model override must be the model reported on the response, like the streaming path."""
+    stub = _StubConverseWithoutModelId()
+    client = BedrockChatClient(
+        model=client_model,
+        region="us-west-2",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    response = await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hello")])],
+        options={"model": "us.openai.gpt-6-sol"},
+    )
+
+    assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
+    assert response.model == "us.openai.gpt-6-sol"
+
+
+class _StubConverseAndStreamWithoutModelId(_StubConverseWithoutModelId):
+    def converse_stream(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        events: list[dict[str, Any]] = [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "hi"}, "contentBlockIndex": 0}},
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+        return {"stream": _StubEventStream(events)}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_streaming_and_non_streaming_report_the_same_model(stream: bool) -> None:
+    """Both paths must report the per-call model override, not the client default."""
+    stub = _StubConverseAndStreamWithoutModelId()
+    client = BedrockChatClient(
+        model="amazon.titan-text",
+        region="us-west-2",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    if stream:
+        response_stream = client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"}, stream=True)
+        response = await response_stream.get_final_response()
+    else:
+        response = await client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"})
+
+    assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
+    assert response.text == "hi"
+    assert response.model == "us.openai.gpt-6-sol"
+
+
 async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
     """stream=True should use ConverseStream and yield text, tool call, finish and usage updates per event."""
     stub = _StubBedrockStreamRuntime([
@@ -141,6 +207,10 @@ async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
 
     assert [update.text for update in updates if update.text] == ["Checking", " the weather."]
     assert all(update.role == "assistant" for update in updates)
+    streamed_contents = [content for update in updates for content in update.contents]
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "text")
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "function_call")
+    assert all(content.merge_mode == "replace" for content in streamed_contents if content.type == "usage")
     assert response.text == "Checking the weather."
     function_call = next(content for content in response.messages[0].contents if content.type == "function_call")
     assert function_call.call_id == "call-1"
@@ -311,10 +381,34 @@ def test_redacted_reasoning_content_is_replayed_unchanged() -> None:
     reasoning = response.messages[0].contents[0]
     assert reasoning.type == "text_reasoning"
     assert reasoning.text is None
+    assert reasoning.additional_properties["bedrock"]["redacted_reasoning"] is True
+    assert reasoning.additional_properties["bedrock.redacted_reasoning"] is True
 
     _, conversation = client._prepare_bedrock_messages(response.messages)
     assert conversation[0]["content"][0] == {"reasoningContent": {"redactedContent": redacted}}
     assert "toolUse" in conversation[0]["content"][1]
+
+
+@pytest.mark.parametrize(
+    "additional_properties",
+    [
+        {"bedrock": {"redacted_reasoning": True}},
+        {"bedrock.redacted_reasoning": True},
+    ],
+)
+def test_redacted_reasoning_replay_accepts_canonical_and_legacy_metadata(
+    additional_properties: dict[str, Any],
+) -> None:
+    client = _make_client()
+    redacted = b"encrypted-reasoning"
+    content = Content.from_text_reasoning(
+        protected_data=base64.b64encode(redacted).decode("utf-8"),
+        additional_properties=additional_properties,
+    )
+
+    block = client._convert_content_to_bedrock_block(content)
+
+    assert block == {"reasoningContent": {"redactedContent": redacted}}
 
 
 async def test_stream_redacted_reasoning_content_is_replayed_unchanged() -> None:
@@ -526,18 +620,18 @@ def test_parse_usage_returns_none_when_no_recognized_keys() -> None:
     assert client._parse_usage(None) is None
 
 
+class _FakeSession:
+    def __init__(self, region_name: str | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.region_name = region_name
+
+    def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
+        self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
+        return _StubBedrockRuntime()
+
+
 def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
     """BedrockChatClient should build a runtime client from a provided boto3 session."""
-
-    class _FakeSession:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, Any]] = []
-            self.region_name: str | None = None
-
-        def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
-            self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
-            return _StubBedrockRuntime()
-
     session = _FakeSession()
 
     client = BedrockChatClient(
@@ -554,6 +648,53 @@ def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
             "config": session.calls[0]["config"],
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("region", "env_region", "session_region", "expected_region"),
+    [
+        (None, None, "eu-west-1", "eu-west-1"),
+        ("us-west-2", None, "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        (None, None, None, "us-east-1"),
+    ],
+    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+)
+def test_init_resolves_region_with_boto3_session(
+    monkeypatch: pytest.MonkeyPatch,
+    region: str | None,
+    env_region: str | None,
+    session_region: str | None,
+    expected_region: str,
+) -> None:
+    """A configured region wins, then the provided session's region, then the default region."""
+    if env_region:
+        monkeypatch.setenv("BEDROCK_REGION", env_region)
+    else:
+        monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name=session_region)
+
+    client = BedrockChatClient(model="amazon.titan-text", region=region, boto3_session=cast(Boto3Session, session))
+
+    assert session.calls[0]["region_name"] == expected_region
+    assert client.region == expected_region
+    assert client.service_url() == f"https://bedrock-runtime.{expected_region}.amazonaws.com"
+
+
+def test_init_ignores_boto3_session_region_when_runtime_client_supplied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preconfigured runtime client wins, so the unused session should not change the reported region."""
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name="eu-west-1")
+
+    client = BedrockChatClient(
+        model="amazon.titan-text",
+        client=cast(BaseClient, _StubBedrockRuntime()),
+        boto3_session=cast(Boto3Session, session),
+    )
+
+    assert session.calls == []
+    assert client.region == "us-east-1"
+    assert client.service_url() == "https://bedrock-runtime.us-east-1.amazonaws.com"
 
 
 @pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
@@ -968,3 +1109,36 @@ def test_parse_message_contents_requires_tool_use_name() -> None:
 
     with pytest.raises(ChatClientInvalidResponseException, match="missing required tool name"):
         client._parse_message_contents([{"toolUse": {"toolUseId": "call-1"}}])
+
+
+def test_prepare_options_keeps_per_call_client_kwargs() -> None:
+    """Per-call client kwargs must land in the Converse request, not vanish (#9344)."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(
+        messages,
+        {},
+        guardrailConfig={"guardrailIdentifier": "gr-1", "guardrailVersion": "DRAFT"},
+        requestMetadata={"channel": "test"},
+    )
+
+    assert request["guardrailConfig"] == {"guardrailIdentifier": "gr-1", "guardrailVersion": "DRAFT"}
+    assert request["requestMetadata"] == {"channel": "test"}
+
+
+def test_prepare_options_prompt_cleanup_uses_overridden_model_id() -> None:
+    """A prompt ARN arriving through client kwargs must trigger the ARN cleanup (#9344)."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(
+        messages,
+        {},
+        modelId="arn:aws:bedrock:us-east-1:123456789012:prompt/PROMPT123",
+    )
+
+    assert ":prompt/" in request["modelId"]
+    assert "inferenceConfig" not in request, "prompt ARN requests must not carry inferenceConfig"
+    assert "system" not in request
+    assert "toolConfig" not in request

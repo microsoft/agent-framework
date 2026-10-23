@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._agent import AgentFrameworkAgent
 from ._client import AGUIChatClient
-from ._endpoint import add_agent_framework_fastapi_endpoint
+from ._endpoint import AuthorizationScopeResolver, add_agent_framework_fastapi_endpoint
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
 from ._message_adapters import agent_framework_messages_to_agui_host_history
@@ -38,6 +38,7 @@ DEFAULT_TAGS = ["AG-UI"]
 __all__ = [
     "AgentFrameworkAgent",
     "AgentFrameworkWorkflow",
+    "AuthorizationScopeResolver",
     "WorkflowFactory",
     "add_agent_framework_fastapi_endpoint",
     "agent_framework_messages_to_agui_host_history",
