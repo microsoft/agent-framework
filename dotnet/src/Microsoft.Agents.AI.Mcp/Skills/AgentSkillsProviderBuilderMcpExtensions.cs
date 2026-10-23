@@ -14,14 +14,14 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// Adds a skill source that discovers skills served over MCP via the supplied <paramref name="client"/>.
     /// </summary>
     /// <param name="builder">The builder to extend.</param>
-    /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c> or <c>skill://index.json</c>.</param>
+    /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>.</param>
     /// <param name="options">Optional options that control skill loading.</param>
     /// <returns>The builder instance for chaining.</returns>
     /// <remarks>
     /// <para>
     /// Supports skills discovered through <c>skills/list</c> when the server declares the
-    /// <c>io.modelcontextprotocol/skills</c> extension. Otherwise, discovers skills through
-    /// <c>skill://index.json</c>.
+    /// <c>io.modelcontextprotocol/skills</c> extension. Otherwise, returns an empty skill list
+    /// without sending a discovery request.
     /// Listed skills fetch instructions and supporting resources when requested.
     /// Page counts, total skill counts, and individual resource sizes
     /// are bounded by <see cref="AgentMcpSkillsSourceOptions"/>.
@@ -63,12 +63,8 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// using var provider = new AgentSkillsProvider(source, ownsSource: true);
     /// </code>
     /// <para>
-    /// Index-based discovery and archive-distributed skills are compatibility features and will be deprecated
-    /// in a future release.
-    /// </para>
-    /// <para>
     /// <strong>Security considerations:</strong> Calling this method is an explicit opt-in to loading
-    /// skills — including instructions and, for archive-type entries, extracted files — from the MCP
+    /// skills — including instructions and supporting resources — from the MCP
     /// server that <paramref name="client"/> is connected to. External skill sources may introduce
     /// adversarial or compromised skills designed to influence the agent via indirect prompt injection
     /// or to exfiltrate data through instructions or scripts the agent is induced to run. Only connect

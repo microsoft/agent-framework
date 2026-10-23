@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -233,7 +232,7 @@ public sealed partial class AgentMcpListedSkillsTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_LaterPageError_PropagatesWithoutReadingIndexAsync()
+    public async Task GetSkillsAsync_LaterPageError_PropagatesWithoutReadingResourcesAsync()
     {
         // Arrange
         int calls = 0;
@@ -530,7 +529,7 @@ public sealed partial class AgentMcpListedSkillsTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_ListError_DoesNotReadIndexAsync()
+    public async Task GetSkillsAsync_ListError_DoesNotReadResourcesAsync()
     {
         // Arrange
         int calls = 0;
@@ -542,7 +541,7 @@ public sealed partial class AgentMcpListedSkillsTests
         }, (uri, _) =>
         {
             reads.Add(uri);
-            return ValueTask.FromResult(Text(uri, "Index must not be read."));
+            return ValueTask.FromResult(Text(uri, "Resource must not be read."));
         });
         await using var client = await server.CreateClientAsync();
         using var source = new AgentMcpSkillsSource(client);
@@ -596,17 +595,29 @@ public sealed partial class AgentMcpListedSkillsTests
         }
     }
 
-    [Fact]
-    public async Task GetSkillsAsync_AlreadyCancelled_SendsNoRequestAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_AlreadyCancelled_SendsNoRequestAsync(bool declaresSkills)
     {
         // Arrange
         int calls = 0;
+        List<string> reads = [];
         await using var server = CreateServer((_, _) =>
         {
             calls++;
             return ValueTask.FromResult<JsonNode?>(ListResult());
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
         });
         await using var client = await server.CreateClientAsync();
+        if (!declaresSkills)
+        {
+            client.ServerCapabilities.Extensions = null;
+        }
+
         using var source = new AgentMcpSkillsSource(client);
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
@@ -614,12 +625,13 @@ public sealed partial class AgentMcpListedSkillsTests
         // Act & Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token));
         Assert.Equal(0, calls);
+        Assert.Empty(reads);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task GetSkillsAsync_NoDeclaration_ReadsIndexInsteadOfListAsync(bool smallResourceLimit)
+    public async Task GetSkillsAsync_NoDeclaration_ReturnsEmptyWithoutRequestsAsync(bool smallResourceLimit)
     {
         // Arrange
         int calls = 0;
@@ -644,15 +656,15 @@ public sealed partial class AgentMcpListedSkillsTests
         var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
-        Assert.Equal("older-skill", Assert.Single(skills).Frontmatter.Name);
-        Assert.Equal("skill://index.json", Assert.Single(reads));
+        Assert.Empty(skills);
+        Assert.Empty(reads);
         Assert.Equal(0, calls);
     }
 
     [Theory]
     [InlineData("{}")]
     [InlineData("null")]
-    public async Task GetSkillsAsync_DeclaredButMissingList_DoesNotReadIndexAsync(string declaration)
+    public async Task GetSkillsAsync_DeclaredButMissingList_DoesNotReadResourcesAsync(string declaration)
     {
         // Arrange
         List<string> reads = [];
@@ -677,47 +689,34 @@ public sealed partial class AgentMcpListedSkillsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task GetSkillsAsync_EmptyOrUnsupportedDynamicList_DoesNotReconcileArchivesAsync(bool dynamic)
+    public async Task GetSkillsAsync_EmptyOrUnsupportedDynamicList_DoesNotReadResourcesAsync(bool dynamic)
     {
         // Arrange
-        string directory = Path.Combine(Path.GetTempPath(), "af-mcp-list-tests-" + Guid.NewGuid().ToString("N"));
-        string staleDirectory = Path.Combine(directory, "stale-skill");
-        Directory.CreateDirectory(staleDirectory);
-        string marker = Path.Combine(staleDirectory, "SKILL.md");
-        await File.WriteAllTextAsync(marker, "Preserve this file.");
-        try
-        {
-            JsonObject entry = Entry();
-            entry["resources"] = "dynamic";
-            List<string> reads = [];
-            await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(dynamic ? ListResult(entry) : ListResult()),
-                (uri, _) =>
-                {
-                    reads.Add(uri);
-                    return ValueTask.FromResult(Text(uri, "{}"));
-                });
-            await using var client = await server.CreateClientAsync();
-            using var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = directory });
-
-            // Act
-            if (dynamic)
+        JsonObject entry = Entry();
+        entry["resources"] = "dynamic";
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(dynamic ? ListResult(entry) : ListResult()),
+            (uri, _) =>
             {
-                await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
-            }
-            else
-            {
-                var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
-                Assert.Empty(skills);
-            }
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, "{}"));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
 
-            // Assert
-            Assert.Empty(reads);
-            Assert.Equal("Preserve this file.", await File.ReadAllTextAsync(marker));
-        }
-        finally
+        // Act
+        if (dynamic)
         {
-            Directory.Delete(directory, recursive: true);
+            await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         }
+        else
+        {
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+            Assert.Empty(skills);
+        }
+
+        // Assert
+        Assert.Empty(reads);
     }
 
     [Theory]
