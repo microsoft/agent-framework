@@ -115,6 +115,9 @@ class RedisContextProvider(ContextProvider):
         self._token_escaper: TokenEscaper = TokenEscaper()
         self._index_initialized: bool = False
         self._schema_dict: dict[str, Any] | None = None
+        # An index built here owns its connection pool and must release it on close;
+        # an injected index stays under the caller's control (matching RedisHistoryProvider).
+        self._owns_index = redis_index is None
         index = redis_index or AsyncSearchIndex.from_dict(  # pyright: ignore[reportUnknownMemberType]
             self.schema_dict, redis_url=self.redis_url, validate_on_load=True
         )
@@ -441,7 +444,15 @@ class RedisContextProvider(ContextProvider):
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        """Async context manager exit."""
+        """Async context manager exit; releases a provider-owned index connection."""
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the Redis connection when this provider owns the index."""
+        if self._owns_index:
+            client = getattr(self.redis_index, "client", None)
+            if client is not None:
+                await client.aclose()
 
 
 __all__ = ["RedisContextProvider"]

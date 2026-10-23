@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -48,6 +50,7 @@ public sealed class AzureBlobAgentSessionStore : AgentSessionStore
     private readonly string _agentKey;
     private readonly string? _blobNamePrefix;
     private readonly bool _createContainerIfNotExists;
+    private readonly ILogger _logger;
     private Task? _containerInitializationTask;
 
     /// <summary>
@@ -56,16 +59,19 @@ public sealed class AzureBlobAgentSessionStore : AgentSessionStore
     /// <param name="containerClient">The blob container client to use for storage operations.</param>
     /// <param name="agentNamespace">A stable name that identifies the agent across application restarts.</param>
     /// <param name="options">Optional configuration options. If <see langword="null"/>, default options will be used.</param>
+    /// <param name="loggerFactory">Creates the logger this store reports through.</param>
     /// <exception cref="ArgumentNullException"><paramref name="containerClient"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="agentNamespace"/> is empty or consists only of whitespace.</exception>
     /// <exception cref="ArgumentException"><paramref name="options"/> specifies a Blob name prefix that exceeds the Azure Blob name limit.</exception>
     public AzureBlobAgentSessionStore(
         BlobContainerClient containerClient,
         string agentNamespace,
-        AzureBlobAgentSessionStoreOptions? options = null)
+        AzureBlobAgentSessionStoreOptions? options = null,
+        ILoggerFactory? loggerFactory = null)
     {
         this._containerClient = Throw.IfNull(containerClient);
         this._agentKey = ComputeAgentKey(Throw.IfNullOrWhitespace(agentNamespace));
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AzureBlobAgentSessionStore>();
 
         options ??= new AzureBlobAgentSessionStoreOptions();
         this._createContainerIfNotExists = options.CreateContainerIfNotExists;
@@ -115,6 +121,31 @@ public sealed class AzureBlobAgentSessionStore : AgentSessionStore
             agent,
             this.GetBlobName(key),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
+
+        BlobClient blobClient = this._containerClient.GetBlobClient(this.GetBlobName(key));
+
+        // DeleteIfExistsAsync reports both a missing blob and a missing container as false.
+        Response<bool> response = await blobClient.DeleteIfExistsAsync(
+            DeleteSnapshotsOption.IncludeSnapshots,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (!response.Value && this._logger.IsEnabled(LogLevel.Debug))
+        {
+            this._logger.LogDebug(
+                "Session '{SessionId}' was not found in the Blob container '{ContainerName}'. Nothing to delete.",
+                key.SessionId,
+                this._containerClient.Name);
+        }
     }
 
     private async ValueTask<AgentSession?> TryGetSessionAsync(

@@ -275,6 +275,128 @@ async def test_get_all_tasks_shows_tasks() -> None:
 # --- Wait for Completion Tests ---
 
 
+@pytest.mark.parametrize("continuation_state", ["running", "completed", "finalized", "failed"])
+@pytest.mark.parametrize("first_outcome", ["completed", "failed", "cancelled"])
+async def test_wait_does_not_finalize_a_continued_task(
+    monkeypatch: pytest.MonkeyPatch, continuation_state: str, first_outcome: str
+) -> None:
+    """A waiter for an earlier execution must not consume a continuation's task."""
+    first_release = asyncio.Event()
+    second_started = asyncio.Event()
+    second_release = asyncio.Event()
+    wait_started = asyncio.Event()
+    wait_completed = asyncio.Event()
+    release_waiter = asyncio.Event()
+
+    class ContinuingAgent(_FakeAgent):
+        async def run(self, messages: Any = None, **kwargs: Any) -> AgentResponse[Any]:
+            if messages == "first":
+                await first_release.wait()
+                if first_outcome == "failed":
+                    raise RuntimeError("first failed")
+                if first_outcome == "cancelled":
+                    raise asyncio.CancelledError
+                return AgentResponse(messages=[Message(role="assistant", contents=["first result"])])
+            second_started.set()
+            await second_release.wait()
+            if continuation_state == "failed":
+                raise RuntimeError("continuation failed")
+            return AgentResponse(messages=[Message(role="assistant", contents=["second result"])])
+
+    real_wait = asyncio.wait
+
+    async def paused_wait(*args: Any, **kwargs: Any) -> Any:
+        wait_started.set()
+        result = await real_wait(*args, **kwargs)
+        wait_completed.set()
+        await release_waiter.wait()
+        return result
+
+    monkeypatch.setattr(asyncio, "wait", paused_wait)
+    provider = _make_provider(ContinuingAgent("Worker"))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+    await _invoke_tool(
+        tools["background_agents_start_task"], agent_name="Worker", input="first", description="first execution"
+    )
+    waiter = asyncio.create_task(_invoke_tool(tools["background_agents_wait_for_first_completion"], task_ids=[1]))
+    try:
+        await wait_started.wait()
+        first_release.set()
+        await wait_completed.wait()
+        first_result = {
+            "completed": "first result",
+            "failed": "Task failed: first failed",
+            "cancelled": "Task failed: Task was canceled.",
+        }[first_outcome]
+        assert await _invoke_tool(tools["background_agents_get_task_results"], task_id=1) == first_result
+        assert "continued" in await _invoke_tool(tools["background_agents_continue_task"], task_id=1, text="second")
+        await second_started.wait()
+        continuation = provider._runtime[session.session_id].in_flight_tasks[1]
+        if continuation_state != "running":
+            second_release.set()
+            await asyncio.gather(continuation, return_exceptions=True)
+        if continuation_state == "finalized":
+            assert await _invoke_tool(tools["background_agents_get_task_results"], task_id=1) == "second result"
+        expected_state = session.to_dict()
+        release_waiter.set()
+        expected_status = "completed" if first_outcome == "completed" else "failed"
+        assert await waiter == f"Task 1 finished with status: {expected_status}."
+        assert session.to_dict() == expected_state
+        if continuation_state != "finalized":
+            assert provider._runtime[session.session_id].in_flight_tasks[1] is continuation
+        second_release.set()
+        await asyncio.gather(continuation, return_exceptions=True)
+        expected_result = "Task failed: continuation failed" if continuation_state == "failed" else "second result"
+        assert await _invoke_tool(tools["background_agents_get_task_results"], task_id=1) == expected_result
+    finally:
+        first_release.set()
+        second_release.set()
+        release_waiter.set()
+        await asyncio.gather(waiter, return_exceptions=True)
+        await provider.release_session(session)
+
+
+async def test_concurrent_waiters_report_the_same_completed_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both waiters must report completion even when one has already finalized it."""
+    agent_release = asyncio.Event()
+    both_waiting = asyncio.Event()
+    wait_count = 0
+    real_wait = asyncio.wait
+
+    class WaitingAgent(_FakeAgent):
+        async def run(self, messages: Any = None, **kwargs: Any) -> AgentResponse[Any]:
+            await agent_release.wait()
+            return AgentResponse(messages=[Message(role="assistant", contents=["shared result"])])
+
+    async def counted_wait(*args: Any, **kwargs: Any) -> Any:
+        nonlocal wait_count
+        wait_count += 1
+        if wait_count == 2:
+            both_waiting.set()
+        return await real_wait(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "wait", counted_wait)
+    provider = _make_provider(WaitingAgent("Worker"))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+    await _invoke_tool(tools["background_agents_start_task"], agent_name="Worker", input="start", description="shared")
+    waiters = [
+        asyncio.create_task(_invoke_tool(tools["background_agents_wait_for_first_completion"], task_ids=[1]))
+        for _ in range(2)
+    ]
+    try:
+        await both_waiting.wait()
+        agent_release.set()
+        assert await asyncio.gather(*waiters) == ["Task 1 finished with status: completed."] * 2
+        assert await _invoke_tool(tools["background_agents_get_task_results"], task_id=1) == "shared result"
+        assert not provider._runtime[session.session_id].in_flight_tasks
+    finally:
+        agent_release.set()
+        await asyncio.gather(*waiters, return_exceptions=True)
+        await provider.release_session(session)
+
+
 async def test_wait_for_first_completion() -> None:
     """Should wait and return when a task completes."""
     provider = _make_provider(_FakeAgent("Fast", response_text="fast result", delay=0.01))
