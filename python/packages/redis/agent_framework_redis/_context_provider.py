@@ -8,7 +8,12 @@ This module provides ``RedisContextProvider``, built on the new
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import contextlib
+import hashlib
 import json
+import secrets
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -20,10 +25,9 @@ from agent_framework.exceptions import (
     IntegrationInvalidRequestException,
 )
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import AggregateHybridQuery, TextQuery
-from redisvl.query.filter import FilterExpression, Tag
+from redisvl.query import AggregateHybridQuery, FilterQuery, TextQuery
+from redisvl.query.filter import FilterExpression
 from redisvl.redis.utils import array_to_buffer
-from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
 
 from ._feature_usage import FeatureIndex
@@ -40,6 +44,93 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
+
+_SCOPE_SCHEMA_VERSION = 1
+_SCOPE_FIELDS = ("application_id", "agent_id", "user_id", "thread_id", "conversation_id")
+_SCOPE_TAG_SEPARATOR = "\x1f"
+_SCOPE_MIGRATION_BATCH_SIZE = 100
+_SCOPE_MIGRATION_MAX_RECORDS = 1000
+_SCOPE_MIGRATION_TIMEOUT_SECONDS = 10.0
+_SCOPE_MIGRATION_LOCK_SECONDS = 30
+_SCOPE_MIGRATION_BACKFILL = "backfill"
+_SCOPE_MIGRATION_REINDEXING = "reindexing"
+_SCOPE_MIGRATION_COMPLETE = "complete"
+_SCOPE_MIGRATION_PAUSED_MESSAGE = (
+    "Redis context scope migration paused after a bounded backfill pass. Rerun with overwrite_index=True to resume."
+)
+
+_TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
+_TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
+
+
+def _scope_token_field(name: str) -> str:
+    if name not in _SCOPE_FIELDS:
+        raise ValueError(f"Unsupported Redis context scope field: {name}")
+    return f"af_scope_v{_SCOPE_SCHEMA_VERSION}_{name}"
+
+
+def _scope_token(name: str, value: str) -> str:
+    payload = f"agent-framework:redis-context:v{_SCOPE_SCHEMA_VERSION}:{name}\0{value}".encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _scope_migration_key(index_name: str, prefix: str) -> str:
+    identity = hashlib.sha256(f"{index_name}\0{prefix}".encode()).hexdigest()
+    return f"agent-framework:redis-context:scope-schema:{identity}"
+
+
+def _scope_key_namespace(prefix: str, key_separator: str) -> str:
+    if not prefix or not key_separator:
+        raise ValueError("Redis context index migration requires a non-empty key prefix and key separator.")
+    normalized_prefix = prefix.rstrip(key_separator)
+    if not normalized_prefix:
+        raise ValueError("Redis context index migration requires a key prefix containing non-separator characters.")
+    return f"{normalized_prefix}{key_separator}"
+
+
+def _redis_scan_literal(value: str) -> str:
+    return "".join(f"\\{char}" if char in "\\*?[]" else char for char in value)
+
+
+def _encode_redis_keys(keys: list[Any]) -> str:
+    return json.dumps([base64.b64encode(key if isinstance(key, bytes) else str(key).encode()).decode() for key in keys])
+
+
+def _decode_redis_keys(value: str) -> list[bytes]:
+    return [base64.b64decode(item) for item in json.loads(value or "[]")]
+
+
+def _schema_signature(schema: dict[str, Any]) -> dict[str, Any]:
+    def significant_index(index: dict[str, Any]) -> dict[str, Any]:
+        return {key: index.get(key) for key in ("name", "prefix", "key_separator", "storage_type")}
+
+    def tag_attrs(attrs: dict[str, Any] | None) -> dict[str, Any]:
+        merged = {**_TAG_DEFAULTS, **(attrs or {})}
+        return {key: merged[key] for key in ("separator", "case_sensitive", "withsuffixtrie")}
+
+    def text_attrs(attrs: dict[str, Any] | None) -> dict[str, Any]:
+        merged = {**_TEXT_DEFAULTS, **(attrs or {})}
+        return {key: merged[key] for key in ("weight", "no_stem")}
+
+    signature: dict[str, Any] = {"index": significant_index(schema.get("index", {})), "fields": {}}
+    for raw_field in schema.get("fields", []):
+        field: dict[str, Any] = raw_field
+        name, field_type = field.get("name"), field.get("type")
+        if not name:
+            continue
+        if field_type == "tag":
+            signature["fields"][name] = {"type": "tag", "attrs": tag_attrs(field.get("attrs"))}
+        elif field_type == "text":
+            signature["fields"][name] = {"type": "text", "attrs": text_attrs(field.get("attrs"))}
+        elif field_type == "vector":
+            attrs: dict[str, Any] = field.get("attrs") or {}
+            signature["fields"][name] = {
+                "type": "vector",
+                "attrs": {key: attrs.get(key) for key in ("algorithm", "dims", "distance_metric", "datatype")},
+            }
+        else:
+            signature["fields"][name] = {"type": field_type}
+    return signature
 
 
 class RedisContextProvider(ContextProvider):
@@ -93,7 +184,8 @@ class RedisContextProvider(ContextProvider):
                 retrieval is not filtered by user.
             context_prompt: The context prompt to use for the provider.
             redis_index: The Redis index to use for the provider.
-            overwrite_index: Whether to overwrite the existing Redis index.
+            overwrite_index: Whether to rebuild an existing index in place and
+                migrate its stored scope identifiers to the current schema.
         """
         super().__init__(source_id)
         self.redis_url = redis_url
@@ -112,7 +204,6 @@ class RedisContextProvider(ContextProvider):
         self.user_id = user_id
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
         self.overwrite_index = overwrite_index
-        self._token_escaper: TokenEscaper = TokenEscaper()
         self._index_initialized: bool = False
         self._schema_dict: dict[str, Any] | None = None
         # An index built here owns its connection pool and must release it on close;
@@ -203,7 +294,11 @@ class RedisContextProvider(ContextProvider):
 
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         """Builds a combined filter expression from simple equality tags."""
-        parts: list[FilterExpression] = [Tag(k) == v for k, v in filters.items() if v]
+        parts = [
+            FilterExpression(f"@{_scope_token_field(name)}:{{{_scope_token(name, value)}}}")
+            for name, value in filters.items()
+            if value
+        ]
         if not parts:
             return None
         combined = parts[0]
@@ -227,13 +322,16 @@ class RedisContextProvider(ContextProvider):
             {"name": "role", "type": "tag"},
             {"name": "mime_type", "type": "tag"},
             {"name": "content", "type": "text"},
-            {"name": "conversation_id", "type": "tag"},
             {"name": "message_id", "type": "tag"},
             {"name": "author_name", "type": "tag"},
-            {"name": "application_id", "type": "tag"},
-            {"name": "agent_id", "type": "tag"},
-            {"name": "user_id", "type": "tag"},
-            {"name": "thread_id", "type": "tag"},
+            *[
+                {
+                    "name": _scope_token_field(name),
+                    "type": "tag",
+                    "attrs": {"case_sensitive": True, "separator": _SCOPE_TAG_SEPARATOR},
+                }
+                for name in _SCOPE_FIELDS
+            ],
         ]
         if vector_field_name is not None and vector_dims is not None:
             fields.append({
@@ -256,50 +354,18 @@ class RedisContextProvider(ContextProvider):
         if self._index_initialized:
             return
         index_exists = await self.redis_index.exists()
-        if not self.overwrite_index and index_exists:
+        if not index_exists:
+            await self.redis_index.create()
+            await self._set_scope_migration_state(_SCOPE_MIGRATION_COMPLETE, cursor=0)
+        elif self.overwrite_index:
+            await self._migrate_scope_tokens()
+        else:
             await self._validate_schema_compatibility()
-        await self.redis_index.create(overwrite=self.overwrite_index, drop=False)
         self._index_initialized = True
 
     async def _validate_schema_compatibility(self) -> None:
         """Validate that existing index schema matches current configuration."""
-        TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
-        TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
-
-        def _significant_index(i: dict[str, Any]) -> dict[str, Any]:
-            return {k: i.get(k) for k in ("name", "prefix", "key_separator", "storage_type")}
-
-        def _sig_tag(attrs: dict[str, Any] | None) -> dict[str, Any]:
-            a = {**TAG_DEFAULTS, **(attrs or {})}
-            return {k: a[k] for k in ("separator", "case_sensitive", "withsuffixtrie")}
-
-        def _sig_text(attrs: dict[str, Any] | None) -> dict[str, Any]:
-            a = {**TEXT_DEFAULTS, **(attrs or {})}
-            return {k: a[k] for k in ("weight", "no_stem")}
-
-        def _sig_vector(attrs: dict[str, Any] | None) -> dict[str, Any]:
-            a = {**(attrs or {})}
-            return {k: a.get(k) for k in ("algorithm", "dims", "distance_metric", "datatype")}
-
-        def _schema_signature(schema: dict[str, Any]) -> dict[str, Any]:
-            sig: dict[str, Any] = {"index": _significant_index(schema.get("index", {})), "fields": {}}
-            for f in schema.get("fields", []):
-                name, ftype = f.get("name"), f.get("type")
-                if not name:
-                    continue
-                if ftype == "tag":
-                    sig["fields"][name] = {"type": "tag", "attrs": _sig_tag(f.get("attrs"))}
-                elif ftype == "text":
-                    sig["fields"][name] = {"type": "text", "attrs": _sig_text(f.get("attrs"))}
-                elif ftype == "vector":
-                    sig["fields"][name] = {"type": "vector", "attrs": _sig_vector(f.get("attrs"))}
-                else:
-                    sig["fields"][name] = {"type": ftype}
-            return sig
-
-        existing_index: Any = await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
-            self.index_name, redis_url=self.redis_url
-        )
+        existing_index = await self._existing_index()
         existing_schema = existing_index.schema.to_dict()
         current_schema = self.schema_dict
         existing_sig = _schema_signature(existing_schema)
@@ -309,8 +375,361 @@ class RedisContextProvider(ContextProvider):
                 "Existing Redis index schema is incompatible with the current configuration.\n"
                 f"Existing (significant): {json.dumps(existing_sig, indent=2, sort_keys=True)}\n"
                 f"Current  (significant): {json.dumps(current_sig, indent=2, sort_keys=True)}\n"
-                "Set overwrite_index=True to rebuild if this change is intentional."
+                "Set overwrite_index=True during a coordinated migration to rebuild the index and populate "
+                "versioned scope tokens while preserving stored hashes."
             )
+        state = await self._scope_migration_state()
+        if state.get("version") != str(_SCOPE_SCHEMA_VERSION) or state.get("state") != _SCOPE_MIGRATION_COMPLETE:
+            raise ValueError(
+                "Redis context scope migration is incomplete. Set overwrite_index=True to resume the coordinated "
+                "migration before using this index."
+            )
+
+    async def _existing_index(self) -> Any:
+        existing_client = self.redis_index.client
+        return await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
+            self.index_name,
+            redis_client=existing_client,
+            redis_url=None if existing_client is not None else self.redis_url,
+        )
+
+    async def _scope_migration_state(self) -> dict[str, str]:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration state.")
+        values = await client.hmget(
+            _scope_migration_key(self.index_name, self.prefix),
+            "version",
+            "state",
+            "cursor",
+            "sample_field",
+            "sample_token",
+            "pending_cursor",
+            "pending_keys",
+        )
+        decoded = [
+            value.decode() if isinstance(value, bytes) else str(value) if value is not None else "" for value in values
+        ]
+        return dict(
+            zip(
+                (
+                    "version",
+                    "state",
+                    "cursor",
+                    "sample_field",
+                    "sample_token",
+                    "pending_cursor",
+                    "pending_keys",
+                ),
+                decoded,
+                strict=True,
+            )
+        )
+
+    async def _set_scope_migration_state(
+        self,
+        state: str,
+        *,
+        cursor: int,
+        sample_field: str = "",
+        sample_token: str = "",
+        pending_cursor: int = 0,
+        pending_keys: list[Any] | None = None,
+        lock_key: str | None = None,
+        lock_value: str | None = None,
+    ) -> None:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration state.")
+        mapping = {
+            "version": str(_SCOPE_SCHEMA_VERSION),
+            "state": state,
+            "cursor": str(cursor),
+            "sample_field": sample_field,
+            "sample_token": sample_token,
+            "pending_cursor": str(pending_cursor),
+            "pending_keys": _encode_redis_keys(pending_keys or []),
+        }
+        marker_key = _scope_migration_key(self.index_name, self.prefix)
+        if lock_key is None or lock_value is None:
+            await client.hset(marker_key, mapping=mapping)
+            return
+        arguments = [lock_value]
+        for name, value in mapping.items():
+            arguments.extend((name, value))
+        result = await client.eval(
+            "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end "
+            "for i = 2, #ARGV, 2 do redis.call('hset', KEYS[2], ARGV[i], ARGV[i + 1]) end return 1",
+            2,
+            lock_key,
+            marker_key,
+            *arguments,
+        )
+        if not result:
+            raise RuntimeError("Redis context scope migration lost its distributed lock.")
+
+    async def _assert_scope_migration_lock(self, lock_key: str, lock_value: str) -> None:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        current = await client.get(lock_key)
+        current_value = current.decode() if isinstance(current, bytes) else current
+        if current_value != lock_value:
+            raise RuntimeError("Redis context scope migration lost its distributed lock.")
+
+    async def _renew_scope_migration_lock(self, lock_key: str, lock_value: str) -> None:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        while True:
+            await asyncio.sleep(max(_SCOPE_MIGRATION_LOCK_SECONDS / 3, 0.1))
+            renewed = await client.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] "
+                "then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end",
+                1,
+                lock_key,
+                lock_value,
+                _SCOPE_MIGRATION_LOCK_SECONDS,
+            )
+            if not renewed:
+                raise RuntimeError("Redis context scope migration lost its distributed lock.")
+
+    async def _process_scope_migration_keys(
+        self,
+        keys: list[bytes],
+        *,
+        sample_field: str,
+        sample_token: str,
+        lock_key: str,
+        lock_value: str,
+    ) -> tuple[str, str]:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        async with client.pipeline(transaction=False) as read_pipeline:
+            for key in keys:
+                read_pipeline.hmget(key, *_SCOPE_FIELDS)
+            records = await read_pipeline.execute()
+        writes: list[tuple[bytes, dict[str, str]]] = []
+        for key, values in zip(keys, records, strict=True):
+            tokens: dict[str, str] = {}
+            for name, raw_value in zip(_SCOPE_FIELDS, values, strict=True):
+                if raw_value is None:
+                    continue
+                value = raw_value.decode() if isinstance(raw_value, bytes) else str(raw_value)
+                if value:
+                    tokens[_scope_token_field(name)] = _scope_token(name, value)
+            if tokens:
+                writes.append((key, tokens))
+                if not sample_token:
+                    sample_field, sample_token = next(iter(tokens.items()))
+        if writes:
+            await self._assert_scope_migration_lock(lock_key, lock_value)
+            async with client.pipeline(transaction=False) as write_pipeline:
+                for key, mapping in writes:
+                    write_pipeline.hset(key, mapping=mapping)
+                await write_pipeline.execute()
+        return sample_field, sample_token
+
+    async def _backfill_scope_tokens(
+        self,
+        state: dict[str, str],
+        *,
+        lock_key: str,
+        lock_value: str,
+    ) -> tuple[str, str]:
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index did not initialize a client for scope migration.")
+        state_is_current = state.get("version") == str(_SCOPE_SCHEMA_VERSION)
+        cursor = (
+            int(state.get("cursor") or 0) if state_is_current and state.get("state") == _SCOPE_MIGRATION_BACKFILL else 0
+        )
+        sample_field = state.get("sample_field", "") if state_is_current else ""
+        sample_token = state.get("sample_token", "") if state_is_current else ""
+        pending_cursor = int(state.get("pending_cursor") or 0) if state_is_current else 0
+        pending_keys = _decode_redis_keys(state.get("pending_keys", "")) if state_is_current else []
+        namespace = _scope_key_namespace(self.prefix, self.redis_index.key_separator)
+        encoded_namespace = namespace.encode()
+        match_pattern = f"{_redis_scan_literal(namespace)}*"
+        processed = 0
+
+        await self._set_scope_migration_state(
+            _SCOPE_MIGRATION_BACKFILL,
+            cursor=cursor,
+            sample_field=sample_field,
+            sample_token=sample_token,
+            pending_cursor=pending_cursor,
+            pending_keys=pending_keys,
+            lock_key=lock_key,
+            lock_value=lock_value,
+        )
+        while True:
+            await self._assert_scope_migration_lock(lock_key, lock_value)
+            remaining = _SCOPE_MIGRATION_MAX_RECORDS - processed
+            if remaining <= 0:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE)
+
+            if not pending_keys:
+                scan_cursor = cursor
+                next_cursor, scanned_keys = await client.scan(
+                    cursor=scan_cursor,
+                    match=match_pattern,
+                    count=min(_SCOPE_MIGRATION_BATCH_SIZE, remaining),
+                    _type="hash",
+                )
+                pending_keys = [
+                    key if isinstance(key, bytes) else str(key).encode()
+                    for key in scanned_keys
+                    if (key if isinstance(key, bytes) else str(key).encode()).startswith(encoded_namespace)
+                ]
+                pending_cursor = int(next_cursor)
+                await self._set_scope_migration_state(
+                    _SCOPE_MIGRATION_BACKFILL,
+                    cursor=scan_cursor,
+                    sample_field=sample_field,
+                    sample_token=sample_token,
+                    pending_cursor=pending_cursor,
+                    pending_keys=pending_keys,
+                    lock_key=lock_key,
+                    lock_value=lock_value,
+                )
+                if not pending_keys:
+                    cursor = pending_cursor
+                    pending_cursor = 0
+                    await self._set_scope_migration_state(
+                        _SCOPE_MIGRATION_BACKFILL,
+                        cursor=cursor,
+                        sample_field=sample_field,
+                        sample_token=sample_token,
+                        lock_key=lock_key,
+                        lock_value=lock_value,
+                    )
+                    if cursor == 0:
+                        return sample_field, sample_token
+                    continue
+
+            batch = pending_keys[:remaining]
+            sample_field, sample_token = await self._process_scope_migration_keys(
+                batch,
+                sample_field=sample_field,
+                sample_token=sample_token,
+                lock_key=lock_key,
+                lock_value=lock_value,
+            )
+            processed += len(batch)
+            pending_keys = pending_keys[len(batch) :]
+            if not pending_keys:
+                cursor = pending_cursor
+                pending_cursor = 0
+            await self._set_scope_migration_state(
+                _SCOPE_MIGRATION_BACKFILL,
+                cursor=cursor,
+                sample_field=sample_field,
+                sample_token=sample_token,
+                pending_cursor=pending_cursor,
+                pending_keys=pending_keys,
+                lock_key=lock_key,
+                lock_value=lock_value,
+            )
+            if pending_keys:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE)
+            if cursor == 0:
+                return sample_field, sample_token
+            if processed >= _SCOPE_MIGRATION_MAX_RECORDS:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE)
+
+    async def _migrate_scope_tokens(self) -> None:
+        """Resume scope-token backfill, rebuild the index, and mark the migration complete."""
+        client = self.redis_index.client
+        if client is None:
+            raise RuntimeError("Redis index rebuild did not initialize a client for scope migration.")
+        marker_key = _scope_migration_key(self.index_name, self.prefix)
+        lock_key = f"{marker_key}:lock"
+        lock_value = secrets.token_hex(16)
+        if not await client.set(lock_key, lock_value, nx=True, ex=_SCOPE_MIGRATION_LOCK_SECONDS):
+            raise RuntimeError("Another Redis context scope migration is already running.")
+
+        renewal_task = asyncio.create_task(self._renew_scope_migration_lock(lock_key, lock_value))
+        try:
+            state = await self._scope_migration_state()
+            existing_index = await self._existing_index()
+            schema_is_current = _schema_signature(existing_index.schema.to_dict()) == _schema_signature(
+                self.schema_dict
+            )
+            state_is_current = state.get("version") == str(_SCOPE_SCHEMA_VERSION)
+            if state_is_current and state.get("state") == _SCOPE_MIGRATION_COMPLETE and schema_is_current:
+                return
+            if state_is_current and state.get("state") == _SCOPE_MIGRATION_REINDEXING and schema_is_current:
+                await self._wait_for_scope_index(state.get("sample_field", ""), state.get("sample_token", ""))
+                await self._set_scope_migration_state(
+                    _SCOPE_MIGRATION_COMPLETE,
+                    cursor=0,
+                    sample_field=state.get("sample_field", ""),
+                    sample_token=state.get("sample_token", ""),
+                    lock_key=lock_key,
+                    lock_value=lock_value,
+                )
+                return
+
+            try:
+                sample_field, sample_token = await asyncio.wait_for(
+                    self._backfill_scope_tokens(state, lock_key=lock_key, lock_value=lock_value),
+                    timeout=_SCOPE_MIGRATION_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise RuntimeError(_SCOPE_MIGRATION_PAUSED_MESSAGE) from exc
+            await self._set_scope_migration_state(
+                _SCOPE_MIGRATION_REINDEXING,
+                cursor=0,
+                sample_field=sample_field,
+                sample_token=sample_token,
+                lock_key=lock_key,
+                lock_value=lock_value,
+            )
+            await self._assert_scope_migration_lock(lock_key, lock_value)
+            await self.redis_index.create(overwrite=True, drop=False)
+            await self._wait_for_scope_index(sample_field, sample_token)
+            await self._set_scope_migration_state(
+                _SCOPE_MIGRATION_COMPLETE,
+                cursor=0,
+                sample_field=sample_field,
+                sample_token=sample_token,
+                lock_key=lock_key,
+                lock_value=lock_value,
+            )
+        finally:
+            renewal_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                _ = await renewal_task
+            await client.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                1,
+                lock_key,
+                lock_value,
+            )
+
+    async def _wait_for_scope_index(self, sample_field: str, sample_token: str) -> None:
+        deadline = asyncio.get_running_loop().time() + _SCOPE_MIGRATION_TIMEOUT_SECONDS
+        while True:
+            info = await self.redis_index.info()
+            percent_indexed = float(info.get("percent_indexed", 1.0))
+            indexing = int(info.get("indexing", 0))
+            if percent_indexed >= 1.0 and indexing == 0:
+                if not sample_token:
+                    return
+                results = await self.redis_index.query(
+                    FilterQuery(
+                        FilterExpression(f"@{sample_field}:{{{sample_token}}}"),
+                        return_fields=[],
+                        num_results=1,
+                    )
+                )
+                if results:
+                    return
+            if asyncio.get_running_loop().time() >= deadline:
+                raise RuntimeError("Redis context index rebuild timed out before scope tokens became queryable.")
+            await asyncio.sleep(0.05)
 
     async def _add(
         self,
@@ -327,11 +746,16 @@ class RedisContextProvider(ContextProvider):
         prepared: list[dict[str, Any]] = []
         for doc in docs:
             d = dict(doc)
-            d.setdefault("application_id", self.application_id)
-            d.setdefault("agent_id", self.agent_id)
-            d.setdefault("user_id", self.user_id)
-            d.setdefault("thread_id", session_id)
-            d.setdefault("conversation_id", session_id)
+            scope_values = {
+                "application_id": self.application_id,
+                "agent_id": self.agent_id,
+                "user_id": self.user_id,
+                "thread_id": session_id,
+                "conversation_id": session_id,
+            }
+            for name, value in scope_values.items():
+                d[name] = value or None
+                d[_scope_token_field(name)] = _scope_token(name, value) if value else None
             if "content" not in d:
                 raise IntegrationInvalidRequestException("add() requires a 'content' field in data")
             if self.vector_field_name:
@@ -428,12 +852,18 @@ class RedisContextProvider(ContextProvider):
             raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
     async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
-        """Returns all documents in the index."""
-        from redisvl.query import FilterQuery
+        """Returns all documents matching the provider's configured scopes."""
+        await self._ensure_index()
+        self._validate_filters()
+        combined_filter = self._build_filter_from_dict({
+            "application_id": self.application_id,
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+        })
 
         out: list[dict[str, Any]] = []
         async for batch in self.redis_index.paginate(
-            FilterQuery(FilterExpression("*"), return_fields=[], num_results=page_size),
+            FilterQuery(combined_filter or FilterExpression("*"), return_fields=[], num_results=page_size),
             page_size=page_size,
         ):
             out.extend(batch)
