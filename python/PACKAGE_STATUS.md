@@ -55,7 +55,7 @@ column records whether `pip install agent-framework` installs the workspace pack
 | `agent-framework-mistral` | `python/packages/mistral` | `beta` | `yes` |
 | `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` | `no` |
 | `agent-framework-monty` | `python/packages/monty` | `beta` | `yes` |
-| `agent-framework-nvidia` | `python/packages/nvidia` | `alpha` | `no` | 
+| `agent-framework-nvidia` | `python/packages/nvidia` | `alpha` | `no` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` | `yes` |
 | `agent-framework-openai` | `python/packages/openai` | `released` | `yes` |
 | `agent-framework-oracle` | `python/packages/oracle` | `alpha` | `no` |
