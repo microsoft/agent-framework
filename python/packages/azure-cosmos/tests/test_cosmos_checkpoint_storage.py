@@ -7,7 +7,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -452,7 +452,7 @@ async def test_get_latest_is_not_pinned_to_a_stale_timestamp_by_a_concurrent_sav
         [_checkpoint_to_cosmos_document(older), _checkpoint_to_cosmos_document(newest)],
         lambda documents: documents.append(_checkpoint_to_cosmos_document(saved)),
     )
-    storage = CosmosCheckpointStorage(container_client=container)  # type: ignore[arg-type]
+    storage = CosmosCheckpointStorage(container_client=cast(Any, container))
 
     during_save = await storage.get_latest(workflow_name="test-workflow")
     after_save = await storage.get_latest(workflow_name="test-workflow")
@@ -474,7 +474,7 @@ async def test_get_latest_falls_back_to_older_checkpoints_when_the_newest_is_del
         [_checkpoint_to_cosmos_document(older), _checkpoint_to_cosmos_document(newest)],
         lambda documents: documents.remove(next(doc for doc in documents if doc["checkpoint_id"] == "cp-2")),
     )
-    storage = CosmosCheckpointStorage(container_client=container)  # type: ignore[arg-type]
+    storage = CosmosCheckpointStorage(container_client=cast(Any, container))
 
     during_delete = await storage.get_latest(workflow_name="test-workflow")
     after_delete = await storage.get_latest(workflow_name="test-workflow")
