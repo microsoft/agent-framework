@@ -21,6 +21,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    AgentTriggeredCompactionStrategy,
     ChatContext,
     ChatOptions,
     ChatResponse,
@@ -3444,6 +3445,55 @@ async def test_chat_agent_compaction_overrides_client_defaults(chat_client_base:
 
     assert captured_roles == [["user", "assistant"]]
     assert captured_token_counts == [[9, 9]]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_triggered_compaction_applies_before_next_model_call(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    agent_compaction = AgentTriggeredCompactionStrategy(
+        TruncationStrategy(max_n=2, compact_to=2, preserve_first_user_group=True),
+    )
+    function_call = Content.from_function_call(
+        call_id="compact-1",
+        name=agent_compaction.tool.name,
+        arguments={"reason": "planning complete"},
+    )
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(contents=[function_call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    captured_roles: list[list[str]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        captured_roles.append([message.role for message in messages])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[agent_compaction.tool],
+        compaction_strategy=agent_compaction,
+    )
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            result_text = "".join([update.text or "" async for update in agent.run("plan", stream=True)])
+        else:
+            result_text = (await agent.run("plan")).text
+
+    assert result_text == "done"
+    assert captured_roles == [["user"], ["user", "assistant", "tool"]]
 
 
 async def test_chat_agent_uses_client_compaction_defaults_when_agent_unset(chat_client_base: Any) -> None:
