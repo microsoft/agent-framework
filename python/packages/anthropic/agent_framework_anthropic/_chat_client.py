@@ -901,25 +901,11 @@ class RawAnthropicClient(
         else:
             msgs = list(messages)
 
-        # A hosted (server tool) call without a result is still running on Anthropic's side, for example
-        # when Claude called a local tool in parallel. It has to be sent back as ``server_tool_use``, or
-        # Anthropic expects a local ``tool_result`` for it.
-        result_call_ids = {
-            content.call_id for msg in msgs for content in msg.contents if content.type == "function_result"
-        }
-        pending_hosted_call_ids = {
-            content.call_id
-            for msg in msgs
-            for content in msg.contents
-            if content.type == "function_call"
-            and content.hosted
-            and content.call_id
-            and content.call_id not in result_call_ids
-        }
+        pending_hosted_calls = self._pending_hosted_function_calls(msgs)
 
         result: list[dict[str, Any]] = []
         for msg in msgs:
-            result.extend(self._prepare_message_groups_for_anthropic(msg, pending_hosted_call_ids))
+            result.extend(self._prepare_message_groups_for_anthropic(msg, pending_hosted_calls))
 
         # Anthropic requires the conversation to end with a user message.
         # Append a synthetic user turn so chained agent outputs work as
@@ -929,11 +915,43 @@ class RawAnthropicClient(
 
         return result
 
+    @staticmethod
+    def _pending_hosted_function_calls(messages: Sequence[Message]) -> set[int]:
+        """Return the identities (``id()``) of hosted function calls that have no result yet.
+
+        A hosted (server tool) call without a result is still running on Anthropic's side, for example
+        when Claude called a local tool in parallel. It has to be sent back as ``server_tool_use``, or
+        Anthropic expects a local ``tool_result`` for it.
+
+        A ``call_id`` is not unique across a transcript: a later occurrence may reuse it. Calls and results
+        are therefore correlated in transcript order. A result settles the open call occurrence with the
+        same ``call_id`` whose ``Content.id`` it carries, and otherwise the earliest open occurrence with
+        that ``call_id``. A result never settles a call that appears after it.
+        """
+        open_calls_by_call_id: dict[str, list[Content]] = {}
+        for message in messages:
+            for content in message.contents:
+                if not content.call_id:
+                    continue
+                if content.type == "function_call":
+                    open_calls_by_call_id.setdefault(content.call_id, []).append(content)
+                elif content.type == "function_result" and (open_calls := open_calls_by_call_id.get(content.call_id)):
+                    settled_index = next(
+                        (
+                            index
+                            for index, call in enumerate(open_calls)
+                            if content.id is not None and call.id == content.id
+                        ),
+                        0,
+                    )
+                    open_calls.pop(settled_index)
+        return {id(call) for open_calls in open_calls_by_call_id.values() for call in open_calls if call.hosted}
+
     def _prepare_message_groups_for_anthropic(
-        self, message: Message, pending_hosted_call_ids: Set[str] | None = None
+        self, message: Message, pending_hosted_calls: Set[int] | None = None
     ) -> list[dict[str, Any]]:
         """Prepare a Message and split Anthropic content blocks into valid role groups."""
-        prepared_message = self._prepare_message_for_anthropic(message, pending_hosted_call_ids)
+        prepared_message = self._prepare_message_for_anthropic(message, pending_hosted_calls)
         content = prepared_message.get("content")
         if not isinstance(content, list):
             return [prepared_message]
@@ -983,14 +1001,16 @@ class RawAnthropicClient(
         return False
 
     def _prepare_message_for_anthropic(
-        self, message: Message, pending_hosted_call_ids: Set[str] | None = None
+        self, message: Message, pending_hosted_calls: Set[int] | None = None
     ) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
 
         Args:
             message: The Message to convert.
-            pending_hosted_call_ids: Call IDs of hosted (server tool) calls that have no result yet.
-                These are sent as ``server_tool_use`` blocks.
+            pending_hosted_calls: Identities (``id()``) of the hosted (server tool) call contents that have
+                no result yet, from ``_pending_hosted_function_calls``. These are sent as ``server_tool_use``
+                blocks. An identity rather than a ``call_id`` is used because a later occurrence may reuse
+                the ``call_id`` of a call that already has its result.
 
         Returns:
             A dictionary representing the message in Anthropic format.
@@ -1023,7 +1043,7 @@ class RawAnthropicClient(
                     else:
                         logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "function_call":
-                    pending_hosted_call = content.hosted and content.call_id in (pending_hosted_call_ids or ())
+                    pending_hosted_call = content.hosted and id(content) in (pending_hosted_calls or ())
                     a_content.append({
                         "type": "server_tool_use" if pending_hosted_call else "tool_use",
                         "id": content.call_id,

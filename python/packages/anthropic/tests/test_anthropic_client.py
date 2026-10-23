@@ -891,6 +891,96 @@ def test_prepare_messages_keeps_completed_server_tool_call_paired_with_its_resul
     assert tool_result_ids == ["toolu_local", "srvtoolu_search"]
 
 
+@pytest.mark.parametrize("reload_history", [False, True], ids=["in_memory", "reloaded"])
+def test_prepare_messages_keeps_later_server_tool_call_pending_when_call_id_is_reused(
+    mock_anthropic_client: MagicMock,
+    reload_history: bool,
+) -> None:
+    """An earlier result for a reused call_id does not settle a later pending server tool call."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["Search the web."]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="srvtoolu_search", name="web_search", arguments={"query": "first"}, hosted=True
+                ),
+                Content.from_function_result(call_id="srvtoolu_search", result="first results"),
+                Content.from_text("First search done."),
+            ],
+        ),
+        Message(role="user", contents=["Call local_value and search again."]),
+        Message(role="assistant", contents=_parallel_local_and_server_tool_call_contents(client)),
+        Message(role="tool", contents=[Content.from_function_result(call_id="toolu_local", result="local-ok")]),
+    ]
+    if reload_history:
+        messages = [Message.from_dict(message.to_dict()) for message in messages]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    blocks = [
+        (block["type"], block.get("id") or block.get("tool_use_id"))
+        for m in result
+        for block in m["content"]
+        if isinstance(m["content"], list) and block["type"] != "text"
+    ]
+    assert blocks == [
+        ("tool_use", "srvtoolu_search"),
+        ("tool_result", "srvtoolu_search"),
+        ("tool_use", "toolu_local"),
+        ("server_tool_use", "srvtoolu_search"),
+        ("tool_result", "toolu_local"),
+    ]
+
+
+def test_prepare_messages_settles_the_server_tool_call_occurrence_named_by_the_result_id(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A result carrying Content.id settles that occurrence, not the earliest one sharing its call_id."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["Search the web twice."]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="srvtoolu_search", id="occurrence_1", name="web_search", arguments={}, hosted=True
+                ),
+                Content.from_function_call(
+                    call_id="srvtoolu_search", id="occurrence_2", name="web_search", arguments={}, hosted=True
+                ),
+                Content.from_function_result(call_id="srvtoolu_search", id="occurrence_2", result="results"),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert [block["type"] for block in result[1]["content"]] == ["server_tool_use", "tool_use"]
+
+
+def test_prepare_messages_does_not_settle_a_server_tool_call_with_an_earlier_result(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A result that precedes every call with its call_id leaves a later server tool call pending."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["Search the web."]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="srvtoolu_search", result="stale")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="srvtoolu_search", name="web_search", arguments={}, hosted=True)
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert [block["type"] for block in result[-1]["content"]] == ["server_tool_use"]
+
+
 def test_prepare_messages_for_anthropic_does_not_append_after_tool_use(
     mock_anthropic_client: MagicMock,
 ) -> None:
