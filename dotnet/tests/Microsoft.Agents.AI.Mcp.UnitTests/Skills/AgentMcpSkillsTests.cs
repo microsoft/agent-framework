@@ -309,11 +309,11 @@ public sealed partial class AgentMcpSkillsTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
-    public async Task DiscoverAsync_LargeUnknownFields_AreAcceptedAcrossPagesAsync(int pageCount)
+    public async Task GetSkillsAsync_LargeUnknownFields_AreAcceptedAcrossPagesAsync(int pageCount)
     {
         // Arrange
         string padding = new('x', 10 * 1024 * 1024 / pageCount);
-        var client = new Mock<McpClient>();
+        var client = CreateSkillsClient();
         var responses = client.SetupSequence(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()));
         for (int page = 0; page < pageCount; page++)
         {
@@ -327,10 +327,10 @@ public sealed partial class AgentMcpSkillsTests
             responses.ReturnsAsync(new JsonRpcResponse { Id = new RequestId(page + 1), Result = result });
         }
 
-        using var loader = new McpSkillsLoader(client.Object);
+        using var source = new AgentMcpSkillsSource(client.Object);
 
         // Act
-        var skills = await loader.DiscoverAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(pageCount, skills.Count);
@@ -338,23 +338,23 @@ public sealed partial class AgentMcpSkillsTests
     }
 
     [Fact]
-    public async Task DiscoverAsync_SkillLimit_RejectsExcessEntriesBeforeTypedDeserializationAsync()
+    public async Task GetSkillsAsync_SkillLimit_RejectsExcessEntriesBeforeTypedDeserializationAsync()
     {
         // Arrange
-        var client = new Mock<McpClient>();
+        var client = CreateSkillsClient();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(Entry(), new JsonObject()) });
-        using var loader = new McpSkillsLoader(client.Object, options: new() { ListedMaxSkillCount = 1 });
+        using var source = new AgentMcpSkillsSource(client.Object, options: new() { ListedMaxSkillCount = 1 });
 
         // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
 
         // Assert
         Assert.Contains("skill count (1)", exception.Message);
     }
 
     [Fact]
-    public async Task DiscoverAsync_LargeResourceManifest_HasNoSeparateResourceCountLimitAsync()
+    public async Task GetSkillsAsync_LargeResourceManifest_HasNoSeparateResourceCountLimitAsync()
     {
         // Arrange
         JsonObject entry = Entry();
@@ -364,13 +364,13 @@ public sealed partial class AgentMcpSkillsTests
             resources.Add(Resource($"skill://unit-converter/file-{i}.txt"));
         }
 
-        var client = new Mock<McpClient>();
+        var client = CreateSkillsClient();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(entry) });
-        using var loader = new McpSkillsLoader(client.Object);
+        using var source = new AgentMcpSkillsSource(client.Object);
 
         // Act
-        var skills = await loader.DiscoverAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -384,7 +384,7 @@ public sealed partial class AgentMcpSkillsTests
     public void Constructor_InvalidDiscoveryLimit_Throws(string option, int limit)
     {
         // Arrange
-        var client = new Mock<McpClient>();
+        var client = CreateSkillsClient();
         var options = new AgentMcpSkillsSourceOptions
         {
             ListedMaxPageCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount) ? limit : null,
@@ -451,16 +451,16 @@ public sealed partial class AgentMcpSkillsTests
     }
 
     [Fact]
-    public async Task DiscoverAsync_MissingResult_ThrowsAsync()
+    public async Task GetSkillsAsync_MissingResult_ThrowsAsync()
     {
         // Arrange
-        var client = new Mock<McpClient>();
+        var client = CreateSkillsClient();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = null });
-        using var loader = new McpSkillsLoader(client.Object);
+        using var source = new AgentMcpSkillsSource(client.Object);
 
         // Act
-        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
 
         // Assert
         Assert.Equal("The server returned no skills/list result.", exception.Message);
@@ -1020,7 +1020,7 @@ public sealed partial class AgentMcpSkillsTests
     public void Constructor_InvalidResourceLimit_Throws(long limit)
     {
         // Arrange
-        var client = new Mock<McpClient>();
+        var client = CreateSkillsClient();
         var options = new AgentMcpSkillsSourceOptions
         {
             ListedResourceMaxSizeBytes = limit,
@@ -1034,18 +1034,18 @@ public sealed partial class AgentMcpSkillsTests
     }
 
     [Fact]
-    public async Task DiscoverAsync_LargeManifest_IsNotSubjectToResourceSizeLimitAsync()
+    public async Task GetSkillsAsync_LargeManifest_IsNotSubjectToResourceSizeLimitAsync()
     {
         // Arrange
         JsonObject result = ListResult(Entry());
         result["padding"] = new string('x', 1_048_577);
-        var client = new Mock<McpClient>();
+        var client = CreateSkillsClient();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = result });
-        using var loader = new McpSkillsLoader(client.Object);
+        using var source = new AgentMcpSkillsSource(client.Object);
 
         // Act
-        var skills = await loader.DiscoverAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
