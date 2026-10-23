@@ -2164,19 +2164,16 @@ def _finalize_function_result(
     return function_result
 
 
-def _parse_function_call_arguments(function_call: Content, tool_name: str) -> dict[str, Any]:
-    """Return the arguments of a function call, rejecting a payload that is not a JSON object.
+def _function_call_payload_is_not_an_object(function_call: Content) -> bool:
+    """Return whether the model sent a payload that is not a JSON object.
 
-    `Content.parse_arguments()` wraps a payload that is not a JSON object under a
-    single "raw" key. That is the right answer for a caller that wants to see
-    what the model sent, but not for a function call: the tool would run with an
-    argument it never declared, and the model would not learn that its call was
-    malformed. Such a call is answered like a missing required argument, so the
-    model can retry it.
-
-    The check runs before the middleware pipeline, so middleware never sees a
-    malformed payload as a tool call: a payload that is not arguments is not a
-    call, and it is answered instead of being invoked.
+    `Content.parse_arguments()` wraps such a payload under a single "raw" key.
+    That is the right answer for a caller that wants to see what the model sent,
+    but not for a function call: the tool would run with an argument it never
+    declared, and the model would not learn that its call was malformed. The
+    wrapped mapping still reaches the function middleware, which can repair the
+    arguments the way it repairs any other invalid arguments; when it stays
+    unrepaired, the innermost handler answers the call instead of running it.
     """
     arguments = function_call.arguments
     if isinstance(arguments, str) and arguments:
@@ -2184,12 +2181,8 @@ def _parse_function_call_arguments(function_call: Content, tool_name: str) -> di
             decoded = json.loads(arguments)
         except (json.JSONDecodeError, TypeError):
             decoded = None
-        if not isinstance(decoded, dict):
-            raise _FunctionArgumentValidationError(
-                f"Invalid arguments for '{tool_name}': arguments are not a JSON object",
-                redacted_message=f"Invalid arguments for '{tool_name}'.",
-            )
-    return dict(function_call.parse_arguments() or {})
+        return not isinstance(decoded, dict)
+    return False
 
 
 async def _auto_invoke_function(
@@ -2267,10 +2260,12 @@ async def _auto_invoke_function(
         approval_response = function_call_content
         function_call_content = approved_function_call
 
-    try:
-        parsed_args = _parse_function_call_arguments(function_call_content, tool.name)
-    except _FunctionArgumentValidationError as exc:
-        return _function_argument_validation_error_result(function_call_content, exc, config)
+    # A payload that is not a JSON object still reaches middleware as the raw
+    # parsed mapping it wraps, so middleware has the same chance to repair it
+    # that it has for any other invalid arguments. If it is still unrepaired,
+    # the innermost handler answers it before the tool runs.
+    payload_is_not_an_object = _function_call_payload_is_not_an_object(function_call_content)
+    parsed_args = dict(function_call_content.parse_arguments() or {})
 
     # Filter out internal framework kwargs before passing to tools.
     # conversation_id is an internal tracking ID that should not be forwarded to tools.
@@ -2309,6 +2304,13 @@ async def _auto_invoke_function(
         # No middleware - execute directly
         direct_context = None
         try:
+            if payload_is_not_an_object:
+                # Without middleware there is nothing that could repair the
+                # wrapped payload, so answer it before the tool runs.
+                raise _FunctionArgumentValidationError(
+                    f"Invalid arguments for '{tool.name}': arguments are not a JSON object",
+                    redacted_message=f"Invalid arguments for '{tool.name}'.",
+                )
             if getattr(tool, "_context_parameter_name", None):
                 direct_context = FunctionInvocationContext(
                     function=tool,
@@ -2343,13 +2345,17 @@ async def _auto_invoke_function(
             return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
     arguments_prepared = False
-    try:
-        args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
-        arguments_prepared = True
-    except _FunctionArgumentValidationError:
-        # Invalid provider arguments are intentionally exposed to middleware so
-        # it has a supported opportunity to repair them before final validation.
-        pass
+    if not payload_is_not_an_object:
+        try:
+            args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
+            arguments_prepared = True
+        except _FunctionArgumentValidationError:
+            # Invalid provider arguments are intentionally exposed to middleware so
+            # it has a supported opportunity to repair them before final validation.
+            pass
+    # A wrapped malformed payload skips preparation: the model would silently
+    # drop the wrapper as an extra field, and middleware would never see what
+    # the model actually sent.
 
     middleware_context = FunctionInvocationContext(
         function=tool,
@@ -2388,10 +2394,20 @@ async def _auto_invoke_function(
         )
 
     final_handler_started = False
+    unrepaired_payload_token = _argument_comparison_token(args) if payload_is_not_an_object else None
 
     async def final_function_handler(context_obj: Any) -> Any:
         nonlocal final_handler_started
         final_handler_started = True
+        if unrepaired_payload_token is not None and _argument_comparison_token(context_obj.arguments) == (
+            unrepaired_payload_token
+        ):
+            # Middleware left the wrapped payload untouched, so the arguments are
+            # still not arguments: answer it here, immediately before the tool runs.
+            raise _FunctionArgumentValidationError(
+                f"Invalid arguments for '{tool.name}': arguments are not a JSON object",
+                redacted_message=f"Invalid arguments for '{tool.name}'.",
+            )
         return await tool.invoke(
             arguments=context_obj.arguments,
             context=context_obj,
@@ -2719,7 +2735,6 @@ async def _try_execute_function_call_groups(
             if function_call.type == "function_call"
         ]
         pause_groups: list[list[Content]] = []
-        surfaced_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
                 continue
@@ -2729,42 +2744,24 @@ async def _try_execute_function_call_groups(
                 and tool_name not in approval_tool_names
                 and (tool_name in declaration_only_tool_names or tool_name in additional_tool_names)
             ):
-                group = [_as_user_input_pause(function_call)]
-                pause_groups.append(group)
-                surfaced_groups.append(group)
+                pause_groups.append([_as_user_input_pause(function_call)])
                 continue
-            if tool_name is not None:
-                # A payload that is not arguments cannot become a working call by
-                # approving it, so answer it here instead of asking a human to
-                # approve a call that can only fail. The same guard runs again in
-                # _auto_invoke_function.
-                try:
-                    _parse_function_call_arguments(function_call, tool_name)
-                except _FunctionArgumentValidationError as exc:
-                    surfaced_groups.append([_function_argument_validation_error_result(function_call, exc, config)])
-                    continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
             if tool_name is None:
                 visible_requests.append(approval_request)
-                group = [approval_request]
-                pause_groups.append(group)
-                surfaced_groups.append(group)
+                pause_groups.append([approval_request])
                 continue
             tool = tool_map.get(tool_name)
             if tool_name in approval_tool_names or tool is None:
                 visible_requests.append(approval_request)
-                group = [approval_request]
-                pause_groups.append(group)
-                surfaced_groups.append(group)
+                pause_groups.append([approval_request])
                 continue
             if not _has_authoritative_approval_session(approval_session):
                 visible_requests.append(approval_request)
-                group = [approval_request]
-                pause_groups.append(group)
-                surfaced_groups.append(group)
+                pause_groups.append([approval_request])
                 continue
             already_approved_requests.append(approval_request)
         _store_already_approved_approval_requests(
@@ -2775,7 +2772,7 @@ async def _try_execute_function_call_groups(
         )
         _store_pending_approval_requests(approval_session, visible_requests)
         _store_pending_mixed_pause_batch(approval_session, pause_groups)
-        return surfaced_groups, False
+        return pause_groups, False
     if has_declaration_only_call:
         # Host-owned calls pause for caller input, but known local siblings must
         # still execute. A caller-owned session can defer those siblings until

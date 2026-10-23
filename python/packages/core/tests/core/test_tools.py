@@ -3,9 +3,10 @@ import asyncio
 import copy
 import logging
 import threading
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date, datetime
-from typing import Annotated, Any, Literal, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 from unittest.mock import Mock
 
 import pytest
@@ -20,7 +21,11 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
-from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._middleware import (
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    FunctionMiddlewarePipeline,
+)
 from agent_framework._tools import (
     _auto_invoke_function,
     _format_tool_parameters,
@@ -497,15 +502,12 @@ async def test_function_call_with_object_arguments_still_runs_the_tool() -> None
     assert result_groups[0][0].result == "ok"
 
 
-@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]"])
-async def test_malformed_arguments_are_answered_before_the_call_is_sent_for_approval(
-    arguments: str,
-) -> None:
-    """A payload that is not arguments is answered instead of being sent for approval.
+async def test_malformed_arguments_reach_approval_like_any_other_call() -> None:
+    """A malformed call is not answered before approval.
 
-    Approving a call whose arguments are not arguments cannot make that call work, so
-    the model is told what went wrong rather than a human being asked to approve a
-    call that can only fail.
+    Middleware may still repair the arguments once the call is approved, so the
+    request goes to approval the way every other call does; the innermost
+    handler answers the call only if the payload is still unrepaired there.
     """
     calls: list[dict[str, Any]] = []
 
@@ -517,7 +519,7 @@ async def test_malformed_arguments_are_answered_before_the_call_is_sent_for_appr
     result_groups, should_terminate = await _try_execute_function_call_groups(
         custom_args={},
         function_calls=[
-            Content.from_function_call(call_id="call-1", name="guarded_write", arguments=arguments),
+            Content.from_function_call(call_id="call-1", name="guarded_write", arguments="not {json"),
         ],
         tools=[guarded_write],
         config={},
@@ -526,10 +528,93 @@ async def test_malformed_arguments_are_answered_before_the_call_is_sent_for_appr
     assert not should_terminate
     assert calls == []
     assert len(result_groups) == 1
+    assert result_groups[0][0].type == "function_approval_request"
+
+
+async def test_middleware_can_repair_a_payload_that_is_not_a_json_object() -> None:
+    """Middleware sees the raw parsed mapping and may repair it into real arguments.
+
+    This is the function-loop contract: middleware receives the arguments before
+    any final validation, and a repaired call executes like any other.
+    """
+
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="list_accounts")
+    def list_accounts(limit: int = 0) -> str:
+        calls.append({"limit": limit})
+        return "ok"
+
+    class RepairRawArguments(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            arguments = cast("dict[str, Any]", context.arguments)
+            if "raw" in arguments:
+                context.arguments = {"limit": 5}
+            await call_next()
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments="[1, 2]"),
+        ],
+        tools=[list_accounts],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(RepairRawArguments()),
+    )
+
+    assert not should_terminate
+    assert calls == [{"limit": 5}]
+    assert result_groups[0][0].result == "ok"
+
+
+@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]"])
+async def test_malformed_arguments_left_unrepaired_are_answered_before_the_tool_runs(
+    arguments: str,
+) -> None:
+    """When middleware does not repair the wrapped payload, the call is answered.
+
+    The error is the argument-validation result, raised immediately before the
+    tool would have executed, so the tool never runs on undeclared arguments.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    class Passthrough(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            await call_next()
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments=arguments),
+        ],
+        tools=[account_tool],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(Passthrough()),
+    )
+
+    assert not should_terminate
+    assert calls == []
     result = result_groups[0][0]
-    assert result.type == "function_result"
     assert "not a JSON object" in str(result.exception)
-    assert all(content.type != "function_approval_request" for group in result_groups for content in group)
 
 
 async def test_invoke_preserves_explicit_null_argument():
