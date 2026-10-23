@@ -38,6 +38,7 @@ from typing import (
     get_args,
     overload,
 )
+from urllib.parse import unquote
 
 from typing_extensions import Required, TypedDict
 
@@ -116,6 +117,7 @@ def _parse_data_uri(uri: str) -> _ParsedDataUri:
     ``base64`` is the only encoding marker and is only valid once, as the last parameter; other
     parameters such as ``charset=utf-8`` are metadata. Only the metadata before the first comma
     is inspected, so a ``;base64,`` sequence inside the payload is never treated as a marker.
+    Payload URL escapes are decoded once before callers process the base64 data; literal ``+`` is preserved.
 
     Raises:
         ContentError: If the URI has no comma or carries an unsupported encoding marker.
@@ -134,7 +136,7 @@ def _parse_data_uri(uri: str) -> _ParsedDataUri:
     return _ParsedDataUri(
         media_type=parts[0][5:] or "text/plain",  # Remove 'data:'
         is_base64=bool(parameters) and parameters[-1] == "base64",
-        payload=payload,
+        payload=unquote(payload),
     )
 
 
