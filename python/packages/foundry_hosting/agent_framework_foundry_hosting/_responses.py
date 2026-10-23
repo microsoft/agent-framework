@@ -284,7 +284,11 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
 def _annotations_to_output_text(
     annotations: Sequence[FrameworkAnnotation] | None,
 ) -> list[ResponsesAnnotation]:
-    """Convert framework citations into Responses output-text annotations."""
+    """Convert framework citations into Responses output-text annotations.
+
+    Regions with ``additional_properties["annotated_regions_coordinate_space"] == "source"``
+    describe the source document, not output text, and are not emitted as output spans.
+    """
     if not annotations or not isinstance(annotations, Sequence) or isinstance(annotations, (str, bytes)):
         return []
 
@@ -301,6 +305,8 @@ def _annotations_to_output_text(
             cast("Mapping[str, Any]", raw_properties) if isinstance(raw_properties, Mapping) else {}
         )
         raw_regions = annotation_mapping.get("annotated_regions")
+        if properties.get("annotated_regions_coordinate_space") == "source":
+            raw_regions = None
         regions: list[Mapping[str, Any]] = []
         if isinstance(raw_regions, Sequence) and not isinstance(raw_regions, (str, bytes)):
             for raw_region in cast("Sequence[Any]", raw_regions):
@@ -1858,7 +1864,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         for update in _agent_response_updates(response, context.response_id):
                             if context.shutdown.is_set() or cancellation_signal.is_set():
                                 break
-                            async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                            async for event in tracker.handle_update(
+                                update, approval_storage=approval_storage, complete_message=True
+                            ):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
@@ -2650,15 +2658,23 @@ class _OutputItemTracker:
         update: AgentResponseUpdate,
         *,
         approval_storage: FunctionApprovalStore | None = None,
+        complete_message: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process one agent update: note its finish reason, then handle each of its contents.
 
         This is the single entry point for both the plain-agent and the workflow loops, so the
-        finish reason cannot be forgotten on one of them.
+        finish reason cannot be forgotten on one of them. Set ``complete_message`` when the
+        update contains a completed message's independent content parts rather than streaming
+        deltas; text and refusal parts then retain their original boundaries and citation offsets.
         """
         self.record_finish_reason(update.finish_reason)
         for content in update.contents:
-            async for event in self.handle(content, message_id=update.message_id, approval_storage=approval_storage):
+            async for event in self.handle(
+                content,
+                message_id=update.message_id,
+                approval_storage=approval_storage,
+                start_new_content_part=complete_message,
+            ):
                 yield event
 
     async def handle(
@@ -2667,6 +2683,7 @@ class _OutputItemTracker:
         message_id: str | None = None,
         *,
         approval_storage: FunctionApprovalStore | None = None,
+        start_new_content_part: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process a content item, yielding its events.
 
@@ -2678,9 +2695,11 @@ class _OutputItemTracker:
                 merged into it.
             approval_storage: Used for content types that fall back to one-shot emission
                 (anything not recognized as a streaming delta type) to save/load approval requests.
+            start_new_content_part: Whether text and refusal content start a new independent
+                content part instead of continuing the current streaming occurrence.
         """
         if _is_refusal_text_content(content) and content.text is not None:
-            for event in self._ensure_message_content("refusal", message_id):
+            for event in self._ensure_message_content("refusal", message_id, start_new_part=start_new_content_part):
                 yield event
             self._active_message_id = message_id
             delta = self._consume_text_update(content.text, content.merge_mode)
@@ -2688,7 +2707,7 @@ class _OutputItemTracker:
                 yield self._refusal_content.emit_delta(delta)
 
         elif content.type == "text" and content.text is not None:
-            for event in self._ensure_message_content("text", message_id):
+            for event in self._ensure_message_content("text", message_id, start_new_part=start_new_content_part):
                 yield event
             self._active_message_id = message_id
             delta = self._consume_text_update(content.text, content.merge_mode)
@@ -3004,11 +3023,13 @@ class _OutputItemTracker:
         self,
         content_type: Literal["text", "refusal"],
         message_id: str | None,
+        *,
+        start_new_part: bool = False,
     ) -> Generator[ResponseStreamEvent]:
         message_changed = (
             message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
         )
-        if self._active_type == content_type and not message_changed:
+        if self._active_type == content_type and not message_changed and not start_new_part:
             return
         if self._message_item is not None and self._active_type in {"text", "refusal"} and not message_changed:
             yield from self._close_message_content()
