@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
@@ -287,7 +288,7 @@ class InMemoryCheckpointStorage:
 # checkpoint ID from different processes still rely on ``os.replace`` being atomic on
 # the underlying filesystem for the file not to be seen half-written; which write
 # survives is undefined.
-_destination_queues: dict[Path, _DestinationQueue] = {}
+_destination_queues: dict[tuple[Path, str], _DestinationQueue] = {}
 # A completed predecessor invokes callbacks synchronously. If cancellation lands while
 # a save is entering the queue, its deferred release can therefore run re-entrantly on
 # the same thread before the enqueue frame has left this guard. A plain Lock deadlocks
@@ -323,14 +324,37 @@ class _WriteTicket:
     error: BaseException | None = None
 
 
+def _fs_key(file_name: str) -> str:
+    """The filesystem's folded spelling of a filename.
+
+    Case-insensitive volumes (the default on Windows and macOS) merge ``a`` and
+    ``A``; APFS and HFS+ additionally merge Unicode normalization forms. Both
+    folds are lossy, so two names sharing a key cannot coexist there.
+    ``str.casefold()`` alone does not normalize.
+    """
+    return unicodedata.normalize("NFC", file_name).casefold()
+
+
+def _destination_key(file_path: Path) -> tuple[Path, str]:
+    """The queue key for *file_path*: one entry per filesystem-folded name.
+
+    Variant spellings of one checkpoint (``Round-A.json`` and ``round-a.json``)
+    resolve to a single file on a folding volume, so their writes must share one
+    queue or the second replace can land first and overwrite the newer one
+    (#9466 review).
+    """
+    return (file_path.parent, _fs_key(file_path.name))
+
+
 def _enqueue_write(file_path: Path) -> _WriteTicket:
     """Take a place in *file_path*'s queue without waiting for it."""
     completion: Future[None] = Future()
+    key = _destination_key(file_path)
     with _destination_queues_guard:
-        queue = _destination_queues.get(file_path)
+        queue = _destination_queues.get(key)
         if queue is None:
             queue = _DestinationQueue()
-            _destination_queues[file_path] = queue
+            _destination_queues[key] = queue
         predecessor = queue.tail
         queue.tail = completion
         queue.pending += 1
@@ -491,11 +515,11 @@ def _release_one_write(ticket: _WriteTicket) -> None:
         if ticket.released:
             return
         ticket.released = True
-        queue = _destination_queues.get(ticket.path)
+        queue = _destination_queues.get(_destination_key(ticket.path))
         if queue is not None:
             queue.pending -= 1
             if queue.pending <= 0:
-                del _destination_queues[ticket.path]
+                del _destination_queues[_destination_key(ticket.path)]
     # Outside the guard: waking the successor must not happen while holding the lock its
     # own release will need.
     if not ticket.completion.done():
@@ -571,6 +595,88 @@ class FileCheckpointStorage:
             raise WorkflowCheckpointException(f"Invalid checkpoint ID: {checkpoint_id}")
         return file_path
 
+    @staticmethod
+    def _assert_no_variant_collision(file_path: Path, checkpoint_id: CheckpointID) -> None:
+        """Reject an ID that the filesystem cannot store as an independent file.
+
+        On case-insensitive filesystems (the default on Windows and macOS),
+        ``Round-A.json`` and ``round-a.json`` name the same file, so a save under
+        the variant spelling would silently replace the other checkpoint and its
+        reads would then return the wrong workflow's state (#9444). APFS and HFS+
+        additionally fold Unicode normalization forms, so ``café-1.json`` spelled
+        NFC and NFD is also one file there (#9466 review). On filesystems without
+        those folds the variant path simply does not exist, so the directory scan
+        below is skipped entirely there.
+        """
+        if not file_path.exists():
+            return
+        # Derive the expected spelling from the requested ID, not the resolved
+        # path: on Windows Path.resolve() canonicalizes an existing file to its
+        # on-disk casing, so file_path.name would already be the colliding
+        # name and the check below would accept the overwrite (#9444).
+        expected_name = f"{checkpoint_id}.json"
+        try:
+            siblings = [entry.name for entry in file_path.parent.iterdir()]
+        except OSError as exc:
+            # Permissions can allow lookup/creation/replacement while denying
+            # enumeration, so skipping the scan here would let a variant
+            # save proceed unchecked. Fail closed instead.
+            raise WorkflowCheckpointException(
+                f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
+                "the storage directory could not be listed."
+            ) from exc
+        # The filesystem key is the NFC-normalized, case-folded spelling: both
+        # folds are lossy on the volumes that perform them, so two IDs sharing
+        # a key cannot coexist there. str.casefold() alone does not normalize.
+        expected_key = _fs_key(expected_name)
+        variant = next(
+            (name for name in siblings if name != expected_name and _fs_key(name) == expected_key),
+            None,
+        )
+        if variant is None or expected_name in siblings:
+            # No filesystem-folded variant exists, or the exact spelling is
+            # already stored (a same-ID update on a volume where distinct
+            # spellings legitimately coexist).
+            return
+        raise WorkflowCheckpointException(
+            f"Checkpoint ID {checkpoint_id!r} collides with the existing checkpoint "
+            f"{variant.removesuffix('.json')!r}: on this filesystem both names "
+            "resolve to one file, and saving would replace that checkpoint's data. "
+            "Choose a checkpoint ID that differs by more than letter case or "
+            "Unicode normalization form."
+        )
+
+    @staticmethod
+    def _assert_stored_spelling(file_path: Path, checkpoint_id: CheckpointID) -> None:
+        """Refuse to act on a file that only a filesystem fold resolved to.
+
+        On a case- or normalization-folding volume, ``load("round-a")`` resolves
+        to the stored ``Round-A.json`` and would read another checkpoint's data;
+        ``delete("round-a")`` would remove it. Under the fail-closed policy a
+        variant ID names no checkpoint at all, so both operations must stop
+        where the stored spelling differs (#9466 review).
+        """
+        expected_name = f"{checkpoint_id}.json"
+        try:
+            siblings = [entry.name for entry in file_path.parent.iterdir()]
+        except OSError as exc:
+            # Enumeration can fail where lookup succeeds; acting on a fold we
+            # could not inspect is exactly the aliasing this guard prevents.
+            raise WorkflowCheckpointException(
+                f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
+                "the storage directory could not be listed."
+            ) from exc
+        if expected_name in siblings:
+            return
+        variant = next((name for name in siblings if _fs_key(name) == _fs_key(expected_name)), None)
+        if variant is None:
+            return
+        raise WorkflowCheckpointException(
+            f"No checkpoint found with ID {checkpoint_id}: the stored checkpoint is spelled "
+            f"{variant.removesuffix('.json')!r}, and on this filesystem both names resolve to "
+            "one file. Refusing to read or delete another checkpoint's data."
+        )
+
     @classmethod
     def _delete_lock(cls, file_path: Path) -> threading.Lock:
         """Return the process-local deletion lock for a checkpoint file."""
@@ -592,6 +698,7 @@ class FileCheckpointStorage:
         from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
+        self._assert_no_variant_collision(file_path, checkpoint.checkpoint_id)
         checkpoint_dict = checkpoint.to_dict()
         # Fail at save time if encoding or restore validation fails (#8181).
         try:
@@ -633,6 +740,15 @@ class FileCheckpointStorage:
             # filesystem). A short, ID-independent name keeps every destination
             # name accepted by _validate_file_path saveable regardless of
             # checkpoint-ID length or filesystem limits.
+            #
+            # The collision guard is repeated here, under destination ownership,
+            # because the pre-enqueue check cannot see a variant sibling another
+            # save is about to create: two first-time variant saves both observed
+            # "no destination" and the second replace would win (#9466 review).
+            # Variant spellings share one queue, so this re-check runs after the
+            # predecessor has actually landed. Cross-process races stay a
+            # documented limitation.
+            self._assert_no_variant_collision(file_path, checkpoint.checkpoint_id)
             tmp_path: Path | None = None
             try:
                 # O_CREAT | O_EXCL | O_WRONLY with an explicit 0o666 mode, so the
@@ -757,9 +873,13 @@ class FileCheckpointStorage:
 
         Raises:
             WorkflowCheckpointException: If no checkpoint with the given ID exists,
-                or if checkpoint decoding fails.
+                or if checkpoint decoding fails. Also when the ID resolves to a
+                differently spelled checkpoint only through a filesystem
+                case/normalization fold: under fail-closed, that ID names no
+                checkpoint and the other one's data is not read.
         """
         file_path = self._validate_file_path(checkpoint_id)
+        self._assert_stored_spelling(file_path, checkpoint_id)
 
         if not file_path.exists():
             raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
@@ -827,8 +947,14 @@ class FileCheckpointStorage:
 
         Returns:
             True if the checkpoint was successfully deleted, False if no checkpoint with the given ID exists.
+
+        Raises:
+            WorkflowCheckpointException: If the ID resolves to a differently spelled
+                checkpoint only through a filesystem case/normalization fold, or the
+                storage directory cannot be listed to rule that out.
         """
         file_path = self._validate_file_path(checkpoint_id)
+        self._assert_stored_spelling(file_path, checkpoint_id)
         file_lock = self._delete_lock(file_path)
 
         def _delete() -> bool:
