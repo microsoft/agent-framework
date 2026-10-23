@@ -696,6 +696,10 @@ class RunContext:
         self._workflow_tasks: set[asyncio.Future[Any]] = set()
         # Tasks explicitly cancelled by framework cleanup.
         self._framework_cancelled_tasks: set[asyncio.Future[Any]] = set()
+        # In-flight per-step checkpoint saves. Cleanup waits for these instead of
+        # cancelling them, so a completed step's checkpoint lands even when the run
+        # is torn down (e.g. a sibling branch fails).
+        self._checkpoint_save_tasks: set[asyncio.Future[str]] = set()
         # Parent task for each tracked workflow task.
         self._workflow_task_parents: dict[asyncio.Future[Any], asyncio.Task[Any] | None] = {}
         # Tasks that have entered at least one @step wrapper.
@@ -1071,7 +1075,7 @@ class RunContext:
         while pending := [task for task in self._workflow_tasks if task is not current_task and not task.done()]:
             waiting_for_existing_cancellation = False
             for task in pending:
-                if task in self._framework_cancelled_tasks:
+                if task in self._framework_cancelled_tasks or task in self._checkpoint_save_tasks:
                     continue
                 if self._has_pending_cancellation(task):
                     waiting_for_existing_cancellation = True
@@ -1080,6 +1084,9 @@ class RunContext:
             if waiting_for_existing_cancellation:
                 await asyncio.sleep(0)
                 continue
+            # Checkpoint saves are awaited, not cancelled: a completed step's
+            # checkpoint must land before the run is torn down, whatever storage
+            # is configured.
             await asyncio.gather(*pending, return_exceptions=True)
         tasks = [task for task in self._workflow_tasks if task is not current_task]
         if tasks:
@@ -2150,7 +2157,30 @@ class FunctionalWorkflow:
         if storage is not None:
 
             async def _on_step_completed() -> None:
-                ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                # A checkpoint save that has started must finish even if the step
+                # is cancelled (e.g. a sibling branch fails the run): a storage
+                # whose save awaits I/O before writing would otherwise lose the
+                # completed step's result, and a resumed run would re-run the
+                # step and its side effects. The save runs as its own task that
+                # cleanup waits for instead of cancelling; both awaits use
+                # asyncio.shield so a cancellation of this step task cannot reach
+                # the save through the await.
+                save_task = asyncio.ensure_future(self._save_checkpoint(ctx, storage, ckpt_chain[0]))
+                ctx._checkpoint_save_tasks.add(save_task)
+                save_task.add_done_callback(ctx._checkpoint_save_tasks.discard)
+                try:
+                    ckpt_chain[0] = await asyncio.shield(save_task)
+                except asyncio.CancelledError:
+                    try:
+                        ckpt_chain[0] = await asyncio.shield(save_task)
+                    except asyncio.CancelledError:
+                        raise
+                    except BaseException:
+                        logger.warning(
+                            "Checkpoint save failed while draining after cancellation",
+                            exc_info=True,
+                        )
+                    raise
 
             ctx._on_step_completed = _on_step_completed
 

@@ -8,6 +8,7 @@ import asyncio
 import gc
 import json
 import logging
+from collections import Counter
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ import pytest
 
 from agent_framework import (
     AgentResponseUpdate,
+    CheckpointID,
     CheckpointStorage,
     Content,
     ExperimentalFeature,
@@ -28,6 +30,7 @@ from agent_framework import (
     RunContext,
     StepWrapper,
     SupportsAgentRun,
+    WorkflowCheckpoint,
     WorkflowEvent,
     WorkflowEventSource,
     WorkflowRunResult,
@@ -929,6 +932,55 @@ class TestCheckpointing:
         await wf.run(checkpoint_id=ckpt_id)
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
         assert len(checkpoints) == 3  # 2 from first run + 1 final from restore
+
+    async def test_completed_parallel_step_is_checkpointed_when_sibling_fails(self):
+        """A step that completed before a sibling failed must not run again
+        after resume, whatever the checkpoint storage's save timing."""
+        runs: Counter[str] = Counter()
+
+        class TransientFailure(Exception):
+            pass
+
+        class YieldingSaveStorage(InMemoryCheckpointStorage):
+            """A storage whose save awaits before writing, as a database-backed one does."""
+
+            async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:  # type: ignore[override]
+                await asyncio.sleep(0.01)
+                return await super().save(checkpoint)
+
+        storage = YieldingSaveStorage()
+
+        @step(replay_key=lambda x: "prepare")
+        async def prepare(x: int) -> int:
+            runs["prepare"] += 1
+            return x
+
+        @step(replay_key=lambda x: "done")
+        async def done(x: int) -> int:
+            runs["done"] += 1
+            return x + 1
+
+        @step(replay_key=lambda x: "flaky")
+        async def flaky(x: int) -> int:
+            runs["flaky"] += 1
+            if runs["flaky"] == 1:
+                raise TransientFailure("sibling failure")
+            return x + 2
+
+        @built_workflow(checkpoint_storage=storage)
+        async def parallel_wf(x: int) -> list[int]:
+            a = await prepare(x)
+            return list(await asyncio.gather(done(a), flaky(a)))
+
+        with pytest.raises(TransientFailure):
+            await parallel_wf.run(0)
+
+        latest = await storage.get_latest(workflow_name="parallel_wf")
+        assert latest is not None
+        result = await parallel_wf.run(checkpoint_id=latest.checkpoint_id)
+
+        assert result.get_outputs() == [[1, 2]]
+        assert runs == Counter({"prepare": 1, "done": 1, "flaky": 2})
 
 
 # ---------------------------------------------------------------------------
