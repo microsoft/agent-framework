@@ -903,6 +903,67 @@ class TestStateTypeRegistry:
         assert isinstance(restored.state["value"], PydanticState)
         assert restored.state["value"].value == "ok"
 
+    def test_registered_pydantic_state_restores_nested_registered_values(self) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        class PydanticMessageState(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            message: Message
+
+        register_state_type(PydanticMessageState, type_id="pydantic_message_state_test")
+        session = AgentSession(session_id="nested-message")
+        session.state["value"] = PydanticMessageState(message=Message(role="user", contents=["persisted"]))
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], PydanticMessageState)
+        assert isinstance(restored.state["value"].message, Message)
+        assert restored.state["value"].message.text == "persisted"
+
+    def test_registered_pydantic_state_keeps_tag_shaped_dict_fields_raw(self) -> None:
+        from pydantic import BaseModel
+
+        class PydanticDictState(BaseModel):
+            data: dict[str, Any]
+
+        register_state_type(PydanticDictState, type_id="pydantic_dict_state_test")
+        session = AgentSession(session_id="dict-tag-shaped")
+        # Ordinary dict data whose "type" happens to name a registered state
+        # type is data, not an encoded nested value.
+        session.state["value"] = PydanticDictState(data={"type": "message", "note": "plain data"})
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], PydanticDictState)
+        assert restored.state["value"].data == {"type": "message", "note": "plain data"}
+
+    def test_registered_pydantic_state_restores_only_failed_fields(self) -> None:
+        """A mixed model restores the broken nested field and keeps valid tag-shaped data raw."""
+        from pydantic import BaseModel, ConfigDict
+
+        class PydanticMixedState(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            message: Message
+            data: dict[str, Any]
+
+        register_state_type(PydanticMixedState, type_id="pydantic_mixed_state_test")
+        session = AgentSession(session_id="mixed-restore")
+        # `message` fails raw validation (its payload is the tagged dict), while
+        # `data` validates raw; the retry must restore only `message`.
+        session.state["value"] = PydanticMixedState(
+            message=Message(role="user", contents=["persisted"]),
+            data={"type": "message", "note": "plain data"},
+        )
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], PydanticMixedState)
+        assert isinstance(restored.state["value"].message, Message)
+        assert restored.state["value"].message.text == "persisted"
+        assert restored.state["value"].data == {"type": "message", "note": "plain data"}
+
     def test_conflicting_type_identifier_is_rejected(self) -> None:
         class FirstState:
             def to_dict(self) -> dict[str, Any]:
@@ -1147,6 +1208,26 @@ class TestFileSessionStore:
         assert files[0].parent == tmp_path
         assert files[0].suffix == ".json"
         assert json.loads(files[0].read_bytes())["version"] == "1.0"
+
+    async def test_round_trips_registered_pydantic_state_with_nested_message(self, tmp_path: Path) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        class PydanticFileMessageState(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            message: Message
+
+        register_state_type(PydanticFileMessageState, type_id="pydantic_file_message_state_test")
+        session = AgentSession(session_id="file-nested-message")
+        session.state["value"] = PydanticFileMessageState(message=Message(role="user", contents=["persisted"]))
+
+        await FileSessionStore(tmp_path).set("tenant_file-nested-message", session)
+        restored = await FileSessionStore(tmp_path).get("tenant_file-nested-message")
+
+        assert restored is not None
+        assert isinstance(restored.state["value"], PydanticFileMessageState)
+        assert isinstance(restored.state["value"].message, Message)
+        assert restored.state["value"].message.text == "persisted"
 
     async def test_round_trips_binary_messagepack_session(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path, serialization_format="msgpack")
