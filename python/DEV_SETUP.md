@@ -6,6 +6,10 @@ want to run the tests included.
 
 For coding standards and conventions, see [CODING_STANDARD.md](CODING_STANDARD.md).
 
+## GitHub Codespace
+
+You have the option to do the development and testing described below in a GitHub Codespace instead of on your local machine. Manage your agent-framework Codespaces [here](https://github.com/microsoft/agent-framework/codespaces). The container configuration is specified by [.devcontainer/devcontainer.json](https://github.com/microsoft/agent-framework/blob/main/.devcontainer/devcontainer.json), and as you can see it runs the [python/devsetup.sh](https://github.com/microsoft/agent-framework/blob/main/python/devsetup.sh) script. Opening multiple Codespaces may be helpful when you want GitHub Copilot to simultaneously work on several tasks, without your local machine getting clogged.
+
 ## System setup
 
 We are using a tool called [poethepoet](https://github.com/nat-n/poethepoet) for task management and [uv](https://github.com/astral-sh/uv) for dependency management. At the [end of this document](#available-poe-tasks), you will find the available Poe tasks.
