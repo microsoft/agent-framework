@@ -10,7 +10,7 @@ using ModelContextProtocol.Protocol;
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 /// <summary>
-/// Tests selection between <c>skills/list</c> and <c>skill://index.json</c> based on the server's Skills extension.
+/// Tests that skill discovery requires the server's Skills extension.
 /// </summary>
 public sealed class AgentMcpSkillsDiscoverySelectionTests
 {
@@ -20,7 +20,7 @@ public sealed class AgentMcpSkillsDiscoverySelectionTests
     [InlineData("""{"extensions":{}}""")]
     [InlineData("""{"extensions":{"example.test/other":{}}}""")]
     [InlineData("""{"extensions":{"IO.MODELCONTEXTPROTOCOL/SKILLS":{}}}""")]
-    public async Task GetSkillsAsync_AbsentSkillsKey_ReadsIndexAsync(string capabilitiesJson)
+    public async Task GetSkillsAsync_AbsentSkillsKey_ReturnsEmptyWithoutRequestsAsync(string capabilitiesJson)
     {
         // Arrange
         List<string> requests = [];
@@ -34,7 +34,7 @@ public sealed class AgentMcpSkillsDiscoverySelectionTests
 
         // Assert
         Assert.Empty(skills);
-        Assert.Equal("skill://index.json", Assert.Single(requests));
+        Assert.Empty(requests);
     }
 
     [Theory]

@@ -14,12 +14,12 @@ using Moq;
 
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
-public sealed partial class AgentMcpListedSkillsTests
+public sealed partial class AgentMcpSkillsTests
 {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoverAsync_PositiveTtl_ReusesCatalogUntilExactExpirationAsync(bool empty)
+    public async Task GetSkillsAsync_PositiveTtl_ReusesCatalogUntilExactExpirationAsync(bool empty)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -30,12 +30,12 @@ public sealed partial class AgentMcpListedSkillsTests
             long ttl = calls == 1 ? 1000 : 2000;
             return Task.FromResult(empty ? TtlListResult(ttl) : TtlListResult(ttl, Entry()));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
 
         // Act
-        var first = await loader.DiscoverAsync(CancellationToken.None);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(999));
-        var fresh = await loader.DiscoverAsync(CancellationToken.None);
+        var fresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Same(first, fresh);
@@ -45,7 +45,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
         // Act
         clock.Advance(TimeSpan.FromMilliseconds(1));
-        var refreshed = await loader.DiscoverAsync(CancellationToken.None);
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.NotSame(first, refreshed);
@@ -54,7 +54,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
         // Act
         clock.Advance(TimeSpan.FromMilliseconds(1999));
-        var stillFresh = await loader.DiscoverAsync(CancellationToken.None);
+        var stillFresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Same(refreshed, stillFresh);
@@ -62,12 +62,13 @@ public sealed partial class AgentMcpListedSkillsTests
 
         // Act
         clock.Advance(TimeSpan.FromMilliseconds(1));
-        var expired = await loader.DiscoverAsync(CancellationToken.None);
+        var expired = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.NotSame(refreshed, expired);
         Assert.Equal(3, calls);
         client.Verify(c => c.SendRequestAsync(It.Is<JsonRpcRequest>(request => request.Method == "skills/list"), It.IsAny<CancellationToken>()), Times.Exactly(3));
+        client.VerifyGet(c => c.ServerCapabilities, Times.Exactly(5));
         client.VerifyNoOtherCalls();
     }
 
@@ -77,7 +78,7 @@ public sealed partial class AgentMcpListedSkillsTests
     [InlineData("0")]
     [InlineData("-1")]
     [InlineData("-9223372036854775808")]
-    public async Task DiscoverAsync_MissingNullOrNonpositiveTtl_RefetchesOnEveryAccessAsync(string? ttl)
+    public async Task GetSkillsAsync_MissingNullOrNonpositiveTtl_RefetchesOnEveryAccessAsync(string? ttl)
     {
         // Arrange
         int calls = 0;
@@ -92,11 +93,11 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var source = new AgentMcpSkillsSource(client.Object);
 
         // Act
-        var first = await loader.DiscoverAsync(CancellationToken.None);
-        var second = await loader.DiscoverAsync(CancellationToken.None);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.NotSame(first, second);
@@ -106,7 +107,7 @@ public sealed partial class AgentMcpListedSkillsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoverAsync_ExtremelyLargeTtl_DoesNotOverflowFreshnessCalculationAsync(bool paginated)
+    public async Task GetSkillsAsync_ExtremelyLargeTtl_DoesNotOverflowFreshnessCalculationAsync(bool paginated)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -122,12 +123,12 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
 
         // Act
-        var first = await loader.DiscoverAsync(CancellationToken.None);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         clock.Advance(TimeSpan.FromDays(365));
-        var second = await loader.DiscoverAsync(CancellationToken.None);
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Same(first, second);
@@ -139,7 +140,7 @@ public sealed partial class AgentMcpListedSkillsTests
     [InlineData(5000L, 1000L, 5000L, 800L)]
     [InlineData(5000L, 5000L, 1000L, 1000L)]
     [InlineData(1000L, 900L, 800L, 600L)]
-    public async Task DiscoverAsync_PaginatedTtl_ExpiresWhenAnyPageExpiresAsync(long firstTtl, long secondTtl, long thirdTtl, long remaining)
+    public async Task GetSkillsAsync_PaginatedTtl_ExpiresWhenAnyPageExpiresAsync(long firstTtl, long secondTtl, long thirdTtl, long remaining)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -168,12 +169,12 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
 
         // Act
-        var first = await loader.DiscoverAsync(CancellationToken.None);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(remaining - 1));
-        var fresh = await loader.DiscoverAsync(CancellationToken.None);
+        var fresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Same(first, fresh);
@@ -182,7 +183,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
         // Act
         clock.Advance(TimeSpan.FromMilliseconds(1));
-        var refreshed = await loader.DiscoverAsync(CancellationToken.None);
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.NotSame(first, refreshed);
@@ -196,7 +197,7 @@ public sealed partial class AgentMcpListedSkillsTests
     [InlineData(0L, true)]
     [InlineData(-1L, false)]
     [InlineData(-1L, true)]
-    public async Task DiscoverAsync_StaleEmptyPage_PreventsCachingWholeCatalogAsync(long? ttl, bool emptyFirstPage)
+    public async Task GetSkillsAsync_StaleEmptyPage_PreventsCachingWholeCatalogAsync(long? ttl, bool emptyFirstPage)
     {
         // Arrange
         int calls = 0;
@@ -212,18 +213,18 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var source = new AgentMcpSkillsSource(client.Object);
 
         // Act
-        await loader.DiscoverAsync(CancellationToken.None);
-        await loader.DiscoverAsync(CancellationToken.None);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(4, calls);
     }
 
     [Fact]
-    public async Task DiscoverAsync_PageExpiresDuringPagination_DoesNotRestartItsClockAsync()
+    public async Task GetSkillsAsync_PageExpiresDuringPagination_DoesNotRestartItsClockAsync()
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -243,18 +244,18 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
 
         // Act
-        await loader.DiscoverAsync(CancellationToken.None);
-        await loader.DiscoverAsync(CancellationToken.None);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(4, calls);
     }
 
     [Fact]
-    public async Task DiscoverAsync_SlowRequest_TtlStartsAtResponseReceiptAsync()
+    public async Task GetSkillsAsync_SlowRequest_TtlStartsAtResponseReceiptAsync()
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -265,11 +266,11 @@ public sealed partial class AgentMcpListedSkillsTests
             clock.Advance(TimeSpan.FromSeconds(2));
             return Task.FromResult(TtlListResult(1000));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
 
         // Act
-        var first = await loader.DiscoverAsync(CancellationToken.None);
-        var second = await loader.DiscoverAsync(CancellationToken.None);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Same(first, second);
@@ -279,7 +280,7 @@ public sealed partial class AgentMcpListedSkillsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoverAsync_ConcurrentCalls_ShareSuccessfulFreshDiscoveryAsync(bool refresh)
+    public async Task GetSkillsAsync_ConcurrentCalls_ShareSuccessfulFreshDiscoveryAsync(bool refresh)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -290,16 +291,16 @@ public sealed partial class AgentMcpListedSkillsTests
             calls++;
             return refresh && calls == 1 ? Task.FromResult(TtlListResult(1000, Entry())) : release.Task;
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
         if (refresh)
         {
-            await loader.DiscoverAsync(CancellationToken.None);
+            await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
             clock.Advance(TimeSpan.FromSeconds(1));
         }
 
         // Act
         Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
-            .Select(_ => loader.DiscoverAsync(CancellationToken.None)).ToArray();
+            .Select(_ => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None)).ToArray();
         release.SetResult(TtlListResult(1000, Entry()));
         var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -309,18 +310,18 @@ public sealed partial class AgentMcpListedSkillsTests
     }
 
     [Fact]
-    public async Task DiscoverAsync_ConcurrentCalls_ZeroTtlDoesNotShareStaleCatalogAsync()
+    public async Task GetSkillsAsync_ConcurrentCalls_ZeroTtlDoesNotShareStaleCatalogAsync()
     {
         // Arrange
         var release = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
         int calls = 0;
         var client = CreateTtlClient((_, _) =>
             ++calls == 1 ? release.Task : Task.FromResult(TtlListResult(0, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
 
         // Act
         Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
-            .Select(_ => loader.DiscoverAsync(CancellationToken.None)).ToArray();
+            .Select(_ => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None)).ToArray();
 
         // Assert
         Assert.Equal(1, calls);
@@ -338,7 +339,7 @@ public sealed partial class AgentMcpListedSkillsTests
     }
 
     [Fact]
-    public async Task DiscoverAsync_CanceledWaiter_DoesNotCancelSharedDiscoveryAsync()
+    public async Task GetSkillsAsync_CanceledWaiter_DoesNotCancelSharedDiscoveryAsync()
     {
         // Arrange
         var release = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -348,12 +349,12 @@ public sealed partial class AgentMcpListedSkillsTests
             calls++;
             return release.Task.WaitAsync(token);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
         using var cts = new CancellationTokenSource();
 
         // Act
-        var initiating = loader.DiscoverAsync(CancellationToken.None);
-        var waiting = loader.DiscoverAsync(cts.Token);
+        var initiating = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        var waiting = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token);
         await cts.CancelAsync();
         try
         {
@@ -366,52 +367,52 @@ public sealed partial class AgentMcpListedSkillsTests
         }
 
         var first = await initiating.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Same(first, await loader.DiscoverAsync(CancellationToken.None));
+        Assert.Same(first, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(1, calls);
     }
 
     [Fact]
-    public async Task DiscoverAsync_CanceledInitiator_WaiterRetriesDiscoveryAsync()
+    public async Task GetSkillsAsync_CanceledInitiator_WaiterRetriesDiscoveryAsync()
     {
         // Arrange
         var release = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
         int calls = 0;
         var client = CreateTtlClient((_, token) =>
             ++calls == 1 ? release.Task.WaitAsync(token) : Task.FromResult(TtlListResult(1000, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
         using var cts = new CancellationTokenSource();
 
         // Act
-        var initiating = loader.DiscoverAsync(cts.Token);
-        var waiting = loader.DiscoverAsync(CancellationToken.None);
+        var initiating = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token);
+        var waiting = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         await cts.CancelAsync();
 
         // Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => initiating.WaitAsync(TimeSpan.FromSeconds(10)));
         var skills = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Single(skills);
-        Assert.Same(skills, await loader.DiscoverAsync(CancellationToken.None));
+        Assert.Same(skills, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(2, calls);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoverAsync_CanceledToken_DoesNotDiscoverOrReturnFreshCacheAsync(bool cached)
+    public async Task GetSkillsAsync_CanceledToken_DoesNotDiscoverOrReturnFreshCacheAsync(bool cached)
     {
         // Arrange
         var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(1000, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
         if (cached)
         {
-            await loader.DiscoverAsync(CancellationToken.None);
+            await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         }
 
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
         // Act & Assert
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => loader.DiscoverAsync(cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token));
         client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(cached ? 1 : 0));
     }
 
@@ -420,7 +421,7 @@ public sealed partial class AgentMcpListedSkillsTests
     [InlineData("page", typeof(JsonException))]
     [InlineData("entry", typeof(InvalidOperationException))]
     [InlineData("manifest", typeof(InvalidOperationException))]
-    public async Task DiscoverAsync_FailedRefresh_PropagatesAndRetriesWithoutServingStaleCatalogAsync(string failure, Type exceptionType)
+    public async Task GetSkillsAsync_FailedRefresh_PropagatesAndRetriesWithoutServingStaleCatalogAsync(string failure, Type exceptionType)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -443,22 +444,22 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(TtlListResult(1000, Entry()));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
-        var first = await loader.DiscoverAsync(CancellationToken.None);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(1));
 
         // Act & Assert
-        await Assert.ThrowsAsync(exceptionType, () => loader.DiscoverAsync(CancellationToken.None));
-        var refreshed = await loader.DiscoverAsync(CancellationToken.None);
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         Assert.NotSame(first, refreshed);
         Assert.Equal(3, calls);
-        Assert.Same(refreshed, await loader.DiscoverAsync(CancellationToken.None));
+        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoverAsync_CanceledRefreshAfterResponse_DoesNotCacheReplacementAsync(bool laterPage)
+    public async Task GetSkillsAsync_CanceledRefreshAfterResponse_DoesNotCacheReplacementAsync(bool laterPage)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -482,23 +483,23 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
-        var first = await loader.DiscoverAsync(CancellationToken.None);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(1));
 
         // Act & Assert
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => loader.DiscoverAsync(cts.Token));
-        var refreshed = await loader.DiscoverAsync(CancellationToken.None);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         Assert.NotSame(first, refreshed);
         Assert.Equal(laterPage ? 6 : 3, calls);
         Assert.Equal(laterPage ? [null, "next", null, "next", null, "next"] : new string?[] { null, null, null }, cursors);
-        Assert.Same(refreshed, await loader.DiscoverAsync(CancellationToken.None));
+        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoverAsync_TtlRefresh_ReplacesCatalogAsync(bool empty)
+    public async Task GetSkillsAsync_TtlRefresh_ReplacesCatalogAsync(bool empty)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -516,12 +517,12 @@ public sealed partial class AgentMcpListedSkillsTests
             added["frontmatter"]!["description"] = "Added skill.";
             return Task.FromResult(empty ? TtlListResult(1000) : TtlListResult(1000, updated, added));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
-        var first = await loader.DiscoverAsync(CancellationToken.None);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Act
         clock.Advance(TimeSpan.FromSeconds(1));
-        var refreshed = await loader.DiscoverAsync(CancellationToken.None);
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.NotSame(first, refreshed);
@@ -537,12 +538,12 @@ public sealed partial class AgentMcpListedSkillsTests
             Assert.All(refreshed, skill => Assert.DoesNotContain(skill, first));
         }
 
-        Assert.Same(refreshed, await loader.DiscoverAsync(CancellationToken.None));
+        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(2, calls);
     }
 
     [Fact]
-    public async Task DiscoverAsync_InvalidLaterRefreshPage_DoesNotCachePartialCatalogAsync()
+    public async Task GetSkillsAsync_InvalidLaterRefreshPage_DoesNotCachePartialCatalogAsync()
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -563,21 +564,21 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
-        var first = await loader.DiscoverAsync(CancellationToken.None);
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(1));
 
         // Act & Assert
-        await Assert.ThrowsAsync<JsonException>(() => loader.DiscoverAsync(CancellationToken.None));
-        var refreshed = await loader.DiscoverAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         Assert.Single(refreshed);
         Assert.NotSame(first, refreshed);
         Assert.Equal([null, "next", null, "next", null, "next"], cursors);
-        Assert.Same(refreshed, await loader.DiscoverAsync(CancellationToken.None));
+        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Fact]
-    public async Task DiscoverAsync_TtlRefresh_PreservesPreviouslyReturnedManifestAsync()
+    public async Task GetSkillsAsync_TtlRefresh_PreservesPreviouslyReturnedManifestAsync()
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -592,12 +593,12 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(TtlListResult(1000, entry));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
-        var first = Assert.Single(await loader.DiscoverAsync(CancellationToken.None));
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
 
         // Act
         clock.Advance(TimeSpan.FromSeconds(1));
-        var updated = Assert.Single(await loader.DiscoverAsync(CancellationToken.None));
+        var updated = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
 
         // Assert
         Assert.NotSame(first, updated);
@@ -608,28 +609,29 @@ public sealed partial class AgentMcpListedSkillsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoverAsync_DisposedLoader_ThrowsWithoutDisposingClientAsync(bool cached)
+    public async Task GetSkillsAsync_DisposedSource_ThrowsWithoutDisposingClientAsync(bool cached)
     {
         // Arrange
         var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(1000, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
         if (cached)
         {
-            await loader.DiscoverAsync(CancellationToken.None);
+            await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         }
 
         // Act
-        loader.Dispose();
-        loader.Dispose();
+        source.Dispose();
+        source.Dispose();
 
         // Assert
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => loader.DiscoverAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(cached ? 1 : 0));
+        client.VerifyGet(c => c.ServerCapabilities, Times.Exactly(cached ? 2 : 1));
         client.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task GetSkillsAsync_DisposedSource_DisposesLoaderButNotClientAsync()
+    public async Task GetSkillsAsync_DisposedSource_DisposesCacheButNotClientAsync()
     {
         // Arrange
         int calls = 0;
@@ -740,9 +742,22 @@ public sealed partial class AgentMcpListedSkillsTests
         return result;
     }
 
-    private static Mock<McpClient> CreateTtlClient(Func<JsonRpcRequest, CancellationToken, Task<JsonObject>> handler)
+    private static Mock<McpClient> CreateSkillsClient()
     {
         var client = new Mock<McpClient>();
+        client.SetupGet(c => c.ServerCapabilities).Returns(new ServerCapabilities
+        {
+            Extensions = new Dictionary<string, object>
+            {
+                ["io.modelcontextprotocol/skills"] = new JsonObject(),
+            },
+        });
+        return client;
+    }
+
+    private static Mock<McpClient> CreateTtlClient(Func<JsonRpcRequest, CancellationToken, Task<JsonObject>> handler)
+    {
+        var client = CreateSkillsClient();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .Returns((JsonRpcRequest request, CancellationToken token) => RespondAsync(request, token));
         return client;

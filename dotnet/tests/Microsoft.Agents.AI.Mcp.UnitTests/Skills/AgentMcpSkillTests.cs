@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// <summary>
 /// Tests instruction and supporting resource access for listed skills.
 /// </summary>
-public sealed class AgentMcpListedSkillTests
+public sealed class AgentMcpSkillTests
 {
     private const string SkillRootUri = "skill://unit-converter/";
     private const string SkillUri = SkillRootUri + "SKILL.md";
@@ -35,7 +35,7 @@ public sealed class AgentMcpListedSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client);
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client);
 
         // Assert
         Assert.Same(frontmatter, skill.Frontmatter);
@@ -53,7 +53,7 @@ public sealed class AgentMcpListedSkillTests
             return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Nested instructions."));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpListedSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
+        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
         [
             Resource(NestedUri, "Nested instructions."),
             Resource(SkillUri, SkillContent),
@@ -84,10 +84,10 @@ public sealed class AgentMcpListedSkillTests
         });
         await using var client = await server.CreateClientAsync();
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.");
-        McpListedSkillResourceEntry[] resources = includeNestedInstructions
+        McpSkillResourceEntry[] resources = includeNestedInstructions
             ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
             : [];
-        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, resources, client);
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, resources, client);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
@@ -439,7 +439,7 @@ public sealed class AgentMcpListedSkillTests
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
-        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client);
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client);
 
         // Act
         string verified = await skill.GetContentAsync();
@@ -476,7 +476,7 @@ public sealed class AgentMcpListedSkillTests
 
         // Act
         var resource = await skill.GetResourceAsync(name);
-        var content = await Assert.IsType<AgentMcpListedSkillResource>(resource).ReadAsync();
+        var content = await Assert.IsType<AgentMcpSkillResource>(resource).ReadAsync();
 
         // Assert
         Assert.Equal(uri, Assert.Single(reads));
@@ -659,7 +659,7 @@ public sealed class AgentMcpListedSkillTests
         ]);
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
         var content = await resource.ReadAsync();
 
         // Assert
@@ -670,7 +670,7 @@ public sealed class AgentMcpListedSkillTests
     public async Task ReadAsync_EmptyResourceContent_ReturnsNullAsync()
     {
         // Arrange
-        var resource = new AgentMcpListedSkillResource("empty.txt", new TextResourceContents { Uri = SkillRootUri + "empty.txt", Text = "" });
+        var resource = new AgentMcpSkillResource("empty.txt", new TextResourceContents { Uri = SkillRootUri + "empty.txt", Text = "" });
 
         // Act
         var content = await resource.ReadAsync();
@@ -695,7 +695,7 @@ public sealed class AgentMcpListedSkillTests
         var skill = CreateSkill(client, resources: [Resource(Uri, Content)], maxResourceSizeBytes: Encoding.UTF8.GetByteCount(Content));
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
         var first = await resource.ReadAsync();
         var second = await resource.ReadAsync();
 
@@ -727,7 +727,7 @@ public sealed class AgentMcpListedSkillTests
         var skill = CreateSkill(client, resources: [Resource(Uri, bytes)], maxResourceSizeBytes: bytes.Length);
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
         var first = Assert.IsType<DataContent>(await resource.ReadAsync());
         var second = Assert.IsType<DataContent>(await resource.ReadAsync());
 
@@ -764,7 +764,7 @@ public sealed class AgentMcpListedSkillTests
         var skill = CreateSkill(client, resources: [Resource(Uri, bytes)]);
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
         var content = Assert.IsType<DataContent>(await resource.ReadAsync());
 
         // Assert
@@ -792,7 +792,7 @@ public sealed class AgentMcpListedSkillTests
         var skill = CreateSkill(client, resources: [Resource(Uri, bytes)], maxResourceSizeBytes: 1);
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
         var content = Assert.IsType<DataContent>(await resource.ReadAsync());
 
         // Assert
@@ -869,7 +869,7 @@ public sealed class AgentMcpListedSkillTests
 
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpListedSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client);
+        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client);
 
         // Act & Assert
         if (useCharacterCount)
@@ -900,7 +900,7 @@ public sealed class AgentMcpListedSkillTests
         var skill = CreateSkill(client, resources: [Resource(Uri, bytes)]);
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
         var content = await resource.ReadAsync();
 
         // Assert
@@ -977,7 +977,7 @@ public sealed class AgentMcpListedSkillTests
         // Act & Assert
         if (excessBytes <= 0)
         {
-            var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+            var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
             object? content = await resource.ReadAsync();
             Assert.Equal(bytes.Length, binary ? Assert.IsType<DataContent>(content).Data.Length : Assert.IsType<string>(content).Length);
         }
@@ -1004,7 +1004,7 @@ public sealed class AgentMcpListedSkillTests
         // Act & Assert
         if (accepted)
         {
-            var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+            var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
             Assert.Equal(Content, await resource.ReadAsync());
         }
         else
@@ -1032,7 +1032,7 @@ public sealed class AgentMcpListedSkillTests
         var skill = CreateSkill(client, resources: [Resource(Uri, bytes)], maxResourceSizeBytes: length);
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
 
         // Assert
         Assert.Equal(length, Assert.IsType<DataContent>(await resource.ReadAsync()).Data.Length);
@@ -1063,7 +1063,7 @@ public sealed class AgentMcpListedSkillTests
         var skill = CreateSkill(client, resources: [Resource(Uri, bytes)], maxResourceSizeBytes: Math.Max(1, bytes.Length));
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
         var content = Assert.IsType<DataContent>(await resource.ReadAsync());
 
         // Assert
@@ -1119,12 +1119,12 @@ public sealed class AgentMcpListedSkillTests
         Assert.Equal(2, reads);
     }
 
-    private static AgentMcpListedSkill CreateSkill(
+    private static AgentMcpSkill CreateSkill(
         McpClient client,
         string root = SkillRootUri,
-        IReadOnlyList<McpListedSkillResourceEntry>? resources = null,
+        IReadOnlyList<McpSkillResourceEntry>? resources = null,
         string content = SkillContent,
-        long maxResourceSizeBytes = AgentMcpListedSkill.DefaultMaxResourceSizeBytes) =>
+        long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes) =>
         new(new AgentSkillFrontmatter("unit-converter", "Convert units."), root + "SKILL.md",
         [
             Resource(root + "SKILL.md", content),
@@ -1136,10 +1136,10 @@ public sealed class AgentMcpListedSkillTests
             ],
         ], client, maxResourceSizeBytes: maxResourceSizeBytes);
 
-    private static McpListedSkillResourceEntry Resource(string uri, string text) => Resource(uri, Encoding.UTF8.GetBytes(text));
+    private static McpSkillResourceEntry Resource(string uri, string text) => Resource(uri, Encoding.UTF8.GetBytes(text));
 
     [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Resource digests require lowercase hexadecimal characters.")]
-    private static McpListedSkillResourceEntry Resource(string uri, byte[] bytes) => new()
+    private static McpSkillResourceEntry Resource(string uri, byte[] bytes) => new()
     {
         Uri = uri,
         Digest = "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),

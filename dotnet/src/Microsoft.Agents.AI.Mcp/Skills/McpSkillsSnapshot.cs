@@ -7,14 +7,14 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// A skill list and its listing-page lifetimes at a point in time.
 /// </summary>
-internal sealed class McpListedSkillsSnapshot
+internal sealed class McpSkillsSnapshot
 {
     /// <summary>
     /// Initializes a snapshot with its skills and listing-page lifetimes.
     /// </summary>
     /// <param name="skills">The complete skill list for this snapshot.</param>
     /// <param name="pageLifetimes">The receipt timestamp and TTL of each listing page.</param>
-    public McpListedSkillsSnapshot(List<AgentSkill> skills, List<McpListedSkillsPageLifetime> pageLifetimes)
+    public McpSkillsSnapshot(List<AgentSkill> skills, List<McpSkillsPageLifetime> pageLifetimes)
     {
         this.Skills = skills;
         this.PageLifetimes = pageLifetimes;
@@ -28,5 +28,5 @@ internal sealed class McpListedSkillsSnapshot
     /// <summary>
     /// Gets the receipt timestamp and TTL of each listing page.
     /// </summary>
-    public List<McpListedSkillsPageLifetime> PageLifetimes { get; }
+    public List<McpSkillsPageLifetime> PageLifetimes { get; }
 }

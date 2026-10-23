@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// <summary>
 /// Tests JSON deserialization of <c>skills/list</c> results.
 /// </summary>
-public sealed class AgentMcpListedSkillsSerializationTests
+public sealed class AgentMcpSkillsSerializationTests
 {
     [Theory]
     [InlineData("null", null)]
@@ -27,7 +27,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         };
 
         // Act
-        var result = node.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult);
+        var result = node.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult);
 
         // Assert
         Assert.NotNull(result);
@@ -41,7 +41,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         const string Json = """{"resultType":"complete","skills":[]}""";
 
         // Act
-        var result = JsonSerializer.Deserialize(Json, McpListedSkillsJsonContext.Default.McpSkillsListResult);
+        var result = JsonSerializer.Deserialize(Json, McpSkillsJsonContext.Default.McpSkillsListResult);
 
         // Assert
         Assert.NotNull(result);
@@ -64,7 +64,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         };
 
         // Act & Assert
-        Assert.Throws<JsonException>(() => node.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult));
+        Assert.Throws<JsonException>(() => node.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult));
     }
 
     [Theory]
@@ -93,7 +93,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
     public void Deserialize_InvalidResult_Throws(string json)
     {
         // Arrange
-        var context = McpListedSkillsJsonContext.Default;
+        var context = McpSkillsJsonContext.Default;
 
         // Act & Assert
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, context.McpSkillsListResult));
@@ -114,7 +114,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         };
 
         // Act
-        var result = node.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult);
+        var result = node.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult);
 
         // Assert
         Assert.NotNull(result);
@@ -142,7 +142,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         entry[field] = JsonNode.Parse(value);
 
         // Act & Assert
-        Assert.Throws<JsonException>(() => entry.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillEntry));
+        Assert.Throws<JsonException>(() => entry.Deserialize(McpSkillsJsonContext.Default.McpSkillEntry));
     }
 
     [Theory]
@@ -156,7 +156,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         entry.Remove(field);
 
         // Act & Assert
-        JsonException exception = Assert.Throws<JsonException>(() => entry.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillEntry));
+        JsonException exception = Assert.Throws<JsonException>(() => entry.Deserialize(McpSkillsJsonContext.Default.McpSkillEntry));
         Assert.Contains(field, exception.Message);
     }
 
@@ -174,10 +174,10 @@ public sealed class AgentMcpListedSkillsSerializationTests
     public void Deserialize_InvalidFrontmatter_Throws(string json)
     {
         // Arrange
-        var context = McpListedSkillsJsonContext.Default;
+        var context = McpSkillsJsonContext.Default;
 
         // Act & Assert
-        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, context.McpListedSkillFrontmatter));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, context.McpSkillFrontmatter));
     }
 
     [Theory]
@@ -190,10 +190,10 @@ public sealed class AgentMcpListedSkillsSerializationTests
     public void Deserialize_InvalidResource_Throws(string json)
     {
         // Arrange
-        var context = McpListedSkillsJsonContext.Default;
+        var context = McpSkillsJsonContext.Default;
 
         // Act & Assert
-        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, context.McpListedSkillResourceEntry));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, context.McpSkillResourceEntry));
     }
 
     [Fact]
@@ -201,10 +201,10 @@ public sealed class AgentMcpListedSkillsSerializationTests
     {
         // Arrange
         const string Json = """{"uri":"skill://unit-converter/file.txt","digest":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}""";
-        var context = McpListedSkillsJsonContext.Default;
+        var context = McpSkillsJsonContext.Default;
 
         // Act
-        McpListedSkillResourceEntry? resource = JsonSerializer.Deserialize(Json, context.McpListedSkillResourceEntry);
+        McpSkillResourceEntry? resource = JsonSerializer.Deserialize(Json, context.McpSkillResourceEntry);
 
         // Assert
         Assert.NotNull(resource);
@@ -223,7 +223,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         entry["resources"] = JsonNode.Parse(resources);
 
         // Act
-        McpListedSkillEntry? deserialized = entry.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillEntry);
+        McpSkillEntry? deserialized = entry.Deserialize(McpSkillsJsonContext.Default.McpSkillEntry);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -233,7 +233,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         Assert.Equal(expected.Count, deserialized.Resources.Count);
         if (expected.Count > 0)
         {
-            McpListedSkillResourceEntry resource = Assert.IsType<McpListedSkillResourceEntry>(Assert.Single(deserialized.Resources));
+            McpSkillResourceEntry resource = Assert.IsType<McpSkillResourceEntry>(Assert.Single(deserialized.Resources));
             Assert.Equal("skill://unit-converter/SKILL.md", resource.Uri);
         }
     }
@@ -245,7 +245,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         const string Json = """{"resultType":"complete","ResultType":"unknown","skills":[],"Skills":null}""";
 
         // Act
-        McpSkillsListResult? result = JsonSerializer.Deserialize(Json, McpListedSkillsJsonContext.Default.McpSkillsListResult);
+        McpSkillsListResult? result = JsonSerializer.Deserialize(Json, McpSkillsJsonContext.Default.McpSkillsListResult);
 
         // Assert
         Assert.NotNull(result);
@@ -272,7 +272,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         resource[field] = JsonNode.Parse(value);
 
         // Act & Assert
-        Assert.Throws<JsonException>(() => resource.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillResourceEntry));
+        Assert.Throws<JsonException>(() => resource.Deserialize(McpSkillsJsonContext.Default.McpSkillResourceEntry));
     }
 
     [Theory]
@@ -286,7 +286,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         resource.Remove(field);
 
         // Act & Assert
-        JsonException exception = Assert.Throws<JsonException>(() => resource.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillResourceEntry));
+        JsonException exception = Assert.Throws<JsonException>(() => resource.Deserialize(McpSkillsJsonContext.Default.McpSkillResourceEntry));
         Assert.Contains(field, exception.Message);
     }
 
@@ -298,7 +298,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         resource["size"] = long.MaxValue;
 
         // Act
-        var deserialized = resource.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillResourceEntry);
+        var deserialized = resource.Deserialize(McpSkillsJsonContext.Default.McpSkillResourceEntry);
 
         // Assert
         Assert.NotNull(deserialized);

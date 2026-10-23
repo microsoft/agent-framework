@@ -20,7 +20,7 @@ internal sealed class McpSkillsListResult
     /// <summary>
     /// Gets the skills listed by the server.
     /// </summary>
-    public required IReadOnlyList<McpListedSkillEntry?> Skills { get; init; }
+    public required IReadOnlyList<McpSkillEntry?> Skills { get; init; }
 
     /// <summary>
     /// Gets the opaque cursor to pass to the next request, or <see langword="null"/> when no more pages are available.
@@ -38,7 +38,7 @@ internal sealed class McpSkillsListResult
 /// <summary>
 /// A skill entry returned by <c>skills/list</c>.
 /// </summary>
-internal sealed class McpListedSkillEntry
+internal sealed class McpSkillEntry
 {
     /// <summary>
     /// Gets the resource URI of the skill's <c>SKILL.md</c>.
@@ -48,18 +48,18 @@ internal sealed class McpListedSkillEntry
     /// <summary>
     /// Gets the skill's name and description.
     /// </summary>
-    public required McpListedSkillFrontmatter Frontmatter { get; init; }
+    public required McpSkillFrontmatter Frontmatter { get; init; }
 
     /// <summary>
     /// Gets the resources listed for the skill.
     /// </summary>
-    public required IReadOnlyList<McpListedSkillResourceEntry> Resources { get; init; }
+    public required IReadOnlyList<McpSkillResourceEntry> Resources { get; init; }
 }
 
 /// <summary>
 /// The name and description of a skill returned by <c>skills/list</c>.
 /// </summary>
-internal sealed class McpListedSkillFrontmatter
+internal sealed class McpSkillFrontmatter
 {
     /// <summary>
     /// Gets the skill's name.
@@ -75,7 +75,7 @@ internal sealed class McpListedSkillFrontmatter
 /// <summary>
 /// A resource entry returned by <c>skills/list</c>.
 /// </summary>
-internal sealed class McpListedSkillResourceEntry
+internal sealed class McpSkillResourceEntry
 {
     /// <summary>
     /// Gets the file's resource URI.
