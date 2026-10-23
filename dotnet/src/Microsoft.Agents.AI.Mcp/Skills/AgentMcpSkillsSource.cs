@@ -74,7 +74,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The MCP client is supplied and owned by the caller, who is responsible for disposing it.")]
     private readonly McpClient _client;
     private readonly ILogger _logger;
-    private readonly McpListedSkillsLoader _listedSkillsLoader;
+    private readonly McpSkillsLoader _skillsLoader;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
@@ -87,7 +87,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         this._client = Throw.IfNull(client);
         loggerFactory ??= NullLoggerFactory.Instance;
         this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
-        this._listedSkillsLoader = new McpListedSkillsLoader(this._client, this._logger, options);
+        this._skillsLoader = new McpSkillsLoader(this._client, this._logger, options);
     }
 
     /// <inheritdoc/>
@@ -105,7 +105,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return [];
         }
 
-        IList<AgentSkill> skills = await this._listedSkillsLoader.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+        IList<AgentSkill> skills = await this._skillsLoader.DiscoverAsync(cancellationToken).ConfigureAwait(false);
 
         LogSkillsLoadedTotal(this._logger, skills.Count);
 
@@ -117,7 +117,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     {
         if (disposing)
         {
-            this._listedSkillsLoader.Dispose();
+            this._skillsLoader.Dispose();
         }
 
         base.Dispose(disposing);

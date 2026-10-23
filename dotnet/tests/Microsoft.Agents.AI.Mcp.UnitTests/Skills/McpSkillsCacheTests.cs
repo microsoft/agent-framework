@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
-public sealed class McpListedSkillsCacheTests
+public sealed class McpSkillsCacheTests
 {
     [Fact]
     public void Constructor_NullDiscoverSkills_ThrowsArgumentNullException()
@@ -17,7 +17,7 @@ public sealed class McpListedSkillsCacheTests
         var clock = new ManualTimeProvider();
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>("discoverSkills", () => new McpListedSkillsCache(clock, null!));
+        Assert.Throws<ArgumentNullException>("discoverSkills", () => new McpSkillsCache(clock, null!));
     }
 
     [Fact]
@@ -26,15 +26,15 @@ public sealed class McpListedSkillsCacheTests
         // Arrange
         var clock = new ManualTimeProvider();
         int calls = 0;
-        McpListedSkillsSnapshot? discovered = null;
-        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
+        McpSkillsSnapshot? discovered = null;
+        Task<McpSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
             discovered = CreateSnapshot(clock, 1000);
             return Task.FromResult(discovered);
         }
 
-        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        using var cache = new McpSkillsCache(clock, DiscoverAsync);
 
         // Act
         var first = await cache.GetOrCreateAsync(CancellationToken.None);
@@ -67,7 +67,7 @@ public sealed class McpListedSkillsCacheTests
         // Arrange
         var clock = new ManualTimeProvider();
         int calls = 0;
-        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
+        Task<McpSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
             long[] ttls = [5000, 5000, 5000];
@@ -75,7 +75,7 @@ public sealed class McpListedSkillsCacheTests
             return Task.FromResult(CreateSnapshot(clock, ttls));
         }
 
-        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        using var cache = new McpSkillsCache(clock, DiscoverAsync);
         var first = await cache.GetOrCreateAsync(CancellationToken.None);
 
         // Act
@@ -94,11 +94,11 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        var release = new TaskCompletionSource<McpListedSkillsSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<McpSkillsSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         int calls = 0;
-        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token) =>
+        Task<McpSkillsSnapshot> DiscoverAsync(CancellationToken token) =>
             ++calls == 1 ? release.Task : Task.FromResult(CreateSnapshot(clock, ttl));
-        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        using var cache = new McpSkillsCache(clock, DiscoverAsync);
 
         // Act
         Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
@@ -125,12 +125,12 @@ public sealed class McpListedSkillsCacheTests
     {
         // Arrange
         var clock = new ManualTimeProvider();
-        var release = new TaskCompletionSource<McpListedSkillsSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<McpSkillsSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var error = new InvalidOperationException("Discovery failed.");
         int calls = 0;
-        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token) =>
+        Task<McpSkillsSnapshot> DiscoverAsync(CancellationToken token) =>
             ++calls == 1 ? release.Task : Task.FromResult(CreateSnapshot(clock, 1000));
-        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        using var cache = new McpSkillsCache(clock, DiscoverAsync);
         var active = cache.GetOrCreateAsync(CancellationToken.None);
         var waiting = cache.GetOrCreateAsync(CancellationToken.None);
 
@@ -152,7 +152,7 @@ public sealed class McpListedSkillsCacheTests
         var clock = new ManualTimeProvider();
         using var cts = new CancellationTokenSource();
         int calls = 0;
-        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
+        Task<McpSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             if (++calls == 1)
             {
@@ -163,7 +163,7 @@ public sealed class McpListedSkillsCacheTests
             return Task.FromResult(CreateSnapshot(clock, 1000));
         }
 
-        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        using var cache = new McpSkillsCache(clock, DiscoverAsync);
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.GetOrCreateAsync(cts.Token));
@@ -181,13 +181,13 @@ public sealed class McpListedSkillsCacheTests
         // Arrange
         var clock = new ManualTimeProvider();
         int calls = 0;
-        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
+        Task<McpSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
             return Task.FromResult(CreateSnapshot(clock, 1000));
         }
 
-        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        using var cache = new McpSkillsCache(clock, DiscoverAsync);
 
         if (cached)
         {
@@ -210,13 +210,13 @@ public sealed class McpListedSkillsCacheTests
         // Arrange
         var clock = new ManualTimeProvider();
         int calls = 0;
-        Task<McpListedSkillsSnapshot> DiscoverAsync(CancellationToken token)
+        Task<McpSkillsSnapshot> DiscoverAsync(CancellationToken token)
         {
             calls++;
             return Task.FromResult(CreateSnapshot(clock, 1000));
         }
 
-        using var cache = new McpListedSkillsCache(clock, DiscoverAsync);
+        using var cache = new McpSkillsCache(clock, DiscoverAsync);
 
         if (cached)
         {
@@ -232,9 +232,9 @@ public sealed class McpListedSkillsCacheTests
         Assert.Equal(cached ? 1 : 0, calls);
     }
 
-    private static McpListedSkillsSnapshot CreateSnapshot(ManualTimeProvider clock, params long[] ttls) =>
+    private static McpSkillsSnapshot CreateSnapshot(ManualTimeProvider clock, params long[] ttls) =>
         new([new AgentInlineSkill("test-skill", "A test skill.", "Test instructions.")],
-            ttls.Select(ttl => new McpListedSkillsPageLifetime(clock.GetTimestamp(), TimeSpan.FromMilliseconds(ttl))).ToList());
+            ttls.Select(ttl => new McpSkillsPageLifetime(clock.GetTimestamp(), TimeSpan.FromMilliseconds(ttl))).ToList());
 
     private sealed class ManualTimeProvider : TimeProvider
     {

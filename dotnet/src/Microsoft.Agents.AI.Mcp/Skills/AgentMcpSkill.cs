@@ -27,7 +27,7 @@ namespace Microsoft.Agents.AI;
 /// Each resource read must return exactly one text or binary content block.
 /// Only supporting resources listed by the server are available.
 /// </remarks>
-internal sealed class AgentMcpListedSkill : AgentSkill
+internal sealed class AgentMcpSkill : AgentSkill
 {
     internal const long DefaultMaxResourceSizeBytes = 1024 * 1024;
 
@@ -37,7 +37,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
     private readonly ILogger _logger;
     private readonly string _skillUri;
     private readonly string _skillRootUri;
-    private readonly IReadOnlyList<McpListedSkillResourceEntry> _resources;
+    private readonly IReadOnlyList<McpSkillResourceEntry> _resources;
     private readonly long _maxResourceSizeBytes;
     private string? _content;
 
@@ -51,7 +51,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
     /// <param name="logger">Optional logger for frontmatter parsing diagnostics.</param>
     /// <param name="maxResourceSizeBytes">The maximum allowed resource size in bytes.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> is not positive.</exception>
-    public AgentMcpListedSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpListedSkillResourceEntry> resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes)
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this._skillUri = Throw.IfNullOrWhitespace(uri);
@@ -83,7 +83,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
             return this._content;
         }
 
-        McpListedSkillResourceEntry? skillMdResource = this._resources.FirstOrDefault(resource => string.Equals(resource.Uri, this._skillUri, StringComparison.Ordinal));
+        McpSkillResourceEntry? skillMdResource = this._resources.FirstOrDefault(resource => string.Equals(resource.Uri, this._skillUri, StringComparison.Ordinal));
         if (skillMdResource is null)
         {
             throw new InvalidOperationException($"The resource list must include the skill's SKILL.md resource '{this._skillUri}'.");
@@ -149,7 +149,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
         }
 
         // Supporting reads must stay within the held manifest.
-        McpListedSkillResourceEntry? resource = this._resources.FirstOrDefault(resource => string.Equals(resource.Uri, uri, StringComparison.Ordinal));
+        McpSkillResourceEntry? resource = this._resources.FirstOrDefault(resource => string.Equals(resource.Uri, uri, StringComparison.Ordinal));
         if (resource is null)
         {
             return null;
@@ -159,7 +159,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
 
         this.VerifyResourceIntegrity(resource, content);
 
-        return new AgentMcpListedSkillResource(name, content);
+        return new AgentMcpSkillResource(name, content);
     }
 
     private async Task<ResourceContents> ReadResourceContentAsync(string uri, CancellationToken cancellationToken)
@@ -188,7 +188,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
         return content is BlobResourceContents binary ? this.DecodeBinaryContent(binary, uri) : content;
     }
 
-    private void VerifyResourceIntegrity(McpListedSkillResourceEntry resource, ResourceContents content)
+    private void VerifyResourceIntegrity(McpSkillResourceEntry resource, ResourceContents content)
     {
         int byteSize;
 

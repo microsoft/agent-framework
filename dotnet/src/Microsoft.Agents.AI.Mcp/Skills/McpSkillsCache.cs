@@ -11,12 +11,12 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Caches MCP-listed skills until any page's TTL expires.
 /// </summary>
-internal sealed class McpListedSkillsCache : IDisposable
+internal sealed class McpSkillsCache : IDisposable
 {
     private readonly TimeProvider _timeProvider;
-    private readonly Func<CancellationToken, Task<McpListedSkillsSnapshot>> _discoverSkills;
+    private readonly Func<CancellationToken, Task<McpSkillsSnapshot>> _discoverSkills;
     private readonly SemaphoreSlim _discoveryGate = new(1, 1);
-    private volatile McpListedSkillsSnapshot? _cachedSnapshot;
+    private volatile McpSkillsSnapshot? _cachedSnapshot;
     private bool _disposed;
 
     /// <summary>
@@ -24,7 +24,7 @@ internal sealed class McpListedSkillsCache : IDisposable
     /// </summary>
     /// <param name="timeProvider">The clock for checking page freshness.</param>
     /// <param name="discoverSkills">Discovers and validates all pages, including their receipt timestamps and TTLs.</param>
-    public McpListedSkillsCache(TimeProvider timeProvider, Func<CancellationToken, Task<McpListedSkillsSnapshot>> discoverSkills)
+    public McpSkillsCache(TimeProvider timeProvider, Func<CancellationToken, Task<McpSkillsSnapshot>> discoverSkills)
     {
         this._timeProvider = Throw.IfNull(timeProvider);
         this._discoverSkills = Throw.IfNull(discoverSkills);
@@ -78,7 +78,7 @@ internal sealed class McpListedSkillsCache : IDisposable
     /// <summary>
     /// Gets the cached snapshot, or <see langword="null"/> if it is absent or any listing page has expired.
     /// </summary>
-    private McpListedSkillsSnapshot? GetCachedSnapshot()
+    private McpSkillsSnapshot? GetCachedSnapshot()
     {
         if (this._cachedSnapshot is not { } cached)
         {
@@ -88,7 +88,7 @@ internal sealed class McpListedSkillsCache : IDisposable
         long now = this._timeProvider.GetTimestamp();
 
         // Check every page against the same timestamp. Any expired page makes the catalog stale.
-        foreach (McpListedSkillsPageLifetime page in cached.PageLifetimes)
+        foreach (McpSkillsPageLifetime page in cached.PageLifetimes)
         {
             if (this._timeProvider.GetElapsedTime(page.ReceivedTimestamp, now) >= page.TimeToLive)
             {
@@ -103,7 +103,7 @@ internal sealed class McpListedSkillsCache : IDisposable
     /// Stores the snapshot.
     /// </summary>
     /// <param name="snapshot">The skill list and its listing-page lifetimes.</param>
-    private void CacheSnapshot(McpListedSkillsSnapshot snapshot)
+    private void CacheSnapshot(McpSkillsSnapshot snapshot)
     {
         // Publish the complete catalog and page lifetimes together only after discovery and validation succeed.
         this._cachedSnapshot = snapshot;

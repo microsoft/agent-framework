@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI;
     AllowTrailingCommas = true,
     ReadCommentHandling = JsonCommentHandling.Skip)]
 [JsonSerializable(typeof(McpSkillsListResult))]
-[JsonSerializable(typeof(McpListedSkillEntry))]
-[JsonSerializable(typeof(McpListedSkillFrontmatter))]
-[JsonSerializable(typeof(McpListedSkillResourceEntry))]
-internal sealed partial class McpListedSkillsJsonContext : JsonSerializerContext;
+[JsonSerializable(typeof(McpSkillEntry))]
+[JsonSerializable(typeof(McpSkillFrontmatter))]
+[JsonSerializable(typeof(McpSkillResourceEntry))]
+internal sealed partial class McpSkillsJsonContext : JsonSerializerContext;

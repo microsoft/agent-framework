@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Instructions and resources are fetched later, when requested.
 /// </remarks>
-internal sealed partial class McpListedSkillsLoader : IDisposable
+internal sealed partial class McpSkillsLoader : IDisposable
 {
     private const string CompleteResultType = "complete";
 
@@ -38,7 +38,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
     private readonly TimeProvider _timeProvider;
-    private readonly McpListedSkillsCache _cache;
+    private readonly McpSkillsCache _cache;
 
     /// <summary>
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
@@ -49,18 +49,18 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
     /// <param name="timeProvider">Optional clock for checking page freshness.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
-    public McpListedSkillsLoader(McpClient client, ILogger? logger = null, AgentMcpSkillsSourceOptions? options = null, TimeProvider? timeProvider = null)
+    public McpSkillsLoader(McpClient client, ILogger? logger = null, AgentMcpSkillsSourceOptions? options = null, TimeProvider? timeProvider = null)
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
-        this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpListedSkill.DefaultMaxResourceSizeBytes;
+        this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpSkill.DefaultMaxResourceSizeBytes;
         this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
-        this._cache = new McpListedSkillsCache(this._timeProvider, this.DiscoverCoreAsync);
+        this._cache = new McpSkillsCache(this._timeProvider, this.DiscoverCoreAsync);
     }
 
     /// <summary>
@@ -79,29 +79,29 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
         return this._cache.GetOrCreateAsync(cancellationToken);
     }
 
-    private async Task<McpListedSkillsSnapshot> DiscoverCoreAsync(CancellationToken cancellationToken)
+    private async Task<McpSkillsSnapshot> DiscoverCoreAsync(CancellationToken cancellationToken)
     {
         var (skillEntries, pageLifetimes) = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
 
         List<AgentSkill> skills = [];
 
-        foreach (McpListedSkillEntry entry in skillEntries)
+        foreach (McpSkillEntry entry in skillEntries)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
-            List<McpListedSkillResourceEntry> resources = this.CreateSupportingResources(entry);
+            List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-            skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
+            skills.Add(new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
         }
 
-        return new McpListedSkillsSnapshot(skills, pageLifetimes);
+        return new McpSkillsSnapshot(skills, pageLifetimes);
     }
 
-    private async Task<(List<McpListedSkillEntry> Entries, List<McpListedSkillsPageLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
+    private async Task<(List<McpSkillEntry> Entries, List<McpSkillsPageLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
     {
-        List<McpListedSkillEntry> skillEntries = [];
-        List<McpListedSkillsPageLifetime> pageLifetimes = [];
+        List<McpSkillEntry> skillEntries = [];
+        List<McpSkillsPageLifetime> pageLifetimes = [];
         HashSet<string> cursors = new(StringComparer.Ordinal);
         string? cursor = null;
         int pageCount = 0;
@@ -141,7 +141,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
                 throw new InvalidOperationException($"Skill discovery exceeds the maximum allowed skill count ({this._maxSkillCount}).");
             }
 
-            McpSkillsListResult result = resultNode.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult)
+            McpSkillsListResult result = resultNode.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult)
                 ?? throw new InvalidOperationException("The server returned no skills/list result.");
 
             if (result.ResultType != CompleteResultType)
@@ -155,7 +155,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
                 pageTimeToLive = TimeSpan.Zero;
             }
 
-            pageLifetimes.Add(new McpListedSkillsPageLifetime(receivedTimestamp, pageTimeToLive));
+            pageLifetimes.Add(new McpSkillsPageLifetime(receivedTimestamp, pageTimeToLive));
 
             cursor = result.NextCursor;
             if (cursor is not null && !cursors.Add(cursor))
@@ -163,7 +163,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
                 throw new InvalidOperationException("The skills/list result contains a repeated pagination cursor.");
             }
 
-            foreach (McpListedSkillEntry? entry in result.Skills)
+            foreach (McpSkillEntry? entry in result.Skills)
             {
                 // Nullable annotations do not reject null collection elements during deserialization.
                 if (entry is null)
@@ -179,7 +179,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
         return (skillEntries, pageLifetimes);
     }
 
-    private static AgentSkillFrontmatter CreateFrontmatter(McpListedSkillEntry entry)
+    private static AgentSkillFrontmatter CreateFrontmatter(McpSkillEntry entry)
     {
         // Instructions must be addressable as a safe, absolute resource, e.g. skill://unit-converter/SKILL.md.
         if (!Uri.TryCreate(entry.Uri, UriKind.Absolute, out _) ||
@@ -223,17 +223,17 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
     /// Validates and returns all resources listed for the skill, including <c>SKILL.md</c>, which contains
     /// the skill's instructions.
     /// </summary>
-    private List<McpListedSkillResourceEntry> CreateSupportingResources(McpListedSkillEntry entry)
+    private List<McpSkillResourceEntry> CreateSupportingResources(McpSkillEntry entry)
     {
         string skillUri = entry.Uri;
 
         // skill://unit-converter/SKILL.md -> skill://unit-converter/ (keep the trailing slash).
         string skillRootUri = skillUri[..^"SKILL.md".Length];
 
-        List<McpListedSkillResourceEntry> resources = [];
+        List<McpSkillResourceEntry> resources = [];
         HashSet<string> resourceUris = new(StringComparer.Ordinal);
 
-        foreach (McpListedSkillResourceEntry? resource in entry.Resources)
+        foreach (McpSkillResourceEntry? resource in entry.Resources)
         {
             this.ValidateResourceManifestEntry(resource, skillUri, skillRootUri);
 
@@ -254,7 +254,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
         return resources;
     }
 
-    private void ValidateResourceManifestEntry([NotNull] McpListedSkillResourceEntry? resource, string skillUri, string skillRootUri)
+    private void ValidateResourceManifestEntry([NotNull] McpSkillResourceEntry? resource, string skillUri, string skillRootUri)
     {
         // Reject null entries, e.g. "resources": [null], which deserialization can accept.
         if (resource is null)
@@ -265,7 +265,7 @@ internal sealed partial class McpListedSkillsLoader : IDisposable
         // Resources must stay under the skill root, e.g. skill://unit-converter/references/rates.md.
         if (!resource.Uri.StartsWith(skillRootUri, StringComparison.Ordinal) ||
             resource.Uri.Length == skillRootUri.Length ||
-            !AgentMcpListedSkill.IsResourceNameSafe(resource.Uri[skillRootUri.Length..]))
+            !AgentMcpSkill.IsResourceNameSafe(resource.Uri[skillRootUri.Length..]))
         {
             throw new InvalidOperationException($"Skill '{skillUri}' contains an invalid resource manifest entry.");
         }

@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// A supporting resource for a skill discovered through <c>skills/list</c>.
 /// </summary>
-internal sealed class AgentMcpListedSkillResource : AgentSkillResource
+internal sealed class AgentMcpSkillResource : AgentSkillResource
 {
     private readonly ResourceContents _content;
 
@@ -23,7 +23,7 @@ internal sealed class AgentMcpListedSkillResource : AgentSkillResource
     /// <param name="name">The resource's relative name.</param>
     /// <param name="content">The resource content that has passed size and digest verification.</param>
     /// <param name="description">An optional description of the resource.</param>
-    public AgentMcpListedSkillResource(string name, ResourceContents content, string? description = null)
+    public AgentMcpSkillResource(string name, ResourceContents content, string? description = null)
         : base(Throw.IfNullOrWhitespace(name), description)
     {
         this._content = Throw.IfNull(content);

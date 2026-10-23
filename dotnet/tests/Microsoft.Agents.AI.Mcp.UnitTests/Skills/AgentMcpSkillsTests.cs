@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// <summary>
 /// Tests discovery and content access for skills returned by <c>skills/list</c>.
 /// </summary>
-public sealed partial class AgentMcpListedSkillsTests
+public sealed partial class AgentMcpSkillsTests
 {
     private const string SkillUri = "skill://unit-converter/SKILL.md";
     private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
@@ -44,7 +44,7 @@ public sealed partial class AgentMcpListedSkillsTests
         var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
-        var skill = Assert.IsType<AgentMcpListedSkill>(Assert.Single(skills));
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
         Assert.Equal("unit-converter", skill.Frontmatter.Name);
         Assert.Equal("Convert units.", skill.Frontmatter.Description);
         Assert.Null(skill.Frontmatter.License);
@@ -327,7 +327,7 @@ public sealed partial class AgentMcpListedSkillsTests
             responses.ReturnsAsync(new JsonRpcResponse { Id = new RequestId(page + 1), Result = result });
         }
 
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpSkillsLoader(client.Object);
 
         // Act
         var skills = await loader.DiscoverAsync(CancellationToken.None);
@@ -344,7 +344,7 @@ public sealed partial class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(Entry(), new JsonObject()) });
-        using var loader = new McpListedSkillsLoader(client.Object, options: new() { ListedMaxSkillCount = 1 });
+        using var loader = new McpSkillsLoader(client.Object, options: new() { ListedMaxSkillCount = 1 });
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
@@ -367,7 +367,7 @@ public sealed partial class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(entry) });
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpSkillsLoader(client.Object);
 
         // Act
         var skills = await loader.DiscoverAsync(CancellationToken.None);
@@ -457,7 +457,7 @@ public sealed partial class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = null });
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpSkillsLoader(client.Object);
 
         // Act
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
@@ -1042,7 +1042,7 @@ public sealed partial class AgentMcpListedSkillsTests
         var client = new Mock<McpClient>();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = result });
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpSkillsLoader(client.Object);
 
         // Act
         var skills = await loader.DiscoverAsync(CancellationToken.None);
@@ -1074,7 +1074,7 @@ public sealed partial class AgentMcpListedSkillsTests
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await first.GetContentAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await first.GetResourceAsync("references/checklist.md"));
         Assert.Equal(UpdatedInstructions, await updated.GetContentAsync());
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await updated.GetResourceAsync("references/checklist.md"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await updated.GetResourceAsync("references/checklist.md"));
         Assert.Equal("Updated checklist.", await resource.ReadAsync());
     }
 
@@ -1279,12 +1279,12 @@ public sealed partial class AgentMcpListedSkillsTests
 
         // Assert
         Assert.Equal(3, skills.Count);
-        var skill = Assert.IsType<AgentMcpListedSkill>(skills[0]);
+        var skill = Assert.IsType<AgentMcpSkill>(skills[0]);
         Assert.Equal("Convert units.", skill.Frontmatter.Description);
         Assert.Null(await skill.GetResourceAsync("references/changed.md"));
-        var secondSkill = Assert.IsType<AgentMcpListedSkill>(skills[1]);
+        var secondSkill = Assert.IsType<AgentMcpSkill>(skills[1]);
         Assert.Equal(conflicting ? "Changed description." : "Convert units.", secondSkill.Frontmatter.Description);
-        var thirdSkill = Assert.IsType<AgentMcpListedSkill>(skills[2]);
+        var thirdSkill = Assert.IsType<AgentMcpSkill>(skills[2]);
         Assert.Equal(conflicting ? "Another description." : "Convert units.", thirdSkill.Frontmatter.Description);
         logger.Verify(
             l => l.Log(
@@ -1316,7 +1316,7 @@ public sealed partial class AgentMcpListedSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skill = Assert.IsType<AgentMcpListedSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
         Assert.Empty(reads);
         string content = await skill.GetContentAsync();
         string cached = await skill.GetContentAsync();
@@ -1558,7 +1558,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
         // Act
         var resource = await skill.GetResourceAsync(name);
-        var content = await Assert.IsType<AgentMcpListedSkillResource>(resource).ReadAsync();
+        var content = await Assert.IsType<AgentMcpSkillResource>(resource).ReadAsync();
 
         // Assert
         Assert.Equal(uri, Assert.Single(reads));
@@ -1600,7 +1600,7 @@ public sealed partial class AgentMcpListedSkillsTests
             }));
         await using var client = await server.CreateClientAsync();
         using var source = new AgentMcpSkillsSource(client);
-        var skill = Assert.IsType<AgentMcpListedSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/checklist.md"));
@@ -1736,7 +1736,7 @@ public sealed partial class AgentMcpListedSkillsTests
         var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act
-        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
         var content = await resource.ReadAsync();
 
         // Assert
@@ -1747,7 +1747,7 @@ public sealed partial class AgentMcpListedSkillsTests
     public async Task ReadAsync_EmptyResourceContent_ReturnsNullAsync()
     {
         // Arrange
-        var resource = new AgentMcpListedSkillResource("empty.txt", new TextResourceContents { Uri = "skill://unit-converter/empty.txt", Text = "" });
+        var resource = new AgentMcpSkillResource("empty.txt", new TextResourceContents { Uri = "skill://unit-converter/empty.txt", Text = "" });
 
         // Act
         var content = await resource.ReadAsync();

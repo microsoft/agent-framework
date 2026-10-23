@@ -14,7 +14,7 @@ using Moq;
 
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
-public sealed partial class AgentMcpListedSkillsTests
+public sealed partial class AgentMcpSkillsTests
 {
     [Theory]
     [InlineData(false)]
@@ -30,7 +30,7 @@ public sealed partial class AgentMcpListedSkillsTests
             long ttl = calls == 1 ? 1000 : 2000;
             return Task.FromResult(empty ? TtlListResult(ttl) : TtlListResult(ttl, Entry()));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
 
         // Act
         var first = await loader.DiscoverAsync(CancellationToken.None);
@@ -92,7 +92,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpSkillsLoader(client.Object);
 
         // Act
         var first = await loader.DiscoverAsync(CancellationToken.None);
@@ -122,7 +122,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
 
         // Act
         var first = await loader.DiscoverAsync(CancellationToken.None);
@@ -168,7 +168,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
 
         // Act
         var first = await loader.DiscoverAsync(CancellationToken.None);
@@ -212,7 +212,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object);
+        using var loader = new McpSkillsLoader(client.Object);
 
         // Act
         await loader.DiscoverAsync(CancellationToken.None);
@@ -243,7 +243,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
 
         // Act
         await loader.DiscoverAsync(CancellationToken.None);
@@ -265,7 +265,7 @@ public sealed partial class AgentMcpListedSkillsTests
             clock.Advance(TimeSpan.FromSeconds(2));
             return Task.FromResult(TtlListResult(1000));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
 
         // Act
         var first = await loader.DiscoverAsync(CancellationToken.None);
@@ -290,7 +290,7 @@ public sealed partial class AgentMcpListedSkillsTests
             calls++;
             return refresh && calls == 1 ? Task.FromResult(TtlListResult(1000, Entry())) : release.Task;
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
         if (refresh)
         {
             await loader.DiscoverAsync(CancellationToken.None);
@@ -316,7 +316,7 @@ public sealed partial class AgentMcpListedSkillsTests
         int calls = 0;
         var client = CreateTtlClient((_, _) =>
             ++calls == 1 ? release.Task : Task.FromResult(TtlListResult(0, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
 
         // Act
         Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
@@ -348,7 +348,7 @@ public sealed partial class AgentMcpListedSkillsTests
             calls++;
             return release.Task.WaitAsync(token);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
         using var cts = new CancellationTokenSource();
 
         // Act
@@ -378,7 +378,7 @@ public sealed partial class AgentMcpListedSkillsTests
         int calls = 0;
         var client = CreateTtlClient((_, token) =>
             ++calls == 1 ? release.Task.WaitAsync(token) : Task.FromResult(TtlListResult(1000, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
         using var cts = new CancellationTokenSource();
 
         // Act
@@ -401,7 +401,7 @@ public sealed partial class AgentMcpListedSkillsTests
     {
         // Arrange
         var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(1000, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
         if (cached)
         {
             await loader.DiscoverAsync(CancellationToken.None);
@@ -443,7 +443,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(TtlListResult(1000, Entry()));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
         var first = await loader.DiscoverAsync(CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(1));
 
@@ -482,7 +482,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
         var first = await loader.DiscoverAsync(CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(1));
 
@@ -516,7 +516,7 @@ public sealed partial class AgentMcpListedSkillsTests
             added["frontmatter"]!["description"] = "Added skill.";
             return Task.FromResult(empty ? TtlListResult(1000) : TtlListResult(1000, updated, added));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
         var first = await loader.DiscoverAsync(CancellationToken.None);
 
         // Act
@@ -563,7 +563,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(result);
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
         var first = await loader.DiscoverAsync(CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(1));
 
@@ -592,7 +592,7 @@ public sealed partial class AgentMcpListedSkillsTests
 
             return Task.FromResult(TtlListResult(1000, entry));
         });
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: clock);
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: clock);
         var first = Assert.Single(await loader.DiscoverAsync(CancellationToken.None));
 
         // Act
@@ -612,7 +612,7 @@ public sealed partial class AgentMcpListedSkillsTests
     {
         // Arrange
         var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(1000, Entry())));
-        using var loader = new McpListedSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
+        using var loader = new McpSkillsLoader(client.Object, timeProvider: new ManualTimeProvider());
         if (cached)
         {
             await loader.DiscoverAsync(CancellationToken.None);
