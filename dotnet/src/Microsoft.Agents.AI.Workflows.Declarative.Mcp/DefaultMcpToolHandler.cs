@@ -104,6 +104,21 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             ThrowIfListToolsArgumentsSpecified(arguments);
         }
 
+        if (headers is not null)
+        {
+            foreach (KeyValuePair<string, string> header in headers)
+            {
+                HttpHeaderValidation.ValidateNoProhibitedCharacters(
+                    header.Key,
+                    nameof(headers),
+                    "HTTP header name contains invalid characters.");
+                HttpHeaderValidation.ValidateNoProhibitedCharacters(
+                    header.Value,
+                    nameof(headers),
+                    "HTTP header value contains invalid characters.");
+            }
+        }
+
         if (this._httpClientProvider is not null)
         {
             TaskCompletionSource<bool> invocationCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);

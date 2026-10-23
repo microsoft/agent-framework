@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI;
 /// underlying store.
 /// </para>
 /// <para>
-/// The default implementation forwards lookup and save operations to the inner store. The inherited
+/// The default implementation forwards lookup, save, and delete operations to the inner store. The inherited
 /// lookup-or-create method calls the outer store's lookup override before creating a session when needed.
 /// Service queries check this instance before querying the inner store.
 /// </para>
@@ -35,7 +35,7 @@ public abstract class DelegatingAgentSessionStore : AgentSessionStore
     /// <param name="innerStore">The underlying session store instance that will handle the core operations.</param>
     /// <exception cref="ArgumentNullException"><paramref name="innerStore"/> is <see langword="null"/>.</exception>
     /// <remarks>
-    /// Lookup and save operations are forwarded to this store unless overridden by a derived class.
+    /// Lookup, save, and delete operations are forwarded to this store unless overridden by a derived class.
     /// </remarks>
     protected DelegatingAgentSessionStore(AgentSessionStore innerStore)
     {
@@ -76,4 +76,11 @@ public abstract class DelegatingAgentSessionStore : AgentSessionStore
         AgentSession session,
         CancellationToken cancellationToken = default)
         => this.InnerStore.SaveSessionAsync(agent, key, session, cancellationToken);
+
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+        => this.InnerStore.DeleteSessionAsync(agent, key, cancellationToken);
 }
