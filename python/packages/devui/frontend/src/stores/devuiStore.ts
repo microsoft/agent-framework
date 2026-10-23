@@ -20,6 +20,21 @@ import type { AttachmentItem } from "@/components/ui/attachment-gallery";
 
 const MAX_DEBUG_EVENTS = 1000;
 const MAX_DEBUG_TEXT_DELTA_CHARS = 2048;
+const DEFAULT_AUDIO_INPUT = {
+  enabled: true,
+  maxDurationSeconds: 60,
+  maxPayloadBytes: 10 * 1024 * 1024,
+  sampleRate: 16000,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  previewBeforeSend: true,
+  autoStopOnSilence: false,
+  silenceThreshold: 0.03,
+  silenceDurationMs: 1500,
+  minimumRecordingMs: 1000,
+  autoPlayAgentAudio: false,
+};
 
 function prepareDebugEvent(event: ExtendedResponseStreamEvent): ExtendedResponseStreamEvent {
   if (
@@ -81,6 +96,21 @@ interface DevUIState {
   isResizing: boolean;
   showToolCalls: boolean; // UI setting to show/hide tool calls in chat
   streamingEnabled: boolean; // Whether to use streaming mode for responses
+  audioInput: {
+    enabled: boolean;
+    maxDurationSeconds: number;
+    maxPayloadBytes: number;
+    sampleRate: number;
+    echoCancellation: boolean;
+    noiseSuppression: boolean;
+    autoGainControl: boolean;
+    previewBeforeSend: boolean;
+    autoStopOnSilence: boolean;
+    silenceThreshold: number;
+    silenceDurationMs: number;
+    minimumRecordingMs: number;
+    autoPlayAgentAudio: boolean;
+  };
 
   // Debug Panel Preferences (persisted)
   debugPanelTab: "events" | "traces" | "tools"; // Main debug panel tab
@@ -175,6 +205,7 @@ interface DevUIActions {
   setIsResizing: (resizing: boolean) => void;
   setShowToolCalls: (show: boolean) => void;
   setStreamingEnabled: (enabled: boolean) => void;
+  setAudioInput: (settings: Partial<DevUIState["audioInput"]>) => void;
 
   // Debug Panel Preference Actions
   setDebugPanelTab: (tab: "events" | "traces" | "tools") => void;
@@ -275,6 +306,7 @@ export const useDevUIStore = create<DevUIStore>()(
         isResizing: false,
         showToolCalls: true, // Default to showing tool calls
         streamingEnabled: true, // Default to streaming mode (recommended)
+        audioInput: { ...DEFAULT_AUDIO_INPUT },
 
         // Debug Panel Preferences (persisted)
         debugPanelTab: "events", // Default to events tab
@@ -426,6 +458,14 @@ export const useDevUIStore = create<DevUIStore>()(
         setDebugPanelWidth: (width) => set({ debugPanelWidth: width }),
         setShowToolCalls: (show) => set({ showToolCalls: show }),
         setStreamingEnabled: (enabled) => set({ streamingEnabled: enabled }),
+        setAudioInput: (settings) =>
+          set((state) => ({
+            audioInput: {
+              ...DEFAULT_AUDIO_INPUT,
+              ...state.audioInput,
+              ...settings,
+            },
+          })),
         addDebugEvent: (event) =>
           set((state) => {
             const eventForStorage = prepareDebugEvent(event);
@@ -665,6 +705,16 @@ export const useDevUIStore = create<DevUIStore>()(
       }),
       {
         name: "devui-storage",
+        merge: (persistedState, currentState) => {
+          const restored = {
+            ...currentState,
+            ...(persistedState && typeof persistedState === "object" ? persistedState : {}),
+          };
+          return {
+            ...restored,
+            audioInput: { ...DEFAULT_AUDIO_INPUT, ...restored.audioInput },
+          };
+        },
         // Only persist UI preferences, not runtime state
         partialize: (state) => ({
           showDebugPanel: state.showDebugPanel,
@@ -672,6 +722,7 @@ export const useDevUIStore = create<DevUIStore>()(
           debugPanelWidth: state.debugPanelWidth,
           showToolCalls: state.showToolCalls, // Persist tool calls visibility preference
           streamingEnabled: state.streamingEnabled, // Persist streaming mode preference
+          audioInput: state.audioInput, // Persist microphone/audio input preferences
           oaiMode: state.oaiMode, // Persist OpenAI proxy mode settings
           azureDeploymentEnabled: state.azureDeploymentEnabled, // Persist Azure deployment preference
           // Debug panel tab preferences

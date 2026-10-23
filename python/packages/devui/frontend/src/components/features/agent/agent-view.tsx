@@ -33,6 +33,7 @@ import {
   Square,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
+import { appendResponseMedia } from "@/services/response-media";
 import type {
   AgentInfo,
   RunAgentRequest,
@@ -456,6 +457,19 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     [setChatItems]
   );
 
+  const renderAssistantMedia = useCallback((
+    assistantMessageId: string,
+    output: import("@/types/openai").ResponseOutputItem[],
+    allowAutoPlay = false,
+  ) => {
+    const currentItems = useDevUIStore.getState().chatItems;
+    setChatItems(currentItems.map((item) =>
+      item.id === assistantMessageId && item.type === "message"
+        ? { ...item, content: appendResponseMedia(item.content, output, allowAutoPlay) }
+        : item
+    ));
+  }, [setChatItems]);
+
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
     if (!messagesEndRef.current) return;
@@ -534,9 +548,16 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           // Pass all events to debug panel
           onDebugEvent(openAIEvent);
 
+          if (openAIEvent.type === "response.output_item.added") {
+            const event = openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent;
+            renderAssistantMedia(assistantMessage.id, [event.item]);
+            continue;
+          }
+
           // Handle response.completed event
           if (openAIEvent.type === "response.completed") {
             const completedEvent = openAIEvent as import("@/types/openai").ResponseCompletedEvent;
+            renderAssistantMedia(assistantMessage.id, completedEvent.response.output ?? []);
             const usage = completedEvent.response?.usage;
 
             if (usage) {
@@ -552,6 +573,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           // Handle response.failed event
           if (openAIEvent.type === "response.failed") {
             const failedEvent = openAIEvent as import("@/types/openai").ResponseFailedEvent;
+            renderAssistantMedia(assistantMessage.id, failedEvent.response.output ?? []);
             const error = failedEvent.response?.error;
             const errorMessage = error
               ? typeof error === "object" && "message" in error
@@ -571,6 +593,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 ? {
                     ...item,
                     content: [
+                      ...item.content.filter((part) => part.type !== "text" && part.type !== "output_text" && part.type !== "refusal"),
                       {
                         type: "text",
                         text: accumulatedTextRef.current || errorMessage,
@@ -624,6 +647,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 ? {
                     ...item,
                     content: [
+                      ...item.content.filter((part) => part.type !== "text" && part.type !== "output_text" && part.type !== "refusal"),
                       {
                         type: "text",
                         text: accumulatedTextRef.current || errorMessage,
@@ -681,6 +705,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             ? {
                 ...item,
                 content: [
+                  ...item.content.filter((part) => part.type !== "text" && part.type !== "output_text" && part.type !== "refusal"),
                   {
                     type: "text",
                     text: `Error resuming stream: ${
@@ -879,7 +904,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
     loadConversations();
     // currentConversation is intentionally excluded - this effect should only run when agent changes
-  }, [selectedAgent, onDebugEvent, clearDebugEvents, renderAssistantStreamingText, setChatItems, setIsStreaming, setLoadingConversations, setAvailableConversations, setCurrentConversation, setPendingApprovals, updateConversationUsage]);
+  }, [selectedAgent, onDebugEvent, clearDebugEvents, renderAssistantStreamingText, renderAssistantMedia, setChatItems, setIsStreaming, setLoadingConversations, setAvailableConversations, setCurrentConversation, setPendingApprovals, updateConversationUsage]);
 
   // Removed old input handling functions - now handled by ChatMessageInput component
 
@@ -1205,6 +1230,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 file_data: fileItem.file_data,
                 filename: fileItem.filename,
               });
+            } else if (contentItem.type === "input_audio") {
+              messageContent.push({
+                type: "input_audio",
+                input_audio: contentItem.input_audio,
+              });
             }
           }
         }
@@ -1309,6 +1339,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           // Handle response.completed event (OpenAI standard)
           if (openAIEvent.type === "response.completed") {
             const completedEvent = openAIEvent as import("@/types/openai").ResponseCompletedEvent;
+            renderAssistantMedia(assistantMessage.id, completedEvent.response.output ?? [], true);
             const usage = completedEvent.response?.usage;
 
             if (usage) {
@@ -1324,6 +1355,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           // Handle response.failed event (OpenAI standard)
           if (openAIEvent.type === "response.failed") {
             const failedEvent = openAIEvent as import("@/types/openai").ResponseFailedEvent;
+            renderAssistantMedia(assistantMessage.id, failedEvent.response.output ?? [], true);
             const error = failedEvent.response?.error;
 
             // Format error message with details
@@ -1352,6 +1384,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 ? {
                     ...item,
                     content: [
+                      ...item.content.filter((part) => part.type !== "text" && part.type !== "output_text" && part.type !== "refusal"),
                       {
                         type: "text",
                         text: accumulatedTextRef.current || errorMessage,
@@ -1459,6 +1492,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 ? {
                     ...item,
                     content: [
+                      ...item.content.filter((part) => part.type !== "text" && part.type !== "output_text" && part.type !== "refusal"),
                       {
                         type: "text",
                         text: errorMessage,
@@ -1498,48 +1532,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             }
 
             // Add output items to assistant message content
-            const currentItems = useDevUIStore.getState().chatItems;
-            setChatItems(currentItems.map((chatItem) => {
-              if (chatItem.id === assistantMessage.id && chatItem.type === "message") {
-                const existingContent = chatItem.content;
-                let newContent: import("@/types/openai").MessageContent | null = null;
-
-                // Map output items to message content
-                if (item.type === "output_image") {
-                  newContent = {
-                    type: "output_image",
-                    image_url: item.image_url,
-                    alt_text: item.alt_text,
-                    mime_type: item.mime_type,
-                  } as import("@/types/openai").MessageOutputImage;
-                } else if (item.type === "output_file") {
-                  newContent = {
-                    type: "output_file",
-                    filename: item.filename,
-                    file_url: item.file_url,
-                    file_data: item.file_data,
-                    mime_type: item.mime_type,
-                  } as import("@/types/openai").MessageOutputFile;
-                } else if (item.type === "output_data") {
-                  newContent = {
-                    type: "output_data",
-                    data: item.data,
-                    mime_type: item.mime_type,
-                    description: item.description,
-                  } as import("@/types/openai").MessageOutputData;
-                }
-
-                // If we created new content, append it
-                if (newContent) {
-                  return {
-                    ...chatItem,
-                    content: [...existingContent, newContent],
-                    status: "in_progress" as const,
-                  };
-                }
-              }
-              return chatItem;
-            }));
+            renderAssistantMedia(assistantMessage.id, [item], true);
             continue; // Continue to next event
           }
 
@@ -1607,6 +1600,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 ? {
                     ...item,
                     content: [
+                      ...item.content.filter((part) => part.type !== "text" && part.type !== "output_text" && part.type !== "refusal"),
                       {
                         type: "text",
                         text: `Error: ${
@@ -1630,7 +1624,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         }
       }
     },
-    [selectedAgent, currentConversation, onDebugEvent, renderAssistantStreamingText, setChatItems, setIsStreaming, setIsSubmitting, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling, startTracePolling]
+    [selectedAgent, currentConversation, onDebugEvent, renderAssistantStreamingText, renderAssistantMedia, setChatItems, setIsStreaming, setIsSubmitting, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling, startTracePolling]
   );
 
   // Handle non-streaming message sending
@@ -1670,6 +1664,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 type: "input_file",
                 file_data: fileItem.file_data,
                 filename: fileItem.filename,
+              });
+            } else if (contentItem.type === "input_audio") {
+              messageContent.push({
+                type: "input_audio",
+                input_audio: contentItem.input_audio,
               });
             }
           }
@@ -1725,10 +1724,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         });
 
         // Extract content from response output
-        const assistantContent: import("@/types/openai").MessageContent[] = [];
+        const assistantContent = appendResponseMedia([], response.output ?? [], true);
         const toolCalls: import("@/types/openai").ConversationFunctionCall[] = [];
         const toolResults: import("@/types/openai").ConversationFunctionCallOutput[] = [];
-
         if (response.output) {
           for (const outputItem of response.output) {
             if (outputItem.type === "message") {
@@ -1746,12 +1744,6 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                       type: "refusal",
                       refusal: content.refusal,
                     });
-                  } else if (content.type === "output_image") {
-                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputImage);
-                  } else if (content.type === "output_file") {
-                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputFile);
-                  } else if (content.type === "output_data") {
-                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputData);
                   }
                 }
               }

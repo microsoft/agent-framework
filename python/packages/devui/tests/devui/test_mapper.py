@@ -7,6 +7,8 @@ to OpenAI-compatible streaming events. Tests use REAL classes from
 agent_framework, not mocks, to ensure proper serialization.
 """
 
+import json
+import warnings
 from typing import Any
 
 import pytest
@@ -229,6 +231,75 @@ async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentF
     delta_events = [e for e in events if e.type == "response.function_call_arguments.delta"]
     full_json = "".join(event.delta for event in delta_events)
     assert "TestCity" in full_json
+
+
+async def test_audio_data_content_maps_to_visible_output_file(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+) -> None:
+    """Agent audio output should stream as a visible output_file item."""
+    update = create_test_agent_update([Content.from_data(data=b"mp3-bytes", media_type="audio/mpeg")])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.type == "response.output_item.added"
+    assert event.item.type == "output_file"
+    assert event.item.filename == "output.mp3"
+    assert event.item.mime_type == "audio/mpeg"
+    assert event.item.file_url == "data:audio/mpeg;base64,bXAzLWJ5dGVz"
+    assert event.item.file_data is None
+
+
+async def test_audio_data_content_is_preserved_in_final_response(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+) -> None:
+    """Agent audio output should be present in non-streaming final responses."""
+    update = create_test_agent_update([Content.from_data(data=b"mp3-bytes", media_type="audio/mpeg")])
+    events = await mapper.convert_event(update, test_request)
+
+    response = await mapper.aggregate_to_response(events, test_request)
+
+    output_files = [item for item in response.model_dump()["output"] if item["type"] == "output_file"]
+    assert len(output_files) == 1
+    output_file = output_files[0]
+    assert output_file["mime_type"] == "audio/mpeg"
+    assert output_file["file_url"] == "data:audio/mpeg;base64,bXAzLWJ5dGVz"
+
+
+@pytest.mark.parametrize(
+    ("media_type", "output_type"),
+    [("audio/mpeg", "output_file"), ("application/pdf", "output_file"), ("image/png", "output_image")],
+)
+@pytest.mark.parametrize("failed", [False, True])
+async def test_media_terminal_events_serialize_without_schema_warnings(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+    media_type: str,
+    output_type: str,
+    failed: bool,
+) -> None:
+    """Completed and failed responses retain media through the actual SSE JSON boundary."""
+    events = list(
+        await mapper.convert_event(
+            create_test_agent_update([Content.from_data(data=b"media", media_type=media_type)]),
+            test_request,
+        )
+    )
+    if failed:
+        events.extend(await mapper.convert_event(AgentFailedEvent(error=RuntimeError("failed")), test_request))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        terminal = await mapper.finalize_stream(events, test_request)
+        payload = json.loads(terminal.model_dump_json())
+
+    assert payload["type"] == ("response.failed" if failed else "response.completed")
+    output = payload["response"]["output"][0]
+    assert output["type"] == output_type
+    assert output.get("file_url", output.get("image_url")) == f"data:{media_type};base64,bWVkaWE="
 
 
 async def test_streaming_function_call_mapping_adds_item_once(

@@ -43,6 +43,8 @@ export function SettingsModal({
 
   // OpenAI proxy mode, Azure deployment, auth status, server capabilities, streaming, and version from store
   const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities, serverVersion, runtime, uiMode, streamingEnabled, setStreamingEnabled } = useDevUIStore();
+  const audioInput = useDevUIStore((state) => state.audioInput);
+  const setAudioInput = useDevUIStore((state) => state.setAudioInput);
 
   // Get current backend URL from localStorage or default
   const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
@@ -382,6 +384,250 @@ export function SettingsModal({
                       </ul>
                     </div>
                   </div>
+                )}
+              </div>
+
+              {/* Audio Input Settings */}
+              <div className="space-y-3 border-t pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">
+                      Microphone Input
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Record microphone audio and send it directly to audio-capable agents
+                    </p>
+                  </div>
+                  <Switch
+                    checked={audioInput.enabled}
+                    onCheckedChange={(checked) => setAudioInput({ enabled: checked })}
+                  />
+                </div>
+
+                {audioInput.enabled && (
+                  <>
+                    <details className="group">
+                      <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                        Audio options
+                      </summary>
+                      <div className="mt-3 space-y-2 pl-4 border-l-2 border-muted">
+                        <details className="group/audio-input rounded-md border border-border/60 p-3" open>
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                            <ChevronRight className="h-3 w-3 transition-transform group-open/audio-input:rotate-90" />
+                            Input
+                          </summary>
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label htmlFor="audio-max-duration" className="text-xs">Max duration (seconds)</Label>
+                              <Input
+                                id="audio-max-duration"
+                                type="number"
+                                min="1"
+                                max="600"
+                                value={audioInput.maxDurationSeconds}
+                                onChange={(e) =>
+                                  setAudioInput({
+                                    maxDurationSeconds: Math.max(1, parseInt(e.target.value || "60")),
+                                  })
+                                }
+                                className="text-sm"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label htmlFor="audio-max-payload" className="text-xs">Max payload (MB)</Label>
+                              <Input
+                                id="audio-max-payload"
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={Math.round(audioInput.maxPayloadBytes / 1024 / 1024)}
+                                onChange={(e) =>
+                                  setAudioInput({
+                                    maxPayloadBytes: Math.max(1, parseInt(e.target.value || "10")) * 1024 * 1024,
+                                  })
+                                }
+                                className="text-sm"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label htmlFor="audio-sample-rate" className="text-xs">Output sample rate (Hz)</Label>
+                              <Input
+                                id="audio-sample-rate"
+                                type="number"
+                                min="8000"
+                                max="48000"
+                                step="1000"
+                                value={audioInput.sampleRate}
+                                onChange={(e) =>
+                                  setAudioInput({
+                                    sampleRate: Math.max(8000, parseInt(e.target.value || "16000")),
+                                  })
+                                }
+                                className="text-sm"
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Resamples microphone recordings before sending.
+                              </p>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-3">
+                                <Label htmlFor="audio-preview" className="text-xs">Preview before send</Label>
+                                <Switch
+                                  id="audio-preview"
+                                  checked={audioInput.previewBeforeSend}
+                                  onCheckedChange={(checked) => setAudioInput({ previewBeforeSend: checked })}
+                                />
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <Label htmlFor="audio-echo" className="text-xs">Echo cancellation</Label>
+                                <Switch
+                                  id="audio-echo"
+                                  checked={audioInput.echoCancellation}
+                                  onCheckedChange={(checked) => setAudioInput({ echoCancellation: checked })}
+                                />
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <Label htmlFor="audio-noise" className="text-xs">Noise suppression</Label>
+                                <Switch
+                                  id="audio-noise"
+                                  checked={audioInput.noiseSuppression}
+                                  onCheckedChange={(checked) => setAudioInput({ noiseSuppression: checked })}
+                                />
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <Label htmlFor="audio-gain" className="text-xs">Auto gain control</Label>
+                                <Switch
+                                  id="audio-gain"
+                                  checked={audioInput.autoGainControl}
+                                  onCheckedChange={(checked) => setAudioInput({ autoGainControl: checked })}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground">Browser support may vary.</p>
+                            </div>
+                          </div>
+                        </details>
+
+                        <details className="group/audio-autostop rounded-md border border-border/60 p-3" open>
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                            <ChevronRight className="h-3 w-3 transition-transform group-open/audio-autostop:rotate-90" />
+                            Auto-stop on silence
+                          </summary>
+                          <div className="mt-3 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-xs text-muted-foreground">
+                                Automatically attaches click-to-record audio after a quiet pause.
+                              </p>
+                              <Switch
+                                aria-label="Auto-stop on silence"
+                                checked={audioInput.autoStopOnSilence}
+                                onCheckedChange={(checked) => setAudioInput({ autoStopOnSilence: checked })}
+                              />
+                            </div>
+                            {audioInput.autoStopOnSilence && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="space-y-1">
+                                  <Label htmlFor="audio-silence-threshold" className="text-xs">Silence threshold</Label>
+                                  <Input
+                                    id="audio-silence-threshold"
+                                    type="number"
+                                    min="0"
+                                    max="1"
+                                    step="0.01"
+                                    value={audioInput.silenceThreshold}
+                                    onChange={(e) =>
+                                      setAudioInput({
+                                        silenceThreshold: Math.max(0, Math.min(1, Number(e.target.value || "0.03"))),
+                                      })
+                                    }
+                                    className="text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label htmlFor="audio-silence-duration" className="text-xs">Silence duration (ms)</Label>
+                                  <Input
+                                    id="audio-silence-duration"
+                                    type="number"
+                                    min="250"
+                                    max="10000"
+                                    step="250"
+                                    value={audioInput.silenceDurationMs}
+                                    onChange={(e) =>
+                                      setAudioInput({
+                                        silenceDurationMs: Math.max(250, parseInt(e.target.value || "1500")),
+                                      })
+                                    }
+                                    className="text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label htmlFor="audio-min-recording" className="text-xs">Minimum recording (ms)</Label>
+                                  <Input
+                                    id="audio-min-recording"
+                                    type="number"
+                                    min="0"
+                                    max="10000"
+                                    step="250"
+                                    value={audioInput.minimumRecordingMs}
+                                    onChange={(e) =>
+                                      setAudioInput({
+                                        minimumRecordingMs: Math.max(0, parseInt(e.target.value || "1000")),
+                                      })
+                                    }
+                                    className="text-sm"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+
+                        <details className="group/audio-output rounded-md border border-border/60 p-3" open>
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                            <ChevronRight className="h-3 w-3 transition-transform group-open/audio-output:rotate-90" />
+                            Output
+                          </summary>
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <Label htmlFor="audio-autoplay" className="text-xs">Auto-play agent audio</Label>
+                            <Switch
+                              id="audio-autoplay"
+                              checked={audioInput.autoPlayAgentAudio}
+                              onCheckedChange={(checked) => setAudioInput({ autoPlayAgentAudio: checked })}
+                            />
+                          </div>
+                        </details>
+                      </div>
+                    </details>
+
+                    <details className="group">
+                      <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                        Learn more about audio input
+                      </summary>
+                      <div className="mt-3 space-y-3 pl-4">
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Audio input requires browser microphone support on localhost or HTTPS.
+                          File uploads remain available when recording is unavailable.
+                        </p>
+                        <div className="space-y-1.5">
+                          <p className="text-xs font-medium">Supported input paths:</p>
+                          <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+                            <li>Audio is sent without transcription</li>
+                            <li>Microphone recordings become mono WAV</li>
+                            <li>Uploaded files keep their original format</li>
+                            <li>Supported audio formats depend on the selected agent</li>
+                            <li>Auto-stop on silence is optional and uses local microphone level only</li>
+                          </ul>
+                        </div>
+                        <div className="space-y-1.5">
+                          <p className="text-xs font-medium">Browser controls:</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            Echo cancellation, noise suppression, and auto gain control are best-effort browser hints.
+                          </p>
+                        </div>
+                      </div>
+                    </details>
+                  </>
                 )}
               </div>
             </div>

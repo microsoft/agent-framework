@@ -29,6 +29,7 @@ from openai.types.responses import (
     ResponseOutputRefusal,
 )
 
+from ._audio import input_audio_to_content
 from ._utils import infer_media_type
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
@@ -576,6 +577,9 @@ class InMemoryConversationStore(ConversationStore):
                     additional_properties=image_properties,
                 )
             return None
+
+        if content_type == "input_audio":
+            return input_audio_to_content(content)
 
         if content_type == "input_file":
             filename = content.get("filename")

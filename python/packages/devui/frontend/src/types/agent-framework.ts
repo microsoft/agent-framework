@@ -34,6 +34,16 @@ export interface ResponseInputFileParam {
   filename: string;
 }
 
+export interface ResponseInputAudioParam {
+  /** The type of the input item. Always `input_audio`. */
+  type: "input_audio";
+  /** Base64-encoded audio data and format. */
+  input_audio: {
+    data: string;
+    format: "wav" | "mp3";
+  };
+}
+
 // DevUI Extension: Function Approval Response Input
 export interface ResponseInputFunctionApprovalParam {
   /** The type of the input item. Always `function_approval_response`. */
@@ -54,6 +64,7 @@ export type ResponseInputContent =
   | ResponseInputTextParam
   | ResponseInputImageParam
   | ResponseInputFileParam
+  | ResponseInputAudioParam
   | ResponseInputFunctionApprovalParam;
 
 export interface EasyInputMessage {
