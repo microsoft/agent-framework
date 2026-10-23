@@ -74,8 +74,12 @@ Set the environment variables described in the
 the dependencies declared in the script:
 
 ```bash
+export PYTHONNOUSERSITE=1
 uv run --script --prerelease=allow main.py
 ```
+
+For other shells and deployment settings, see the
+[Python startup configuration](../../README.md#python-startup-configuration).
 
 Additional sample imports belong in inline script metadata, not a workspace,
 package or sample `pyproject.toml`. Before the coordinated hosting beta is

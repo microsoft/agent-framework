@@ -195,8 +195,12 @@ azd deploy --all
 ```
 
 ```bash
+export PYTHONNOUSERSITE=1
 azd ai agent run
 ```
+
+For other shells and deployment settings, see the
+[Python startup configuration](../../README.md#python-startup-configuration).
 
 The agent host will start on `http://localhost:8088`.
 

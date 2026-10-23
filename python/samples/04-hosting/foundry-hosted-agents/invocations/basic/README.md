@@ -104,8 +104,12 @@ Use the current workspace until the coordinated hosting beta containing the
 native workflow API is published. From `python/`, run:
 
 ```bash
+export PYTHONNOUSERSITE=1
 uv run --no-sync python samples/04-hosting/foundry-hosted-agents/invocations/basic/workflow.py
 ```
+
+For other shells and deployment settings, see the
+[Python startup configuration](../../README.md#python-startup-configuration).
 
 After that release, the script's PEP 723 metadata also supports
 `uv run --script --prerelease=allow workflow.py`. Do not change a

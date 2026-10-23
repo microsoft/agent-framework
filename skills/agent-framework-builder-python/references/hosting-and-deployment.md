@@ -35,6 +35,17 @@ Verify the entry point imports, required packages and external files are include
 and storage ownership are documented, request-owned resources are cleaned up, and no local credentials or caches enter
 the deployment package.
 
+For Python Foundry hosted agents, configure `PYTHONNOUSERSITE=1` in the
+deployment environment before Python starts, and in the Dockerfile for images
+also launched without that deployment definition. Set it in the launching
+shell for local runs; setting it inside application code or a `.env` file
+loaded by Python is too late for startup. Install dependencies in a virtual
+environment or image system site-packages, not with `pip install --user`.
+This customer-configured setting disables Python user-site loading, not all
+code execution or other language runtimes. Redeploy a new agent version to
+apply it to existing deployments. See the
+[maintained sample startup guidance](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents#python-startup-configuration).
+
 ## Deploy to Microsoft Foundry
 
 Foundry deployment commands, manifests, prerequisites, and injected configuration change independently from Agent
