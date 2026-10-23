@@ -5,6 +5,30 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 > [IMPORTANT] Migrating from Protocol version 1.0.0 to 2.0.0: Foundry Hosting Agents service has been updated to use Protocol version 2.0.0. If your application is using Protocol version 1.0.0, please upgrade to Protocol version 2.0.0 in your `agent.manifest.yaml` or `agent.yaml` and upgrade to the latest `agent-framework-foundry-hosting` package. `agent-framework-foundry-hosting==1.0.0a260625` is the last version that supports Protocol version 1.0.0.
 >
 > The `agent-framework-foundry-hosting` Python API surface is intended to remain stable, but protocol 1.0.0 and 2.0.0 are incompatible.
+
+## Python startup configuration
+
+The deployment YAML files in these samples explicitly configure
+`PYTHONNOUSERSITE` with the string value `"1"` before the remote Python
+interpreter starts. Each Python Dockerfile also sets `ENV PYTHONNOUSERSITE=1`
+so directly running an image without its YAML keeps the same startup setting.
+The Telegram direct-code sample sets it in `azure.yaml` instead.
+
+This setting is configured by the customer in the sample deployment, not
+automatically injected by Foundry or Agent Framework. It disables Python
+user-site loading, not all code execution, and does not configure other
+language runtimes. Existing deployments need a newly deployed agent version
+to pick up the setting; editing a local YAML file does not update a running
+version.
+
+Install dependencies in a virtual environment or the container image's
+system site-packages, not with `pip install --user`. The samples' `pip` and
+`uv` installation paths do not require user-site packages.
+
+Keep this setting in the deployment environment or Python Dockerfile, rather
+than adding it to individual run commands. Setting `os.environ` or loading a
+`.env` file from application code is too late for Python startup.
+
 ## Samples
 
 ### Responses API
