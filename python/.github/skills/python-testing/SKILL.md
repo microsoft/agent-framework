@@ -12,7 +12,9 @@ Alpha packages are report-only, and the DevUI and experimental Lab packages are 
 aggregate coverage enforcement. Tests should be fast, reliable, and maintainable.
 Test observable behavior first, and use coverage as a backstop. Meaningful new branches, error paths,
 and edge cases must be covered without coupling tests to implementation details.
-When adding new code, check that the relevant sections of the codebase are covered by tests, and add new tests as needed. When modifying existing code, update or add tests to cover the changes.
+Before writing new tests, inspect the existing tests and coverage for the affected behavior. For refactors and
+behavior-preserving implementation changes, update existing tests when they already express the contract. Add new
+tests for new behavior, regressions, or a meaningful coverage gap rather than by default for every production edit.
 We run tests in two stages, for a PR each commit is tested with unit tests only (using `-m "not integration"`), and the full suite including integration tests is run when merging.
 
 When an API is marked as deprecated, migrate ordinary tests to its replacement in the same change. Retain only

@@ -7,8 +7,10 @@ Before reviewing Python changes, read and apply the canonical
 [python/AGENTS.md](../../python/AGENTS.md) and the nearest package or sample `AGENTS.md`
 for task-specific architecture and workflow guidance.
 
-- Report every applicable standards violation visible in files affected by the pull request, including violations
-  that predate the changed lines.
+- Review new or materially edited code against the standards. Do not report unrelated legacy convention violations
+  elsewhere in a touched file.
+- Independently report material correctness or security defects visible in affected files, even when they predate
+  the changed lines.
 - Treat `MUST` and `MUST NOT` violations as review findings.
 - Report `SHOULD` and `SHOULD NOT` violations when they have a material correctness, API, maintainability,
   performance, or usability impact.

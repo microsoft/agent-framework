@@ -14,7 +14,8 @@ Every sample file should follow this order:
 6. Environment variable loading: `load_dotenv()`
 7. Helper functions
 8. Main function(s) demonstrating functionality
-9. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+9. Entry point: use `if __name__ == "__main__": asyncio.run(main())` for async samples or
+   `if __name__ == "__main__": main()` for synchronous samples
 
 When modifying samples, update associated README files in the same or parent folders.
 

@@ -72,8 +72,10 @@ those tools rather than duplicated as subjective review guidance.
 Typing is a design aid, not an end in itself.
 
 - Public APIs MUST have complete, stable parameter and return annotations.
-- Functions and methods MUST annotate every parameter and return value. A trivially inferred local callable, such as
-  a short lambda or nested callback, MAY rely on inference.
+- Functions and methods in package source MUST annotate every parameter and return value. A trivially inferred local
+  callable, such as a short lambda or nested callback, MAY rely on inference.
+- Tests and samples follow their configured relaxed checker profiles; complete annotations are not universally
+  required there. Add annotations when they clarify reusable helpers, fixtures, callbacks, or copied public usage.
 - Package source MUST pass the configured strict Pyright checks.
 - Tests MUST pass the repository-configured Pyright, mypy, pyrefly, ty, and zuban profiles.
 - Samples MUST pass the configured supported subset of those checkers.

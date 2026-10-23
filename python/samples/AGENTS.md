@@ -137,7 +137,8 @@ Every sample file follows this order:
 5. Required imports
 6. Helper functions
 7. Main function(s) demonstrating functionality
-8. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+8. Entry point: use `if __name__ == "__main__": asyncio.run(main())` for async samples or
+   `if __name__ == "__main__": main()` for synchronous samples
 
 Use PEP 723 inline script metadata for external sample-only dependencies; do not add sample-only dependencies to
 the root `pyproject.toml` dev group.
