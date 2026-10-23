@@ -81,10 +81,35 @@ def _checkpoint_to_cosmos_document(checkpoint: WorkflowCheckpoint) -> dict[str, 
     return doc
 
 
-def _mock_get_latest_queries(container: MagicMock, newest_docs: list[dict[str, Any]]) -> None:
-    """Answer get_latest's newest-timestamp query, then its query for the rows at that timestamp."""
-    newest_timestamps = [max(doc["timestamp"] for doc in newest_docs)] if newest_docs else []
-    container.query_items.side_effect = [_to_async_iter(newest_timestamps), _to_async_iter(newest_docs)]
+def _mock_get_latest_queries(container: MagicMock, docs: list[dict[str, Any]]) -> None:
+    """Answer get_latest's newest-first query the way Cosmos orders it, keeping tied rows in the given order."""
+    newest_first = sorted(docs, key=lambda doc: doc["timestamp"], reverse=True)
+    container.query_items.return_value = _to_async_iter(newest_first)
+
+
+class _ConcurrentlyWrittenContainer:
+    """A Cosmos container whose partition another writer changes right after each query is issued.
+
+    Each query reads a snapshot of the partition, newest first, as Cosmos serves one result page.
+    """
+
+    def __init__(self, documents: list[dict[str, Any]], concurrent_write: Any) -> None:
+        self.documents = list(documents)
+        self._concurrent_write = concurrent_write
+        self.queries: list[str] = []
+
+    def query_items(self, *, query: str, partition_key: str, **kwargs: Any) -> AsyncIterator[Any]:
+        assert "ORDER BY c.timestamp DESC" in query
+        self.queries.append(query)
+        snapshot = sorted(
+            (doc for doc in self.documents if doc["workflow_name"] == partition_key),
+            key=lambda doc: doc["timestamp"],
+            reverse=True,
+        )
+        write, self._concurrent_write = self._concurrent_write, None
+        if write is not None:
+            write(self.documents)
+        return _to_async_iter(snapshot)
 
 
 @pytest.fixture
@@ -375,35 +400,91 @@ async def test_get_latest_returns_none_when_empty(mock_container: MagicMock) -> 
     assert result is None
 
 
-async def test_get_latest_fetches_every_checkpoint_at_the_newest_timestamp(mock_container: MagicMock) -> None:
+async def test_get_latest_reads_the_newest_rows_with_one_ordered_query(mock_container: MagicMock) -> None:
     cp = _make_checkpoint(checkpoint_id="cp-latest", timestamp="2025-06-01T00:00:00+00:00")
     _mock_get_latest_queries(mock_container, [_checkpoint_to_cosmos_document(cp)])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
     await storage.get_latest(workflow_name="test-workflow")
 
-    max_call, candidates_call = mock_container.query_items.call_args_list
-    assert "MAX(c.timestamp)" in max_call.kwargs["query"]
-    assert max_call.kwargs["parameters"] == [{"name": "@workflow_name", "value": "test-workflow"}]
-    assert max_call.kwargs["partition_key"] == "test-workflow"
-    assert "c.timestamp = @timestamp" in candidates_call.kwargs["query"]
-    assert "LIMIT" not in candidates_call.kwargs["query"]
-    assert candidates_call.kwargs["parameters"] == [
-        {"name": "@workflow_name", "value": "test-workflow"},
-        {"name": "@timestamp", "value": "2025-06-01T00:00:00+00:00"},
-    ]
-    assert candidates_call.kwargs["partition_key"] == "test-workflow"
+    (query_call,) = mock_container.query_items.call_args_list
+    assert "ORDER BY c.timestamp DESC" in query_call.kwargs["query"]
+    assert "MAX(" not in query_call.kwargs["query"]
+    assert "LIMIT" not in query_call.kwargs["query"]
+    assert query_call.kwargs["parameters"] == [{"name": "@workflow_name", "value": "test-workflow"}]
+    assert query_call.kwargs["partition_key"] == "test-workflow"
+    assert query_call.kwargs["max_item_count"] > 0
 
 
-async def test_get_latest_returns_none_when_newest_rows_disappear(mock_container: MagicMock) -> None:
-    mock_container.query_items.side_effect = [
-        _to_async_iter(["2025-06-01T00:00:00+00:00"]),
-        _to_async_iter([]),
+async def test_get_latest_stops_reading_at_the_first_older_checkpoint(mock_container: MagicMock) -> None:
+    timestamp = "2025-06-01T00:00:00+00:00"
+    tied = [
+        _checkpoint_to_cosmos_document(_make_checkpoint(checkpoint_id="parent", timestamp=timestamp)),
+        _checkpoint_to_cosmos_document(
+            _make_checkpoint(checkpoint_id="child", previous_checkpoint_id="parent", timestamp=timestamp)
+        ),
     ]
+    older = _checkpoint_to_cosmos_document(
+        _make_checkpoint(checkpoint_id="older", timestamp="2025-05-01T00:00:00+00:00")
+    )
+
+    async def _rows() -> AsyncIterator[Any]:
+        for doc in [*tied, older]:
+            yield doc
+        raise AssertionError("get_latest read past the first older checkpoint")
+
+    mock_container.query_items.return_value = _rows()
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
+    result = await storage.get_latest(workflow_name="test-workflow")
 
-    assert await storage.get_latest(workflow_name="test-workflow") is None
+    assert result is not None
+    assert result.checkpoint_id == "child"
+
+
+async def test_get_latest_is_not_pinned_to_a_stale_timestamp_by_a_concurrent_save() -> None:
+    older = _make_checkpoint(checkpoint_id="cp-1", timestamp="2025-05-01T00:00:00+00:00")
+    newest = _make_checkpoint(
+        checkpoint_id="cp-2", previous_checkpoint_id="cp-1", timestamp="2025-06-01T00:00:00+00:00"
+    )
+    saved = _make_checkpoint(checkpoint_id="cp-3", previous_checkpoint_id="cp-2", timestamp="2025-07-01T00:00:00+00:00")
+    container = _ConcurrentlyWrittenContainer(
+        [_checkpoint_to_cosmos_document(older), _checkpoint_to_cosmos_document(newest)],
+        lambda documents: documents.append(_checkpoint_to_cosmos_document(saved)),
+    )
+    storage = CosmosCheckpointStorage(container_client=container)  # type: ignore[arg-type]
+
+    during_save = await storage.get_latest(workflow_name="test-workflow")
+    after_save = await storage.get_latest(workflow_name="test-workflow")
+
+    # The first call answers from the one read it made, before the save landed.
+    assert during_save is not None
+    assert during_save.checkpoint_id == "cp-2"
+    assert len(container.queries) == 2
+    assert after_save is not None
+    assert after_save.checkpoint_id == "cp-3"
+
+
+async def test_get_latest_falls_back_to_older_checkpoints_when_the_newest_is_deleted_concurrently() -> None:
+    older = _make_checkpoint(checkpoint_id="cp-1", timestamp="2025-05-01T00:00:00+00:00")
+    newest = _make_checkpoint(
+        checkpoint_id="cp-2", previous_checkpoint_id="cp-1", timestamp="2025-06-01T00:00:00+00:00"
+    )
+    container = _ConcurrentlyWrittenContainer(
+        [_checkpoint_to_cosmos_document(older), _checkpoint_to_cosmos_document(newest)],
+        lambda documents: documents.remove(next(doc for doc in documents if doc["checkpoint_id"] == "cp-2")),
+    )
+    storage = CosmosCheckpointStorage(container_client=container)  # type: ignore[arg-type]
+
+    during_delete = await storage.get_latest(workflow_name="test-workflow")
+    after_delete = await storage.get_latest(workflow_name="test-workflow")
+
+    # The first call returns the checkpoint its one read saw, never None while checkpoints remain.
+    assert during_delete is not None
+    assert during_delete.checkpoint_id == "cp-2"
+    assert len(container.queries) == 2
+    assert after_delete is not None
+    assert after_delete.checkpoint_id == "cp-1"
 
 
 @pytest.mark.parametrize("row_order", [("parent", "child", "grandchild"), ("grandchild", "child", "parent")])

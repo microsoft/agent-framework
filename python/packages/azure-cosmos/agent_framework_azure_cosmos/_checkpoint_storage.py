@@ -25,6 +25,11 @@ AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger(__name__)
 
+# Page size for get_latest's newest-first query. It is normally stopped after the first row
+# or a small group of rows sharing the newest timestamp, so a small page avoids reading many
+# full checkpoint documents that are then discarded.
+_LATEST_CHECKPOINT_PAGE_SIZE = 10
+
 
 def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
     """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
@@ -371,45 +376,35 @@ class CosmosCheckpointStorage:
         """
         await self._ensure_container_proxy()
 
-        # Checkpoints taken at the same superstep boundary can share a timestamp, so fetch
+        # Checkpoints taken at the same superstep boundary can share a timestamp, so collect
         # every checkpoint at the newest timestamp and resolve the tie through lineage
-        # instead of letting the backend pick one row.
-        max_query = "SELECT VALUE MAX(c.timestamp) FROM c WHERE c.workflow_name = @workflow_name"
-        max_parameters: list[dict[str, object]] = [
-            {"name": "@workflow_name", "value": workflow_name},
-        ]
-
-        max_items = self._container_proxy.query_items(  # type: ignore[union-attr]
-            query=max_query,
-            parameters=max_parameters,
-            partition_key=workflow_name,
-        )
-
-        newest_timestamp: str | None = None
-        async for value in max_items:
-            if isinstance(value, str):
-                newest_timestamp = value
-            break
-
-        if newest_timestamp is None:
-            return None
-
-        query = "SELECT * FROM c WHERE c.workflow_name = @workflow_name AND c.timestamp = @timestamp"
+        # instead of letting the backend pick one row. The newest timestamp and its rows come
+        # from one query ordered newest first rather than a MAX query followed by a second
+        # query, so a checkpoint saved or deleted in between cannot leave the result pinned to
+        # a stale timestamp, or empty while older checkpoints remain. Iteration stops at the
+        # first older row, so only the pages holding the tied group are read.
+        query = "SELECT * FROM c WHERE c.workflow_name = @workflow_name ORDER BY c.timestamp DESC"
         parameters: list[dict[str, object]] = [
             {"name": "@workflow_name", "value": workflow_name},
-            {"name": "@timestamp", "value": newest_timestamp},
         ]
 
         items = self._container_proxy.query_items(  # type: ignore[union-attr]
             query=query,
             parameters=parameters,
             partition_key=workflow_name,
+            max_item_count=_LATEST_CHECKPOINT_PAGE_SIZE,
         )
 
-        candidates = [self._document_to_checkpoint(item) async for item in items]
-        if not candidates:
+        newest_documents: list[dict[str, Any]] = []
+        async for item in items:
+            if newest_documents and item.get("timestamp") != newest_documents[0].get("timestamp"):
+                break
+            newest_documents.append(item)
+
+        if not newest_documents:
             return None
 
+        candidates = [self._document_to_checkpoint(document) for document in newest_documents]
         checkpoint = _select_latest_checkpoint(candidates)
         logger.debug(
             "Latest checkpoint for workflow %s is %s",
