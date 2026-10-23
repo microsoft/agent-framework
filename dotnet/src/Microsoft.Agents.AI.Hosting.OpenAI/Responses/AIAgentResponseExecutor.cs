@@ -19,14 +19,33 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
 {
     private readonly AIAgent? _agent;
     private readonly string _registrationKey;
+    private readonly string? _sessionStorageIdentity;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IServiceProvider? _requestServices;
     private readonly OpenAIResponsesMapOptions _mapOptions;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AIAgentResponseExecutor"/> class for a fixed agent instance.
+    /// </summary>
+    /// <param name="agent">The agent that executes the responses.</param>
+    /// <param name="registrationKey">The name that keys the agent's session store.</param>
+    /// <param name="scopeFactory">The factory used to create a scope for operations that are not bound to a request.</param>
+    /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    /// <param name="sessionStorageIdentity">
+    /// The stable logical identity that partitions persisted sessions, or <see langword="null"/> to use the agent instance identity.
+    /// </param>
+    /// <param name="requestServices">
+    /// The services of the request that selected <paramref name="agent"/>, or <see langword="null"/> when the agent is not
+    /// bound to a request. When specified, validation and responses that are not run in the background resolve the
+    /// session store from these services, so the store shares the agent's request-scoped dependencies.
+    /// </param>
     public AIAgentResponseExecutor(
         AIAgent agent,
         string registrationKey,
         IServiceScopeFactory scopeFactory,
-        OpenAIResponsesMapOptions? mapOptions = null)
+        OpenAIResponsesMapOptions? mapOptions = null,
+        string? sessionStorageIdentity = null,
+        IServiceProvider? requestServices = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentException.ThrowIfNullOrEmpty(registrationKey);
@@ -34,7 +53,9 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
 
         this._agent = agent;
         this._registrationKey = registrationKey;
+        this._sessionStorageIdentity = sessionStorageIdentity;
         this._scopeFactory = scopeFactory;
+        this._requestServices = requestServices;
         this._mapOptions = mapOptions ?? new OpenAIResponsesMapOptions();
     }
 
@@ -47,6 +68,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         ArgumentNullException.ThrowIfNull(scopeFactory);
 
         this._registrationKey = registrationKey;
+        this._sessionStorageIdentity = registrationKey;
         this._scopeFactory = scopeFactory;
         this._mapOptions = mapOptions ?? new OpenAIResponsesMapOptions();
     }
@@ -55,17 +77,31 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         CreateResponse request,
         CancellationToken cancellationToken = default)
     {
+        // Validation always runs within the request.
+        if (this._requestServices is { } requestServices)
+        {
+            return await this.ValidateRequestAsync(request, requestServices, cancellationToken).ConfigureAwait(false);
+        }
+
         AsyncServiceScope scope = this._scopeFactory.CreateAsyncScope();
         await using (scope.ConfigureAwait(false))
         {
-            AIAgent executionAgent = this.ResolveExecutionAgent(scope.ServiceProvider);
-            ResponseError? sessionError =
-                AgentResponseExecution.ValidateSessionRequirements(request, executionAgent is AIHostAgent);
-            return sessionError
-                ?? this.ValidateRunOptions(request)
-                ?? await AgentResponseExecution.ValidatePendingApprovalResponsesAsync(
-                    executionAgent, request, cancellationToken).ConfigureAwait(false);
+            return await this.ValidateRequestAsync(request, scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async ValueTask<ResponseError?> ValidateRequestAsync(
+        CreateResponse request,
+        IServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        AIAgent executionAgent = this.ResolveExecutionAgent(services);
+        ResponseError? sessionError =
+            AgentResponseExecution.ValidateSessionRequirements(request, executionAgent is AIHostAgent);
+        return sessionError
+            ?? this.ValidateRunOptions(request)
+            ?? await AgentResponseExecution.ValidatePendingApprovalResponsesAsync(
+                executionAgent, request, cancellationToken).ConfigureAwait(false);
     }
 
     internal ResponseError? ValidateRunOptions(CreateResponse request)
@@ -93,22 +129,54 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         IReadOnlyList<ChatMessage>? conversationHistory = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Responses that are not run in the background are owned by the request that selected the agent, so their
+        // session store shares the agent's request-scoped dependencies.
+        if (this._requestServices is { } requestServices && this.IsExecutionBoundToRequest(request))
+        {
+            await foreach (StreamingResponseEvent streamingEvent in this.ExecuteAsync(
+                requestServices, context, request, conversationHistory, cancellationToken).ConfigureAwait(false))
+            {
+                yield return streamingEvent;
+            }
+
+            yield break;
+        }
+
         // The scope surrounds the full enumeration so background execution retains scoped
         // agents and stores through session persistence after the HTTP request has returned.
         AsyncServiceScope scope = this._scopeFactory.CreateAsyncScope();
         await using (scope.ConfigureAwait(false))
         {
-            AIAgent executionAgent = this.ResolveExecutionAgent(scope.ServiceProvider);
-
-            // Agent selection is fixed by the endpoint. The remaining response execution behavior is
-            // shared with request-routed hosted agents.
-            await foreach (StreamingResponseEvent streamingEvent in AgentResponseExecution.ExecuteAsync(
-                executionAgent, this._mapOptions, context, request, conversationHistory, cancellationToken).ConfigureAwait(false))
+            await foreach (StreamingResponseEvent streamingEvent in this.ExecuteAsync(
+                scope.ServiceProvider, context, request, conversationHistory, cancellationToken).ConfigureAwait(false))
             {
                 yield return streamingEvent;
             }
         }
     }
+
+    private IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
+        IServiceProvider services,
+        AgentInvocationContext context,
+        CreateResponse request,
+        IReadOnlyList<ChatMessage>? conversationHistory,
+        CancellationToken cancellationToken)
+    {
+        AIAgent executionAgent = this.ResolveExecutionAgent(services);
+
+        // Agent selection is fixed by the endpoint. The remaining response execution behavior is
+        // shared with request-routed hosted agents.
+        return AgentResponseExecution.ExecuteAsync(
+            executionAgent, this._mapOptions, context, request, conversationHistory, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Executions for an agent selected by a request use that request's services unless they run in the background,
+    /// which outlives the request and therefore owns a separate service scope.
+    /// </remarks>
+    public bool IsExecutionBoundToRequest(CreateResponse request) =>
+        this._requestServices is not null && request.Background != true;
 
     private AIAgent ResolveExecutionAgent(IServiceProvider services)
     {
@@ -123,7 +191,6 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
             return agent;
         }
 
-        string? sessionStorageIdentity = this._agent is null ? this._registrationKey : null;
-        return new AIHostAgent(agent, sessionStore, sessionStorageIdentity);
+        return new AIHostAgent(agent, sessionStore, this._sessionStorageIdentity);
     }
 }
