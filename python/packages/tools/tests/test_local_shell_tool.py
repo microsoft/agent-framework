@@ -355,6 +355,36 @@ async def test_persistent_powershell_does_not_inherit_previous_exit_code() -> No
         )
 
 
+@pytest.mark.skipif(_POWERSHELL is None, reason="PowerShell is not installed")
+async def test_persistent_powershell_reports_repeated_native_exit_code(tmp_path: os.PathLike[str]) -> None:
+    """A native command failing with the same code as the previous one must still report it.
+
+    ``$LASTEXITCODE`` keeps the same value in that case, and ``$?`` reflects
+    ``Invoke-Expression`` rather than the native command, so the second
+    failure used to be reported as ``exit_code=0``.
+    Runs wherever PowerShell is installed, not just on Windows.
+    """
+    assert _POWERSHELL is not None
+    failing = f"& '{sys.executable}' -c 'import sys; sys.exit(3)'"
+    async with LocalShellTool(
+        mode="persistent",
+        shell=[_POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"],
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        workdir=str(tmp_path),
+    ) as tool:
+        for attempt in range(1, 4):
+            result = await tool.run(failing)
+            assert result.exit_code == 3, f"attempt {attempt} reported rc {result.exit_code}"
+
+        succeeding = await tool.run("Write-Output ok")
+        assert succeeding.exit_code == 0
+
+        readback = await tool.run("Write-Output $LASTEXITCODE")
+        assert readback.exit_code == 0
+        assert readback.stdout.strip() == "3"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell-specific encoding")
 async def test_persistent_powershell_utf8_roundtrip() -> None:
     """Non-ASCII output should round-trip without mojibake."""

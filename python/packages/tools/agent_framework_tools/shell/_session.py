@@ -379,7 +379,7 @@ class ShellSession:
                 # earlier command is still there when a cmdlet-only command
                 # runs. Snapshot it instead of clearing it: the variable stays
                 # readable by the user's own commands, which persistent mode is
-                # meant to preserve, and a value that differs afterwards can
+                # meant to preserve, and a different object afterwards can
                 # only have been written by this command.
                 " $__af_last = $LASTEXITCODE;"
                 " try {"
@@ -393,7 +393,12 @@ class ShellSession:
                 # $? has to be read on the very next statement: anything else
                 # in between overwrites it.
                 "   $__af_ok = $?;"
-                "   if ($LASTEXITCODE -ne $__af_last) { $__af_rc = $LASTEXITCODE }"
+                # Compare by reference, not by value: every native exit stores
+                # a newly boxed int, so a command that fails with the same code
+                # as the previous one still counts as a change. A value
+                # comparison would miss it, and $? cannot catch it either,
+                # because it reflects Invoke-Expression, which succeeded.
+                "   if (-not [object]::ReferenceEquals($LASTEXITCODE, $__af_last)) { $__af_rc = $LASTEXITCODE }"
                 "   elseif (-not $__af_ok) { $__af_rc = 1 }"
                 " } catch {"
                 "   [Console]::Error.WriteLine($_.ToString());"
