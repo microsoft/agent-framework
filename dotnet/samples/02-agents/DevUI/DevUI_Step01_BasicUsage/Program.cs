@@ -22,13 +22,13 @@ namespace DevUI_Step01_BasicUsage;
 /// 1. Set up Azure OpenAI as the chat client
 /// 2. Create function tools for agents to use
 /// 3. Register agents and workflows using the hosting packages with tools
-/// 4. Map the DevUI endpoint which automatically configures the middleware
+/// 4. Register DevUI services and map the DevUI endpoint
 /// 5. Map the dynamic OpenAI Responses API for Python DevUI compatibility
 /// 6. Access the DevUI in a web browser
 ///
 /// The DevUI provides an interactive web interface for testing and debugging AI agents.
 /// DevUI assets are served from embedded resources within the assembly.
-/// Simply call MapDevUI() to set up everything needed.
+/// Call AddDevUI() before building the app, then MapDevUI() to expose the interface.
 ///
 /// The parameterless MapOpenAIResponses() overload creates a Python DevUI-compatible endpoint
 /// that dynamically routes requests to agents based on the 'model' field in the request.
@@ -94,6 +94,11 @@ internal static class Program
 
         builder.Services.AddOpenAIResponses();
         builder.Services.AddOpenAIConversations();
+
+        if (builder.Environment.IsDevelopment())
+        {
+            builder.AddDevUI();
+        }
 
         var app = builder.Build();
 

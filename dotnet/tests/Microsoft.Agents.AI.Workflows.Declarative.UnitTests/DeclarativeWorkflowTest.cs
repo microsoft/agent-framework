@@ -13,8 +13,10 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.PowerFx.Types;
 using Moq;
+using Shared.UnitTests;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
@@ -522,6 +524,36 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
+    }
+
+    [Fact]
+    public void UnsupportedActionLogsWarning()
+    {
+        SearchKnowledgeSources.Builder unsupportedAction = new() { Id = "action_bad" };
+        AdaptiveDialog.Builder dialogBuilder =
+            new()
+            {
+                BeginDialog =
+                    new OnActivity.Builder()
+                    {
+                        Id = "anything",
+                        Actions = [unsupportedAction]
+                    }
+            };
+        AdaptiveDialog dialog = dialogBuilder.Build();
+
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("1");
+        CapturingLoggerFactory loggerFactory = new();
+        DeclarativeWorkflowOptions options = new(mockAgentProvider.Object) { LoggerFactory = loggerFactory };
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), options, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
+
+        Assert.True(visitor.HasUnsupportedActions);
+        (LogLevel Level, string Message) warning = Assert.Single(loggerFactory.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains(nameof(SearchKnowledgeSources), warning.Message, StringComparison.Ordinal);
+        Assert.Contains("action_bad", warning.Message, StringComparison.Ordinal);
     }
 
     [Theory]

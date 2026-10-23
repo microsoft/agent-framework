@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.AI.Hosting.UnitTests;
+namespace Shared.UnitTests;
 
 /// <summary>
 /// A minimal <see cref="ILoggerFactory"/> that captures every log entry it produces, for asserting on

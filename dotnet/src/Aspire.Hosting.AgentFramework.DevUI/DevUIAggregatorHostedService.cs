@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
@@ -59,13 +60,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         DevUIResource resource,
         ILogger logger,
         IConfiguration? configuration = null,
-        AspireDashboardConnection? dashboardConnectionOverride = null)
+        AspireDashboardConnection? dashboardConnectionOverride = null,
+        bool loadFrontendResources = true)
     {
         this._resource = resource;
         this._logger = logger;
         this._configuration = configuration;
         this._dashboardConnectionOverride = dashboardConnectionOverride;
-        this._frontendResources = LoadFrontendResources(logger);
+        this._frontendResources = loadFrontendResources ? LoadFrontendResources(logger) : null;
     }
 
     /// <summary>
@@ -89,6 +91,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         // Bind to a fixed port if one was specified on the DevUI resource; otherwise use 0 for dynamic allocation.
         var port = this._resource.Port ?? 0;
         this._app.Urls.Add($"http://127.0.0.1:{port}");
+        this._app.Use(ValidateLocalRequestAsync);
         this.MapRoutes(this._app);
 
         await this._app.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -128,6 +131,76 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
         this._tracingProbeLock.Dispose();
     }
+
+    private static async Task ValidateLocalRequestAsync(HttpContext context, RequestDelegate next)
+    {
+        if (!IsLoopbackHost(context.Request.Host.Host) ||
+            !IsAllowedBrowserRequest(context.Request))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+
+        await next(context).ConfigureAwait(false);
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
+    }
+
+    private static bool IsAllowedBrowserRequest(HttpRequest request)
+    {
+        if (HttpMethods.IsGet(request.Method) ||
+            HttpMethods.IsHead(request.Method) ||
+            HttpMethods.IsOptions(request.Method) ||
+            HttpMethods.IsTrace(request.Method))
+        {
+            return true;
+        }
+
+        if (request.Headers.TryGetValue("Sec-Fetch-Site", out var fetchSites))
+        {
+            foreach (var fetchSite in fetchSites)
+            {
+                if (fetchSite?.Split(',').Any(static value =>
+                        string.Equals(value.Trim(), "cross-site", StringComparison.OrdinalIgnoreCase)) == true)
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (!request.Headers.TryGetValue("Origin", out var origins))
+        {
+            return true;
+        }
+
+        if (origins.Count != 1 ||
+            !Uri.TryCreate(origins[0], UriKind.Absolute, out var origin) ||
+            (!string.Equals(origin.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(origin.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) ||
+            !string.IsNullOrEmpty(origin.UserInfo) ||
+            !string.Equals(origin.AbsolutePath, "/", StringComparison.Ordinal) ||
+            !string.IsNullOrEmpty(origin.Query) ||
+            !string.IsNullOrEmpty(origin.Fragment))
+        {
+            return false;
+        }
+
+        var requestPort = request.Host.Port ?? GetDefaultPort(request.Scheme);
+        return string.Equals(origin.Scheme, request.Scheme, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(origin.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase) &&
+            origin.Port == requestPort;
+    }
+
+    private static int GetDefaultPort(string scheme)
+        => string.Equals(scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ? 443 : 80;
 
     /// <summary>
     /// Loads the DevUI frontend resources from the <c>Microsoft.Agents.AI.DevUI</c> assembly.
@@ -883,7 +956,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
         foreach (var header in context.Request.Headers)
         {
-            if (IsHopByHopHeader(header.Key))
+            if (IsHopByHopHeader(header.Key) || IsBrowserProvenanceHeader(header.Key))
             {
                 continue;
             }
@@ -1113,6 +1186,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             || headerName.Equals("Keep-Alive", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("Host", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsBrowserProvenanceHeader(string headerName)
+        => headerName.Equals("Origin", StringComparison.OrdinalIgnoreCase)
+            || headerName.StartsWith("Sec-Fetch-", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Validates that constructing a proxy target URI from <paramref name="backendUrl"/> and

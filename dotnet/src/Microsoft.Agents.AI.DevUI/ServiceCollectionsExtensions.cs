@@ -3,6 +3,7 @@
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -36,7 +37,9 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
             optionsBuilder.Configure(configure);
         }
 
-        services.AddSingleton<DevUIAuthFilter>();
+        services.TryAddSingleton<DevUIRequestValidator>();
+        services.TryAddSingleton<DevUIAuthFilter>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IStartupFilter, DevUIAccessControlStartupFilter>());
 
         // a factory that tries to construct an AIAgent from Workflow,
         // even if workflow was not explicitly registered as an AIAgent.
