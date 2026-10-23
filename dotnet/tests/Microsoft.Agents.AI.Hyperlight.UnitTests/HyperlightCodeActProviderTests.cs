@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.IO;
 using System.Linq;
 using Microsoft.Extensions.AI;
 
@@ -169,5 +170,72 @@ public sealed class HyperlightCodeActProviderTests
 
         // Assert
         Assert.Throws<System.ObjectDisposedException>(() => provider.AddTools(tool));
+    }
+
+    [Fact]
+    public void CreateForPython_SetsWasmBackendAndBundledGuest()
+    {
+        // Act
+        var options = HyperlightCodeActProviderOptions.CreateForPython();
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.Wasm, options.Backend);
+        Assert.False(string.IsNullOrWhiteSpace(options.ModulePath));
+        Assert.False(string.IsNullOrWhiteSpace(Path.GetFileName(options.ModulePath)));
+    }
+
+    [Fact]
+    public void CreateForWasm_SetsWasmBackendAndCustomPath()
+    {
+        // Arrange
+        var modulePath = Path.Combine("path", "to", "guest.aot");
+
+        // Act
+        var options = HyperlightCodeActProviderOptions.CreateForWasm(modulePath);
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.Wasm, options.Backend);
+        Assert.Equal(modulePath, options.ModulePath);
+    }
+
+    [Fact]
+    public void CreateForJavaScript_SetsJavaScriptBackend()
+    {
+        // Act
+        var options = HyperlightCodeActProviderOptions.CreateForJavaScript();
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.JavaScript, options.Backend);
+        Assert.Null(options.ModulePath);
+    }
+
+    [Fact]
+    public void DefaultCtor_EquivalentToCreateForJavaScript()
+    {
+        // Act
+        var options = new HyperlightCodeActProviderOptions();
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.JavaScript, options.Backend);
+        Assert.Null(options.ModulePath);
+    }
+
+    [Fact]
+    public void Ctor_WithPythonOptions_SeedsFromOptions()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create(() => "x", name: "x");
+        var options = HyperlightCodeActProviderOptions.CreateForPython();
+        options.Tools = new[] { tool };
+        options.FileMounts = new[] { new FileMount("/h", "/m") };
+        options.AllowedDomains = new[] { new AllowedDomain("https://a") };
+
+        // Act
+        using var provider = new HyperlightCodeActProvider(options);
+
+        // Assert
+        Assert.Single(provider.GetTools());
+        Assert.Single(provider.GetFileMounts());
+        Assert.Single(provider.GetAllowedDomains());
     }
 }
