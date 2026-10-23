@@ -8,7 +8,7 @@ import math
 import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Any, cast
 from uuid import UUID
@@ -1144,3 +1144,122 @@ async def test_in_memory_filter_still_matches_a_collection_of_native_scalars() -
     matched = await collection.get(filter=Filter("created", "in", (value,)))
 
     assert [record.id for record in matched] == ["one"]
+
+
+@vectorstoremodel(collection_name="time_filter_records")
+@dataclass
+class TimeFilterRecord:
+    id: Annotated[str, VectorStoreField("key")]
+    starts: Annotated[time, VectorStoreField("data")]
+    vector: Annotated[list[float] | None, VectorStoreField("vector", dimensions=2)] = None
+
+
+async def _time_filter_collection() -> InMemoryCollection[str, TimeFilterRecord]:
+    collection = InMemoryCollection(TimeFilterRecord)
+    await collection.ensure_collection_exists()
+    await collection.upsert([TimeFilterRecord("one", time(12, 30, tzinfo=timezone.utc))], generate_vectors=False)
+    return collection
+
+
+async def test_in_memory_filter_matches_a_utc_time_stored_with_a_z_suffix() -> None:
+    """A UTC time is stored with a trailing "Z" and must still match.
+
+    ``time.fromisoformat`` accepts the "Z" suffix only from Python 3.11, so
+    the restore normalizes it the way the datetime restore does.
+    """
+    collection = await _time_filter_collection()
+
+    matched = await collection.get(filter=Filter("starts", "eq", time(12, 30, tzinfo=timezone.utc)))
+
+    assert [record.id for record in matched] == ["one"]
+
+
+async def test_in_memory_text_operator_compares_the_stored_scalar_string() -> None:
+    """A text operator reads the stored string, not the restored scalar.
+
+    The serialized timestamp is what the text operators have always compared
+    these fields by.
+    """
+    collection = await _scalar_filter_collection()
+
+    matched = await collection.get(filter=Filter("created", "starts_with", "2026-10-16T01"))
+
+    assert [record.id for record in matched] == ["one"]
+
+
+async def test_in_memory_group_mixes_a_text_operator_and_a_native_comparison() -> None:
+    """One field can carry a text operator and a native comparison in a group.
+
+    The two leaves need different forms of the stored value: the text operator
+    reads the serialized string while the comparison restores the scalar.
+    """
+    collection = await _scalar_amount_collection()
+
+    matched = await collection.get(
+        filter=FilterGroup(
+            "and",
+            (
+                Filter("created", "starts_with", "2026-10-17"),
+                Filter("created", "gte", datetime(2026, 10, 17, 1, 0, tzinfo=timezone.utc)),
+            ),
+        )
+    )
+
+    assert [record.id for record in matched] == ["ten"]
+
+
+async def _long_span_collection(span: timedelta) -> InMemoryCollection[str, ScalarFilterRecord]:
+    collection = InMemoryCollection(ScalarFilterRecord)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            ScalarFilterRecord(
+                id="long",
+                created=datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc),
+                day=date(2026, 10, 16),
+                token=UUID("00000000-0000-0000-0000-000000000001"),
+                amount=Decimal("1.5"),
+                span=span,
+                label="long",
+                count=1,
+                flag=True,
+            )
+        ],
+        generate_vectors=False,
+    )
+    return collection
+
+
+async def test_in_memory_restores_a_large_duration_exactly() -> None:
+    """A microsecond inside a large duration survives the restore.
+
+    Summing the duration through ``float`` loses this microsecond, so the
+    equality would quietly match nothing.
+    """
+    collection = await _long_span_collection(timedelta(days=100_000, microseconds=1))
+
+    matched = await collection.get(filter=Filter("span", "eq", timedelta(days=100_000, microseconds=1)))
+
+    assert [record.id for record in matched] == ["long"]
+
+
+async def test_in_memory_distinguishes_durations_a_microsecond_apart() -> None:
+    """Two durations a microsecond apart must not collapse into one."""
+    collection = await _long_span_collection(timedelta(days=100_000, microseconds=1))
+
+    matched = await collection.get(filter=Filter("span", "eq", timedelta(days=100_000, microseconds=2)))
+
+    assert matched == []
+
+
+async def test_in_memory_restores_the_largest_duration_exactly() -> None:
+    """``timedelta.max`` is restored, not rounded out of the type's range.
+
+    A ``float`` of the total seconds rounds the stored duration past the
+    largest span ``timedelta`` supports.
+    """
+    collection = await _long_span_collection(timedelta.max)
+
+    matched = await collection.get(filter=Filter("span", "eq", timedelta.max))
+
+    assert [record.id for record in matched] == ["long"]
