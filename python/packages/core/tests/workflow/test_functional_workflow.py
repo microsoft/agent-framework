@@ -933,10 +933,12 @@ class TestCheckpointing:
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
         assert len(checkpoints) == 3  # 2 from first run + 1 final from restore
 
-    async def test_completed_parallel_step_is_checkpointed_when_sibling_fails(self):
+    @pytest.mark.parametrize("save_mode", ["inline", "task", "gather"])
+    async def test_completed_parallel_step_is_checkpointed_when_sibling_fails(self, save_mode: str):
         """A step that completed before a sibling failed must not run again
         after resume, whatever the checkpoint storage's save timing."""
         runs: Counter[str] = Counter()
+        save_started = asyncio.Event()
 
         class TransientFailure(Exception):
             pass
@@ -945,8 +947,17 @@ class TestCheckpointing:
             """A storage whose save awaits before writing, as a database-backed one does."""
 
             async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:  # type: ignore[override]
-                await asyncio.sleep(0.01)
-                return await super().save(checkpoint)
+                async def write() -> CheckpointID:
+                    if runs["done"]:
+                        save_started.set()
+                    await asyncio.sleep(0.01)
+                    return await super(YieldingSaveStorage, self).save(checkpoint)
+
+                if save_mode == "task":
+                    return await asyncio.create_task(write())
+                if save_mode == "gather":
+                    return (await asyncio.gather(write()))[0]
+                return await write()
 
         storage = YieldingSaveStorage()
 
@@ -964,6 +975,7 @@ class TestCheckpointing:
         async def flaky(x: int) -> int:
             runs["flaky"] += 1
             if runs["flaky"] == 1:
+                await save_started.wait()
                 raise TransientFailure("sibling failure")
             return x + 2
 

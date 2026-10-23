@@ -1073,9 +1073,18 @@ class RunContext:
         """Cancel and drain all tracked workflow tasks."""
         current_task = asyncio.current_task()
         while pending := [task for task in self._workflow_tasks if task is not current_task and not task.done()]:
+            # Storage adapters may create tasks of their own (including via
+            # gather). Protect the whole in-flight save subtree, not just its
+            # root, or cancelling a child still aborts the shielded save.
+            save_tasks: set[asyncio.Future[Any]] = set(self._checkpoint_save_tasks)
+            while True:
+                previous_count = len(save_tasks)
+                save_tasks.update(task for task, parent in self._workflow_task_parents.items() if parent in save_tasks)
+                if len(save_tasks) == previous_count:
+                    break
             waiting_for_existing_cancellation = False
             for task in pending:
-                if task in self._framework_cancelled_tasks or task in self._checkpoint_save_tasks:
+                if task in self._framework_cancelled_tasks or task in save_tasks:
                     continue
                 if self._has_pending_cancellation(task):
                     waiting_for_existing_cancellation = True
