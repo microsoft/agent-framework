@@ -6933,7 +6933,7 @@ class TestMCPIFCMetaLabels:
             ),
             SimpleNamespace(tools=[], next_cursor=None),
         ]
-        mcp_tool._connection = _ClientMCPConnection(sdk_client)
+        mcp_tool._connection = _ClientMCPConnection(sdk_client, is_framework_owned=True)
 
         await apply_mcp_security_labels(mcp_tool)
 

@@ -43,6 +43,12 @@ from agent_framework.observability import (
     get_function_span,
 )
 
+
+def _span_attributes(span: Any) -> dict[str, Any]:
+    attributes = span.attributes
+    return dict(attributes) if attributes is not None else {}
+
+
 # region Test constants
 
 
@@ -2043,7 +2049,8 @@ async def test_enable_instrumentation_controls_message_event_emission(
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert (OtelAttr.INPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
     assert (OtelAttr.OUTPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
 
@@ -2528,7 +2535,8 @@ async def test_chat_client_observability_provider_name_under_baseline_semconv(
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert OtelAttr.SYSTEM in attributes
     assert OtelAttr.PROVIDER_NAME not in attributes
 
@@ -4026,7 +4034,8 @@ def test_capture_messages_baseline_semconv_emits_events_only(span_exporter: InMe
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert OtelAttr.INPUT_MESSAGES not in attributes
     mock_emit.assert_called_once()
     assert mock_emit.call_args.kwargs["event_name"] == "gen_ai.user.message"
@@ -4061,7 +4070,8 @@ def test_capture_messages_latest_experimental_emits_span_attribute_only_when_eve
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
     assert mock_emit.call_count == 0
@@ -4094,7 +4104,8 @@ def test_capture_messages_defaults_emit_both_events_and_span_attribute(span_expo
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
     mock_emit.assert_called_once()
@@ -4162,7 +4173,8 @@ def test_capture_messages_preserves_custom_finish_reason(span_exporter: InMemory
 
     assert mock_emit.call_args.kwargs["body"]["finish_reason"] == "guardrail"
     spans = span_exporter.get_finished_spans()
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     output_messages = json.loads(cast(str, attributes[OtelAttr.OUTPUT_MESSAGES]))
     assert output_messages[-1]["finish_reason"] == "guardrail"
 
@@ -4199,7 +4211,9 @@ def test_capture_messages_exports_native_otel_event(span_exporter: InMemorySpanE
     record = readable_record.log_record
     assert record.event_name == "gen_ai.user.message"
     assert record.body == {"content": "Test"}
-    assert dict(record.attributes or {}) == {"gen_ai.system": "test_provider"}
+    record_attributes = record.attributes
+    assert record_attributes is not None
+    assert dict(record_attributes) == {"gen_ai.system": "test_provider"}
     assert record.trace_id == span_context.trace_id
     assert record.span_id == span_context.span_id
 
@@ -5749,7 +5763,7 @@ async def test_agent_instructions_include_context_provider_extensions(
     agent_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
 
@@ -5813,13 +5827,13 @@ async def test_agent_instructions_not_overwritten_by_unrelated_nested_chat(
     agent_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
     chat_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
     ]
     assert len(chat_spans) == 2
 

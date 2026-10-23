@@ -18,10 +18,15 @@ the Agent Framework Python SDK. Entries are reviewed against the
 | Name | Brief description | Scenarios | Project | Issues |
 | --- | --- | --- | --- | --- |
 | Engram | Durable memory tools with optional middleware for Agent Framework agents. | Explicit cross-session memory recall and persistence; automatic recall and capture | [agent-framework-engram](https://github.com/lumetra-io/engram-agent-framework) | [Open an issue](https://github.com/lumetra-io/engram-agent-framework/issues/new/choose) |
-| Quilzo | A self-hosted MCP gateway that offers an organization's MCP servers to agents with pinned tool definitions, per-role access, held calls and an audit log. | Calling MCP tools through `MCPStreamableHTTPTool` with a token; tool calls that wait for a person to approve; audit of every tool call | [Quilzo with Agent Framework](https://quilzo.github.io/frameworks/#agent-framework) | [Open an issue](https://github.com/quilzo/quilzo/issues/new/choose) |
 
 ## Context providers
 
 | Name | Brief description | Scenarios | Project | Issues |
 | --- | --- | --- | --- | --- |
 | MemorySync | A context provider that recalls and captures user memory around agent runs. | Per-user cross-session memory; instruction-layer recall; automatic fact capture | [agent-framework-memorysync](https://pypi.org/project/agent-framework-memorysync/) | [Open an issue](https://github.com/memorysyncio/memorysync-plugins/issues/new/choose) |
+
+## Middleware
+
+| Name | Brief description | Scenarios | Project | Issues |
+| --- | --- | --- | --- | --- |
+| Tracekit | Function middleware that checks each function call against a policy before it runs and records calls and results in a signed, hash-chained log. | Allow or deny function calls by policy; human approval of held calls; offline-verifiable run records | [tracekit-ai](https://github.com/Cygnux-Labs/Tracekit/blob/main/docs/integrations/microsoft-agent-framework.md) | [Open an issue](https://github.com/Cygnux-Labs/Tracekit/issues/new/choose) |

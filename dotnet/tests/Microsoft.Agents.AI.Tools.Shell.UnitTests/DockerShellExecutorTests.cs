@@ -124,6 +124,51 @@ public sealed class DockerShellExecutorTests
         Assert.Contains("owner=test", list);
     }
 
+    [Fact]
+    public void Ctor_RejectsNullUnsafeExtraRunArg()
+    {
+        // Arrange
+        var options = new DockerShellExecutorOptions { UnsafeExtraRunArgs = [null!] };
+
+        // Act
+        var exception = Assert.Throws<ArgumentException>(() => new DockerShellExecutor(options));
+
+        // Assert
+        Assert.Contains("UnsafeExtraRunArgs", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("null token", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Ctor_SnapshotsCallerOwnedUnsafeExtraRunArgListAsync()
+    {
+        // Arrange
+        var unsafeArgs = new List<string> { "--network", "host" };
+        await using var unsafeExecutor = new DockerShellExecutor(new() { UnsafeExtraRunArgs = unsafeArgs });
+
+        // Act
+        unsafeArgs.Add("--privileged");
+
+        // Assert
+        Assert.DoesNotContain("--privileged", unsafeExecutor.BuildRunArgvPersistent());
+        Assert.DoesNotContain("--privileged", unsafeExecutor.BuildRunArgvStateless("unsafe"));
+    }
+
+    [Fact]
+    public async Task Ctor_PassesUnsafeExtraRunArgsVerbatimInBothModesAsync()
+    {
+        // Arrange
+        string[] unsafeArgs = ["--network", "host", "--entrypoint", "/bin/custom"];
+        await using var executor = new DockerShellExecutor(new() { UnsafeExtraRunArgs = unsafeArgs });
+
+        // Act
+        var persistent = executor.BuildRunArgvPersistent();
+        var stateless = executor.BuildRunArgvStateless("stateless");
+
+        // Assert
+        AssertOrderedSubsequence(persistent, unsafeArgs);
+        AssertOrderedSubsequence(stateless, unsafeArgs);
+    }
+
     private static readonly string[] s_expectedInteractive = new[] { "docker", "exec", "-i", "af-shell-x", "bash", "--noprofile", "--norc" };
 
     [Fact]
@@ -169,6 +214,9 @@ public sealed class DockerShellExecutorTests
         var fn = t.AsAIFunction();
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
+        Assert.NotNull(fn.Description);
+        Assert.Contains("configured Docker container", fn.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("has no network", fn.Description, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -210,5 +258,16 @@ public sealed class DockerShellExecutorTests
         });
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => t.RunAsync("rm -rf /"));
+    }
+
+    private static void AssertOrderedSubsequence(IReadOnlyList<string> actual, IReadOnlyList<string> expected)
+    {
+        var start = 0;
+        foreach (var value in expected)
+        {
+            var index = actual.ToList().FindIndex(start, item => string.Equals(item, value, StringComparison.Ordinal));
+            Assert.True(index >= 0, $"Expected '{value}' after index {start - 1}.");
+            start = index + 1;
+        }
     }
 }

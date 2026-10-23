@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.ObjectModel;
@@ -107,7 +108,7 @@ internal sealed class WorkflowExpressionEngine
 
         if (expressionResult.Value is BlankValue)
         {
-            return new EvaluationResult<bool>(default, SensitivityLevel.None);
+            return new EvaluationResult<bool>(default, expressionResult.Sensitivity);
         }
 
         if (expressionResult.Value is not BooleanValue formulaValue)
@@ -327,39 +328,65 @@ internal sealed class WorkflowExpressionEngine
             expression.VariableReference?.ToString() :
             expression.ExpressionText;
 
+        ImmutableArray<string> sensitiveReferences = this.GetSensitiveReferences(expression);
+        SensitivityLevel sensitivity = sensitiveReferences.IsEmpty ? SensitivityLevel.None : SensitivityLevel.Sensitive;
         FormulaValue result = this._state.Engine.Eval(expressionText, options: this._parserOptions);
+
+        if (sensitivity == SensitivityLevel.Sensitive && ContainsError(result))
+        {
+            Trace.TraceWarning(
+                "Expression evaluation returned a blank result for references: {0}.",
+                string.Join(", ", sensitiveReferences));
+            return new(FormulaValue.NewBlank(result.Type), sensitivity);
+        }
 
         if (result is ErrorValue errorValue)
         {
             throw new DeclarativeActionException(errorValue.Format());
         }
 
-        return new(result, this.GetSensitivity(expression));
+        return new(result, sensitivity);
     }
 
-    private SensitivityLevel GetSensitivity(ExpressionBase expression)
+    private static bool ContainsError(FormulaValue value) =>
+        value switch
+        {
+            ErrorValue => true,
+            RecordValue recordValue => recordValue.OriginalFields.Any(field => ContainsError(field.Value)),
+            TableValue tableValue => tableValue.Rows.Any(row => row.IsError || (row.IsValue && ContainsError(row.Value))),
+            _ => false,
+        };
+
+    private ImmutableArray<string> GetSensitiveReferences(ExpressionBase expression)
     {
         if (expression.VariableReference is { VariableName: string variableName })
         {
-            return GetReferenceSensitivity(expression.VariableReference.NamespaceAlias, variableName);
+            return GetReferenceSensitivity(expression.VariableReference.NamespaceAlias, variableName) == SensitivityLevel.Sensitive
+                ? [expression.VariableReference.ToString()]
+                : [];
         }
 
         string? expressionText = expression.ExpressionText;
         if (string.IsNullOrWhiteSpace(expressionText))
         {
-            return SensitivityLevel.None;
+            return [];
         }
 
         CheckResult checkResult = this._state.Engine.Check(expressionText, options: this._parserOptions);
         checkResult.ThrowOnErrors();
 
-        SensitivityLevel sensitivity = SensitivityLevel.None;
+        HashSet<string> sensitiveReferences = new(StringComparer.Ordinal);
         foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(checkResult.Parse.Root))
         {
-            sensitivity = MaxSensitivity(sensitivity, GetReferenceSensitivity(reference.ScopeName, reference.VariableName));
+            if (GetReferenceSensitivity(reference.ScopeName, reference.VariableName) == SensitivityLevel.Sensitive)
+            {
+                sensitiveReferences.Add(reference.ScopeName is null
+                    ? reference.VariableName
+                    : $"{reference.ScopeName}.{reference.VariableName}");
+            }
         }
 
-        return sensitivity;
+        return [.. sensitiveReferences];
 
         SensitivityLevel GetReferenceSensitivity(string? scopeName, string variableName) =>
             scopeName is null && VariableScopeNames.IsValidName(variableName)
