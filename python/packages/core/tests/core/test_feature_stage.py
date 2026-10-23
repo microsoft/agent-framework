@@ -82,6 +82,20 @@ def test_computer_use_content_is_experimental_without_staging_all_content() -> N
     assert "[COMPUTER_USE]" in str(caught[0].message)
 
 
+def test_server_compaction_content_is_experimental() -> None:
+    constructor = Content.from_compaction
+    assert getattr(constructor, "__feature_stage__", None) == "experimental"
+    assert getattr(constructor, "__feature_id__", None) == PublicExperimentalFeature.SERVER_COMPACTION.value
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ExperimentalWarning)
+        content = Content.from_compaction(id="cmp_1", protected_data="state")
+
+    assert content.type == "compaction"
+    assert len(caught) == 1
+    assert "[SERVER_COMPACTION]" in str(caught[0].message)
+
+
 def test_experimental_decorator_accepts_feature_enum() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
