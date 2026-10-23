@@ -8,7 +8,7 @@ and inject them as `AIContextProviders` so the agent can discover and use them a
 
 - Connecting to a Foundry toolbox's MCP endpoint via Streamable HTTP transport
 - Injecting a fresh Azure AI bearer token (`https://ai.azure.com/.default`) on every MCP request
-- Using `AgentSkillsProviderBuilder.UseMcpSkills(client)` to discover skills from the toolbox
+- Using `AgentSkillsProviderBuilder.UseMcpSkills(client)` to discover skills from the toolbox through `skills/list`
 - Injecting the discovered skills into `AIProjectClient.AsAIAgent(...)` via `AIContextProviders`
 - Auto-approving skill tools with `UseToolApproval` and `AgentSkillsProvider.AllToolsAutoApprovalRule`
 
@@ -19,7 +19,7 @@ for a walkthrough of the full approval flow.
 ## Prerequisites
 
 - A Microsoft Foundry project with a toolbox already configured
-- The toolbox MCP endpoint must expose `skill://index.json` with `skill-md` entries (SEP-2640). If the resource is absent, the sample runs but the skills provider will be empty.
+- The toolbox MCP endpoint must declare the `io.modelcontextprotocol/skills` extension and implement `skills/list` and resource reads for the advertised skills. If the extension is not declared, the skills provider will be empty.
 - An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
