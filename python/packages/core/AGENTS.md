@@ -338,6 +338,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   by that continuation, can atomically restore a supplied checkpoint before cancellation, and returns the resulting
   `WorkflowRunResult`. Cancelling a computer request also cancels the other pending requests in that agent's batch,
   retains already resolved sibling evidence in terminal output, and resets its session before new input.
+- **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
+  replacing live state or queues. `WorkflowExecutor` delegates its private validation hook to its child's runner,
+  so each child uses its own response-origin policy and migration metadata stays in the candidate snapshot.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
   `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
   is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless

@@ -654,8 +654,12 @@ async def test_workflow_response_entry_checkpoint_records_response_and_replays()
 
     # Resuming from the response-entry checkpoint replays the continuation and reproduces the output.
     replay_workflow = _build_workflow()
+    validated_requests: list[list[Any]] = []
+    replay_workflow._response_batch_validator = lambda requests: validated_requests.append(list(requests))
     replay_outputs = (await replay_workflow.run(checkpoint_id=response_entry.checkpoint_id)).get_outputs()
     assert replay_outputs == ["approve->yes"]
+    assert [[event.request_id for event in batch] for batch in validated_requests] == [[request_id]]
+    assert validated_requests[0][0].data == "approve"
 
 
 async def test_memory_checkpoint_storage_roundtrip_json_native_types():

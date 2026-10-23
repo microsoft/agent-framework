@@ -7,7 +7,7 @@ import functools
 import inspect
 import logging
 import types
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeVar, overload
 
 from ..observability import create_processing_span
@@ -30,6 +30,8 @@ from ._typing_utils import (
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 logger = logging.getLogger(__name__)
+
+_ResponseBatchValidation = tuple[Callable[[Sequence[WorkflowEvent]], None], Sequence[WorkflowEvent]]
 
 
 # region Executor
@@ -532,6 +534,17 @@ class Executor(RequestInfoMixin, DictConvertible):
     async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
         """Release executor-owned state for a cancelled workflow request."""
         del request_id, ctx
+
+    async def _get_response_validation_batches(
+        self, requests: Sequence[WorkflowEvent]
+    ) -> list[_ResponseBatchValidation]:
+        """Collect delegated response policies without changing pending requests."""
+        del requests
+        return []
+
+    def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
+        """Validate a checkpoint snapshot without changing live executor state."""
+        del state, requests
 
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Hook called when the workflow is being saved to a checkpoint.

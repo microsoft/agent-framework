@@ -3,7 +3,7 @@
 import logging
 import sys
 import types
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -24,7 +24,11 @@ from ._events import (
     WorkflowRunState,
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
-from ._executor import Executor, handler
+from ._executor import (
+    Executor,
+    _ResponseBatchValidation,  # pyright: ignore[reportPrivateUsage]
+    handler,
+)
 from ._request_info_mixin import response_handler
 from ._runner_context import WorkflowMessage
 from ._typing_utils import is_instance_of
@@ -589,6 +593,21 @@ class WorkflowExecutor(Executor):
             # the parent checkpoints.
             "sub_workflow_checkpoint": await self.workflow._runner.build_checkpoint(),  # pyright: ignore[reportPrivateUsage]
         }
+
+    @override
+    async def _get_response_validation_batches(
+        self, requests: Sequence[WorkflowEvent]
+    ) -> list[_ResponseBatchValidation]:
+        pending = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
+        return await self.workflow._get_response_validation_batches([  # pyright: ignore[reportPrivateUsage]
+            pending[request.request_id] for request in requests if request.request_id in pending
+        ])
+
+    @override
+    def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
+        sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
+        if sub_workflow_checkpoint is not None:
+            self.workflow._runner._validate_checkpoint_tree(sub_workflow_checkpoint, requests)  # pyright: ignore[reportPrivateUsage]
 
     @override
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
