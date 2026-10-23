@@ -444,6 +444,11 @@
     <Project Path="samples/05-end-to-end/AspNetAgentAuthorization/RazorWebClient/RazorWebClient.csproj" />
     <Project Path="samples/05-end-to-end/AspNetAgentAuthorization/Service/Service.csproj" />
   </Folder>
+  <Folder Name="/Samples/05-end-to-end/DevUIWithPostgresPersistence/">
+    <File Path="samples/05-end-to-end/DevUIWithPostgresPersistence/README.md" />
+    <Project Path="samples/05-end-to-end/DevUIWithPostgresPersistence/AgentService/DevUIWithPostgresPersistence.AgentService.csproj" />
+    <Project Path="samples/05-end-to-end/DevUIWithPostgresPersistence/AppHost/DevUIWithPostgresPersistence.AppHost.csproj" />
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
