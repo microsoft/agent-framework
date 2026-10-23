@@ -117,13 +117,17 @@ Choose the narrowest boundary:
   receives a function invocation context. Use it for argument checks, authorization context, logging, exception
   handling, or tool-result transformation.
 
-Each delegate receives the input and a `next` delegate:
+The shared-delegate and function-invocation overloads receive a `next` delegate:
 
 1. Inspect or change the input before execution.
 2. Await `next` once, passing the inputs along.
 3. Inspect or transform the result after execution.
 
-Skip `next` only when deliberately terminating the pipeline or returning a complete valid result. Keep state scoped to
+The result-producing agent overload, `Use(runFunc, runStreamingFunc)`, instead receives the inner `AIAgent`. Call
+`innerAgent.RunAsync(...)` in the run callback and `innerAgent.RunStreamingAsync(...)` in the streaming callback; the
+streaming callback returns an `IAsyncEnumerable<AgentResponseUpdate>`, so enumerate and yield the inner updates.
+
+Skip the inner call only when deliberately terminating the pipeline or returning a complete valid result. Keep state scoped to
 the run or session unless cross-run sharing is intentional. Provide both non-streaming and streaming behavior; if only
 the non-streaming delegate is supplied, check how streaming calls are handled.
 

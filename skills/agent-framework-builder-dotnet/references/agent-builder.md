@@ -84,7 +84,9 @@ logical conversation. Without a session, each call is independent.
   unrelated: it controls parallel execution of multiple tool calls within a single run.)
 - Persist with `agent.SerializeSessionAsync(session)` and restore with `agent.DeserializeSessionAsync(json)`. Restore
   with the same agent configuration (providers and state keys) that created the session.
-- Treat persisted session state as sensitive data.
+- Treat persisted session state as sensitive data. It also holds pending tool-approval requests, which the server uses
+  to validate approval responses. Store it server-side in tenant-authorized storage with integrity protection, never
+  accept session JSON from a client, and bound deserialization size.
 - Read [session documentation](https://learn.microsoft.com/agent-framework/concepts/agents/conversations/session) for
   serialization and provider-specific continuation behavior.
 
@@ -98,8 +100,9 @@ Choose one primary history owner:
   identifier that Agent Framework keeps on the session; later turns send new input against that stored conversation
   instead of resending the full transcript.
 - When the service does not manage history and no `ChatHistoryProvider` is configured, `ChatClientAgent` defaults to an
-  `InMemoryChatHistoryProvider` so the session retains history for the current process. Replace it with a persistent
-  provider when history must survive process restarts or scale across instances.
+  `InMemoryChatHistoryProvider`, which keeps messages in the session state. Serializing and restoring the session
+  therefore preserves history across restarts. Use a custom `ChatHistoryProvider` only when history must live in an
+  external store (shared across instances, queried, or too large for session state).
 - Not every provider supports service-managed storage, and continuation and branching behavior varies.
 - Combining service-managed storage with a configured `ChatHistoryProvider` is a conflict. `ChatClientAgentOptions`
   controls the behavior (`ClearOnChatHistoryProviderConflict`, `WarnOnChatHistoryProviderConflict`,

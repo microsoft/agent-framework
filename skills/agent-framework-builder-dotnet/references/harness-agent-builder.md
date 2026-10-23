@@ -23,8 +23,11 @@ Keep only the defaults that affect architecture or safety in working memory; rea
 `HarnessAgentOptions` XML docs for the complete option list.
 
 - Todo list, plan/execute mode, file memory, Agent Skills discovery, tool approval ("don't ask again" rules),
-  OpenTelemetry, per-service-call history persistence, and a hosted web search tool are enabled by default; each has a
-  `Disable...` option.
+  OpenTelemetry, and a hosted web search tool are enabled by default; each has a `Disable...` option.
+- Per-service-call history persistence is always on and has no `Disable...` option. If it must be omitted, compose the
+  agent manually instead of using `HarnessAgent`.
+- The default `HostedWebSearchTool` is not translated by many `IChatClient` providers. Set `DisableWebSearch = true`
+  unless the provider supports it.
 - Compaction applies only when a context-window budget or a custom strategy is supplied; `DisableCompaction` turns it
   off.
 - File access (`FileAccessProvider`), background agents (`BackgroundAgentsProvider`), and looping (`LoopAgent` with
@@ -41,8 +44,12 @@ Keep only the defaults that affect architecture or safety in working memory; rea
 - For hosted or untrusted workloads, disable file memory or supply a tenant-scoped `AgentFileStore` with quotas,
   retention, and server-owned cleanup. Do not rely on a shared default working-directory store.
 - Load skills and background agents only from trusted sources; their content crosses the model and tool boundary.
-- Bound autonomous loops (`MaximumIterationsPerRequest`, evaluator conditions) and stop for unresolved approvals or
-  user input.
+- Bound autonomous loops and stop for unresolved approvals or user input. Two separate limits exist:
+  `MaximumIterationsPerRequest` caps function-invocation iterations inside each inner run, while
+  `LoopAgentOptions.MaxIterations` caps how many times `LoopAgent` repeats. Also use evaluator conditions.
+- `HarnessAgentOptions.BackgroundAgents` creates an internal provider with no quota; child sessions and tasks persist
+  until cleaned up. For hosted use, create and retain the `BackgroundAgentsProvider` yourself, bound how many agents
+  and tasks a session may start, and call `ReleaseSessionAsync` when a session is evicted or disconnects.
 - Treat shell command filters as a usability guard, not a security boundary. The host owns sandboxing and executor
   lifecycle.
 
