@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import uuid
+from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, TypeAlias, TypeVar
@@ -311,8 +312,6 @@ class EdgeGroup(DictConvertible):
     id: str
     type: str
     edges: list[Edge]
-
-    from builtins import type as builtin_type
 
     _TYPE_REGISTRY: ClassVar[dict[str, builtin_type[EdgeGroup]]] = {}
 

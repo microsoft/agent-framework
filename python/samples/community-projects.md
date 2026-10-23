@@ -29,4 +29,5 @@ the Agent Framework Python SDK. Entries are reviewed against the
 
 | Name | Brief description | Scenarios | Project | Issues |
 | --- | --- | --- | --- | --- |
+| ACGS | Function middleware that checks each function call's name and arguments against an ACGS rule set before it runs, and requests tool approval when a rule calls for review. | Block function calls by rule; human review of flagged calls through tool approvals; refuse runs that offer tools the middleware cannot check | [agent-framework-acgs](https://github.com/acgs-ai/agent-framework-acgs) | [Open an issue](https://github.com/acgs-ai/agent-framework-acgs/issues/new) |
 | Tracekit | Function middleware that checks each function call against a policy before it runs and records calls and results in a signed, hash-chained log. | Allow or deny function calls by policy; human approval of held calls; offline-verifiable run records | [tracekit-ai](https://github.com/Cygnux-Labs/Tracekit/blob/main/docs/integrations/microsoft-agent-framework.md) | [Open an issue](https://github.com/Cygnux-Labs/Tracekit/issues/new/choose) |
