@@ -231,8 +231,12 @@ class TestToEvalItem:
         agent.context_providers.clear()
         agent.default_options["tools"] = []
         agent.mcp_tools.clear()
-        assert _to_eval_item(query="Use the skill", response=response).tools == item.tools
-        assert _to_eval_item(query="Use the skill", response=response, agent=agent).tools == item.tools
+        for supplied_agent in (None, agent):
+            captured = _to_eval_item(query="Use the skill", response=response, agent=supplied_agent).tools
+            assert captured is not None
+            assert {tool.name: tool.parameters() for tool in captured} == {
+                tool.name: tool.parameters() for tool in item.tools
+            }
         explicit_tool = FunctionTool(name="explicit", func=lambda: "")
         assert _to_eval_item(query="Test", response=response, tools=[explicit_tool]).tools == [explicit_tool]
         assert _to_eval_item(query="Test", response=response, tools=[]).tools is None
@@ -241,7 +245,7 @@ class TestToEvalItem:
         assert "_evaluation_tools" not in serialized
         assert AgentResponse.from_json(response.to_json()).messages[0].contents[0].name == "load_skill"
         restored = pickle.loads(pickle.dumps(response))
-        assert restored._evaluation_tools is None
+        assert not hasattr(restored, "_evaluation_tools")
         for restored_response in [
             AgentResponse.from_dict(serialized),
             AgentResponse.from_json(response.to_json()),
@@ -308,6 +312,8 @@ class TestToEvalItem:
             response_stream = agent.run("Test", stream=True)
             updates = [AgentResponseUpdate.from_json(update.to_json()) async for update in response_stream]
             response = await response_stream.get_final_response()
+            assert sum("agent_framework.evaluation" in (update.additional_properties or {}) for update in updates) == 1
+            assert "agent_framework.evaluation" in (updates[-1].additional_properties or {})
             restored_item = _to_eval_item(query="Test", response=AgentResponse.from_updates(updates))
             assert restored_item.tools is not None
             assert [tool.name for tool in restored_item.tools] == ["load", "finish"]
@@ -389,7 +395,7 @@ class TestToEvalItem:
         else:
             restored = pickle.loads(pickle.dumps(response))
 
-        assert restored.additional_properties["agent_framework.evaluation"] == {"version": 1, "tools": []}
+        assert restored.additional_properties["agent_framework.evaluation"] == {}
         assert _to_eval_item(query="No tools", response=restored, agent=agent).tools is None
 
     @pytest.mark.parametrize("replace_same_name", [False, True])
@@ -506,19 +512,15 @@ class TestToEvalItem:
         assert captured.additional_properties is None
         metadata = response.to_dict()["additional_properties"]["agent_framework.evaluation"]
         assert metadata == {
-            "version": 1,
-            "tools": [
-                {
-                    "name": "weather",
-                    "description": "Original description",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {"city": {"type": "string", "enum": ["Seattle", "Paris"]}},
-                        "required": ["city"],
-                        "additionalProperties": False,
-                    },
-                }
-            ],
+            "weather": {
+                "description": "Original description",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string", "enum": ["Seattle", "Paris"]}},
+                    "required": ["city"],
+                    "additionalProperties": False,
+                },
+            },
         }
         assert "not-in-snapshot" not in response.to_json()
 
@@ -536,22 +538,9 @@ class TestToEvalItem:
                 func=lambda city: city,
             )
             response = await Agent(client=chat_client_base, tools=[tool]).run("Weather?")
-            cached_tools = response._evaluation_tools
-            assert cached_tools is not None
-            copied_tool = deepcopy(tool)
-            assert copied_tool.func is tool.func
-            assert copied_tool._invocation_duration_histogram is tool._invocation_duration_histogram
-
             copied = deepcopy(response)
 
-            assert copied._evaluation_tools is not None
-            assert copied._evaluation_tools is not cached_tools
-            assert copied._evaluation_tools[0] is not cached_tools[0]
-            assert (
-                copied._evaluation_tools[0]._invocation_duration_histogram
-                is cached_tools[0]._invocation_duration_histogram
-            )
-            assert response._evaluation_tools is cached_tools
+            assert not hasattr(copied, "_evaluation_tools")
             assert (
                 copied.additional_properties["agent_framework.evaluation"]
                 == (response.additional_properties["agent_framework.evaluation"])
@@ -564,9 +553,11 @@ class TestToEvalItem:
             assert item.tools[0].parameters() == tool.parameters()
             assert item.tools[0].declaration_only
             item.tools[0].parameters()["properties"]["city"]["type"] = "number"
-            copied.additional_properties["agent_framework.evaluation"]["tools"].clear()
-            assert cached_tools[0].parameters()["properties"]["city"]["type"] == "string"
-            assert len(response.additional_properties["agent_framework.evaluation"]["tools"]) == 1
+            assert copied.additional_properties["agent_framework.evaluation"]["weather"]["input_schema"] == (
+                tool.parameters()
+            )
+            copied.additional_properties["agent_framework.evaluation"].clear()
+            assert len(response.additional_properties["agent_framework.evaluation"]) == 1
         finally:
             meter_provider.shutdown()
 
@@ -574,22 +565,13 @@ class TestToEvalItem:
         "metadata",
         [
             None,
-            {},
-            {"version": 2, "tools": []},
-            {"version": True, "tools": []},
-            {"version": 1, "tools": {}},
-            {"version": 1, "tools": [None]},
-            {"version": 1, "tools": [{"name": "", "description": "", "input_schema": {}}]},
-            {"version": 1, "tools": [{"name": "weather", "description": None, "input_schema": {}}]},
-            {"version": 1, "tools": [{"name": "weather", "description": "", "input_schema": []}]},
-            {"version": 1, "tools": [{"name": "weather", "description": "", "input_schema": {"default": object()}}]},
-            {
-                "version": 1,
-                "tools": [
-                    {"name": "weather", "description": "", "input_schema": {}},
-                    {"name": "weather", "description": "", "input_schema": {}},
-                ],
-            },
+            [],
+            {"weather": None},
+            {"": {"description": "", "input_schema": {}}},
+            {1: {"description": "", "input_schema": {}}},
+            {"weather": {"description": None, "input_schema": {}}},
+            {"weather": {"description": "", "input_schema": []}},
+            {"weather": {"description": "", "input_schema": {"default": object()}}},
         ],
     )
     def test_invalid_serialized_tool_metadata_raises(self, metadata: Any) -> None:
@@ -604,7 +586,7 @@ class TestToEvalItem:
     def test_serialized_empty_definitions_do_not_fall_back_to_agent_tools(self) -> None:
         response = AgentResponse(
             additional_properties={
-                "agent_framework.evaluation": {"version": 1, "tools": []},
+                "agent_framework.evaluation": {},
             }
         )
         agent = MagicMock()
@@ -701,7 +683,7 @@ class TestEvaluateAgentTools:
         if empty_stream:
             assert restored.messages == final.messages == []
         assert _to_eval_item(query="No tools", response=restored, agent=agent).tools is None
-        assert restored.additional_properties["agent_framework.evaluation"] == {"version": 1, "tools": []}
+        assert restored.additional_properties["agent_framework.evaluation"] == {}
 
     async def test_loop_aggregation_uses_latest_same_name_definition(self, chat_client_base: Any) -> None:
         class ChangingToolsProvider(ContextProvider):

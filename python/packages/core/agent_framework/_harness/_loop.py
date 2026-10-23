@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from copy import copy
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import BaseModel, Field
@@ -43,7 +42,6 @@ from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware, MiddlewareTermination
 from .._sessions import SessionContext
 from .._types import (
-    _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
@@ -52,12 +50,12 @@ from .._types import (
     ResponseStream,
     UsageDetails,
     add_usage_details,
+    merge_additional_properties,
     normalize_messages,
 )
 
 if TYPE_CHECKING:
     from .._clients import SupportsChatGetResponse
-    from .._tools import FunctionTool
 
 __all__ = [
     "AgentLoopMiddleware",
@@ -547,7 +545,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         # injected "nudge" messages, used to build the combined response when return_final_only=False.
         aggregated: list[Message] = []
         aggregated_usage: UsageDetails | None = None
-        evaluation_tools: list[FunctionTool] | None = None
+        additional_properties: dict[str, Any] = {}
         final_result: AgentResponse | None = None
         stamped_options = dict(context.options) if context.options is not None else {}
         stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
@@ -566,10 +564,7 @@ class AgentLoopMiddleware(AgentMiddleware):
 
                 final_result = result
                 aggregated.extend(result.messages)
-                if (result_tools := result._get_evaluation_tools()) is not None:  # pyright: ignore[reportPrivateUsage]
-                    if evaluation_tools is None:
-                        evaluation_tools = []
-                    evaluation_tools.extend(result_tools)
+                additional_properties = merge_additional_properties(additional_properties, result.additional_properties)
                 if result.usage_details is not None:
                     aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
 
@@ -627,8 +622,7 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
-            if evaluation_tools is not None:
-                context.result._set_evaluation_tools(evaluation_tools)  # pyright: ignore[reportPrivateUsage]
+            context.result.additional_properties = additional_properties
         await self._fire_turn_scoped_after_providers(
             context,
             context.result if isinstance(context.result, AgentResponse) else final_result,
@@ -650,7 +644,6 @@ class AgentLoopMiddleware(AgentMiddleware):
             iteration = 0
             work_iterations = 0
             progress: list[str] = []
-            evaluation_tools: dict[str, FunctionTool] = {}
             stamped_options = dict(context.options) if context.options is not None else {}
             stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
             context.options = stamped_options
@@ -667,22 +660,6 @@ class AgentLoopMiddleware(AgentMiddleware):
 
                         async with inner:
                             async for update in inner:
-                                if (
-                                    update.additional_properties is not None
-                                    and _EVALUATION_TOOLS_METADATA_KEY in update.additional_properties
-                                ):
-                                    evaluation_snapshot = AgentResponse(
-                                        additional_properties=update.additional_properties
-                                    )
-                                    tools = evaluation_snapshot._get_evaluation_tools()  # pyright: ignore[reportPrivateUsage]
-                                    if tools is not None:
-                                        evaluation_tools.update({tool.name: tool for tool in tools})
-                                        evaluation_snapshot._set_evaluation_tools(  # pyright: ignore[reportPrivateUsage]
-                                            list(evaluation_tools.values())
-                                        )
-                                        # Accumulate only emitted snapshots, not the inner final response.
-                                        update = copy(update)
-                                        update.additional_properties = evaluation_snapshot.additional_properties
                                 yield update
 
                             holder["final"] = await inner.get_final_response()

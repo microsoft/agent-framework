@@ -634,8 +634,6 @@ class FunctionTool(SerializationMixin):
     """
 
     INJECTABLE: ClassVar[set[str]] = {"func"}
-    # Telemetry instruments are shared runtime resources and may contain non-copyable locks.
-    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation", "_invocation_duration_histogram"}
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {
         "additional_properties",
         "input_model",

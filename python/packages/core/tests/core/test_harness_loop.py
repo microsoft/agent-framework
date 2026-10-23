@@ -339,6 +339,32 @@ async def test_non_streaming_return_final_only_returns_last_response() -> None:
     assert "first answer" not in response.text
 
 
+@pytest.mark.parametrize("return_final_only", [False, True])
+async def test_non_streaming_loop_preserves_namespaced_metadata(
+    chat_client_base: MockBaseChatClient, return_final_only: bool
+) -> None:
+    first_metadata = {"custom": {"first": 1, "shared": {"old": True}}, "status": "first"}
+    final_metadata = {"custom": {"last": 2, "shared": {"new": True}}, "status": "last"}
+    chat_client_base.run_responses = [
+        ChatResponse(messages=[Message("assistant", ["First"])], additional_properties=first_metadata),
+        ChatResponse(messages=[Message("assistant", ["Last"])], additional_properties=final_metadata),
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=2, return_final_only=return_final_only)],
+    )
+
+    response = await agent.run("Test")
+
+    expected = {"last": 2, "shared": {"new": True}}
+    if not return_final_only:
+        expected["first"] = 1
+    assert response.additional_properties["custom"] == expected
+    assert response.additional_properties["status"] == "last"
+    assert first_metadata == {"custom": {"first": 1, "shared": {"old": True}}, "status": "first"}
+    assert final_metadata == {"custom": {"last": 2, "shared": {"new": True}}, "status": "last"}
+
+
 # region feedback loop
 
 

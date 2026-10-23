@@ -20,6 +20,8 @@ from pydantic import create_model
 from agent_framework import (
     DEFAULT_TOOL_APPROVAL_SOURCE_ID,
     Agent,
+    AgentContext,
+    AgentMiddleware,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
@@ -470,7 +472,11 @@ async def test_policy_approval_resume_supports_enum_arguments(
         resumed_stream = agent.run(request.to_function_approval_response(True), stream=True, session=session)
         resumed_updates = [update async for update in resumed_stream]
         resumed = await resumed_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in resumed_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents])
+            for update in resumed_updates
+            if update.contents
+        ] == [
             ("tool", ["function_result"]),
             ("assistant", ["text"]),
         ]
@@ -582,7 +588,9 @@ async def test_changed_hidden_snapshot_requires_visible_second_approval(
         )
         stale_updates = [update async for update in stale_stream]
         stale = await stale_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in stale_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents]) for update in stale_updates if update.contents
+        ] == [
             ("assistant", ["function_approval_request"]),
         ]
     else:
@@ -623,7 +631,11 @@ async def test_changed_hidden_snapshot_requires_visible_second_approval(
         )
         approved_updates = [update async for update in approved_stream]
         approved = await approved_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in approved_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents])
+            for update in approved_updates
+            if update.contents
+        ] == [
             ("tool", ["function_result"]),
             ("assistant", ["text"]),
         ]
@@ -713,7 +725,9 @@ async def test_principal_change_requires_visible_second_approval(
         )
         stale_updates = [update async for update in stale_stream]
         stale = await stale_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in stale_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents]) for update in stale_updates if update.contents
+        ] == [
             ("assistant", ["function_approval_request"]),
         ]
     else:
@@ -737,7 +751,11 @@ async def test_principal_change_requires_visible_second_approval(
         )
         approved_updates = [update async for update in approved_stream]
         approved = await approved_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in approved_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents])
+            for update in approved_updates
+            if update.contents
+        ] == [
             ("tool", ["function_result"]),
             ("assistant", ["text"]),
         ]
@@ -1203,7 +1221,7 @@ async def test_approval_resume_returns_result_without_mutating_inputs(
             second_stream = agent.run(approval_message, stream=True, session=session)
             second_updates = [update async for update in second_stream]
             second_response = await second_stream.get_final_response()
-            assert [[content.type for content in update.contents] for update in second_updates] == [
+            assert [[content.type for content in update.contents] for update in second_updates if update.contents] == [
                 ["function_result"],
                 ["text"],
             ]
@@ -2876,7 +2894,7 @@ async def test_tool_approval_middleware_queues_streamed_approval_requests(
     final_updates = [update async for update in final_stream]
     final_response = await final_stream.get_final_response()
 
-    assert final_updates[-1].text == "done"
+    assert "".join(update.text for update in final_updates) == "done"
     assert final_response.text == "done"
     assert calls == 2
 
@@ -3268,6 +3286,57 @@ async def test_streaming_auto_approved_tool_preserves_structured_value(
     assert calls == 1
     assert isinstance(response.value, Answer)
     assert response.value.answer == "42"
+
+
+async def test_streaming_filtered_approval_preserves_response_metadata(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    class StampApprovalMetadata(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+            assert isinstance(context.result, ResponseStream)
+
+            def stamp(update: AgentResponseUpdate) -> AgentResponseUpdate:
+                if any(content.type == "function_approval_request" for content in update.contents):
+                    update.additional_properties = {"custom": {"approval": "retained"}}
+                return update
+
+            context.result = context.result.with_transform_hook(stamp)
+
+    executions: list[str] = []
+
+    @tool(approval_mode="always_require")
+    def guarded() -> str:
+        executions.append("called")
+        return "Done"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded],
+        middleware=[
+            ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: True]),
+            StampApprovalMetadata(),
+        ],
+    )
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call("call_1", "guarded", arguments={})],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Finished")])],
+    ]
+
+    stream = agent.run("Test", stream=True, session=agent.create_session())
+    updates = [AgentResponseUpdate.from_json(update.to_json()) async for update in stream]
+    final = await stream.get_final_response()
+
+    for response in (final, AgentResponse.from_updates(updates)):
+        assert response.additional_properties["custom"] == {"approval": "retained"}
+        assert not _approval_requests(response.messages)
+        assert all(message.contents for message in response.messages)
+    assert executions == ["called"]
 
 
 async def test_streaming_auto_approved_tool_preserves_value_when_preamble_text_coalesces(

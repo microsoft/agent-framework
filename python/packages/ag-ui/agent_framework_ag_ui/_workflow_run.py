@@ -1539,6 +1539,8 @@ async def run_workflow_stream(
                 # message. "output" keeps the terminal-message behavior.
                 is_intermediate = event_type in {"intermediate", "data"}
                 output_payload = getattr(event, "data", None)
+                if isinstance(output_payload, AgentResponseUpdate) and not output_payload.contents:
+                    continue
                 if isinstance(output_payload, BaseEvent):
                     yield output_payload
                     continue

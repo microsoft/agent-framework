@@ -359,9 +359,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   the shim.
 - Core orchestration builds `EvalItem` instances through private helpers; callers needing manual control construct
   the public `EvalItem` directly.
-- Agent responses retain schema-only tool snapshots, including context-provider tools, under the reserved
-  `additional_properties["agent_framework.evaluation"]` key for evaluation after serialization; executable callbacks
-  are not persisted. `evaluate_agent(tools=...)` overrides discovery without changing agent execution.
+- Agent responses retain schema-only tool snapshots keyed by tool name, including context-provider tools, under
+  `additional_properties["agent_framework.evaluation"]` for evaluation after serialization; executable callbacks are
+  not persisted. `evaluate_agent(tools=...)` overrides discovery without changing agent execution.
 
 ## Built-in Providers
 

@@ -1546,7 +1546,7 @@ async def test_context_provider_receives_full_agent_response_non_streaming(
     assert response.continuation_token == {"token": "next"}
     assert response.additional_properties == {
         "provider": "test",
-        "agent_framework.evaluation": {"version": 1, "tools": []},
+        "agent_framework.evaluation": {},
     }
     assert response.raw_representation is raw_response
 
@@ -1638,7 +1638,7 @@ async def test_context_provider_receives_full_agent_response_streaming(
     assert response.continuation_token == {"token": "stream-next"}
     assert response.additional_properties == {
         "provider": "stream-test",
-        "agent_framework.evaluation": {"version": 1, "tools": []},
+        "agent_framework.evaluation": {},
     }
     assert response.raw_representation == [raw_update]
 
