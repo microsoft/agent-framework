@@ -206,7 +206,7 @@ class TestResultOverrideMiddleware:
         async for update in agent.run(normal_messages, stream=True):
             normal_updates.append(update)
 
-        assert len(normal_updates) == 2
+        assert len([update for update in normal_updates if update.contents]) == 2
         assert normal_updates[0].text == "test streaming response "
         assert normal_updates[1].text == "another update"
 

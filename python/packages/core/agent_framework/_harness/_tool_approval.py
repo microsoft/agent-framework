@@ -562,6 +562,8 @@ class ToolApprovalMiddleware(AgentMiddleware):
                         remaining_update = copy.copy(update)
                         remaining_update.contents = remaining_contents
                         yield remaining_update
+                    elif update.additional_properties:
+                        yield AgentResponseUpdate(additional_properties=update.additional_properties)
                 if not all_auto_approved or has_other_user_input:
                     return
                 context.messages = []
