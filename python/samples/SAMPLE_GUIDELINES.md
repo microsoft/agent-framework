@@ -149,15 +149,22 @@ Try to over-document the samples. This includes comments in the code, README.md 
 For the getting started samples and the concept samples, we should have the following:
 
 1. A README.md file is included in each set of samples that explains the purpose of the samples and the setup required to run them.
-2. A summary should be included underneath the imports that explains the purpose of the sample and required components/concepts to understand the sample. For example:
+2. The module docstring should appear after the copyright header and optional metadata comments, before any future
+   imports or other imports. It should explain the purpose of the sample and the required components or concepts. For
+   example:
 
     ```python
+    # Copyright (c) Microsoft. All rights reserved.
+
+    """Demonstrate a chatbot built from an agent and a chat client.
+
+    The agent manages instructions and conversation state. The chat client
+    generates responses to user messages.
     """
-    This sample shows how to create a chatbot. This sample uses the following two main components:
-    - a ChatCompletionService: This component is responsible for generating responses to user messages.
-    - a ChatHistory: This component is responsible for keeping track of the chat history.
-    The chatbot in this sample is called Mosscap, who responds to user messages with long flowery prose.
-    """
+
+    from __future__ import annotations
+
+    import asyncio
     ```
 
 3. Mark the code with comments to explain the purpose of each section of the code. For example:

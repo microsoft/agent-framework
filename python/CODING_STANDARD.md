@@ -398,7 +398,7 @@ Tests are behavior-first. Coverage is a backstop, not the objective.
 - Parameterized reusable setup SHOULD use a fixture that returns a callable factory.
 - Fixtures MUST be consumed through pytest injection, not imported from `conftest.py`.
 - Non-fixture helpers MUST live in a normal helper module and be imported explicitly.
-- Fixture names SHOULD describe the provided value or capability, such as `client`, `request`, or
+- Fixture names SHOULD describe the provided value or capability, such as `client`, `test_request`, or
   `configured_agent`.
 
 ### Integration Tests
