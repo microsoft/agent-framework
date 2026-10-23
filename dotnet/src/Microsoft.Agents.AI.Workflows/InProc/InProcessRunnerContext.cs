@@ -47,7 +47,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         object? existingOwnershipSignoff = null,
         bool subworkflow = false,
         bool enableConcurrentRuns = false,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        string? workflowSessionId = null)
     {
         if (enableConcurrentRuns)
         {
@@ -62,6 +63,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         this._workflow = workflow;
         this._sessionId = sessionId;
+        this.WorkflowSessionId = workflowSessionId ?? sessionId;
 
         this._edgeMap = new(this, this._workflow, stepTracer);
         this._outputFilter = new(workflow);
@@ -71,6 +73,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.OutgoingEvents = outgoingEvents;
     }
     public WorkflowTelemetryContext TelemetryContext => this._workflow.TelemetryContext;
+
+    internal string WorkflowSessionId { get; }
 
     public IExternalRequestSink RegisterPort(string executorId, RequestPort port)
     {
@@ -349,8 +353,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private sealed class BoundWorkflowContext(
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
-        Dictionary<string, string>? traceContext) : IWorkflowContext
+        Dictionary<string, string>? traceContext) : IWorkflowContext, IWorkflowSessionContext
     {
+        public string SessionId => RunnerContext.WorkflowSessionId;
+
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)

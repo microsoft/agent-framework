@@ -392,12 +392,13 @@ public sealed class RootExecutorTests
             };
         TestRootExecutor executor = new(options);
         Mock<IWorkflowContext> sourceContext = new(MockBehavior.Strict);
+        sourceContext.As<IWorkflowSessionContext>().SetupGet(c => c.SessionId).Returns("test-session");
         sourceContext.Setup(c => c.QueueStateUpdateAsync("ALLOWED", It.IsAny<object?>(), VariableScopeNames.Environment, It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask));
         sourceContext.Setup(c => c.QueueStateUpdateAsync("ALLOWED", SensitivityLevel.Sensitive, WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Environment), It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask));
 
-        DeclarativeWorkflowContext context = new(sourceContext.Object, executor.Session.State);
+        DeclarativeWorkflowContext context = await DeclarativeWorkflowContext.CreateAsync(sourceContext.Object, executor.Session.State);
 
         // Act
         await executor.InitializeAsync(context, "ALLOWED", "HIDDEN");
@@ -484,8 +485,9 @@ public sealed class RootExecutorTests
             {
                 await base.OnCheckpointRestoredAsync(context, cancellationToken);
             }
-            EvaluationResult<string?> result = await new DeclarativeWorkflowContext(context, this._session.State)
-                .EvaluateValueWithSensitivityAsync<string>("Local.TestValue", cancellationToken);
+            DeclarativeWorkflowContext declarativeContext =
+                await DeclarativeWorkflowContext.CreateAsync(context, this._session.State, cancellationToken);
+            EvaluationResult<string?> result = await declarativeContext.EvaluateValueWithSensitivityAsync<string>("Local.TestValue", cancellationToken);
             this.RestoredValue = result.Value;
         }
 
