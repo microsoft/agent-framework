@@ -48,7 +48,7 @@ from uuid import UUID, uuid4
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from opentelemetry.util.types import AttributeValue
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
+from pydantic import BaseModel, Field, PlainSerializer, TypeAdapter, ValidationError, WrapSerializer, create_model
 from pydantic_core import to_jsonable_python
 
 from ._serialization import SerializationMixin
@@ -500,6 +500,39 @@ _ToolParameterFormat: TypeAlias = Literal["compact", "json"]
 _ToolDescriptionFormat: TypeAlias = _ToolParameterFormat | Mapping[str, _ToolParameterFormat]
 _NormalizedToolDescriptionFormat: TypeAlias = _ToolParameterFormat | dict[str, _ToolParameterFormat]
 _TOOL_DESCRIPTION_FORMAT_ERROR = "tool_description_format must be 'compact', 'json', or a tool-name mapping."
+# model_dump's fallback (str for values JSON mode doesn't know) only exists on newer Pydantic 2 versions.
+_MODEL_DUMP_JSON_FALLBACK: dict[str, Any] = (
+    {"fallback": str} if "fallback" in inspect.signature(BaseModel.model_dump).parameters else {}
+)
+
+
+def _has_field_serializer(model_type: type[BaseModel], name: str) -> bool:
+    """Whether a model field has its own serializer, from a decorator or an annotation."""
+    decorators = model_type.__pydantic_decorators__.field_serializers.values()
+    if any(name in decorator.info.fields or "*" in decorator.info.fields for decorator in decorators):
+        return True
+    field = model_type.model_fields.get(name)
+    return field is not None and any(
+        isinstance(metadata, (PlainSerializer, WrapSerializer)) for metadata in field.metadata
+    )
+
+
+def _escape_invalid_utf8(value: Any) -> Any:
+    """Replace bytes that aren't valid UTF-8 with their str() form, inside models, dicts and sequences too."""
+    if isinstance(value, bytes):
+        try:
+            value.decode("utf-8")
+        except UnicodeDecodeError:
+            return str(value).encode()
+        return value
+    if isinstance(value, BaseModel):
+        return value.model_copy(update={name: _escape_invalid_utf8(item) for name, item in value.__dict__.items()})
+    if isinstance(value, dict):
+        dict_value = cast(dict[object, object], value)
+        return {key: _escape_invalid_utf8(item) for key, item in dict_value.items()}
+    if type(value) in (list, tuple, set, frozenset):
+        return type(value)(_escape_invalid_utf8(item) for item in value)
+    return value
 
 
 def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
@@ -1372,12 +1405,79 @@ class FunctionTool(SerializationMixin):
         if isinstance(value, Content):
             return value.to_dict(exclude={"raw_representation", "additional_properties"})
         if isinstance(value, BaseModel):
-            return value.model_dump()
+            return FunctionTool._dump_model(value)
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
             return value.text
         return value
+
+    @staticmethod
+    def _dump_model(model: BaseModel) -> Any:
+        """Dump a Pydantic model in JSON mode, falling back to python mode only for the values that need it.
+
+        JSON mode applies enum, datetime and UUID encoding and JSON-only field serializers. When it
+        fails (bytes that aren't valid UTF-8, or an arbitrary type on Pydantic versions without
+        ``fallback``), each field is dumped in JSON mode on its own and only a failing field falls
+        back. Models inside a failing field, directly or in a list or dict, are dumped the same way,
+        so their JSON serializers and excluded fields still apply. A failing field with its own
+        serializer is dumped in JSON mode again with its invalid UTF-8 bytes escaped, so the
+        serializer still runs, and is left out if that fails too. Excluded fields stay out either
+        way, unlike the str(result) fallback in invoke.
+        """
+        try:
+            return model.model_dump(mode="json", **_MODEL_DUMP_JSON_FALLBACK)
+        except ValueError:
+            pass
+        # The python-mode dump gives the serialized field names without the excluded ones. The class's
+        # model_computed_fields can't be used for that, it's a property on Pydantic 2.0.
+        python_dump = model.model_dump(by_alias=False)
+        if not isinstance(python_dump, dict):
+            return model.model_dump()
+        model_type = type(model)
+        dumped: dict[str, Any] = {}
+        for name in python_dump:
+            try:
+                dumped.update(model.model_dump(mode="json", include={name}, **_MODEL_DUMP_JSON_FALLBACK))
+                continue
+            except ValueError:
+                pass
+            value = getattr(model, name, None)
+            if _has_field_serializer(model_type, name):
+                # The python-mode value would skip the field's serializer, and with it any redaction it does.
+                escaped = model.model_copy(update={name: _escape_invalid_utf8(value)})
+                try:
+                    dumped.update(escaped.model_dump(mode="json", include={name}, **_MODEL_DUMP_JSON_FALLBACK))
+                except ValueError:
+                    logger.warning(
+                        "Leaving %s.%s out of the tool result: its serializer's output can't be encoded as JSON.",
+                        model_type.__name__,
+                        name,
+                    )
+                continue
+            for key, python_value in model.model_dump(include={name}).items():
+                if isinstance(value, (BaseModel, dict, list, tuple, set, frozenset)):
+                    dumped[key] = FunctionTool._dump_fallback_value(value)
+                else:
+                    dumped[key] = python_value
+        return dumped
+
+    @staticmethod
+    def _dump_fallback_value(value: Any) -> Any:
+        """Dump a field value JSON mode could not encode, keeping JSON mode for what inside it can be."""
+        if isinstance(value, BaseModel):
+            return FunctionTool._dump_model(value)
+        if isinstance(value, dict):
+            dict_value = cast(dict[object, object], value)
+            return {key: FunctionTool._dump_fallback_value(item) for key, item in dict_value.items()}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            items = cast(Iterable[object], value)
+            return [FunctionTool._dump_fallback_value(item) for item in items]
+        try:
+            return to_jsonable_python(value)
+        except ValueError:
+            # parse_result's json.dumps(default=str) turns it into a string
+            return value
 
     @staticmethod
     def parse_result(result: Any) -> list[Content]:
