@@ -368,6 +368,7 @@ cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 - **Complete auditability**: All security events logged
 
 The system hides FIDES-labeled untrusted tool output from the LLM context and policy-checks tool calls against the
-cumulative security state before execution. Caller-replayed and history-provider assistant/tool messages conservatively
-reconstruct missing FIDES state, while restored state remains authoritative; trusted non-history context providers
-remain responsible for the data they inject.
+cumulative security state before execution. Newly supplied assistant/tool messages are conservatively labeled even
+when state was restored. History-provider messages reconstruct missing state, while restored state remains
+authoritative for unstamped stored history; trusted non-history context providers remain responsible for the data they
+inject.

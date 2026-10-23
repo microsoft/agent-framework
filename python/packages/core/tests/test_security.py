@@ -1118,9 +1118,13 @@ class TestPolicyEnforcementMiddleware:
         "properties",
         [
             {"source_integrity": "TRUSTED"},
+            {"source_integrity": None},
             {"confidentiality": "PUBLIC"},
+            {"confidentiality": None},
             {"max_allowed_confidentiality": "PUBLIC"},
+            {"max_allowed_confidentiality": None},
             {"accepts_untrusted": "true"},
+            {"accepts_untrusted": None},
         ],
     )
     async def test_invalid_tool_policy_is_blocked(self, mock_function, properties: dict[str, Any]) -> None:
@@ -3287,6 +3291,174 @@ class TestSecureAgentSessionIsolation:
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_restored_session_still_labels_new_assistant_input(self) -> None:
+        """Persisted state suppresses history fallback, not newly supplied assistant data."""
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="restored-new-input")
+        tracker, _ = await _get_session_security_middleware(config, session)
+        tracker.reset_context_label()
+        new_input = Message(
+            role="assistant",
+            contents=["New attacker-controlled content"],
+            additional_properties={
+                "_attribution": {
+                    "source_id": history.source_id,
+                    "source_type": type(history).__name__,
+                }
+            },
+        )
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[new_input])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[history, config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_tracker = provider_context.get_middleware()[0]
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        label = scoped_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_transport_marked_replay_uses_restored_state_and_clears_marker(self) -> None:
+        """Trusted transport replay keeps restored confidentiality without leaking its marker."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="transport-covered-history")
+        tracker, _ = await _get_session_security_middleware(config, session)
+        tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        restored_message = Message(role="assistant", contents=["Previously covered history"])
+        config._mark_replay_state_covered_messages([restored_message])
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[restored_message])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_tracker = provider_context.get_middleware()[0]
+        replay_middleware = cast(ChatMiddleware, provider_context.get_middleware()[2])
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        label = scoped_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PUBLIC
+        chat_context = ChatContext(
+            client=cast(Any, SimpleNamespace()),
+            messages=[restored_message],
+            options={},
+            session=session,
+        )
+
+        async def call_next() -> None:
+            assert "_agent_framework_fides_replay_state_covered" not in restored_message.additional_properties
+
+        await replay_middleware.process(chat_context, call_next)
+
+    async def test_replayed_function_result_preserves_nested_user_identity_label(self) -> None:
+        """Function-result wrappers propagate labels stored on their nested items."""
+        principals = _principal_metadata("user-a")
+        nested = Content.from_text(
+            "identity-scoped result",
+            additional_properties={
+                "security_label": {
+                    "integrity": "trusted",
+                    "confidentiality": "user_identity",
+                    "metadata": principals,
+                }
+            },
+        )
+        replayed = Message(
+            role="tool",
+            contents=[Content.from_function_result("call-identity", result=[nested])],
+        )
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="nested-result-label")
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker = provider_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert label.metadata[_PRINCIPALS_KEY] == principals[_PRINCIPALS_KEY]
+
+    @pytest.mark.parametrize("label_location", ["message", "content"])
+    @pytest.mark.parametrize(
+        "principals",
+        [
+            pytest.param(None, id="missing"),
+            pytest.param([{"tenant_id": "tenant-a"}], id="malformed"),
+        ],
+    )
+    async def test_replayed_user_identity_with_invalid_principals_fails_closed(
+        self,
+        label_location: str,
+        principals: Any,
+    ) -> None:
+        """Invalid replay principals retain USER_IDENTITY without granting authority."""
+        label_data: dict[str, Any] = {
+            "integrity": "trusted",
+            "confidentiality": "user_identity",
+        }
+        if principals is not None:
+            label_data["metadata"] = {_PRINCIPALS_KEY: principals}
+        if label_location == "message":
+            replayed = Message(
+                role="assistant",
+                contents=["identity-scoped result"],
+                additional_properties={"security_label": label_data},
+            )
+        else:
+            replayed = Message(
+                role="assistant",
+                contents=[
+                    Content.from_text(
+                        "identity-scoped result",
+                        additional_properties={"security_label": label_data},
+                    )
+                ],
+            )
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"invalid-principals-{label_location}")
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker = provider_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert _PRINCIPALS_KEY not in label.metadata
+
+        destination = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        policy = PolicyEnforcementFunctionMiddleware(allow_untrusted_tools={destination.name})
+        invocation = FunctionInvocationContext(function=destination, arguments={"value": "value"})
+        invocation.metadata["context_label"] = label
+
+        async def execute() -> None:
+            pytest.fail("Invalid principals must block execution")
+
+        with pytest.raises(MiddlewareTermination):
+            await policy.process(invocation, execute)
+
+        assert invocation.result["violation_type"] == "principal_mismatch"
 
     async def test_non_history_context_provider_messages_remain_deferred(self) -> None:
         """SecureAgentConfig does not silently impose policy on trusted context-provider plugins."""

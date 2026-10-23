@@ -51,7 +51,6 @@ from ._tools import (
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
-    _SECURITY_POLICY_ERRORS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
     tool,
@@ -114,8 +113,12 @@ _INTERNAL_SECURITY_TOOL_MARKER = object()
 # with the content and break the lookup.
 _VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
 _REWRITTEN_ARGUMENT_INDICES_KEY = "_rewritten_argument_indices"
+_SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_security_policy_errors"
 _SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_security_arguments_materialized"
 _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
+_MAX_REPLAY_CONTENT_DEPTH = 32
+_REPLAY_STATE_COVERED_KEY = "_agent_framework_fides_replay_state_covered"
+_REPLAY_STATE_COVERED_MARKER = object()
 
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
@@ -477,9 +480,9 @@ def _parse_tool_security_policy(
         key: str,
         enum_type: type[IntegrityLabel] | type[ConfidentialityLabel],
     ) -> IntegrityLabel | ConfidentialityLabel | None:
-        raw_value = props.get(key)
-        if raw_value is None:
+        if key not in props:
             return None
+        raw_value = props[key]
         if not isinstance(raw_value, str):
             errors.append(f"{key} must be a string")
             return None
@@ -493,9 +496,9 @@ def _parse_tool_security_policy(
     confidentiality = parse_enum("confidentiality", ConfidentialityLabel)
     max_allowed_confidentiality = parse_enum("max_allowed_confidentiality", ConfidentialityLabel)
 
-    accepts_untrusted_raw = props.get("accepts_untrusted")
     accepts_untrusted = False
-    if accepts_untrusted_raw is not None:
+    if "accepts_untrusted" in props:
+        accepts_untrusted_raw = props["accepts_untrusted"]
         if type(accepts_untrusted_raw) is bool:
             accepts_untrusted = accepts_untrusted_raw
         else:
@@ -940,6 +943,85 @@ class LabeledMessage(Message):
         )
 
 
+def _parse_replayed_content_label(
+    label_data: MutableMapping[str, Any],
+    *,
+    source: str,
+) -> ContentLabel | None:
+    """Parse replay labels without allowing malformed principals to lower confidentiality."""
+    try:
+        return _parse_content_label(label_data, source=source, allow_principals=True)
+    except (TypeError, ValueError) as exc:
+        try:
+            restrictive_label = _parse_content_label(label_data, source=source, allow_principals=False)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid %s security label: %s", source, exc)
+            return None
+        if restrictive_label.confidentiality != ConfidentialityLabel.USER_IDENTITY:
+            logger.warning("Ignoring invalid %s security label: %s", source, exc)
+            return None
+        logger.warning("Discarding invalid principals from %s security label.", source)
+        return restrictive_label
+
+
+def _uninspectable_replay_label() -> ContentLabel:
+    """Return a maximum-restriction label when nested replay content cannot be traversed."""
+    return ContentLabel(
+        integrity=IntegrityLabel.UNTRUSTED,
+        confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        metadata={"source": "uninspectable_replayed_content"},
+    )
+
+
+def _replayed_content_labels(
+    content: Content,
+    *,
+    source: str,
+    depth: int = 0,
+    active_content_ids: set[int] | None = None,
+) -> list[ContentLabel]:
+    """Collect labels from a content item and nested function-result items."""
+    labels: list[ContentLabel] = []
+    label_data = content.additional_properties.get("security_label")
+    if isinstance(label_data, MutableMapping):
+        parsed = _parse_replayed_content_label(
+            cast(MutableMapping[str, Any], label_data),
+            source=source,
+        )
+        if parsed is not None:
+            labels.append(parsed)
+
+    if not content.items:
+        return labels
+    if depth >= _MAX_REPLAY_CONTENT_DEPTH:
+        labels.append(_uninspectable_replay_label())
+        return labels
+
+    active_ids: set[int] = active_content_ids if active_content_ids is not None else set()
+    content_id = id(content)
+    if content_id in active_ids:
+        labels.append(_uninspectable_replay_label())
+        return labels
+
+    active_ids.add(content_id)
+    try:
+        for index, item in enumerate(content.items):
+            if not isinstance(item, Content):
+                labels.append(_uninspectable_replay_label())
+                continue
+            labels.extend(
+                _replayed_content_labels(
+                    item,
+                    source=f"{source}.items[{index}]",
+                    depth=depth + 1,
+                    active_content_ids=active_ids,
+                )
+            )
+    finally:
+        active_ids.remove(content_id)
+    return labels
+
+
 def _replayed_message_label(message: Message, *, reconstruct_unstamped: bool) -> ContentLabel:
     """Return a restriction-only label for caller-replayed or stored history."""
     role = str(message.role)
@@ -969,31 +1051,31 @@ def _replayed_message_label(message: Message, *, reconstruct_unstamped: bool) ->
 
     message_label = message.additional_properties.get("security_label")
     if isinstance(message_label, MutableMapping):
-        with contextlib.suppress(TypeError, ValueError):
-            labels.append(
-                _parse_content_label(
-                    cast(MutableMapping[str, Any], message_label),
-                    source="replayed message",
-                    allow_principals=True,
-                )
-            )
+        parsed = _parse_replayed_content_label(
+            cast(MutableMapping[str, Any], message_label),
+            source="replayed message",
+        )
+        if parsed is not None:
+            labels.append(parsed)
 
-    for content in message.contents:
+    for index, content in enumerate(message.contents):
         if not isinstance(content, Content):
             continue
-        content_label = content.additional_properties.get("security_label")
-        if not isinstance(content_label, MutableMapping):
-            continue
-        with contextlib.suppress(TypeError, ValueError):
-            labels.append(
-                _parse_content_label(
-                    cast(MutableMapping[str, Any], content_label),
-                    source="replayed content",
-                    allow_principals=True,
-                )
-            )
+        labels.extend(_replayed_content_labels(content, source=f"replayed content[{index}]"))
 
     return combine_labels(*labels)
+
+
+def _is_replay_state_covered(message: Message) -> bool:
+    """Return whether trusted transport code marked this replay as represented by restored state."""
+    return message.additional_properties.get(_REPLAY_STATE_COVERED_KEY) is _REPLAY_STATE_COVERED_MARKER
+
+
+def _clear_replay_state_covered_markers(messages: Sequence[Message]) -> None:
+    """Remove private replay provenance before messages reach a chat provider."""
+    for message in messages:
+        if message.additional_properties.get(_REPLAY_STATE_COVERED_KEY) is _REPLAY_STATE_COVERED_MARKER:
+            message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
 
 
 class _ReplaySecurityChatMiddleware(ChatMiddleware):
@@ -1004,17 +1086,17 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
         scope: _SecurityScope,
         history_source_ids: set[str],
         *,
-        reconstruct_unstamped: bool,
+        reconstruct_history_unstamped: bool,
     ) -> None:
         self._scope = scope
         self._history_source_ids = history_source_ids
-        self._reconstruct_unstamped = reconstruct_unstamped
+        self._reconstruct_history_unstamped = reconstruct_history_unstamped
         self._processed = False
 
-    def _is_replay_input(self, message: Message) -> bool:
+    def _is_history_message(self, message: Message) -> bool:
         attribution = message.additional_properties.get("_attribution")
         if not isinstance(attribution, Mapping):
-            return True
+            return False
         attribution_mapping = cast(Mapping[str, Any], attribution)
         source_id = attribution_mapping.get("source_id")
         return isinstance(source_id, str) and source_id in self._history_source_ids
@@ -1024,15 +1106,16 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
         context: ChatContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
+        _clear_replay_state_covered_markers(context.messages)
         if not self._processed:
             self._processed = True
             replay_labels = [
                 _replayed_message_label(
                     message,
-                    reconstruct_unstamped=self._reconstruct_unstamped,
+                    reconstruct_unstamped=self._reconstruct_history_unstamped,
                 )
                 for message in context.messages
-                if self._is_replay_input(message)
+                if self._is_history_message(message)
             ]
             if replay_labels:
                 self._scope.context_label = combine_labels(self._scope.context_label, *replay_labels)
@@ -3803,6 +3886,11 @@ class SecureAgentConfig(ContextProvider):
         """Return provider-customized middleware bound to one restored session scope."""
         return self._middleware_for_scope(self._scope_for_session(session))
 
+    def _mark_replay_state_covered_messages(self, messages: Sequence[Message]) -> None:
+        """Mark trusted transport-restored messages as already represented by session state."""
+        for message in messages:
+            message.additional_properties[_REPLAY_STATE_COVERED_KEY] = _REPLAY_STATE_COVERED_MARKER
+
     async def before_run(
         self,
         *,
@@ -3823,7 +3911,7 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
-        reconstruct_unstamped = _STATE_CONTEXT_LABEL not in state
+        reconstruct_history_unstamped = _STATE_CONTEXT_LABEL not in state
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
         history_source_ids = {
@@ -3831,25 +3919,35 @@ class SecureAgentConfig(ContextProvider):
             for provider in getattr(agent, "context_providers", ())
             if isinstance(provider, HistoryProvider)
         }
-        initial_replay_messages = list(context.input_messages)
+        input_labels = [
+            _replayed_message_label(
+                message,
+                reconstruct_unstamped=(
+                    reconstruct_history_unstamped if _is_replay_state_covered(message) else True
+                ),
+            )
+            for message in context.input_messages
+        ]
+        history_labels: list[ContentLabel] = []
         for source_id in history_source_ids:
-            initial_replay_messages.extend(context.context_messages.get(source_id, ()))
-        if initial_replay_messages:
+            history_labels.extend(
+                _replayed_message_label(
+                    message,
+                    reconstruct_unstamped=reconstruct_history_unstamped,
+                )
+                for message in context.context_messages.get(source_id, ())
+            )
+        if input_labels or history_labels:
             scope.context_label = combine_labels(
                 scope.context_label,
-                *(
-                    _replayed_message_label(
-                        message,
-                        reconstruct_unstamped=reconstruct_unstamped,
-                    )
-                    for message in initial_replay_messages
-                ),
+                *input_labels,
+                *history_labels,
             )
         middleware.append(
             _ReplaySecurityChatMiddleware(
                 scope,
                 history_source_ids,
-                reconstruct_unstamped=reconstruct_unstamped,
+                reconstruct_history_unstamped=reconstruct_history_unstamped,
             )
         )
         self._provider_state_used = True
