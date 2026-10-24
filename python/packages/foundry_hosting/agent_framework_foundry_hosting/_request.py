@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -116,10 +116,42 @@ _HOST_CONTROLLED_FIELDS = frozenset({
 })
 _OPTION_NAMES = {"max_output_tokens": "max_tokens", "parallel_tool_calls": "allow_multiple_tool_calls"}
 _NATIVE_FIELDS = frozenset(CreateResponse.__annotations__)
+# Trusted tool-execution context that callers must not supply. Unlike ``_HOST_CONTROLLED_FIELDS``, a developer
+# ``prepare_options`` hook may still set it from trusted host state.
+_CALLER_REJECTED_FIELDS = frozenset({"additional_function_arguments"})
+
+
+def _reject_caller_controls(names: Iterable[str]) -> None:
+    rejected = _CALLER_REJECTED_FIELDS.intersection(names)
+    if rejected:
+        raise ValueError(
+            f"Responses requests cannot set agent-controlled fields: {', '.join(sorted(rejected))}. "
+            "Configure trusted tool context in the agent's default options or a prepare_options hook."
+        )
+
+
+def reject_caller_tool_context(request: CreateResponse) -> None:
+    """Reject caller-supplied agent-controlled tool context, at the top level or in ``extra_body``.
+
+    This applies to every hosted Responses request, whichever agent or workflow shape serves it, so callers can
+    never replace trusted values configured by the developer.
+
+    Raises:
+        ValueError: If the request sets an agent-controlled field.
+    """
+    _reject_caller_controls(cast(Mapping[str, Any], request))
+    extra_body = request.get("extra_body")
+    if isinstance(extra_body, Mapping):
+        _reject_caller_controls(cast(Mapping[str, Any], extra_body))
 
 
 def response_run_options(request: CreateResponse) -> dict[str, Any]:
-    """Translate native generation fields, with flattened extra-body values winning collisions."""
+    """Translate native generation fields, with flattened extra-body values winning collisions.
+
+    Raises:
+        ValueError: If the caller supplies agent-controlled tool-execution context.
+    """
+    reject_caller_tool_context(request)
     native: dict[str, Any] = {}
     extra: dict[str, Any] = {}
     nested_extra: dict[str, Any] = {}
