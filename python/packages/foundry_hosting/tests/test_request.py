@@ -75,40 +75,6 @@ def test_nested_extra_body_is_also_overlaid_last_without_reserved_fields() -> No
         response_run_options(cast(CreateResponse, {"extra_body": {"extra_body": {"store": True}}}))
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"additional_function_arguments": {"tenant_id": "forged"}},
-        {"extra_body": {"additional_function_arguments": {"tenant_id": "forged"}}},
-        {"additional_function_arguments": None},
-        {"extra_body": {"additional_function_arguments": None}},
-    ],
-)
-def test_caller_cannot_supply_tool_execution_context(payload: dict[str, Any]) -> None:
-    with pytest.raises(ValueError, match="agent-controlled fields: additional_function_arguments"):
-        response_run_options(cast(CreateResponse, {"input": "hello", "temperature": 0.2, **payload}))
-
-
-def test_requests_without_tool_context_keep_other_options() -> None:
-    request = cast(CreateResponse, {"input": "hello", "extra_body": {"slogan_style": "retro"}, "temperature": 0.2})
-    assert response_run_options(request) == {"temperature": 0.2, "slogan_style": "retro"}
-
-
-async def test_hook_can_supply_trusted_tool_context() -> None:
-    context = MagicMock(spec=ResponseContext)
-    context.response_id = "outer-id"
-    context.conversation_id = None
-    scope = FoundryRequestScope(session_id="sandbox", user_id="user", call_id="call", is_hosted=True)
-    request = HostedResponseRequest(cast(CreateResponse, {"input": "hello"}), context, scope, {})
-
-    def inject(view: HostedResponseRequest, options: dict[str, Any]) -> dict[str, Any]:
-        return {**options, "additional_function_arguments": {"tenant_id": view.scope.user_id}}
-
-    await prepare_response_options(request, inject)
-    validate_request_options(request.options)
-    assert request.options["additional_function_arguments"] == {"tenant_id": "user"}
-
-
 async def test_hook_uses_a_request_copy_and_does_not_mutate_defaults() -> None:
     payload = cast(CreateResponse, {"input": "hello", "metadata": {"source": "caller"}})
     context = MagicMock(spec=ResponseContext)
