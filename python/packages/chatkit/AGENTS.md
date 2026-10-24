@@ -19,7 +19,8 @@ Integration with OpenAI ChatKit (Python) for building chat UIs.
 ```python
 from agent_framework.chatkit import stream_agent_response, ThreadItemConverter
 
-async for event in stream_agent_response(agent, messages):
+response_stream = agent.run(messages, stream=True)
+async for event in stream_agent_response(response_stream, thread_id):
     # Handle ChatKit events
     pass
 ```

@@ -1,173 +1,248 @@
-# Coding Standards
+# Python Coding Standards
 
-This document describes the coding standards and conventions for the Agent Framework project.
+This document is the canonical source for Python coding standards in Agent Framework.
+It applies to package source, tests, samples, and Python-specific repository tooling under `python/`.
 
-## Code Style and Formatting
+Exact formatter, linter, and type-checker settings live in the relevant configuration files. This document explains
+the engineering intent behind those settings and defines the rules that require design judgment.
 
-We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting with the following configuration:
+## Requirement Levels
 
-- **Line length**: 120 characters
-- **Target Python version**: 3.10+
-- **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
+- **MUST** and **MUST NOT** define requirements.
+- **SHOULD** and **SHOULD NOT** define the expected default. Deviations require a concrete reason.
+- **MAY** identifies an acceptable option, not a preference.
 
-### Module Docstrings
+New code and materially edited code MUST follow these standards. Existing code may not yet conform everywhere; do not
+copy a non-conforming pattern merely because it already exists.
 
-Public modules must include a module-level docstring, including `__init__.py` files.
+## Engineering Priorities
 
-- Namespace-style `__init__.py` modules (for example under `agent_framework/<provider>/`) should use a structured
-  docstring that includes:
-  - A one-line summary of the namespace
-  - A short "This module lazily re-exports objects from:" section that lists only pip install package names
-    (for example `agent-framework-a2a`)
-  - A short "Supported classes:" (or "Supported classes and functions:") section
-- The main `agent_framework/__init__.py` should include a concise background-oriented docstring rather than a long
-  per-symbol list.
-- Core modules with broad surface area, including `agent_framework/exceptions.py` and
-  `agent_framework/observability.py`, should always have explicit module docstrings.
+When principles compete, use this order:
+
+1. Correctness and public API clarity
+2. Maintainability and readability
+3. Measured performance
+4. Typing purity
+
+- Code MUST preserve public compatibility unless a breaking change has been explicitly approved and documented.
+  Do not invent compatibility aliases or shims without that decision.
+- Code SHOULD use the most explicit, unsurprising implementation with the clearest data flow, even when it is slightly
+  more verbose.
+- Inputs from users, external services, files, environment variables, and other trust boundaries MUST be validated.
+  Inside trusted typed code, rely on documented invariants and fail at the point where an invariant is broken.
+- Mutation MUST be intentional and visible in the API. Accept read-only abstractions when mutation is unnecessary,
+  and do not make defensive copies without a concrete ownership or correctness need.
+- A new abstraction SHOULD centralize meaningful policy, remove real duplication, or create a stable boundary.
+  Do not add speculative abstractions or wrappers whose only purpose is satisfying a type checker.
+
+## Tool-Enforced Style
+
+Ruff is the formatter and linter. The current configuration uses a 120-character line length and targets Python 3.10
+or later. `pyproject.toml` and the other tool configuration files are the source of truth for exact values and enabled
+rules.
+
+- Every checked-in `.py` file MUST start with:
+
+  ```python
+  # Copyright (c) Microsoft. All rights reserved.
+  ```
+
+- Code MUST NOT shadow Python built-ins. A compatibility exception requires an explicit API decision.
+- Package source files that are new or materially edited MUST use:
+
+  ```python
+  from __future__ import annotations
+  ```
+
+- `TypeVar` names MUST use a descriptive `T` suffix.
+
+  ```python
+  # Preferred
+  ChatResponseT = TypeVar("ChatResponseT", bound=ChatResponse)
+
+  # Avoid
+  TChatResponse = TypeVar("TChatResponse", bound=ChatResponse)
+  ```
+
+Purely mechanical findings that the required formatter, linter, or type checkers already report should be fixed through
+those tools rather than duplicated as subjective review guidance.
 
 ## Type Annotations
 
-We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targeted cast or ignore.
-In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
-This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
-because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
-use `item.attribute` to ensure it fails at that point, rather than somewhere downstream where a value is expected but none was found.
+Typing is a design aid, not an end in itself.
 
-### Future Annotations
+- Public APIs MUST have complete, stable parameter and return annotations.
+- Functions and methods in package source MUST annotate every parameter and return value. A trivially inferred local
+  callable, such as a short lambda or nested callback, MAY rely on inference.
+- Tests and samples follow their configured relaxed checker profiles; complete annotations are not universally
+  required there. Add annotations when they clarify reusable helpers, fixtures, callbacks, or copied public usage.
+- Package source MUST pass the configured strict Pyright checks.
+- Tests MUST pass the repository-configured Pyright, mypy, pyrefly, ty, and zuban profiles.
+- Samples MUST pass the configured supported subset of those checkers.
+- The exact checker responsibilities and commands live in
+  [`python-code-quality`](.github/skills/python-code-quality/SKILL.md).
 
-> **Note:** This convention is being adopted. See [#3578](https://github.com/microsoft/agent-framework/issues/3578) for progress.
+### Collection Inputs
 
-Use `from __future__ import annotations` at the top of files to enable postponed evaluation of annotations. This prevents the need for string-based type hints for forward references:
-
-```python
-# ✅ Preferred - use future annotations
-from __future__ import annotations
-
-class Agent:
-    def create_child(self) -> Agent:  # No quotes needed
-        ...
-
-# ❌ Avoid - string-based type hints
-class Agent:
-    def create_child(self) -> "Agent":  # Requires quotes without future annotations
-        ...
-```
-
-### TypeVar Naming Convention
-
-> **Note:** This convention is being adopted. See [#3594](https://github.com/microsoft/agent-framework/issues/3594) for progress.
-
-Use the suffix `T` for TypeVar names instead of a prefix:
+Input parameters that do not mutate a collection SHOULD use the narrowest practical read-only abstraction, such as
+`Mapping`, `Sequence`, or `Collection`, instead of requiring a mutable concrete type.
 
 ```python
-# ✅ Preferred - suffix T
-ChatResponseT = TypeVar("ChatResponseT", bound=ChatResponse)
-AgentT = TypeVar("AgentT", bound=Agent)
-
-# ❌ Avoid - prefix T
-TChatResponse = TypeVar("TChatResponse", bound=ChatResponse)
-TAgent = TypeVar("TAgent", bound=Agent)
-```
-
-### Mapping Types
-
-> **Note:** This convention is being adopted. See [#3577](https://github.com/microsoft/agent-framework/issues/3577) for progress.
-
-Use `Mapping` instead of `MutableMapping` for input parameters when mutation is not required:
-
-```python
-# ✅ Preferred - Mapping for read-only access
+# Preferred
 def process_config(config: Mapping[str, Any]) -> None:
     ...
 
-# ❌ Avoid - MutableMapping when mutation isn't needed
+
+# Avoid when mutation is not required
 def process_config(config: MutableMapping[str, Any]) -> None:
     ...
 ```
 
-### Typing Ignore and Cast Policy
+### Suppressions and Casts
 
-Use typing as a helper first and suppressions as a last resort:
+Resolve type-checker failures in this order:
 
-- **Prefer explicit typing before suppression**: Start with clearer type annotations, helper types, overloads,
-  protocols, or refactoring dynamic code into typed helpers. Prioritize performance over completeness of typing, but make a good-faith effort to reduce uncertainty with typing before ignoring. Prefer to use a cast over a typeguard function since that does add overhead.
-- **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
-  unavoidable narrowing where the runtime contract is known.
-- **Avoid multiple assignments**: Avoid assigning multiple variables just to get typing to pass, that has performance impact while typing should not have that.
-- **Source vs tests/samples**: Source code (`agent_framework*`) is checked **by pyright in strict mode** — use
-  `# pyright: ignore[...]` there, never `# type: ignore` (strict pyright flags unnecessary ignores as errors). Tests
-  and samples are checked by pyright (relaxed `basic`), mypy, pyrefly, ty (and zuban on tests) in a relaxed/basic
-  profile; prefer real fixes (`isinstance`, `cast`, annotations, asserts for Optional access) over per-line ignores,
-  and keep test/sample bodies readable rather than over-annotated. When a relaxed-pyright suppression is genuinely
-  needed in tests/samples, use `# pyright: ignore[rule]`; the relaxed test/sample configs do not flag unnecessary
-  ignores, so combine with a mypy/zuban `# type: ignore[code]` on the same line only where both are required.
-- **Line-level pyright ignores only**: If suppression is still required in source, use a line-level rule-specific ignore
-  (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
-  Never change the global suppression flags unless the dev team okays it.
-- **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
-  codebase, but private member usage for non-Agent Framework dependencies should remain flagged. Do not make an
-  internal helper public merely to satisfy pyright private-usage checks inside the package; use a targeted
-  `# pyright: ignore[reportPrivateUsage]` when the internal dependency is intentional.
-- **Avoid typing-only wrappers**: Do not introduce trivial pass-through functions solely to satisfy typing or private
-  usage checks. Prefer a targeted ignore, cast, or clearer annotation over an extra one-line function that adds runtime
-  overhead without improving the design.
+1. Improve the annotations, protocol, overload, or design.
+2. Use a narrow, rule-specific suppression when the checker cannot represent a valid runtime contract.
+3. Use `cast()` only when it materially improves clarity.
+4. Add a runtime check only when runtime validation is semantically required.
 
-## Function Parameter Guidelines
+Additional rules:
 
-To make the code easier to use and maintain:
+- Source code SHOULD use a line-level, rule-specific `# pyright: ignore[...]` when a suppression is unavoidable.
+- Internal implementation code MAY use a rule-specific `# type: ignore[...]` when it is clearer than
+  checker-specific suppressions. The ignore MUST include a brief inline reason explaining the valid runtime contract
+  or checker limitation.
+- Tests and samples MUST use only the minimum checker-specific suppressions required by their configured profiles.
+  A line MAY need both a Pyright suppression and a mypy-compatible suppression when the checkers report independent
+  findings.
+- File-level suppressions MUST be limited to generated code or a documented file-wide checker limitation that cannot
+  be addressed locally.
+- An Agent Framework package MAY intentionally use another Agent Framework package's private helper. Keep the helper
+  private and use a targeted `reportPrivateUsage` suppression rather than making it public solely for the checker.
+- Private members of third-party dependencies SHOULD NOT be used unless the integration has a documented, unavoidable
+  reason.
+- Code MUST NOT add trivial pass-through helpers or extra assignments solely to satisfy typing.
 
-- **Positional parameters**: Only use for up to 3 fully expected parameters (this is not a hard rule, but a guideline there are instances where this does make sense to exceed)
-- **Keyword-only parameters**: Arguments after `*` in function signatures are keyword-only; prefer these for optional parameters
-- **Avoid additional imports**: Do not require the user to import additional modules to use the function, so provide string based overrides when applicable, for instance:
+## Public API Design
+
+Python APIs should keep the common path simple without removing advanced extensibility.
+
+### Import-Light Common Paths
+
+- A common operation SHOULD require one primary Agent Framework import for that concept.
+- Simple configuration SHOULD use keyword-only parameters, plain Python values, or typed structural data rather than
+  forcing callers to construct several framework-owned data-holder classes.
+- Additional framework imports MAY be required for advanced behavior.
+- A public configuration class SHOULD exist only when it owns meaningful validation or behavior, is independently
+  reusable, or represents a durable domain concept. Do not create a class merely to group arguments for one call.
+- Choose between keyword-only parameters and a `TypedDict` case by case. Prefer keyword-only parameters for direct
+  discoverability. Prefer a `TypedDict` when the values form a cohesive payload that is passed, stored, or forwarded
+  as data. There is no field-count cutoff.
+
+`ChatOptions` is the preferred model for extensible structured options: common fields are typed without requiring
+callers to instantiate a configuration object, provider-specific types can extend the structure, and generic APIs can
+carry a caller- or provider-defined `TypedDict` without waiting for Agent Framework to add another public class.
+
+- An API that expects users or providers to extend structured options SHOULD be generic over their `TypedDict` rather
+  than requiring configuration-class inheritance.
+
+### Function Signatures
+
+- Positional parameters SHOULD be obvious, stable, and difficult to misorder. There is no fixed numeric limit.
+- Optional or evolving parameters SHOULD be keyword-only.
+- Public APIs SHOULD accept a string alternative to an enum or framework type when that makes the common path simpler
+  and the string vocabulary is stable.
+- String alternatives MUST use `Literal[...]` to enumerate supported values and MUST normalize to the canonical type
+  at the API boundary.
+
 ```python
-def create_agent(name: str, tool_mode: ChatToolMode) -> Agent:
-    # Implementation here
-```
-Should be:
-```python
-def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | ChatToolMode) -> Agent:
-    # Implementation here
+def create_agent(
+    name: str,
+    *,
+    tool_mode: Literal["auto", "required", "none"] | ChatToolMode = "auto",
+) -> Agent:
     if isinstance(tool_mode, str):
         tool_mode = ChatToolMode(tool_mode)
+    ...
 ```
-- **Avoid shadowing built-ins**: Do not use parameter names that shadow Python built-ins (e.g., use `next_handler` instead of `next`). See [#3583](https://github.com/microsoft/agent-framework/issues/3583) for progress.
 
-### Using `**kwargs`
+### Flexible Arguments
 
-> **Note:** This convention is being adopted. See [#3642](https://github.com/microsoft/agent-framework/issues/3642) for progress.
+`**kwargs` is an escape route, not the default shape for known data.
 
-Avoid `**kwargs` unless absolutely necessary. It should only be used as an escape route, not for well-known flows of data:
+- Known framework data MUST use explicit parameters.
+- `**kwargs` MAY be used for documented subclass extensibility.
+- `**kwargs` MAY be used for a narrow passthrough to a large or unstable external SDK surface.
+- A flexible payload that is part of the API contract SHOULD use a purpose-named mapping such as
+  `additional_properties`, `client_kwargs`, or `function_invocation_kwargs`.
+- The API MUST document who owns the mapping, where it is forwarded, and whether values are copied or mutated.
+- Wrappers MUST NOT accept or forward generic keyword arguments they do not use.
 
-- **Prefer named parameters**: If there are known extra arguments being passed, use explicit named parameters instead of kwargs
-- **Prefer purpose-specific buckets over generic kwargs**: If a flexible payload is still needed, use an explicit named parameter such as `additional_properties`, `function_invocation_kwargs`, or `client_kwargs` rather than a blanket `**kwargs`
-- **Subclassing support**: kwargs is acceptable in methods that are part of classes designed for subclassing, allowing subclass-defined kwargs to pass through without issues. In this case, clearly document that kwargs exists for subclass extensibility and not for passing arbitrary data
-- **Make known flows explicit first**: For abstract hooks, move known data flows into explicit parameters before leaving `**kwargs` behind for subclass extensibility (for example, prefer `state=` explicitly instead of passing it through kwargs)
-- **Prefer explicit metadata containers**: For constructors that expose metadata, prefer an explicit `additional_properties` parameter.
-- **Keep SDK passthroughs narrow and documented**: A kwargs escape hatch may be acceptable for provider helper APIs that pass through to a large or unstable external SDK surface, but it should be documented as SDK passthrough and revisited regularly
-- **Do not keep passthrough kwargs on wrappers that do not use them**: Convenience wrappers and session helpers should not accept generic kwargs merely to forward or ignore them
-- **Remove when possible**: In other cases, removing kwargs is likely better than keeping it
-- **Separate kwargs by purpose**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
-- **Always document**: If kwargs must be used, always document how it's used, either by referencing external documentation or explaining its purpose
+### Interfaces and Reuse
 
-## Method Naming Inside Connectors
+- Behavioral contracts SHOULD use `Protocol`.
+- An abstract base class SHOULD be used only when inheritance provides shared implementation, lifecycle, construction
+  control, or other required runtime semantics.
+- Composition and inheritance are both acceptable. Choose based on substitutability, lifecycle, and clarity rather
+  than a blanket preference.
 
-When naming methods inside connectors, we have a loose preference for using the following conventions:
-- Use `_prepare_<object>_for_<purpose>` as a prefix for methods that prepare data for sending to the external service.
-- Use `_parse_<object>_from_<source>` as a prefix for methods that process data received from the external service.
+## Asynchronous Code and Resource Ownership
 
-This is not a strict rule, but a guideline to help maintain consistency across the codebase.
+- Use asynchronous APIs for I/O and concurrency. Keep purely synchronous work synchronous.
+- Async code MUST NOT block the event loop with synchronous network, file, process, or long-running CPU work.
+- Cancellation MUST propagate. Cleanup belongs in `finally` blocks or context managers; cancellation MUST NOT be
+  translated into ordinary success or an unrelated framework exception.
+- Resource ownership MUST be explicit:
+  - Close or cancel resources the object creates.
+  - Do not close caller-injected resources.
+  - Use synchronous or asynchronous context managers when lifecycle management is part of correct use.
 
-## Implementation Decisions
+## Exception Hierarchy
 
-### Settings Resolution in Connectors
+The authoritative classes live in
+[`packages/core/agent_framework/exceptions.py`](packages/core/agent_framework/exceptions.py). This document defines
+how to choose and use them rather than duplicating a hierarchy that can drift.
 
-Connector constructors should use `load_settings` to resolve explicit keyword
-arguments, an explicitly selected `.env` file, process environment variables,
-and defaults before deciding that a required value is missing.
+- Broken internal invariants SHOULD fail immediately at the point of violation.
+- Invalid Python arguments, configuration values, or object state SHOULD use built-in exceptions such as
+  `TypeError`, `ValueError`, or `RuntimeError`.
+- Domain failures that callers may handle distinctly MUST use the Agent Framework exception branch owned by that
+  domain, such as Agent, ChatClient, Integration, Workflow, Tool, or Middleware.
+- Exception selection MUST follow domain ownership rather than HTTP status code or a generic category alone.
+- Translated exceptions MUST preserve their cause with `raise ... from exc`.
+- Code MUST NOT silently swallow errors, return a success-shaped fallback after failure, or use a broad catch without
+  an explicit recovery boundary.
+- New exception names SHOULD follow the established naming convention of their domain. Do not force one universal
+  `Error` or `Exception` suffix across all branches.
+- Renames and removals MUST follow the general public compatibility policy. Do not assume either a clean break or a
+  compatibility alias without an approved API decision.
 
-When a preconfigured SDK client can be injected, both the client and individual
-settings may be omitted at the constructor boundary. Make settings required only
-for the branch that creates the SDK client:
+Use the following selection guide:
+
+| Scenario | Exception family |
+|---|---|
+| Invalid argument or configuration | Built-in `TypeError` or `ValueError` |
+| Object in an invalid internal state | Built-in `RuntimeError` |
+| Agent lookup or response handling failure | `AgentException` branch |
+| Chat-provider request, response, auth, or filtering failure | `ChatClientException` branch |
+| Non-chat external dependency failure | `IntegrationException` branch |
+| Workflow execution or validation failure | `WorkflowException` branch |
+| Tool execution failure | `ToolException` branch |
+
+## Connector Conventions
+
+### Settings Resolution
+
+Connector constructors MUST use `load_settings` to resolve explicit keyword arguments, an explicitly selected `.env`
+file, process environment variables, and defaults before deciding that a required value is missing.
+
+When a preconfigured SDK client can be injected:
+
+- The client and individual settings MAY both be omitted at the constructor boundary.
+- Settings MUST become required only on the branch that constructs the SDK client.
+- The constructor MUST NOT reject an injected client merely because optional credentials or model settings were also
+  provided. The injected client owns its transport and authentication.
 
 ```python
 settings = load_settings(
@@ -185,599 +260,165 @@ if client is None:
     )
 ```
 
-Do not prevalidate optional constructor arguments before settings resolution.
-In particular, do not reject an injected client merely because an optional
-credential or model argument was also supplied. The injected client owns its
-transport and authentication; resolved settings are used only when constructing
-a client.
+### Transformation Helper Names
 
-### Asynchronous Programming
+Connector implementations SHOULD use these names when they accurately describe the operation:
 
-It's important to note that most of this library is written with asynchronous in mind. The
-developer should always assume everything is asynchronous. One can use the function signature
-with either `async def` or `def` to understand if something is asynchronous or not.
+- `_prepare_<object>_for_<purpose>` for data prepared for an external service.
+- `_parse_<object>_from_<source>` for data received from an external service.
 
-### Attributes vs Inheritance
+These are consistency patterns, not mandatory templates. Use a clearer verb when the operation has different
+semantics.
 
-Prefer attributes over inheritance when parameters are mostly the same:
+## Imports and Public Exports
+
+Consumer-facing documentation and samples MUST use stable public imports:
 
 ```python
-# ✅ Preferred - using attributes
-from agent_framework import Message
-
-user_msg = Message("user", ["Hello, world!"])
-asst_msg = Message("assistant", ["Hello, world!"])
-
-# ❌ Not preferred - unnecessary inheritance
-class UserMessage(Message):
-    pass
-
-class AssistantMessage(Message):
-    pass
-
-user_msg = UserMessage("user", ["Hello, world!"])
-asst_msg = AssistantMessage("assistant", ["Hello, world!"])
+from agent_framework import Agent, Message, tool
+from agent_framework.observability import configure_otel_providers
+from agent_framework.openai import OpenAIChatClient
 ```
 
-### Import Structure
+Private defining modules remain implementation details.
 
-The package follows a flat import structure:
+- Wildcard imports are prohibited in production `.py` and `.pyi` files. Generated code MAY be explicitly exempted.
+- Package and public import surfaces MUST define an explicit `__all__`.
+- Internal modules SHOULD omit `__all__` unless the module intentionally defines a supported public import surface.
+- Runtime `.py` re-exports SHOULD use direct imports without identity aliases.
+- `.pyi` stubs SHOULD use identity aliases for re-exported names so type checkers recognize the public surface.
 
-- **Core**: Import directly from `agent_framework`
-  ```python
-  from agent_framework import Agent, tool
-  ```
+### Root Lazy Exports
 
-- **Components**: Import from `agent_framework.<component>`
-  ```python
-  from agent_framework.observability import enable_sensitive_telemetry, configure_otel_providers
-  ```
+When adding, removing, or moving a root `agent_framework` export, the change MUST:
 
-- **Connectors**: Import from `agent_framework.<vendor/platform>`
-  ```python
-  from agent_framework.openai import OpenAIChatClient
-  from agent_framework.foundry import FoundryChatClient
-  ```
+1. Update `_LAZY_MODULE_EXPORTS` in `packages/core/agent_framework/__init__.py`.
+2. Keep the derived lazy export registry and explicit runtime `__all__` synchronized.
+3. Update `packages/core/agent_framework/__init__.pyi`.
+4. Keep deprecation behavior in the owning module rather than adding symbol-specific branches to the root
+   `__getattr__`.
+5. Validate direct import and wildcard import behavior.
 
-## Exception Hierarchy
-
-The Agent Framework defines a structured exception hierarchy rooted at `AgentFrameworkException`. Every AF-specific
-exception inherits from this base, so callers can catch `AgentFrameworkException` as a broad fallback. The hierarchy
-is organized into domain-specific L1 branches, each with a consistent set of leaf exceptions where applicable.
-
-### Design Principles
-
-- **Domain-scoped branches**: Exceptions are grouped by the subsystem that raises them (agent, chat client,
-  integration, workflow, content, tool, middleware), not by HTTP status code or generic error category.
-- **Consistent suberror pattern**: The `AgentException`, `ChatClientException`, and `IntegrationException` branches
-  share a parallel set of leaf exceptions (`InvalidAuth`, `InvalidRequest`, `InvalidResponse`, `ContentFilter`) so
-  that callers can handle the same failure mode uniformly across domains.
-- **Built-ins for validation**: Configuration/parameter validation errors use Python built-in exceptions
-  (`ValueError`, `TypeError`, `RuntimeError`) rather than AF-specific classes. AF exceptions are reserved for
-  domain-level failures that callers may want to catch and handle distinctly from programming errors.
-- **No compatibility aliases**: When exceptions are renamed or removed, the old names are not kept as aliases.
-  This is a deliberate trade-off for hierarchy clarity over backward compatibility.
-- **Suffix convention**: L1 branch classes use `...Exception` (e.g., `AgentException`). Leaf classes may use
-  either `...Exception` or `...Error` depending on the domain convention (e.g., `ContentError`,
-  `WorkflowValidationError`). Within a branch, the suffix is consistent.
-
-### Full Hierarchy
-
-```
-AgentFrameworkException                          # Base for all AF exceptions
-├── AgentException                               # Agent-scoped failures
-│   ├── AgentInvalidAuthException                # Agent auth failures
-│   ├── AgentInvalidRequestException             # Invalid request to agent (e.g., agent not found, bad input)
-│   ├── AgentInvalidResponseException            # Invalid/unexpected response from agent
-│   └── AgentContentFilterException              # Agent content filter triggered
-│
-├── ChatClientException                          # Chat client lifecycle and communication failures
-│   ├── ResponseInvalidatedException             # Provider invalidated partial response output
-│   ├── ChatClientInvalidAuthException           # Chat client auth failures
-│   ├── ChatClientInvalidRequestException        # Invalid request to chat client
-│   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
-│   └── ChatClientContentFilterException         # Chat client content filter triggered
-│
-├── IntegrationException                         # External service/dependency integration failures
-│   ├── IntegrationInitializationError           # Wrapped dependency lifecycle failure during setup
-│   ├── IntegrationInvalidAuthException          # Integration auth failures (e.g., 401/403)
-│   ├── IntegrationInvalidRequestException       # Invalid request to integration
-│   ├── IntegrationInvalidResponseException      # Invalid/unexpected response from integration
-│   └── IntegrationContentFilterException        # Integration content filter triggered
-│
-├── ContentError                                 # Content processing/validation failures
-│   └── AdditionItemMismatch                     # Type mismatch when merging content items
-│
-├── WorkflowException                            # Workflow engine failures
-│   ├── WorkflowRunnerException                  # Runtime execution failures
-│   │   ├── WorkflowConvergenceException         # Runner exceeded max iterations
-│   │   └── WorkflowCheckpointException          # Checkpoint save/restore/decode failures
-│   ├── WorkflowValidationError                  # Graph validation errors
-│   │   ├── EdgeDuplicationError                 # Duplicate edge in workflow graph
-│   │   ├── TypeCompatibilityError               # Type mismatch between connected executors
-│   │   └── GraphConnectivityError               # Graph connectivity issues
-│   ├── WorkflowActionError                      # User-level error from declarative ThrowException action
-│   └── DeclarativeWorkflowError                 # Declarative workflow definition/YAML errors
-│
-├── ToolException                                # Tool-related failures
-│   └── ToolExecutionException                   # Failure during tool execution
-│
-├── MiddlewareException                          # Middleware failures
-│   ├── MiddlewareFailure                        # Control-flow: fatal fail-closed abort of the run
-│   └── MiddlewareTermination                    # Control-flow: early middleware termination
-│
-└── SettingNotFoundError                         # Required setting not resolved from any source
-```
-
-### When to Use AF Exceptions vs Built-ins
-
-| Scenario | Exception to use |
-|---|---|
-| Missing or invalid constructor argument (e.g., `api_key` is `None`) | `ValueError` or `TypeError` |
-| Object in wrong state (e.g., client not initialized) | `RuntimeError` |
-| External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
-| External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
-| Chat provider invalidates partial response output containing local function calls | `ResponseInvalidatedException` |
-| Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
-| Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
-| Agent not found in registry | `AgentInvalidRequestException` |
-| Agent returned no/bad response | `AgentInvalidResponseException` |
-| Workflow runner exceeds max iterations | `WorkflowConvergenceException` |
-| Checkpoint serialization/deserialization failure | `WorkflowCheckpointException` |
-| Workflow graph has invalid structure | `WorkflowValidationError` (or specific subclass) |
-| Declarative YAML definition error | `DeclarativeWorkflowError` |
-| Tool execution failure | `ToolExecutionException` |
-| Content merge type mismatch | `AdditionItemMismatch` |
-
-### Choosing Between Agent, ChatClient, and Integration Branches
-
-- **`AgentException`**: The failure is scoped to agent-level logic — agent lookup, agent response handling,
-  agent content filtering. Use when the agent itself is the source of the problem.
-- **`ChatClientException`**: The failure is scoped to the chat client (the LLM provider connection) — auth with
-  the LLM provider, request/response format issues specific to the chat protocol, chat-level content filtering.
-- **`IntegrationException`**: The failure is in a non-chat external dependency — search services, vector stores,
-  Purview, custom APIs, or any service that is not the primary LLM chat provider.
-
-When in doubt: if the code is in a chat client constructor or method, use `ChatClient*`. If it's in an agent
-method, use `Agent*`. If it's talking to an external service that isn't the chat LLM, use `Integration*`.
-
-## Package Structure
-
-The project uses a monorepo structure with separate packages for each connector/extension:
-
-```plaintext
-python/
-├── pyproject.toml              # Root package (agent-framework) depends on agent-framework-core[all]
-├── samples/                    # Sample code and examples
-├── packages/
-│   ├── core/                   # agent-framework-core - Core abstractions and implementations
-│   │   ├── pyproject.toml      # Defines the curated standard-integration [all] extra
-│   │   ├── tests/              # Tests for core package
-│   │   └── agent_framework/
-│   │       ├── __init__.py     # Lazy runtime public API exports
-│   │       ├── __init__.pyi    # Public API typing surface for lazy root exports
-│   │       ├── _agents.py      # Agent implementations
-│   │       ├── _clients.py     # Chat client protocols and base classes
-│   │       ├── _tools.py       # Tool definitions
-│   │       ├── _types.py       # Type definitions
-│   │       │   # Provider folders - lazy load from connector packages
-│   │       ├── openai/         # OpenAI clients (built into core)
-│   │       ├── azure/          # Lazy loads from azure-ai, azure-ai-search, azurefunctions
-│   │       ├── anthropic/      # Lazy loads from agent-framework-anthropic
-│   │       ├── ollama/         # Lazy loads from agent-framework-ollama
-│   │       ├── a2a/            # Lazy loads from agent-framework-a2a
-│   │       ├── ag_ui/          # Lazy loads from agent-framework-ag-ui
-│   │       ├── chatkit/        # Lazy loads from agent-framework-chatkit
-│   │       ├── declarative/    # Lazy loads from agent-framework-declarative
-│   │       ├── devui/          # Lazy loads from agent-framework-devui
-│   │       ├── mem0/           # Lazy loads from agent-framework-mem0
-│   │       └── redis/          # Lazy loads from agent-framework-redis
-│   │
-│   ├── foundry/                # agent-framework-foundry
-│   │   ├── pyproject.toml
-│   │   ├── tests/
-│   │   └── agent_framework_foundry/
-│   │       ├── __init__.py     # Public exports
-│   │       ├── _chat_client.py # FoundryChatClient implementation
-│   │       ├── _agent.py       # FoundryAgent implementation
-│   │       ├── _embedding_client.py # FoundryEmbeddingClient implementation
-│   │       ├── _memory_provider.py # Foundry memory implementation
-│   │       └── py.typed        # PEP 561 marker
-│   ├── anthropic/              # agent-framework-anthropic
-│   ├── bedrock/                # agent-framework-bedrock
-│   ├── ollama/                 # agent-framework-ollama
-│   └── ...                     # Other connector packages
-```
-
-### Lazy Loading Pattern
-
-The root `agent_framework` package is a lazy public API surface. When adding, removing, or moving a root export:
-
-- Add the symbol to `_LAZY_MODULE_EXPORTS` in `agent_framework/__init__.py`.
-- Keep `_LAZY_EXPORTS` derived from `_LAZY_MODULE_EXPORTS`.
-- Keep the explicit runtime `__all__` synchronized; it is required for `from agent_framework import *`.
-- Add the same public symbol to `agent_framework/__init__.pyi` so type checkers and editors see the typed surface.
-- Put runtime deprecation behavior in the owning module using that module's `__getattr__`. Do not add one-off
-  deprecated-symbol branches to root `agent_framework.__getattr__`.
-- Validate root API changes with `uv run poe syntax -P core`, `uv run poe pyright -P core`, and import smoke tests
-  for both `from agent_framework import <symbol>` and `from agent_framework import *`.
-
-Provider folders in the core package use `__getattr__` to lazy load classes from their respective connector packages. This allows users to import from a consistent location while only loading dependencies when needed:
-
-```python
-# In agent_framework/foundry/__init__.py
-_IMPORTS: dict[str, tuple[str, str]] = {
-    "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
-    # ...
-}
-
-def __getattr__(name: str) -> Any:
-    if name in _IMPORTS:
-        import_path, package_name = _IMPORTS[name]
-        try:
-            return getattr(importlib.import_module(import_path), name)
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                f"The package {package_name} is required to use `{name}`. "
-                f"Install it with: pip install {package_name}"
-            ) from exc
-```
-
-The decision to expose a package through lazy loading, and the namespace to use, is a package-governance decision
-rather than a coding convention. Follow
-[`python-package-management`](.github/skills/python-package-management/SKILL.md) for package creation, lifecycle
-promotion, sample placement, meta-package membership, lazy-loading approval, versioning, and dependency bounds.
-This section only defines how to implement an approved lazy-loading surface.
-
-### Installation Options
-
-Connectors are distributed as separate packages and are not imported by default in the core package. Users install the specific connectors they need:
-
-```bash
-# Install core only
-pip install agent-framework-core
-
-# Install core with the curated standard integrations
-pip install agent-framework-core[all]
-# or (equivalently):
-pip install agent-framework
-
-# Install specific connector (pulls in core as dependency)
-pip install agent-framework-foundry
-```
+Package-governance decisions and detailed validation commands live in
+[`python-package-management`](.github/skills/python-package-management/SKILL.md).
 
 ## Documentation
 
-Each file should have a single first line containing: # Copyright (c) Microsoft. All rights reserved.
+### Module Docstrings
 
-We follow the [Google Docstring](https://github.com/google/styleguide/blob/gh-pages/pyguide.md#383-functions-and-methods) style guide for functions and methods.
-They are currently not checked for private functions (functions starting with '_').
+- Every public module, including public `__init__.py` modules, MUST have a concise module docstring focused on its
+  purpose.
+- Namespace modules SHOULD NOT maintain long package or supported-symbol inventories in their docstrings.
+- For a module with a docstring, the order MUST be:
+  1. Copyright comment
+  2. Optional top-level metadata comments, such as a PEP 723 block
+  3. Module docstring
+  4. `from __future__ import annotations`, when applicable
+  5. Imports
 
-When a change adds, removes, or renames a sample-facing environment variable in repo-level samples or
-package-local sample docs for a package included by `agent-framework-core[all]`, update the consolidated
-inventory in `samples/README.md` in the same change.
+### API Docstrings
 
-They should contain:
+Public APIs MUST use Google-style docstrings.
 
-- Single line explaining what the function does, ending with a period.
-- If necessary to further explain the logic a newline follows the first line and then the explanation is given.
-- The following three sections are optional, and if used should be separated by a single empty line.
-- Arguments are then specified after a header called `Args:`, with each argument being specified in the following format:
-  - `arg_name`: Explanation of the argument.
-    - if a longer explanation is needed for a argument, it should be placed on the next line, indented by 4 spaces.
-    - Type and default values do not have to be specified, they will be pulled from the definition.
-- Returns are specified after a header called `Returns:` or `Yields:`, with the return type and explanation of the return value.
-- Keyword arguments are specified after a header called `Keyword Args:`, with each argument being specified in the same format as `Args:`.
-- A header for exceptions can be added, called `Raises:`, following these guidelines:
-  - **Always document** Agent Framework specific exceptions (e.g., `AgentInvalidRequestException`, `IntegrationInvalidAuthException`)
-  - **Only document** standard Python exceptions (TypeError, ValueError, KeyError, etc.) when the condition is non-obvious or provides value to API users
-  - Format: `ExceptionType`: Explanation of the exception.
-  - If a longer explanation is needed, it should be placed on the next line, indented by 4 spaces.
-- Code examples can be added using the `Examples:` header followed by `.. code-block:: python` directive.
-
-Putting them all together, gives you at minimum this:
-
-```python
-def equal(arg1: str, arg2: str) -> bool:
-    """Compares two strings and returns True if they are the same."""
-    ...
-```
-
-Or a complete version of this:
+- The summary MUST use imperative mood and end with a period.
+- Docstrings MUST explain behavior, constraints, meaningful errors, and non-obvious semantics rather than restating
+  the signature.
+- Positional and ordinary parameters belong under `Args:`.
+- Keyword-only parameters belong under `Keyword Args:`.
+- `Returns:` or `Yields:` SHOULD be present when the value has meaningful semantics beyond its annotation. Omit it
+  for `None` and obvious trivial values.
+- `Raises:` MUST document intentionally raised Agent Framework exceptions.
+- `Raises:` SHOULD document built-in exceptions when callers can meaningfully act on a non-obvious condition.
+- Examples SHOULD use an `Examples:` section with `.. code-block:: python`.
+- Internal docstrings and comments SHOULD explain important intent, invariants, or tradeoffs. Do not narrate obvious
+  code.
 
 ```python
-def equal(arg1: str, arg2: str) -> bool:
-    """Compares two strings and returns True if they are the same.
-
-    Here is extra explanation of the logic involved.
+def equal(arg1: str, arg2: str, *, case_sensitive: bool = True) -> bool:
+    """Compare two strings.
 
     Args:
         arg1: The first string to compare.
         arg2: The second string to compare.
 
-    Returns:
-        True if the strings are the same, False otherwise.
-    """
-```
-
-A more complete example with keyword arguments and code samples:
-
-```python
-def create_client(
-    model: str | None = None,
-    *,
-    timeout: float | None = None,
-    env_file_path: str | None = None,
-    **kwargs: Any,
-) -> Client:
-    """Create a new client with the specified configuration.
-
-    Args:
-        model: The model ID to use. If not provided,
-            it will be loaded from settings.
-
     Keyword Args:
-        timeout: Optional timeout for requests.
-        env_file_path: If provided, settings are read from this file.
-        kwargs: Additional keyword arguments passed to the underlying client.
+        case_sensitive: Whether comparison preserves letter case.
 
     Returns:
-        A configured client instance.
-
-    Raises:
-        ValueError: If the model is invalid.
-
-    Examples:
-
-        .. code-block:: python
-
-            # Create a client with default settings:
-            client = create_client(model="gpt-4o")
-
-            # Or load from environment:
-            client = create_client(env_file_path=".env")
+        Whether the strings are equal under the selected comparison mode.
     """
     ...
 ```
 
-Use Google-style docstrings for all public APIs:
+## Logging and Telemetry
 
-```python
-def create_agent(name: str, client: SupportsChatGetResponse) -> Agent:
-    """Create a new agent with the specified configuration.
+- Log actionable, structured context at the boundary that owns the failure or decision.
+- Secrets, credentials, tokens, and sensitive user content MUST NOT be logged or emitted to telemetry by default.
+- Exception logging SHOULD preserve the original exception and stack context.
+- Logs SHOULD help an operator decide what failed and where; avoid duplicate logging at every layer of the same call.
 
-    Args:
-        name: The name of the agent.
-        client: The chat client to use for communication.
+## Performance and Serialization
 
-    Returns:
-        True if the strings are the same, False otherwise.
+- Code MUST avoid obvious repeated expensive work and redundant conversions.
+- A less-readable micro-optimization SHOULD require measurement or a clearly established hot path.
+- Caching SHOULD be introduced only for repeated expensive work with stable inputs and clear lifetime or invalidation
+  semantics.
+- Cached mutable values MUST have explicit ownership semantics so callers cannot corrupt shared cached state.
+- Choose `isinstance()`, a discriminator such as `.type`, or structural matching based on semantics. Do not replace
+  one with another solely because of a blanket performance claim.
 
-    Raises:
-        ValueError: If one of the strings is empty.
-    """
-    ...
-```
+When serializing:
 
-If in doubt, use the link above to read much more considerations of what to do and when, or use common sense.
+- Compute a representation once and reuse it when several consumers need the same value.
+- Use a known model's own `to_dict()` or equivalent when its exact type is known.
+- Use the framework's optimized `make_json_safe()` converter for heterogeneous values containing framework models,
+  Pydantic models, dataclasses, containers, or primitives.
+- Keep provider-specific conversion local when an external API requires exact aliases, JSON modes, or opaque JSON
+  strings.
+- Avoid `json.dumps()` followed by `json.loads()` unless crossing a required wire-format boundary.
 
-## Public API and Exports
+## Testing
 
-### Explicit Exports
+Tests are behavior-first. Coverage is a backstop, not the objective.
 
-**All wildcard imports (`from ... import *`) are prohibited** in production code, including both `.py` and `.pyi` files. Always use explicit import lists to maintain clarity and avoid namespace pollution.
+- Tests MUST validate the public or observable contract rather than mirror implementation details.
+- Meaningful new branches, error paths, and edge cases MUST be covered.
+- Mocks SHOULD replace external boundaries, not the internal units whose behavior the test is meant to prove.
+- Test names SHOULD describe the behavior and condition under test.
 
-Do not use ``__all__`` in internal modules. Define it in the ``__init__`` file of the level you want to expose.
-If a non-``__init__`` module is intentionally part of the public API surface (for example, ``observability.py``),
-it should define ``__all__`` as well.
+### Test Layout
 
-Also avoid identity alias imports in ``__init__`` files. Use ``from ._module import Symbol`` instead of
-``from ._module import Symbol as Symbol``.
+- Test directories MUST NOT contain `__init__.py`.
+- Files beginning with `test_` MUST contain tests; helper modules MUST use another name.
+- Non-core packages MUST place tests under a uniquely named `tests/<package>/` directory.
+- Core MAY use `packages/core/tests/` directly with topic subdirectories.
+- Keep the package-level `tests/` directory even when tests live in a nested package-specific directory.
 
-Exception: `.pyi` stubs that describe re-exported public APIs should use identity aliases (for example,
-`from ._agents import Agent as Agent`) so type checkers recognize the symbol as exported. This applies to the
-root `agent_framework/__init__.pyi`, which mirrors the lazy runtime exports from `agent_framework/__init__.py`.
+### Fixtures and Helpers
 
-```python
-# ✅ Preferred - explicit __all__ and named imports
-from ._agents import Agent
-from ._types import Message, ChatResponse
+- Shared fixtures MUST live in `conftest.py`.
+- Parameterized reusable setup SHOULD use a fixture that returns a callable factory.
+- Fixtures MUST be consumed through pytest injection, not imported from `conftest.py`.
+- Non-fixture helpers MUST live in a normal helper module and be imported explicitly.
+- Fixture names SHOULD describe the provided value or capability, such as `client`, `test_request`, or
+  `configured_agent`.
 
-# ✅ For many exports, use parenthesized multi-line imports
-from ._types import (
-    AgentResponse,
-    ChatResponse,
-    Message,
-    ResponseStream,
-)
+### Integration Tests
 
-__all__ = [
-    "Agent",
-    "AgentResponse",
-    "ChatResponse",
-    "Message",
-    "ResponseStream",
-]
+Every external-service integration test MUST have:
 
-# ❌ Prohibited pattern: wildcard/star imports (do not use)
-# from ._agents import *
-# from ._types import *
+- `@pytest.mark.integration`
+- A provider-specific skip condition for missing credentials, endpoints, or required infrastructure
 
-# ❌ Prohibited pattern: identity alias imports (do not use)
-# from ._agents import Agent as Agent
-```
+Add `@pytest.mark.flaky` only when the test is genuinely nondeterministic or service-sensitive.
 
-**Rationale:**
-- **Clarity**: Explicit imports make it clear exactly what is being exported and used
-- **IDE Support**: Enables better autocomplete, go-to-definition, and refactoring
-- **Type Checking**: Improves static analysis and type checker accuracy
-- **Maintenance**: Makes it easier to track symbol usage and detect breaking changes
-- **Performance**: Avoids unnecessary symbol resolution during module import
+Task-specific commands, CI workflow synchronization, and integration-job placement live in
+[`python-testing`](.github/skills/python-testing/SKILL.md).
 
-## Performance considerations
+## Related Guidance
 
-### Cache Expensive Computations
-
-Think about caching where appropriate. Cache the results of expensive operations that are called repeatedly with the same inputs:
-
-```python
-# ✅ Preferred - cache expensive computations
-class FunctionTool:
-    def __init__(self, ...):
-        self._cached_parameters: dict[str, Any] | None = None
-
-    def parameters(self) -> dict[str, Any]:
-        """Return the JSON schema for the function's parameters.
-
-        The result is cached after the first call for performance.
-        """
-        if self._cached_parameters is None:
-            self._cached_parameters = self.input_model.model_json_schema()
-        return self._cached_parameters
-
-# ❌ Avoid - recalculating every time
-def parameters(self) -> dict[str, Any]:
-    return self.input_model.model_json_schema()
-```
-
-### Prefer Attribute Access Over isinstance()
-
-When checking types in hot paths, prefer checking a `type` attribute (fast string comparison) over `isinstance()` (slower due to method resolution order traversal):
-
-```python
-# ✅ Preferred - use match/case with type attribute (faster)
-match content.type:
-    case "function_call":
-        # handle function call
-    case "usage":
-        # handle usage
-    case _:
-        # handle other types
-
-# ❌ Avoid in hot paths - isinstance() is slower
-if isinstance(content, FunctionCallContent):
-    # handle function call
-elif isinstance(content, UsageContent):
-    # handle usage
-```
-
-For inline conditionals:
-
-```python
-# ✅ Preferred - type attribute comparison
-result = value if content.type == "function_call" else other
-
-# ❌ Avoid - isinstance() in hot paths
-result = value if isinstance(content, FunctionCallContent) else other
-```
-
-### Avoid Redundant Serialization
-
-When the same data needs to be used in multiple places, compute it once and reuse it:
-
-```python
-# ✅ Preferred - reuse computed representation
-otel_message = _to_otel_message(message)
-otel_messages.append(otel_message)
-logger.info(otel_message, extra={...})
-
-# ❌ Avoid - computing the same thing twice
-otel_messages.append(_to_otel_message(message)) # this already serializes
-message_data = message.to_dict(exclude_none=True)  # and this does so again!
-logger.info(message_data, extra={...})
-```
-
-When converting arbitrary values for telemetry, protocol, or event payloads, reuse the optimized framework
-converter instead of adding a package-local recursive serializer:
-
-```python
-from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
-
-payload = make_json_safe(value)
-```
-
-Use a model's `to_dict()` directly when its type is known. Use `make_json_safe()` for heterogeneous values that may
-contain framework models, Pydantic models, dataclasses, containers, or primitives. Keep provider-specific conversion
-local when an API requires exact aliases, JSON modes, or opaque JSON strings, and avoid `json.dumps()` followed by
-`json.loads()` unless crossing such a required wire-format boundary.
-
-## Test Organization
-
-### Test Directory Structure
-
-Test folders require specific organization to avoid pytest conflicts when running tests across packages:
-
-1. **No `__init__.py` in test folders**: Test directories should NOT contain `__init__.py` files. This can cause import conflicts when pytest collects tests across multiple packages.
-
-2. **File naming**: Files starting with `test_` are treated as test files by pytest. Do not use this prefix for helper modules or utilities. If you need shared test utilities, put them in `conftest.py` or a file with a different name pattern (e.g., `helpers.py`, `fixtures.py`).
-
-3. **Package-specific conftest location**: The `tests/conftest.py` path is reserved for the core package (`packages/core/tests/conftest.py`). Other packages must place their tests in a uniquely-named subdirectory:
-
-```plaintext
-# ✅ Correct structure for non-core packages
-packages/devui/
-├── tests/
-│   └── devui/           # Unique subdirectory matching package name
-│       ├── conftest.py  # Package-specific fixtures
-│       ├── test_server.py
-│       └── test_mapper.py
-
-packages/anthropic/
-├── tests/
-│   └── anthropic/       # Unique subdirectory
-│       ├── conftest.py
-│       └── test_client.py
-
-# ❌ Incorrect - will conflict with core package
-packages/devui/
-├── tests/
-│   ├── conftest.py      # Conflicts when running all tests
-│   ├── test_server.py
-│   └── test_helpers.py  # Bad name - looks like a test file
-
-# ✅ Core package can use tests/ directly
-packages/core/
-├── tests/
-│   ├── conftest.py      # Core's conftest.py
-│   ├── core/
-│   │   └── test_agents.py
-│   └── openai/
-│       └── test_client.py
-```
-
-4. **Keep the `tests/` folder**: Even when using a subdirectory, keep the `tests/` folder at the package root. Some test discovery commands and tooling rely on this convention.
-
-### Fixture Guidelines
-
-- Use `conftest.py` for shared fixtures within a test directory
-- Factory functions with parameters should be regular functions, not fixtures (fixtures can't accept arguments)
-- Import factory functions explicitly: `from conftest import create_test_request`
-- Fixtures should use simple names that describe what they provide: `mapper`, `test_request`, `mock_client`
-
-### Integration Test Markers
-
-New integration tests that call external services must have all three markers:
-
-```python
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_openai_integration_tests_disabled
-async def test_chat_completion() -> None:
-    ...
-```
-
-- `@pytest.mark.flaky` — marks the test as potentially flaky since it depends on external services
-- `@pytest.mark.integration` — enables selecting/excluding integration tests with `-m integration` / `-m "not integration"`
-- `@skip_if_..._integration_tests_disabled` — skips the test when required API keys or service endpoints are missing
-
-For test modules where all tests are integration tests, use `pytestmark`:
-
-```python
-pytestmark = [
-    pytest.mark.flaky,
-    pytest.mark.integration,
-    pytest.mark.sample("01_single_agent"),
-]
-```
-
-When adding integration tests for a new provider, update the path filters and job assignments in **both** `python-merge-tests.yml` and `python-integration-tests.yml` — these workflows must be kept in sync. See the `python-testing` skill for details.
+- [Python development setup](DEV_SETUP.md)
+- [Python testing skill](.github/skills/python-testing/SKILL.md)
+- [Python code-quality skill](.github/skills/python-code-quality/SKILL.md)
+- [Python package-management skill](.github/skills/python-package-management/SKILL.md)
+- [Sample guidelines](samples/SAMPLE_GUIDELINES.md)

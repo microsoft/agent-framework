@@ -18,6 +18,165 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 /// </summary>
 public class CheckpointResumeTests
 {
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    internal async Task Checkpoint_Restore_InvokesSharedCallbackOncePerLoadAsync(ExecutionEnvironment environment)
+    {
+        // Arrange
+        object sharedStateKey = new();
+        int sharedRestores = 0;
+        int executorRestores = 0;
+        ValueTask RestoreSharedAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref sharedRestores);
+            return default;
+        }
+        ValueTask RestoreExecutorAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref executorRestores);
+            return default;
+        }
+        RestoreProbeExecutor source = new("source", RestoreSharedAsync, () => true, sharedStateKey, RestoreExecutorAsync);
+        RestoreProbeExecutor sink = new("sink", RestoreSharedAsync, () => true, sharedStateKey, RestoreExecutorAsync);
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, sink).Build();
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment().WithCheckpointing(checkpointManager);
+        CheckpointInfo? checkpoint = null;
+        await using (StreamingRun run = await env.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint = saved;
+                }
+            }
+        }
+        Assert.NotNull(checkpoint);
+
+        // Act
+        await using StreamingRun resumed = await env.ResumeStreamingAsync(workflow, checkpoint);
+        for (int load = 1; load <= 3; load++)
+        {
+            // Assert
+            Assert.Equal(load, sharedRestores);
+            Assert.Equal(load * 2, executorRestores);
+
+            if (load < 3)
+            {
+                await resumed.RestoreCheckpointAsync(checkpoint);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    internal async Task Checkpoint_Resume_RestoresAllStateBeforeSubclassHooksAsync(ExecutionEnvironment environment)
+    {
+        // Arrange
+        TaskCompletionSource<bool> restoreStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<bool> otherRestoreStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<bool> releaseRestore = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        int restoredCount = 0;
+        int sourceExecutorRestored = 0;
+        RestoreProbeExecutor source = new("source", async (_, _) =>
+        {
+            restoreStarted.SetResult(true);
+            await releaseRestore.Task;
+            Interlocked.Increment(ref restoredCount);
+        }, () => Volatile.Read(ref restoredCount) == 2, restoreExecutor: (_, _) =>
+        {
+            Interlocked.Increment(ref sourceExecutorRestored);
+            return default;
+        });
+        RestoreProbeExecutor sink = new("sink", (_, _) =>
+        {
+            Interlocked.Increment(ref restoredCount);
+            otherRestoreStarted.SetResult(true);
+            return default;
+        }, () => Volatile.Read(ref restoredCount) == 2);
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, sink).Build();
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment().WithCheckpointing(checkpointManager);
+        CheckpointInfo? checkpoint = null;
+        await using (StreamingRun run = await env.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint = saved;
+                }
+            }
+        }
+        Assert.NotNull(checkpoint);
+
+        // Act
+        Task<StreamingRun> resume = env.ResumeStreamingAsync(workflow, checkpoint).AsTask();
+        try
+        {
+            Task bothStarted = Task.WhenAll(restoreStarted.Task, otherRestoreStarted.Task);
+            Assert.Same(bothStarted, await Task.WhenAny(bothStarted, Task.Delay(TimeSpan.FromSeconds(10))));
+            await bothStarted;
+
+            // Assert
+            Assert.Null(source.RestorationCompleteInHook);
+            Assert.Null(sink.RestorationCompleteInHook);
+            Assert.Equal(0, Volatile.Read(ref sourceExecutorRestored));
+        }
+        finally
+        {
+            releaseRestore.TrySetResult(true);
+            await using StreamingRun resumed = await resume;
+        }
+        Assert.True(source.RestorationCompleteInHook);
+        Assert.True(sink.RestorationCompleteInHook);
+        Assert.Equal(1, sourceExecutorRestored);
+    }
+
+    private sealed class RestoreProbeExecutor : Executor<int>, IResettableExecutor
+    {
+        private readonly Func<bool> _isRestored;
+
+        public RestoreProbeExecutor(
+            string id,
+            Func<IWorkflowContext, CancellationToken, ValueTask> restore,
+            Func<bool> isRestored,
+            object? sharedStateKey = null,
+            Func<IWorkflowContext, CancellationToken, ValueTask>? restoreExecutor = null) : base(id)
+        {
+            this._isRestored = isRestored;
+            if (sharedStateKey is null)
+            {
+                this.RegisterCheckpointRestoringCallback(restore);
+            }
+            else
+            {
+                this.RegisterCheckpointRestoringCallback(sharedStateKey, restore);
+            }
+            if (restoreExecutor is not null)
+            {
+                this.RegisterCheckpointRestoringCallback(restoreExecutor);
+            }
+        }
+
+        public bool? RestorationCompleteInHook { get; private set; }
+
+        public ValueTask ResetAsync() => default;
+
+        [SendsMessage(typeof(int))]
+        public override ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
+            context.SendMessageAsync(message, cancellationToken: cancellationToken);
+
+        protected internal override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            this.RestorationCompleteInHook = this._isRestored();
+            return default;
+        }
+    }
+
     /// <summary>
     /// Verifies that a resumed workflow re-emits <see cref="RequestInfoEvent"/>s for
     /// pending external requests that existed at the time of the checkpoint.
