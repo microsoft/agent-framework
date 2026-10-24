@@ -420,7 +420,7 @@ class BedrockChatClient(
 
         async def _get_response() -> ChatResponse:
             raw_response = await asyncio.to_thread(self._invoke_converse, request)
-            return self._process_converse_response(raw_response, options)
+            return self._process_converse_response(raw_response, options, model=request["modelId"])
 
         return _get_response()
 
@@ -758,9 +758,12 @@ class BedrockChatClient(
         )
 
     def _process_converse_response(
-        self, response: dict[str, Any], options: Mapping[str, Any] | None = None
+        self, response: dict[str, Any], options: Mapping[str, Any] | None = None, *, model: str | None = None
     ) -> ChatResponse:
-        """Convert Bedrock Converse API response to ChatResponse."""
+        """Convert Bedrock Converse API response to ChatResponse.
+
+        Converse does not return the model id, so ``model`` should be the ``modelId`` the request was sent with.
+        """
         output = response.get("output") or {}
         message = output.get("message") or {}
         content_blocks = message.get("content") or []
@@ -770,7 +773,7 @@ class BedrockChatClient(
         usage_details = self._parse_usage(usage_source)
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
-        model = response.get("modelId") or output.get("modelId") or self.model
+        model = response.get("modelId") or output.get("modelId") or model or self.model
         return ChatResponse(
             response_id=response_id,
             messages=[chat_message],

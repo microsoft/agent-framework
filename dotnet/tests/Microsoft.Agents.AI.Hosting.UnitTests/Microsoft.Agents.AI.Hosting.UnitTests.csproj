@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <InjectSharedUnitTestCode>true</InjectSharedUnitTestCode>
   </PropertyGroup>
 
   <ItemGroup>

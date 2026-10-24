@@ -4393,6 +4393,57 @@ class TestArityValidation:
         assert wf is not None
 
 
+class TestKeywordOnlyRunContext:
+    """Regression tests for Issue #9324: keyword-only RunContext parameter injection."""
+
+    async def test_workflow_with_keyword_only_run_context(self):
+        """A @workflow function with a keyword-only RunContext parameter injects properly."""
+
+        @built_workflow
+        async def wf(text: str, *, ctx: RunContext) -> str:
+            ctx.set_state("text", text)
+            return ctx.get_state("text")
+
+        result = await wf.run("hello")
+        assert result.get_outputs() == ["hello"]
+
+    async def test_workflow_with_both_keyword_only_parameters(self):
+        """A @workflow function with both message and context keyword-only injects properly."""
+
+        @built_workflow
+        async def wf(*, text: str, ctx: RunContext) -> str:
+            ctx.set_state("text", text)
+            return ctx.get_state("text")
+
+        result = await wf.run("hello")
+        assert result.get_outputs() == ["hello"]
+
+    async def test_workflow_with_keyword_only_ctx_named_param(self):
+        """An unannotated keyword-only ctx parameter is injected properly."""
+
+        @built_workflow
+        async def wf(text: str, *, ctx) -> str:
+            ctx.set_state("val", text)
+            return ctx.get_state("val")
+
+        result = await wf.run("world")
+        assert result.get_outputs() == ["world"]
+
+    async def test_workflow_streaming_with_keyword_only_run_context(self):
+        """Streaming mode properly passes keyword-only RunContext parameter."""
+
+        @built_workflow
+        async def wf(text: str, *, ctx: RunContext) -> str:
+            ctx.set_state("text", text)
+            return ctx.get_state("text")
+
+        stream = wf.run("hello", stream=True)
+        async for _ in stream:
+            pass
+        result = await stream.get_final_response()
+        assert result.get_outputs() == ["hello"]
+
+
 class TestStaleResponsesRejected:
     """Regression for bug_014: stale responses after clean completion must be rejected."""
 
