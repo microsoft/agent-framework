@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from agent_framework import (
     Agent,
@@ -81,7 +81,7 @@ def make_tenant_agent(
     return Agent(
         client=ToolCallingClient(),
         tools=[read_tenant_data],
-        default_options={"additional_function_arguments": {"tenant_id": TRUSTED_TENANT_ID}},
+        default_options=cast(Any, {"additional_function_arguments": {"tenant_id": TRUSTED_TENANT_ID}}),
     )
 
 
