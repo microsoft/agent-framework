@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Literal, cast
+from urllib.parse import quote
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -7689,3 +7690,73 @@ def test_data_uri_readers_agree_on_the_base64_marker():
     payload_marker = f"data:image/png,x;base64,{png_b64}"
     with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
         detect_media_type_from_base64(data_uri=payload_marker)
+
+
+@mark.parametrize(
+    "payload",
+    [
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        base64.b64encode(b"\x89PNG\r\n\x1a\n\x00\xfb\xef\xff\x00").decode(),
+    ],
+)
+@mark.parametrize("escaped_characters", ["/", "+", "=", "/+="])
+@mark.parametrize("lowercase", [False, True])
+def test_data_uri_percent_encoded_base64_payload(payload: str, escaped_characters: str, lowercase: bool):
+    """Equivalent escaped payloads detect and extract the same bytes without changing the stored URI."""
+    escaped = payload
+    for character in escaped_characters:
+        escape = quote(character, safe="")
+        escaped = escaped.replace(character, escape.lower() if lowercase else escape)
+    uri = f"data:image/png;charset=utf-8;name=a%2Fb;base64,{escaped}"
+    content = Content.from_uri(uri=uri)
+    raw_bytes = base64.b64decode(payload, validate=True)
+    from_data = Content.from_data(data=raw_bytes, media_type="image/png")
+
+    assert detect_media_type_from_base64(data_uri=uri) == "image/png"
+    assert detect_media_type_from_base64(data_uri=f"data:image/png;base64,{payload}") == "image/png"
+    assert detect_media_type_from_base64(data_str=payload) == "image/png"
+    assert detect_media_type_from_base64(data_bytes=raw_bytes) == "image/png"
+    assert content.media_type == from_data.media_type == "image/png"
+    assert content.uri == uri
+    assert _get_data_bytes_as_str(content) == _get_data_bytes_as_str(from_data) == payload
+    assert _get_data_bytes(content) == _get_data_bytes(from_data) == raw_bytes
+
+
+@mark.parametrize(("payload", "expected"), [("%252F", "%2F"), ("%252B", "%2B"), ("%253D", "%3D")])
+def test_data_uri_payload_is_percent_decoded_once(payload: str, expected: str):
+    """Nested escapes remain escapes after extraction and fail strict base64 detection."""
+    uri = f"data:image/png;base64,{payload}"
+    assert _get_data_bytes_as_str(Content.from_uri(uri=uri)) == expected
+    with raises(ValueError, match="Invalid base64 data provided."):
+        detect_media_type_from_base64(data_uri=uri)
+
+
+def test_percent_decoding_is_not_applied_to_raw_base64_inputs():
+    """Only data URI payloads are URL-encoded; raw strings and bytes retain their contracts."""
+    payload = "iVBORw0KGgo%3D"
+    with raises(ValueError, match="Invalid base64 data provided."):
+        detect_media_type_from_base64(data_str=payload)
+    assert detect_media_type_from_base64(data_bytes=payload.encode()) is None
+    content = Content.from_data(data=payload.encode(), media_type="text/plain")
+    assert _get_data_bytes(content) == payload.encode()
+
+
+@mark.parametrize("payload", ["%21%21invalid%21%21", "%GG", "%FF"])
+def test_data_uri_percent_decoding_preserves_base64_errors(payload: str):
+    """Decoding URL escapes does not relax the existing base64 decoder or error types."""
+    uri = f"data:image/png;base64,{payload}"
+    content = Content.from_uri(uri=uri)
+    with raises(ValueError, match="Invalid base64 data provided."):
+        detect_media_type_from_base64(data_uri=uri)
+    with raises(ContentError, match="Failed to decode base64 data"):
+        _get_data_bytes(content)
+
+
+@mark.parametrize("metadata", ["image/png;gzip", "image/png;%62ase64", "image/png;base64;charset=utf-8"])
+def test_data_uri_percent_decoding_does_not_change_encoding_markers(metadata: str):
+    """Only payload escapes are decoded; metadata validation stays unchanged."""
+    uri = f"data:{metadata},iVBORw0KGgo%3D"
+    with raises(ContentError):
+        Content.from_uri(uri=uri)
+    with raises(ValueError):
+        detect_media_type_from_base64(data_uri=uri)
