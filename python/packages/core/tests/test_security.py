@@ -24,6 +24,7 @@ from agent_framework import (
     FunctionMiddleware,
     Message,
     SessionContext,
+    SupportsChatGetResponse,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
@@ -8861,7 +8862,9 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
             return SimpleNamespace(text=self.name + " response")
 
     alpha, beta = FakeClient("A"), FakeClient("B")
-    a, b = SecureAgentConfig(quarantine_chat_client=alpha), SecureAgentConfig(quarantine_chat_client=beta)
+    # The fake exposes only the chat methods exercised by these security tests.
+    a = SecureAgentConfig(quarantine_chat_client=cast(SupportsChatGetResponse, alpha))
+    b = SecureAgentConfig(quarantine_chat_client=cast(SupportsChatGetResponse, beta))
     empty = SecureAgentConfig(quarantine_chat_client=None)
 
     async def execute(cfg: SecureAgentConfig, marker: str, *, direct: bool = False) -> None:
@@ -8876,7 +8879,7 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
                 context=ctx,
                 state=session.state.setdefault(cfg.source_id, {}),
             )
-            middleware = ctx.middleware[cfg.source_id]
+            middleware = cast(list[FunctionMiddleware], ctx.middleware[cfg.source_id])
         tool = next(t for t in cfg.get_tools() if t.name == "quarantined_llm")
         args = {
             "prompt": "Summarize",
@@ -8934,14 +8937,14 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
                     result.append(self.policy_enforcer)
                 return result
 
-        custom = CustomizedConfig(quarantine_chat_client=alpha)
+        custom = CustomizedConfig(quarantine_chat_client=cast(SupportsChatGetResponse, alpha))
         custom.label_tracker = LabelTrackingFunctionMiddleware()
         await execute(custom, "ALPHA_CUSTOM_STACK_MARKER")
         assert any("ALPHA_CUSTOM_STACK_MARKER" in x for x in alpha.calls)
         assert not any("ALPHA_CUSTOM_STACK_MARKER" in x for x in beta.calls)
 
         # Standalone calls retain the legacy process-global fallback.
-        set_quarantine_client(beta)
+        set_quarantine_client(cast(SupportsChatGetResponse, beta))
         await quarantined_llm.invoke(
             arguments={
                 "prompt": "Direct",
