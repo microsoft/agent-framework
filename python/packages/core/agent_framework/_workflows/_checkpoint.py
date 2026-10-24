@@ -252,6 +252,42 @@ class InMemoryCheckpointStorage:
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
 
+def _encode_checkpoint_for_storage(checkpoint: WorkflowCheckpoint, allowed_types: frozenset[str]) -> dict[str, Any]:
+    """Encode a checkpoint for persistent storage, refusing one the storage could not restore.
+
+    Storages that persist encoded checkpoints decode them under their ``allowed_checkpoint_types``
+    on load, so the encoded payload is decoded here under the same allowlist before it is written.
+    A checkpoint that ``load`` would reject then fails at save time instead of when a workflow
+    tries to resume from it (#8181).
+
+    Args:
+        checkpoint: The checkpoint to encode.
+        allowed_types: The storage's ``allowed_checkpoint_types``, as passed to
+            ``decode_checkpoint_value`` on load.
+
+    Returns:
+        The encoded checkpoint, ready to be written.
+
+    Raises:
+        WorkflowCheckpointException: If the checkpoint cannot be encoded or would
+            fail to decode under ``allowed_types``.
+    """
+    from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+
+    checkpoint_dict = checkpoint.to_dict()
+    try:
+        encoded_checkpoint: dict[str, Any] = encode_checkpoint_value(checkpoint_dict)
+        decode_checkpoint_value(encoded_checkpoint, allowed_types=allowed_types)
+    except WorkflowCheckpointException:
+        raise
+    except Exception as ex:
+        raise WorkflowCheckpointException(
+            f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
+            "this storage's allowed types; refusing to save."
+        ) from ex
+    return encoded_checkpoint
+
+
 # Process-wide serialization of writes per destination file.
 #
 # asyncio.Lock is loop-bound, so a per-(loop, checkpoint-id) registry cannot
@@ -589,21 +625,8 @@ class FileCheckpointStorage:
             WorkflowCheckpointException: If the checkpoint cannot be encoded or would
                 fail to decode under this storage's ``allowed_checkpoint_types``.
         """
-        from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
-
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
-        checkpoint_dict = checkpoint.to_dict()
-        # Fail at save time if encoding or restore validation fails (#8181).
-        try:
-            encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
-            decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
-        except WorkflowCheckpointException:
-            raise
-        except Exception as ex:
-            raise WorkflowCheckpointException(
-                f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
-                "this storage's allowed types; refusing to save."
-            ) from ex
+        encoded_checkpoint = _encode_checkpoint_for_storage(checkpoint, self._allowed_types)
 
         def _replace_with_retry(tmp_path: Path) -> None:
             # On Windows, os.replace can transiently fail with PermissionError when a

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -201,6 +202,18 @@ async def test_save_returns_checkpoint_id(mock_container: MagicMock) -> None:
     result = await storage.save(checkpoint)
 
     assert result == "cp-123"
+
+
+async def test_save_unencodable_state_raises_checkpoint_exception(mock_container: MagicMock) -> None:
+    """save wraps encoding failures in WorkflowCheckpointException and writes nothing."""
+    checkpoint = _make_checkpoint()
+    checkpoint.state = {"lock": threading.Lock()}
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with pytest.raises(WorkflowCheckpointException, match="cannot be encoded"):
+        await storage.save(checkpoint)
+
+    mock_container.upsert_item.assert_not_awaited()
 
 
 # --- Tests for load ---
@@ -763,3 +776,46 @@ async def test_get_latest_allows_listed_app_type(mock_container: MagicMock) -> N
     assert result is not None
     assert isinstance(result.state["data"], _AppState)
     assert result.state["data"].label == "latest"
+
+
+async def test_save_rejects_unlisted_app_type(mock_container: MagicMock) -> None:
+    """save refuses a checkpoint that the same storage could not load back."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        await storage.save(checkpoint)
+
+    mock_container.upsert_item.assert_not_awaited()
+
+
+async def test_save_rejected_checkpoint_does_not_create_database(
+    mock_cosmos_client: MagicMock, mock_container: MagicMock
+) -> None:
+    """A refused save does not create the database or container."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
+    storage = CosmosCheckpointStorage(
+        cosmos_client=mock_cosmos_client,
+        database_name="db1",
+        container_name="checkpoints",
+    )
+
+    with pytest.raises(WorkflowCheckpointException):
+        await storage.save(checkpoint)
+
+    mock_cosmos_client.create_database_if_not_exists.assert_not_awaited()
+    mock_container.upsert_item.assert_not_awaited()
+
+
+async def test_save_allows_listed_app_type(mock_container: MagicMock) -> None:
+    """save accepts application types listed in allowed_checkpoint_types."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="ok", count=7)})
+    storage = CosmosCheckpointStorage(
+        container_client=mock_container,
+        allowed_checkpoint_types=[_APP_STATE_TYPE_KEY],
+    )
+
+    result = await storage.save(checkpoint)
+
+    assert result == checkpoint.checkpoint_id
+    mock_container.upsert_item.assert_awaited_once()
