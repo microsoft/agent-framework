@@ -3084,7 +3084,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatResponse, Message
+            from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message
 
             # Create a response with messages
             msg = Message("assistant", ["The weather is sunny."])
@@ -3096,7 +3096,14 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             print(response.text)  # "The weather is sunny."
 
             # Combine streaming updates
-            updates = [...]  # List of ChatResponseUpdate objects
+            updates = [
+                ChatResponseUpdate(
+                    contents=[Content.from_text("The weather is sunny.")],
+                    role="assistant",
+                    finish_reason="stop",
+                    model="gpt-4",
+                )
+            ]
             response = ChatResponse.from_updates(updates)
 
             # Serialization - to_dict and from_dict
@@ -3572,7 +3579,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentResponse, Message
+            from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message
 
             # Create agent response
             msg = Message("assistant", ["Task completed successfully."])
@@ -3584,7 +3591,13 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             print(len(user_requests))  # 0
 
             # Combine streaming updates
-            updates = [...]  # List of AgentResponseUpdate objects
+            updates = [
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Task completed successfully.")],
+                    role="assistant",
+                    response_id="run_123",
+                )
+            ]
             response = AgentResponse.from_updates(updates)
 
             # Serialization - to_dict and from_dict
