@@ -1725,6 +1725,14 @@ class RawAnthropicClient(
     def _parse_citations_from_anthropic(
         self, content_block: BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock
     ) -> list[Annotation] | None:
+        """Parse Anthropic citations into annotations.
+
+        Note:
+            Document and search-result citations retain their source coordinates in ``annotated_regions``.
+            Their ``additional_properties["annotated_regions_coordinate_space"]`` is ``"source"`` to distinguish
+            these locations from generated-response character offsets. The Responses host does not emit these
+            regions as output-text spans.
+        """
         content_blocks = getattr(content_block, "citations", None)
         if not content_blocks:
             return None
@@ -1789,6 +1797,8 @@ class RawAnthropicClient(
                     )
                 case _:
                     logger.debug(f"Unknown citation type encountered: {citation.type}")
+            if cit.get("annotated_regions"):
+                cit["additional_properties"] = {"annotated_regions_coordinate_space": "source"}
             annotations.append(cit)
         return annotations or None
 
