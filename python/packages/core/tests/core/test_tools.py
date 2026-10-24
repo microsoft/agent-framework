@@ -3,9 +3,10 @@ import asyncio
 import copy
 import logging
 import threading
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date, datetime
-from typing import Annotated, Any, Literal, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 from unittest.mock import Mock
 
 import pytest
@@ -20,7 +21,11 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
-from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._middleware import (
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    FunctionMiddlewarePipeline,
+)
 from agent_framework._tools import (
     _auto_invoke_function,
     _format_tool_parameters,
@@ -429,6 +434,291 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
 
     with pytest.raises(TypeError, match="Missing required argument"):
         await search.invoke(arguments={})
+
+
+@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]", '"text"', "   "])
+async def test_function_call_arguments_that_are_not_a_json_object_are_answered_with_an_error(
+    arguments: str,
+) -> None:
+    """A payload that is not a JSON object is not arguments, and must not be called as one.
+
+    Wrapping it under "raw" would call the tool with an argument it never
+    declared, and the model would not learn that its call was malformed.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments=arguments),
+        ],
+        tools=[account_tool],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+async def test_function_call_with_object_arguments_still_runs_the_tool() -> None:
+    """A well-formed call is unaffected by the guard."""
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments='{"limit": 5}'),
+        ],
+        tools=[account_tool],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == [{"limit": 5}]
+    assert result_groups[0][0].result == "ok"
+
+
+async def test_malformed_arguments_reach_approval_like_any_other_call() -> None:
+    """A malformed call is not answered before approval.
+
+    Middleware may still repair the arguments once the call is approved, so the
+    request goes to approval the way every other call does; the innermost
+    handler answers the call only if the payload is still unrepaired there.
+    """
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write(value: str = "") -> str:
+        calls.append({"value": value})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="guarded_write", arguments="not {json"),
+        ],
+        tools=[guarded_write],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == []
+    assert len(result_groups) == 1
+    assert result_groups[0][0].type == "function_approval_request"
+
+
+async def test_middleware_can_repair_a_payload_that_is_not_a_json_object() -> None:
+    """Middleware sees the raw parsed mapping and may repair it into real arguments.
+
+    This is the function-loop contract: middleware receives the arguments before
+    any final validation, and a repaired call executes like any other.
+    """
+
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="list_accounts")
+    def list_accounts(limit: int = 0) -> str:
+        calls.append({"limit": limit})
+        return "ok"
+
+    class RepairRawArguments(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            arguments = cast("dict[str, Any]", context.arguments)
+            if "raw" in arguments:
+                context.arguments = {"limit": 5}
+            await call_next()
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments="[1, 2]"),
+        ],
+        tools=[list_accounts],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(RepairRawArguments()),
+    )
+
+    assert not should_terminate
+    assert calls == [{"limit": 5}]
+    assert result_groups[0][0].result == "ok"
+
+
+@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]"])
+async def test_malformed_arguments_left_unrepaired_are_answered_before_the_tool_runs(
+    arguments: str,
+) -> None:
+    """When middleware does not repair the wrapped payload, the call is answered.
+
+    The error is the argument-validation result, raised immediately before the
+    tool would have executed, so the tool never runs on undeclared arguments.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    class Passthrough(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            await call_next()
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments=arguments),
+        ],
+        tools=[account_tool],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(Passthrough()),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+class _InjectUser(FunctionMiddleware):
+    """Middleware that appends a key to every call's arguments."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        context.arguments = {**cast("dict[str, Any]", context.arguments), "user": "u1"}
+        await call_next()
+
+
+async def test_injecting_middleware_does_not_make_a_malformed_payload_count_as_repaired() -> None:
+    """A middleware that appends a key must not un-mark the wrapped payload.
+
+    The injection preserves the original ``raw`` entry, so the arguments are
+    still the wrapper plus an undeclared key - the tool must not run.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments="[1, 2]"),
+        ],
+        tools=[account_tool],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(_InjectUser()),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+async def test_injecting_middleware_does_not_silence_a_malformed_payload_for_a_typed_tool() -> None:
+    """The same holds for a typed tool: the wrapper must not reach it either.
+
+    The input model would silently drop the undeclared ``raw`` key, so the tool
+    would run on injected values alone without the model ever learning that its
+    call was malformed.
+    """
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="typed_target")
+    def typed_target(user: str = "", limit: int = 0) -> str:
+        calls.append({"user": user, "limit": limit})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="typed_target", arguments="[1, 2]"),
+        ],
+        tools=[typed_target],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(_InjectUser()),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+async def test_a_tool_that_declares_raw_receives_a_non_object_payload_as_arguments() -> None:
+    """A tool that declares ``raw`` gets the wrapped payload as ordinary arguments.
+
+    For such a tool the wrapper coincides with a valid call, which is the
+    behaviour the loop had before the malformed-argument guard existed.
+    """
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="raw_writer")
+    def raw_writer(raw: str = "") -> str:
+        calls.append({"raw": raw})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="raw_writer", arguments="not {json"),
+        ],
+        tools=[raw_writer],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == [{"raw": "not {json"}]
+    assert result_groups[0][0].result == "ok"
 
 
 async def test_invoke_preserves_explicit_null_argument():
