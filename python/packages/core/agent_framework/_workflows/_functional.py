@@ -1198,7 +1198,10 @@ class RunContext:
             await self._cancel_workflow_tasks()
             if propagate_failures:
                 _raise_completed_failure()
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError) and not isinstance(exc, WorkflowInterrupted):
+                for save_task in list(self._checkpoint_save_tasks):
+                    save_task.cancel()
             await self._cancel_workflow_tasks()
             raise
 
@@ -2166,8 +2169,8 @@ class FunctionalWorkflow:
         if storage is not None:
 
             async def _on_step_completed() -> None:
-                # A checkpoint save that has started must finish even if the step
-                # is cancelled (e.g. a sibling branch fails the run): a storage
+                # A checkpoint save that has started must finish if the step
+                # is cancelled because a sibling branch fails the run: a storage
                 # whose save awaits I/O before writing would otherwise lose the
                 # completed step's result, and a resumed run would re-run the
                 # step and its side effects. The save runs as its own task that
@@ -2363,6 +2366,8 @@ class FunctionalWorkflow:
             try:
                 await asyncio.wait({workflow_task})
             except BaseException:
+                for save_task in list(ctx._checkpoint_save_tasks):
+                    save_task.cancel()
                 ctx._cancel_workflow_task(workflow_task)
                 await asyncio.gather(workflow_task, return_exceptions=True)
                 await ctx._cancel_workflow_tasks()

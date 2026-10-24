@@ -994,6 +994,81 @@ class TestCheckpointing:
         assert result.get_outputs() == [[1, 2]]
         assert runs == Counter({"prepare": 1, "done": 1, "flaky": 2})
 
+    @pytest.mark.parametrize("save_mode", ["inline", "task", "gather"])
+    @pytest.mark.parametrize("cancel_mode", ["cancel", "timeout"])
+    @pytest.mark.parametrize("phase", ["step", "failure", "pause"])
+    async def test_caller_can_cancel_in_flight_checkpoint_save(self, save_mode: str, cancel_mode: str, phase: str):
+        save_started = asyncio.Event()
+        release_save = asyncio.Event()
+        save_finished = asyncio.Event()
+        workflow_finished = asyncio.Event()
+
+        class BlockingSaveStorage(InMemoryCheckpointStorage):
+            async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+                async def write() -> CheckpointID:
+                    save_started.set()
+                    try:
+                        await release_save.wait()
+                        return await super(BlockingSaveStorage, self).save(checkpoint)
+                    finally:
+                        save_finished.set()
+
+                if save_mode == "task":
+                    return await asyncio.create_task(write())
+                if save_mode == "gather":
+                    return (await asyncio.gather(write()))[0]
+                return await write()
+
+        storage = BlockingSaveStorage()
+
+        @step(replay_key=lambda value: "complete")
+        async def complete(value: int) -> int:
+            return value + 1
+
+        @step(replay_key=lambda: "interrupt")
+        async def interrupt(ctx: RunContext) -> int:
+            await save_started.wait()
+            if phase == "failure":
+                raise RuntimeError("sibling failure")
+            return await ctx.request_info("continue?", int, request_id="continue")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: int) -> int | list[int]:
+            try:
+                if phase == "step":
+                    return await complete(value)
+                return list(await asyncio.gather(complete(value), interrupt()))
+            finally:
+                workflow_finished.set()
+
+        run_task = asyncio.ensure_future(wf.run(0))
+        cancellation_task = run_task
+        expected_error: type[BaseException]
+        try:
+            await asyncio.wait_for(save_started.wait(), timeout=5)
+            if phase != "step":
+                await asyncio.wait_for(workflow_finished.wait(), timeout=5)
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+            if cancel_mode == "timeout":
+                cancellation_task = asyncio.ensure_future(asyncio.wait_for(run_task, timeout=0.01))
+                expected_error = asyncio.TimeoutError
+            else:
+                run_task.cancel()
+                expected_error = asyncio.CancelledError
+
+            finished, _ = await asyncio.wait({cancellation_task}, timeout=1)
+            assert cancellation_task in finished, "Caller cancellation is blocked by the checkpoint save"
+            with pytest.raises(expected_error):
+                await cancellation_task
+
+            assert run_task.cancelled()
+            assert save_finished.is_set()
+            assert await storage.list_checkpoints(workflow_name="wf") == []
+        finally:
+            release_save.set()
+            await asyncio.gather(cancellation_task, run_task, return_exceptions=True)
+
 
 # ---------------------------------------------------------------------------
 # Step replay identity
