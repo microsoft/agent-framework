@@ -77,6 +77,49 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "Agent_With_TypeSafe",
+            ProjectPath = "samples/02-agents/AgentProviders/typesafe/Agent_With_TypeSafe",
+            RequiredEnvironmentVariables = ["TYPESAFE_API_KEY"],
+            Inputs = ["Y"],
+            MustContain =
+            [
+                "Direct JevChatClient result:",
+                "Agent result:",
+                "Default questions result:",
+                "Function calling result:",
+                "better_city:",
+                "Tool approval:",
+                "issue_refund(plan: Pro)",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The direct result should route the duplicate subscription charge to billing, and the agent result should route the failing checkout integration to technical with a high urgency probability.",
+                "The default questions result should route the invoice request to billing with a low urgency probability.",
+                "The function calling result should contain one weather line for Seattle and one for Amsterdam, with temperatures in Fahrenheit, followed by a better_city line that names one of the two cities.",
+                "The tool approval step should ask to approve issue_refund for the Pro plan and, after approval, show the refund result followed by a department line.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_TypeSafe_Step01_LoopJudge",
+            ProjectPath = "samples/02-agents/AgentProviders/typesafe/Agent_TypeSafe_Step01_LoopJudge",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "TYPESAFE_API_KEY"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain = ["Answer 1:", "Judge:", "red_sunsets:", "Final answer:"],
+            ExpectedOutputDescription =
+            [
+                "The first answer should explain only why the sky is blue, and the judge should mark red_sunsets as missing with a low probability.",
+                "A later answer should also explain why sunsets are red, and the judge should mark red_sunsets as met for it.",
+                "Every numbered answer (Answer 1, Answer 2, and so on) should be followed by a Judge block with probabilities. The Final answer section repeats the last judged answer and has no Judge block of its own.",
+                "The final answer should explain both why the sky is blue and why sunsets are red.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
         // ── Agents ──────────────────────────────────────────────────────────
 
         new SampleDefinition
@@ -399,6 +442,29 @@ internal static class AgentsSamples
                 "The output should show an agent planning a team offsite by breaking the work into a todo list.",
                 "The output should show the todo list being updated as progress is reported (for example marking items complete after the venue is booked and invites are sent) and adjusted when the plan changes to skip catering and add a group hike.",
                 "The current todo list should be printed after each turn, showing item status.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_Step25_ClassificationWithJev",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step25_ClassificationWithJev",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "TYPESAFE_API_KEY"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "Ticket:",
+                "Tool result:",
+                "The same tool, answered by a local keyword classifier:",
+                "local-keyword-classifier",
+            ],
+            ExpectedOutputDescription =
+            [
+                "Each of the three tickets should show a tool result with department, urgent, and frustration answers from a jev model, followed by a one-line agent reply.",
+                "The failing Stripe integration ticket should be routed to technical and marked urgent, and the invoice request should be routed to billing and not urgent.",
+                "The vague account ticket may be sent to human review when the department confidence is low.",
+                "The last part should show a tool result from the local-keyword-classifier model for the invoice ticket, followed by an agent reply.",
                 "The output should not contain error messages or stack traces.",
             ],
         },

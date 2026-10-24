@@ -93,6 +93,13 @@ covering basics, function tools, structured output, middleware, MCP, code interp
 | [Conversation](./openai/Agent_OpenAI_Step05_Conversation/) | Multi-turn conversations with OpenAI |
 | [Code Interpreter](./openai/Agent_OpenAI_Step06_CodeInterpreterFileDownload/) | Code interpreter with file downloads |
 
+### [TypeSafe](./typesafe/)
+
+| Sample | Description |
+| --- | --- |
+| [Agent with TypeSafe](./typesafe/Agent_With_TypeSafe/) | Use Jev, the TypeSafe System One model, as an IChatClient that answers typed questions and calls closed-set tools |
+| [Loop judge](./typesafe/Agent_TypeSafe_Step01_LoopJudge/) | Use Jev as the judge of a LoopAgent, with one yes or no question per criterion |
+
 ## Running the samples
 
 Navigate to a sample directory and run:
