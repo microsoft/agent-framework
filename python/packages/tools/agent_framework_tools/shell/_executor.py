@@ -22,6 +22,9 @@ from ._resolve import is_powershell
 from ._truncate import truncate_head_tail as _truncate
 from ._types import ShellResult
 
+# Bounds the post-kill drain: a process that left the session can still hold the pipes open.
+_DRAIN_GRACE = 2.0
+
 
 def _popen_kwargs_for_group() -> dict[str, object]:
     """Platform-specific process-group isolation so we can kill children too."""
@@ -76,9 +79,11 @@ async def run_stateless(
         await kill_process_tree(proc)
         # Drain any queued output.
         try:
-            stdout_bytes, stderr_bytes = await proc.communicate()
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=_DRAIN_GRACE)
         except Exception:
             stdout_bytes, stderr_bytes = b"", b""
+            # Release the pipes a detached process still holds instead of leaving them to its exit.
+            proc._transport.close()  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage]
 
     duration_ms = int((time.monotonic() - started) * 1000)
     stdout_str, stdout_truncated = _truncate(stdout_bytes or b"", max_output_bytes)
