@@ -54,7 +54,8 @@ public static class Program
 
         var resourceBuilder = ResourceBuilder
             .CreateDefault()
-            .AddService("WorkflowSample");
+            .AddService("WorkflowSample")
+            .AddAttributes([new("microsoft.foundry", "True")]);
 
         var traceProviderBuilder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
