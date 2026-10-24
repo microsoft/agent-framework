@@ -2,10 +2,13 @@
 
 import asyncio
 import base64
+import copy
 import inspect
 import json
 import os
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Iterator, Mapping, Sequence
+import pickle
+import sys
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
@@ -9791,6 +9794,45 @@ async def test_streaming_error_event_preserves_provider_details(
     assert getattr(cause, "event", None) is error_event
     if request_path == "resume":
         assert "continuation_token" not in options
+
+
+@pytest.mark.parametrize(
+    "round_trip",
+    [
+        param(copy.copy, id="copy"),
+        param(copy.deepcopy, id="deepcopy"),
+        param(lambda value: pickle.loads(pickle.dumps(value)), id="pickle"),
+    ],
+)
+@pytest.mark.parametrize("wrapped", [False, True], ids=["inner", "wrapper"])
+def test_streaming_error_exception_round_trip_preserves_state(round_trip: Callable[[Any], Any], wrapped: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    error_event = ResponseErrorEvent(
+        code="server_error", message="boom", param="input", sequence_number=1, type="error"
+    )
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_chunk_from_openai(error_event, options={}, function_call_ids={})
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, RuntimeError)
+    cause.__dict__["trace_id"] = "trace-123"
+    if sys.version_info >= (3, 11):
+        cause.add_note("provider stream failed")
+
+    error = exc_info.value if wrapped else cause
+    restored = round_trip(error)
+    assert type(restored) is type(error)
+    assert str(restored) == str(error)
+    restored_cause = restored.args[1] if wrapped else restored
+    assert type(restored_cause) is type(cause)
+    assert restored_cause.args == cause.args
+    assert getattr(restored_cause, "code", None) == error_event.code
+    assert getattr(restored_cause, "message", None) == error_event.message
+    assert getattr(restored_cause, "param", None) == error_event.param
+    assert getattr(restored_cause, "event", None) == error_event
+    assert restored_cause.__dict__["trace_id"] == "trace-123"
+    if sys.version_info >= (3, 11):
+        assert restored_cause.__notes__ == ["provider stream failed"]
 
 
 async def test_resumed_stream_error_clears_continuation_token() -> None:

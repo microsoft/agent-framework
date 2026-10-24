@@ -179,6 +179,9 @@ class _OpenAIResponseStreamError(RuntimeError):
             error_details = f"{error_details} (parameter: {event.param})"
         super().__init__(f"OpenAI streaming error: {error_details}")
 
+    def __reduce__(self) -> tuple[type[_OpenAIResponseStreamError], tuple[ResponseErrorEvent], dict[str, Any]]:
+        return type(self), (self.event,), self.__dict__
+
 
 def _is_refusal_text_content(content: Content) -> bool:
     return (
