@@ -944,6 +944,100 @@ class TestParsedRequests:
         assert agent.calls == []
         assert provider.contexts == []
 
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("source", ["request", "parser", "hook"])
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"provider": {"type": "openai", "base_url": "https://example.com/api"}},
+            {"mcp_servers": {"application": {"type": "http", "url": "https://example.com/mcp", "tools": ["*"]}}},
+        ],
+    )
+    async def test_connection_options_are_governed_by_the_agent(
+        self, stream: bool, source: str, options: dict[str, Any]
+    ) -> None:
+        agent = _make_agent(response_text="ok", stream_texts=["ok"])
+        server = InvocationsHostServer(
+            agent,
+            agent_session_store_provider=_SessionStoreProvider(_mock_session_store()),
+            parse_request=(lambda _request: InvocationRun(messages="hi", options=options, stream=stream))
+            if source == "parser"
+            else None,
+            prepare_options=(lambda _request, _options: options) if source == "hook" else None,
+        )
+        with _request_context(session_id="connection-options"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "hi", "stream": stream, "options": options if source == "request" else {}})
+            )
+            assert await _success_text(response) == "ok"
+
+        assert agent.calls[0]["options"] == options
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("agent_type", ["RawGitHubCopilotAgent", "GitHubCopilotAgent"])
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"provider": {"type": "openai", "base_url": "https://example.com/api"}},
+            {"mcp_servers": {"application": {"type": "http", "url": "https://example.com/mcp", "tools": ["*"]}}},
+        ],
+    )
+    async def test_http_route_reports_copilot_connection_policy_rejections_as_client_errors(
+        self, stream: bool, agent_type: str, options: dict[str, Any]
+    ) -> None:
+        copilot_agents = pytest.importorskip("agent_framework_github_copilot")
+        sdk_client = MagicMock()
+        sdk_client.start = AsyncMock()
+        sdk_client.create_session = AsyncMock()
+        sdk_client.resume_session = AsyncMock()
+        agent = getattr(copilot_agents, agent_type)(client=sdk_client)
+        server = InvocationsHostServer(agent, agent_session_store_provider=_SessionStoreProvider(_mock_session_store()))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                params={"agent_session_id": f"connection-policy-{uuid.uuid4().hex}"},
+                json={"message": "hi", "stream": stream, "options": options},
+            )
+
+        if stream:
+            assert response.status_code == 200
+            assert _parse_sse_events(response.text) == [
+                (
+                    "error",
+                    {
+                        "message": "The agent rejected the invocation request.",
+                        "code": "invalid_request",
+                        "status": 400,
+                    },
+                )
+            ]
+        else:
+            assert response.status_code == 400
+            assert response.json() == {"error": "The agent rejected the invocation request."}
+        sdk_client.start.assert_not_awaited()
+        sdk_client.create_session.assert_not_awaited()
+        sdk_client.resume_session.assert_not_awaited()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_generation_options_preserve_application_connection_defaults(self, stream: bool) -> None:
+        agent = _make_agent(response_text="ok", stream_texts=["ok"])
+        agent.default_options = {
+            "mcp_servers": {"application": {"type": "http", "url": "https://example.com/mcp", "tools": ["*"]}},
+            "provider": {"type": "openai", "base_url": "https://example.com/api"},
+        }
+        server = InvocationsHostServer(agent)
+        with _request_context(session_id="generation-options"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "hi", "stream": stream, "options": {"model": "request-model"}})
+            )
+            assert await _success_text(response) == "ok"
+
+        assert agent.calls[0]["options"] == {"model": "request-model"}
+        assert agent.default_options == {
+            "mcp_servers": {"application": {"type": "http", "url": "https://example.com/mcp", "tools": ["*"]}},
+            "provider": {"type": "openai", "base_url": "https://example.com/api"},
+        }
+
     @pytest.mark.parametrize("result", [None, [], {1: "invalid"}, {"session_id": "forged"}])
     async def test_options_hook_must_return_safe_string_keyed_mapping(self, result: Any) -> None:
         agent = _make_agent(response_text="ok")

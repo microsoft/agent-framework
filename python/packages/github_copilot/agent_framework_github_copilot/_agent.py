@@ -51,7 +51,7 @@ from agent_framework._types import (
     _get_data_bytes_as_str,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
-from agent_framework.exceptions import AgentException, ContentError
+from agent_framework.exceptions import AgentException, AgentInvalidRequestException, ContentError
 from agent_framework.observability import AgentTelemetryLayer
 
 from ._feature_usage import FeatureIndex
@@ -504,7 +504,8 @@ class GitHubCopilotOptions(TypedDict, total=False):
     ``reasoning_effort``, ``context_tier``, ``enable_citations``, ``available_tools``,
     ``memory``, ...) may also be supplied and is forwarded verbatim to the SDK. An
     unrecognized parameter name surfaces as a ``TypeError`` from the SDK, so typos are
-    caught rather than silently ignored.
+    caught rather than silently ignored. Per-run ``provider`` and ``mcp_servers`` require
+    constructor opt-in through ``allow_runtime_connection_overrides=True``.
     """
 
     system_message: SystemMessageConfig
@@ -661,6 +662,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsT | None = None,
+        allow_runtime_connection_overrides: bool = False,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -681,12 +683,17 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 or tool definition dicts. These are converted to Copilot SDK tools internally.
             default_options: Default options for the agent. Can include cli_path, model,
                 timeout, log_level, etc.
+            allow_runtime_connection_overrides: Allow per-run `provider` and `mcp_servers` configuration.
+                Defaults to False. Configure application-owned connections through `default_options` instead.
             env_file_path: Optional path to .env file for loading configuration.
             env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
 
         Raises:
             ValueError: If required configuration is missing or invalid.
         """
+        if not isinstance(allow_runtime_connection_overrides, bool):
+            raise TypeError("allow_runtime_connection_overrides must be a bool.")
+
         super().__init__(
             id=id,
             name=name,
@@ -697,6 +704,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         self._client = client
         self._owns_client = client is None
+        self._allow_runtime_connection_overrides = allow_runtime_connection_overrides
 
         # Parse options
         opts: dict[str, Any] = dict(default_options) if default_options else {}
@@ -894,6 +902,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             When stream=True: A ResponseStream of AgentResponseUpdate items.
 
         Raises:
+            AgentInvalidRequestException: If runtime connection configuration is supplied without constructor opt-in.
             AgentException: If the request fails.
         """
         if middleware:
@@ -966,13 +975,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
+        opts: dict[str, Any] = dict(options) if options else {}
+        self._validate_runtime_connection_options(opts)
+
         if not self._started:
             await self.start()
 
         if not session:
             session = self.create_session()
 
-        opts: dict[str, Any] = dict(options) if options else {}
         if "on_function_approval" in opts:
             raise ValueError(
                 "on_function_approval is a security-sensitive option and must be set "
@@ -1103,13 +1114,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the request fails.
         """
+        opts: dict[str, Any] = dict(options) if options else {}
+        self._validate_runtime_connection_options(opts)
+
         if not self._started:
             await self.start()
 
         if not session:
             session = self.create_session()
 
-        opts: dict[str, Any] = dict(options) if options else {}
         if "on_function_approval" in opts:
             raise ValueError(
                 "on_function_approval is a security-sensitive option and must be set "
@@ -1714,6 +1727,17 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             working_directory / ".github" / "hooks",
         )
 
+    def _validate_runtime_connection_options(self, options: Mapping[str, Any]) -> None:
+        if self._allow_runtime_connection_overrides:
+            return
+        reserved = {"mcp_servers", "provider"}.intersection(options)
+        if reserved:
+            raise AgentInvalidRequestException(
+                f"Runtime connection options are disabled: {', '.join(sorted(reserved))}. "
+                "Configure connections through default_options or set allow_runtime_connection_overrides=True "
+                "when constructing the agent."
+            )
+
     def _build_session_kwargs(
         self,
         streaming: bool,
@@ -1725,11 +1749,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         """Assemble keyword arguments for ``create_session`` / ``resume_session``.
 
         Options are layered: the agent's ``default_options`` first, then per-run
-        ``runtime_options`` which override them. Every key is forwarded verbatim to
+        ``runtime_options`` which override them. Every accepted key is forwarded verbatim to
         the Copilot SDK, so any ``create_session`` parameter is supported without a
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
-        SDK). A few keys are handled specially because they need a specific default or
-        transforming: ``on_permission_request`` defaults to denying all requests and is
+        SDK). Runtime connection options require constructor opt-in. A few keys need
+        specific defaults or transformations: ``on_permission_request`` defaults to denying all requests and is
         wrapped so under-specified ``approve-for-session`` decisions are scoped to the
         request that triggered them, ``enable_file_hooks`` defaults to off, ``tools`` are
         merged with the agent's tools and converted to SDK tools, and approval callbacks
@@ -1748,6 +1772,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             The keyword arguments to splat into the SDK session factory.
         """
         opts = runtime_options or {}
+        self._validate_runtime_connection_options(opts)
 
         # Passthrough layer: agent defaults first, per-run options override.
         kwargs: dict[str, Any] = {**self._default_options, **opts}
@@ -1923,6 +1948,7 @@ class GitHubCopilotAgent(  # type: ignore[misc]
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsT | None = None,
+        allow_runtime_connection_overrides: bool = False,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -1943,6 +1969,8 @@ class GitHubCopilotAgent(  # type: ignore[misc]
                 These are converted to Copilot SDK tools internally.
             default_options: Default options for the agent. Can include cli_path, model,
                 timeout, log_level, etc.
+            allow_runtime_connection_overrides: Allow per-run `provider` and `mcp_servers` configuration.
+                Defaults to False. Configure application-owned connections through `default_options` instead.
             env_file_path: Optional path to .env file for loading configuration.
             env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
         """
@@ -1956,6 +1984,7 @@ class GitHubCopilotAgent(  # type: ignore[misc]
             middleware=middleware,
             tools=tools,
             default_options=default_options,
+            allow_runtime_connection_overrides=allow_runtime_connection_overrides,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )

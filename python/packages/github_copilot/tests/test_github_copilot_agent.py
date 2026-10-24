@@ -32,9 +32,10 @@ from agent_framework import (
     MCPStdioTool,
     Message,
     ResponseStream,
+    SessionStore,
     tool,
 )
-from agent_framework.exceptions import AgentException
+from agent_framework.exceptions import AgentException, AgentInvalidRequestException
 from copilot.session import PermissionHandler, PermissionInvocation, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
@@ -1650,6 +1651,178 @@ class TestGitHubCopilotAgentSessionManagement:
         assert config["disabled_skills"] == ["override-skill"]
 
 
+class TestGitHubCopilotAgentRuntimeConnections:
+    @pytest.mark.parametrize("agent_type", [RawGitHubCopilotAgent, GitHubCopilotAgent])
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("resume", [False, True])
+    @pytest.mark.parametrize("configured_connections", [False, True])
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"provider": {"type": "openai", "base_url": "https://example.com/api"}},
+            {"mcp_servers": {"application": {"type": "http", "url": "https://example.com/mcp", "tools": ["*"]}}},
+        ],
+    )
+    async def test_run_rejects_runtime_connections_by_default(
+        self,
+        agent_type: type[RawGitHubCopilotAgent[GitHubCopilotOptions]],
+        stream: bool,
+        resume: bool,
+        configured_connections: bool,
+        options: GitHubCopilotOptions,
+        mock_client: MagicMock,
+    ) -> None:
+        agent = agent_type(client=mock_client, default_options=options if configured_connections else None)
+        session = AgentSession(service_session_id="existing-session" if resume else None)
+
+        with pytest.raises(AgentInvalidRequestException, match="allow_runtime_connection_overrides=True"):
+            if stream:
+                async for _ in agent.run("Hello", session=session, options=options, stream=True):
+                    pass
+            else:
+                await agent.run("Hello", session=session, options=options)
+
+        mock_client.start.assert_not_awaited()
+        mock_client.create_session.assert_not_awaited()
+        mock_client.resume_session.assert_not_awaited()
+        assert agent.default_options == (options if configured_connections else {})
+
+    @pytest.mark.parametrize("agent_type", [RawGitHubCopilotAgent, GitHubCopilotAgent])
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("resume", [False, True])
+    @pytest.mark.parametrize("runtime_connections", [False, True])
+    async def test_run_preserves_defaults_and_supports_explicit_runtime_opt_in(
+        self,
+        agent_type: type[RawGitHubCopilotAgent[GitHubCopilotOptions]],
+        stream: bool,
+        resume: bool,
+        runtime_connections: bool,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        defaults: GitHubCopilotOptions = {
+            "provider": {"type": "azure", "base_url": "https://application.example/api"},
+            "mcp_servers": {"application": {"type": "http", "url": "https://application.example/mcp", "tools": ["*"]}},
+        }
+        options: GitHubCopilotOptions = {"model": "runtime-model", "timeout": 3}
+        if runtime_connections:
+            options["provider"] = {"type": "openai", "base_url": "https://runtime.example/api"}
+            options["mcp_servers"] = {"runtime": {"type": "http", "url": "https://runtime.example/mcp", "tools": ["*"]}}
+
+        def mock_on(handler: Any) -> Any:
+            handler(assistant_delta_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        mock_session.send_and_wait.return_value = assistant_message_event
+        agent = agent_type(
+            client=mock_client,
+            default_options=defaults,
+            allow_runtime_connection_overrides=runtime_connections,
+        )
+        session = AgentSession(service_session_id="existing-session" if resume else None)
+        if stream:
+            updates = [update async for update in agent.run("Hello", session=session, options=options, stream=True)]
+            assert "".join(update.text for update in updates) == "Hello"
+        else:
+            response = await agent.run("Hello", session=session, options=options)
+            assert response.text == "Test response"
+
+        config = (mock_client.resume_session if resume else mock_client.create_session).call_args.kwargs
+        assert config["provider"] == (options["provider"] if runtime_connections else defaults["provider"])
+        assert config["mcp_servers"] == (options["mcp_servers"] if runtime_connections else defaults["mcp_servers"])
+        assert config["model"] == "runtime-model"
+        assert "allow_runtime_connection_overrides" not in config
+        assert agent.default_options == defaults
+
+    async def test_runtime_options_cannot_enable_connection_overrides(self, mock_client: MagicMock) -> None:
+        agent: RawGitHubCopilotAgent[GitHubCopilotOptions] = RawGitHubCopilotAgent(client=mock_client)
+        with pytest.raises(AgentInvalidRequestException, match="provider"):
+            await agent.run(
+                "Hello",
+                options=cast(GitHubCopilotOptions, {"provider": {}, "allow_runtime_connection_overrides": True}),
+            )
+        mock_client.create_session.assert_not_awaited()
+
+    @pytest.mark.parametrize("agent_type", [RawGitHubCopilotAgent, GitHubCopilotAgent])
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_invocations_preserves_explicit_runtime_connection_opt_in(
+        self,
+        agent_type: type[RawGitHubCopilotAgent[GitHubCopilotOptions]],
+        stream: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        hosting = pytest.importorskip("agent_framework_foundry_hosting")
+        import httpx
+
+        # Host construction configures process-wide SDK telemetry, so isolate it as the Foundry tests do.
+        monkeypatch.setattr("azure.ai.agentserver.core._tracing._configure_tracing", lambda **kwargs: None)
+
+        def mock_on(handler: Any) -> Any:
+            handler(assistant_delta_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        mock_session.send_and_wait.return_value = assistant_message_event
+        store = MagicMock(spec=SessionStore)
+        store.get.return_value = None
+        store_provider = MagicMock(spec=hosting.StoreProvider)
+        store_provider.get_store.return_value = store
+        agent = agent_type(client=mock_client, allow_runtime_connection_overrides=True)
+        server = hosting.InvocationsHostServer(agent, agent_session_store_provider=store_provider)
+        options: GitHubCopilotOptions = {
+            "provider": {"type": "openai", "base_url": "https://runtime.example/api"},
+            "mcp_servers": {"runtime": {"type": "http", "url": "https://runtime.example/mcp", "tools": ["*"]}},
+        }
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                params={"agent_session_id": f"trusted-connections-{uuid4().hex}"},
+                json={"message": "Hello", "stream": stream, "options": options},
+            )
+
+        assert response.status_code == 200
+        if stream:
+            assert 'event: delta\ndata: {"text": "Hello"}' in response.text
+            assert "event: done" in response.text
+            assert "event: error" not in response.text
+        else:
+            assert response.json() == {"response": "Test response"}
+        config = mock_client.create_session.call_args.kwargs
+        assert config["provider"] == options["provider"]
+        assert config["mcp_servers"] == options["mcp_servers"]
+        store.set.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        "options", [{"provider": None}, {"provider": {}}, {"mcp_servers": None}, {"mcp_servers": {}}]
+    )
+    async def test_empty_runtime_connection_options_are_rejected(
+        self, options: dict[str, Any], mock_client: MagicMock
+    ) -> None:
+        agent: RawGitHubCopilotAgent[GitHubCopilotOptions] = RawGitHubCopilotAgent(client=mock_client)
+        with pytest.raises(AgentInvalidRequestException, match="Runtime connection options are disabled"):
+            await agent.run("Hello", options=cast(GitHubCopilotOptions, options))
+        mock_client.start.assert_not_awaited()
+
+    @pytest.mark.parametrize("agent_type", [RawGitHubCopilotAgent, GitHubCopilotAgent])
+    @pytest.mark.parametrize("value", [None, 1, "false"])
+    def test_connection_override_policy_requires_a_boolean(
+        self, agent_type: type[RawGitHubCopilotAgent[GitHubCopilotOptions]], value: Any
+    ) -> None:
+        with pytest.raises(TypeError, match="allow_runtime_connection_overrides must be a bool"):
+            agent_type(allow_runtime_connection_overrides=value)
+
+
 class TestGitHubCopilotAgentMCPServers:
     """Test cases for MCP server configuration."""
 
@@ -1852,6 +2025,7 @@ class TestGitHubCopilotAgentProvider:
         agent = GitHubCopilotAgent(
             client=mock_client,
             default_options=copilot_options({"provider": default_provider}),
+            allow_runtime_connection_overrides=True,
         )
         await agent.start()
 

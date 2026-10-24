@@ -397,6 +397,12 @@ runtime options. It also rejects agent execution controls: `additional_function_
 arguments belong in developer-configured agent defaults or middleware/factories, not in request options or hook output.
 A hook may strip denied caller fields before validation; allowed generation and provider-specific options remain
 available. These restrictions apply to both wire formats and every `unsupported_options` policy.
+Connection option names such as `provider` and `mcp_servers` are not reserved host-wide.
+The hosted agent owns their policy. The updated `GitHubCopilotAgent` and `RawGitHubCopilotAgent` reject those runtime
+options by default, while preserving connections in `default_options`. Trusted applications can enable them with the
+constructor-only `allow_runtime_connection_overrides=True` flag and filter request input through `prepare_options`.
+Update the Copilot package as well as the host to obtain that default-deny policy; older Copilot versions retain their
+existing runtime connection behavior.
 When an agent cannot accept runtime options, `unsupported_options="warn"` (default) logs and ignores
 them; `"ignore"` silently drops them and `"error"` rejects them. For request-scoped factories, unsupported options
 discovered after streaming starts are reported as an SSE `error` event with `status: 400`.
@@ -404,8 +410,10 @@ discovered after streaming starts are reported as an SSE `error` event with `sta
 **New default:** non-streaming success is JSON `{"response": "..."}`. Streaming success is real SSE
 `event: delta` with `{"text": "..."}`, followed by `event: done` with the platform sandbox `session_id`.
 The `done` event is sent only after the final MAF `ResponseStream` is finalized and the session is persisted.
-Client validation errors return JSON HTTP 400 before streaming where possible. Provider errors are logged and
-sanitized as JSON HTTP 500 or an SSE `error`; a cross-process ETag conflict is JSON HTTP 409 or an SSE `error`
+Client validation errors return JSON HTTP 400 before streaming where possible. An agent's `AgentInvalidRequestException`
+is reported as a sanitized JSON HTTP 400 or SSE `error` with `code: "invalid_request"` and `status: 400`.
+Provider errors are logged and sanitized as JSON HTTP 500 or an SSE `error`; a cross-process ETag conflict is
+JSON HTTP 409 or an SSE `error`
 with `code: "session_conflict"` and `status: 409`. A stream may emit deltas before an error. The host serializes
 same-session requests in one process, but a CAS conflict can still follow external tool effects in separate
 processes; it does not guarantee exactly-once execution. See the

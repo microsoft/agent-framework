@@ -35,6 +35,7 @@ from agent_framework import (
     WorkflowExecutor,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework.exceptions import AgentInvalidRequestException
 from anyio import CancelScope
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -251,6 +252,8 @@ def _sse(event: str, data: Mapping[str, Any]) -> str:
 def _invocation_failure(exc: Exception) -> tuple[str, int, str]:
     cause: BaseException | None = exc
     while cause is not None:
+        if isinstance(cause, AgentInvalidRequestException):
+            return "The agent rejected the invocation request.", 400, "invalid_request"
         if isinstance(cause, (FoundryStorageConflictError, FoundryStoragePreconditionError)):
             return "Another request advanced this agent session; reload before retrying.", 409, "session_conflict"
         cause = cause.__cause__
