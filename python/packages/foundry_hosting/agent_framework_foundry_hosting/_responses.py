@@ -52,6 +52,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._workflows._agent import _StreamingRoleGate  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentFrameworkException
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.core import get_request_context
@@ -2326,13 +2327,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         TODO(@taochen): #7677
         """
+        role_gate = _StreamingRoleGate()
         async for event in agent.workflow.run(
             stream=True,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
         ):
             for update in agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
-                response_id, event
+                response_id, event, role_gate
             ):
                 yield update
 
