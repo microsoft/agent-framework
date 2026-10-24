@@ -90,6 +90,15 @@ _SESSION_SCOPED_INSTRUCTIONS_SUFFIX = (
 # regex match when building a result snippet.
 _SEARCH_SNIPPET_RADIUS = 50
 
+# Path complexity bounds shared by every store backend. Real filesystems cap
+# these too (PATH_MAX and practical directory depth); the in-memory store's
+# directory index materializes the full key of every ancestor directory, so an
+# unbounded path would let a single write retain quadratic space in the path
+# depth. Bounding here keeps that retention constant regardless of input, and
+# rejects the same extremes the filesystem backend's OS layer would refuse.
+_MAX_PATH_SEGMENTS: Final[int] = 255
+_MAX_PATH_LENGTH: Final[int] = 4096
+
 # Hard cap on the length of a user-supplied search regex. The cap is a coarse bound on
 # how much work a single pattern can describe; it does not stop a short pathological
 # pattern, which is what :class:`_BoundedSearchPattern` is for.
@@ -296,6 +305,10 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
         ValueError: When the path is rooted, starts with a drive letter, contains
             ``.``/``..`` segments, is empty for a file path, or ends with a
             separator for a file path.
+        OSError: With :data:`errno.ENAMETOOLONG` when the normalized path
+            exceeds ``_MAX_PATH_SEGMENTS`` segments or ``_MAX_PATH_LENGTH``
+            characters, matching what a real filesystem raises for the same
+            input.
     """
     if not path or not path.strip():
         if not is_directory:
@@ -333,6 +346,9 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     result = "/".join(clean_segments)
     if not is_directory and not result:
         raise ValueError(f"Invalid path: {path!r}. A file path must not be empty.")
+    if len(clean_segments) > _MAX_PATH_SEGMENTS or len(result) > _MAX_PATH_LENGTH:
+        # Check before any caller materializes ancestor prefixes of this path.
+        raise OSError(errno.ENAMETOOLONG, "File name too long", path)
     return result
 
 

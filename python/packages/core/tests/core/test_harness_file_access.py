@@ -2798,3 +2798,71 @@ async def test_in_memory_store_delete_directory_releases_empty_explicit_director
     assert await store.delete("sessions/s2/state.txt") is True
     assert await store.delete_directory("sessions/s2") is True
     assert await store.delete_directory("sessions") is True
+
+
+async def test_in_memory_store_rejects_paths_beyond_the_complexity_bound() -> None:
+    """A path deeper than the shared bound is rejected before any ancestor
+    prefix is materialized, so one write cannot retain quadratic memory in the
+    path depth. The error matches what the OS raises for the same input on the
+    filesystem backend (ENAMETOOLONG)."""
+    import errno
+
+    store = InMemoryAgentFileStore()
+    path = "/".join(["a"] * 8000 + ["f"])
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(path, "x")
+
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    # Nothing was stored and no ancestor prefixes were retained.
+    assert store._files == {}
+    assert store._dir_counts == {}
+    # Reads of the same path hit the same validation, never the index.
+    with pytest.raises(OSError) as read_info:
+        await store.read(path)
+    assert read_info.value.errno == errno.ENAMETOOLONG
+
+    # A total length past the bound is refused the same way even when shallow.
+    with pytest.raises(OSError) as long_info:
+        await store.write("/".join(["b" * 3000, "c" * 3000]), "x")
+    assert long_info.value.errno == errno.ENAMETOOLONG
+    assert store._files == {}
+
+
+async def test_in_memory_store_accepts_deep_paths_within_the_bound() -> None:
+    """Legitimate deep paths (deeper than any realistic hierarchy) still work,
+    and the retention of the directory index stays linear in the stored path."""
+    store = InMemoryAgentFileStore()
+    path = "/".join(["d"] * 200 + ["f"])
+
+    await store.write(path, "x")
+
+    assert await store.read(path) == "x"
+    # Every retained ancestor key is a prefix of the one stored path, so the
+    # index is bounded by a small constant times the path length.
+    retained = sum(len(k) for k in store._dir_counts)
+    assert retained < 200 * len(path)
+
+
+async def test_filesystem_store_matches_in_memory_complexity_bound(tmp_path) -> None:
+    """Both backends refuse the same over-bound path with the same errno, so
+    backend substitution is not observable on the bound either."""
+    import errno
+
+    fs_store = FileSystemAgentFileStore(str(tmp_path))
+    mem_store = InMemoryAgentFileStore()
+    path = "/".join(["a"] * 8000 + ["f"])
+
+    with pytest.raises(OSError) as fs_info:
+        await fs_store.write(path, "x")
+    with pytest.raises(OSError) as mem_info:
+        await mem_store.write(path, "x")
+
+    assert fs_info.value.errno == errno.ENAMETOOLONG
+    assert mem_info.value.errno == errno.ENAMETOOLONG
+
+    within = "/".join(["d"] * 200 + ["f"])
+    await fs_store.write(within, "x")
+    await mem_store.write(within, "x")
+    assert await fs_store.read(within) == "x"
+    assert await mem_store.read(within) == "x"
