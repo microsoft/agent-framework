@@ -617,6 +617,110 @@ async def test_malformed_arguments_left_unrepaired_are_answered_before_the_tool_
     assert "not a JSON object" in str(result.exception)
 
 
+class _InjectUser(FunctionMiddleware):
+    """Middleware that appends a key to every call's arguments."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        context.arguments = {**cast("dict[str, Any]", context.arguments), "user": "u1"}
+        await call_next()
+
+
+async def test_injecting_middleware_does_not_make_a_malformed_payload_count_as_repaired() -> None:
+    """A middleware that appends a key must not un-mark the wrapped payload.
+
+    The injection preserves the original ``raw`` entry, so the arguments are
+    still the wrapper plus an undeclared key - the tool must not run.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments="[1, 2]"),
+        ],
+        tools=[account_tool],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(_InjectUser()),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+async def test_injecting_middleware_does_not_silence_a_malformed_payload_for_a_typed_tool() -> None:
+    """The same holds for a typed tool: the wrapper must not reach it either.
+
+    The input model would silently drop the undeclared ``raw`` key, so the tool
+    would run on injected values alone without the model ever learning that its
+    call was malformed.
+    """
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="typed_target")
+    def typed_target(user: str = "", limit: int = 0) -> str:
+        calls.append({"user": user, "limit": limit})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="typed_target", arguments="[1, 2]"),
+        ],
+        tools=[typed_target],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(_InjectUser()),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+async def test_a_tool_that_declares_raw_receives_a_non_object_payload_as_arguments() -> None:
+    """A tool that declares ``raw`` gets the wrapped payload as ordinary arguments.
+
+    For such a tool the wrapper coincides with a valid call, which is the
+    behaviour the loop had before the malformed-argument guard existed.
+    """
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="raw_writer")
+    def raw_writer(raw: str = "") -> str:
+        calls.append({"raw": raw})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="raw_writer", arguments="not {json"),
+        ],
+        tools=[raw_writer],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == [{"raw": "not {json"}]
+    assert result_groups[0][0].result == "ok"
+
+
 async def test_invoke_preserves_explicit_null_argument():
     """A required nullable argument the model sets to null must reach the function.
 

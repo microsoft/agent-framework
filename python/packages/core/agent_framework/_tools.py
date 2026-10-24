@@ -2164,6 +2164,19 @@ def _finalize_function_result(
     return function_result
 
 
+def _tool_declares_parameter(tool: FunctionTool, name: str) -> bool:
+    """Return whether the tool's own schema declares a parameter with this name.
+
+    Schema-supplied tools declare through their JSON ``properties``; decorated
+    tools through their resolved input model. A ``**kwargs`` catch-all does not
+    declare anything: the model never agreed to such a parameter by name.
+    """
+    if tool._schema_supplied:  # pyright: ignore[reportPrivateUsage]
+        properties = tool._input_schema_cached.get("properties") if tool._input_schema_cached else None  # pyright: ignore[reportPrivateUsage]
+        return isinstance(properties, Mapping) and name in properties
+    return tool.input_model is not None and name in tool.input_model.model_fields
+
+
 def _function_call_payload_is_not_an_object(function_call: Content) -> bool:
     """Return whether the model sent a payload that is not a JSON object.
 
@@ -2266,6 +2279,19 @@ async def _auto_invoke_function(
     # the innermost handler answers it before the tool runs.
     payload_is_not_an_object = _function_call_payload_is_not_an_object(function_call_content)
     parsed_args = dict(function_call_content.parse_arguments() or {})
+    wrapped_raw_value = parsed_args.get("raw") if payload_is_not_an_object and set(parsed_args) == {"raw"} else None
+
+    def _unrepaired_wrapper(arguments: Any) -> bool:
+        """Return whether the arguments are still the wrapped malformed payload.
+
+        The wrapper counts as repaired only when middleware replaced it. Keeping
+        the original ``raw`` entry - which an argument-injecting middleware does
+        - leaves the call malformed, while a ``raw`` entry the tool itself
+        declares is ordinary arguments and never counts as the wrapper.
+        """
+        if wrapped_raw_value is None or _tool_declares_parameter(tool, "raw"):
+            return False
+        return isinstance(arguments, Mapping) and cast("Mapping[str, Any]", arguments).get("raw") == wrapped_raw_value
 
     # Filter out internal framework kwargs before passing to tools.
     # conversation_id is an internal tracking ID that should not be forwarded to tools.
@@ -2304,9 +2330,11 @@ async def _auto_invoke_function(
         # No middleware - execute directly
         direct_context = None
         try:
-            if payload_is_not_an_object:
+            if _unrepaired_wrapper(args):
                 # Without middleware there is nothing that could repair the
-                # wrapped payload, so answer it before the tool runs.
+                # wrapped payload, so answer it before the tool runs. A tool
+                # that declares ``raw`` receives the payload as ordinary
+                # arguments instead.
                 raise _FunctionArgumentValidationError(
                     f"Invalid arguments for '{tool.name}': arguments are not a JSON object",
                     redacted_message=f"Invalid arguments for '{tool.name}'.",
@@ -2394,16 +2422,15 @@ async def _auto_invoke_function(
         )
 
     final_handler_started = False
-    unrepaired_payload_token = _argument_comparison_token(args) if payload_is_not_an_object else None
 
     async def final_function_handler(context_obj: Any) -> Any:
         nonlocal final_handler_started
         final_handler_started = True
-        if unrepaired_payload_token is not None and _argument_comparison_token(context_obj.arguments) == (
-            unrepaired_payload_token
-        ):
-            # Middleware left the wrapped payload untouched, so the arguments are
-            # still not arguments: answer it here, immediately before the tool runs.
+        if _unrepaired_wrapper(context_obj.arguments):
+            # Middleware left the wrapped payload in place - an argument-injecting
+            # middleware keeps its ``raw`` entry with the original value - so the
+            # arguments are still not arguments: answer it here, immediately
+            # before the tool runs.
             raise _FunctionArgumentValidationError(
                 f"Invalid arguments for '{tool.name}': arguments are not a JSON object",
                 redacted_message=f"Invalid arguments for '{tool.name}'.",
