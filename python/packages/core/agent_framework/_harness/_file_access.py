@@ -1877,6 +1877,7 @@ class FileAccessProvider(ContextProvider):
         disable_write_tool_approval: bool = False,
         session_scoped: bool = False,
         scope: str | None = None,
+        tool_name_prefix: str | None = None,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1917,6 +1918,7 @@ class FileAccessProvider(ContextProvider):
                 ``session_id`` is used. The value is treated as an opaque
                 key rather than a path: it is mapped onto exactly one folder
                 by :func:`~agent_framework._filesystem._storage_key_segment`.
+            tool_name_prefix: Optional prefix for tool names to avoid collisions.
         """
         super().__init__(source_id)
         self.store = store
@@ -1926,6 +1928,7 @@ class FileAccessProvider(ContextProvider):
         self.disable_write_tool_approval = disable_write_tool_approval
         self.session_scoped = session_scoped
         self.scope = scope
+        self.tool_name_prefix = tool_name_prefix
 
     def _resolve_session_key(self, context: SessionContext) -> str:
         """Resolve the working folder key for session-scoped mode.
@@ -2046,6 +2049,9 @@ class FileAccessProvider(ContextProvider):
             and function_call.name in FileAccessProvider._ALL_TOOL_NAMES
         )
 
+    def _prefixed_tool_name(self, name: str) -> str:
+        return f"{self.tool_name_prefix}_{name}" if self.tool_name_prefix else name
+
     async def before_run(
         self,
         *,
@@ -2071,7 +2077,11 @@ class FileAccessProvider(ContextProvider):
         if session_key:
             instructions += _SESSION_SCOPED_INSTRUCTIONS_SUFFIX
 
-        @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.WRITE_TOOL_NAME),
+            schema=_WriteFileInput,
+            approval_mode=write_approval,
+        )
         async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
             """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
@@ -2096,7 +2106,11 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not write file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' written."
 
-        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.READ_TOOL_NAME),
+            schema=_ReadFileInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_read(file_name: str) -> str:
             r"""Read the content of a file by name. Returns the file content or a message indicating the file could not be read. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
@@ -2109,7 +2123,7 @@ class FileAccessProvider(ContextProvider):
             return content if content is not None else f"File '{file_name}' not found."
 
         @tool(
-            name=FileAccessProvider.READ_LINES_TOOL_NAME,
+            name=self._prefixed_tool_name(FileAccessProvider.READ_LINES_TOOL_NAME),
             schema=_ReadLinesInput,
             approval_mode=readonly_approval,
         )
@@ -2128,7 +2142,11 @@ class FileAccessProvider(ContextProvider):
             # Each line keeps its terminator, so it doubles as the row separator.
             return "".join(f"{number}\t{line}" for number, line in enumerate(sliced, start_line))
 
-        @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.DELETE_TOOL_NAME),
+            schema=_DeleteFileInput,
+            approval_mode=write_approval,
+        )
         async def file_access_delete(file_name: str) -> str:
             """Delete a file by name."""
             try:
@@ -2142,7 +2160,11 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name=FileAccessProvider.LS_TOOL_NAME, schema=_ListInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.LS_TOOL_NAME),
+            schema=_ListInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_ls(
             directory: str | None = None,
             glob_pattern: str | None = None,
@@ -2164,7 +2186,11 @@ class FileAccessProvider(ContextProvider):
                 {"name": entry.name, "type": entry.type} for entry in listed if _matches_glob(entry.name, glob_pattern)
             ]
 
-        @tool(name=FileAccessProvider.REPLACE_TOOL_NAME, schema=_ReplaceInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.REPLACE_TOOL_NAME),
+            schema=_ReplaceInput,
+            approval_mode=write_approval,
+        )
         async def file_access_replace(
             file_name: str,
             old_string: str,
@@ -2188,7 +2214,7 @@ class FileAccessProvider(ContextProvider):
             return f"Replaced {count} occurrence(s) in '{file_name}'."
 
         @tool(
-            name=FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            name=self._prefixed_tool_name(FileAccessProvider.REPLACE_LINES_TOOL_NAME),
             schema=_ReplaceLinesInput,
             approval_mode=write_approval,
         )
@@ -2209,7 +2235,11 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not edit file '{file_name}': {exc.strerror or exc}"
             return f"Replaced {len(edits)} line(s) in '{file_name}'."
 
-        @tool(name=FileAccessProvider.GREP_TOOL_NAME, schema=_SearchFilesInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.GREP_TOOL_NAME),
+            schema=_SearchFilesInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_grep(
             regex_pattern: str,
             glob_pattern: str | None = None,
