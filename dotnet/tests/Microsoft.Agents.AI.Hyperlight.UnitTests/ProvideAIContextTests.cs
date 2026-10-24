@@ -192,6 +192,45 @@ public sealed class ProvideAIContextTests
         Assert.NotEqual(firstFingerprint, secondFingerprint);
     }
 
+    [Fact]
+    public async Task ProvideAIContextAsync_WithParameterizedTool_CarriesHostToolSchemaAsync()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create((string query) => "ok", name: "lookup");
+        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions
+        {
+            Tools = [tool],
+        });
+
+        // Act
+        var context = await provider.InvokingAsync(NewInvokingContext());
+        var function = Assert.IsType<AIFunction>(context!.Tools!.First(), exactMatch: false);
+
+        // Assert — Description is what the model actually sees.
+        Assert.Contains("query", function.Description);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_WithParameterizedTool_KeepsCodeOnlyInputSchemaAsync()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create((string query) => "ok", name: "lookup");
+        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions
+        {
+            Tools = [tool],
+        });
+
+        // Act
+        var context = await provider.InvokingAsync(NewInvokingContext());
+        var function = Assert.IsType<AIFunction>(context!.Tools!.First(), exactMatch: false);
+        var inputSchema = function.JsonSchema.GetRawText();
+
+        // Assert — host-tool schemas are documentation inside the description only; they
+        // must never widen execute_code's own input contract.
+        Assert.Contains("\"code\"", inputSchema);
+        Assert.DoesNotContain("query", inputSchema);
+    }
+
     private static void AssertFingerprintsChanged(List<string> fingerprints)
     {
         for (var index = 1; index < fingerprints.Count; index++)
