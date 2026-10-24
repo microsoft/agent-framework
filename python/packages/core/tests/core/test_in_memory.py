@@ -1127,6 +1127,31 @@ async def test_in_memory_numeric_operand_compares_exactly_with_a_native_numeric_
     assert [record.id for record in matched] == ["one"]
 
 
+@pytest.mark.parametrize(
+    ("operator", "value", "expected"),
+    [
+        ("eq", 2, ["two"]),
+        ("gte", 10, ["ten"]),
+        ("lte", 2, ["two"]),
+    ],
+)
+async def test_in_memory_int_operand_compares_exactly_with_a_decimal_field(
+    operator: str,
+    value: Any,
+    expected: list[str],
+) -> None:
+    """An int operand fits a Decimal field: the comparison is exact.
+
+    The restore turns the stored text into a ``Decimal``, and ``Decimal``
+    compares exactly with ``int`` in both equality and ordering.
+    """
+    collection = await _scalar_amount_collection()
+
+    matched = await collection.get(filter=Filter("amount", operator, value))
+
+    assert [record.id for record in matched] == expected
+
+
 async def test_in_memory_search_rejects_an_operand_of_another_type() -> None:
     """The search path rejects the operands the get path rejects."""
     collection = await _scalar_filter_collection()

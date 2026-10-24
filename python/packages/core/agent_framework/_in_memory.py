@@ -577,12 +577,14 @@ def _operand_matches_field_type(field_type: str, operand: Any) -> bool:
     A field stored as a native value compares exactly with Python's own numeric
     equality and ordering, so numeric operands fit any of those fields; only
     the types the serializer writes as text can never be compared against them.
+    An ``int`` operand also fits a ``Decimal`` field: the restore compares the
+    two exactly, in equality and in ordering.
     """
     if operand is None:
         return True
     operand_type = type(operand).__name__
     if field_type in _SERIALIZED_SCALAR_TYPE_NAMES:
-        return operand_type == field_type
+        return operand_type == field_type or (field_type == "Decimal" and operand_type == "int")
     return operand_type not in _TEXT_STORED_TYPE_NAMES
 
 
