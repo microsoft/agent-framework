@@ -94,6 +94,45 @@ class TestInMemoryCacheProvider:
         result1 = await cache.get("key1")
         assert result1 is None
 
+    async def test_cache_oversized_entry_preserves_other_entries(self) -> None:
+        """Skip a value exceeding the total capacity while retaining cached peers."""
+        cache = InMemoryCacheProvider(max_size_bytes=20)
+        await cache.set("existing", "value")
+
+        await cache.set("oversized", "x" * 20)
+
+        assert await cache.get("oversized") is None
+        assert await cache.get("existing") == "value"
+        assert cache._current_size_bytes == 7
+
+    async def test_cache_oversized_replacement_invalidates_previous_value(self) -> None:
+        """Remove the superseded value when its replacement exceeds capacity."""
+        cache = InMemoryCacheProvider(max_size_bytes=20)
+        await cache.set("updated", "old", ttl_seconds=10)
+        await cache.set("other", "peer", ttl_seconds=20)
+
+        await cache.set("updated", "x" * 20)
+
+        assert await cache.get("updated") is None
+        assert await cache.get("other") == "peer"
+        assert cache._current_size_bytes == 6
+
+        await cache.set("next", "n" * 12)
+        assert await cache.get("next") == "n" * 12
+        assert await cache.get("other") == "peer"
+        assert cache._current_size_bytes == 20
+
+    async def test_cache_entry_filling_capacity_is_cached(self) -> None:
+        """Allow a value whose estimated size exactly matches the capacity."""
+        cache = InMemoryCacheProvider(max_size_bytes=20)
+        await cache.set("existing", "value")
+
+        await cache.set("full", "x" * 18)
+
+        assert await cache.get("full") == "x" * 18
+        assert await cache.get("existing") is None
+        assert cache._current_size_bytes == 20
+
     async def test_estimate_size_with_pydantic_model(self) -> None:
         """Test size estimation with Pydantic models."""
         cache = InMemoryCacheProvider()
