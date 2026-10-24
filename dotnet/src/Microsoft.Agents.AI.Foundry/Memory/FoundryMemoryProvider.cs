@@ -170,7 +170,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {
@@ -238,7 +238,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                     response.UpdateId);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {

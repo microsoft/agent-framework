@@ -35,9 +35,9 @@ from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 - Documentation and examples that show a literal Foundry project endpoint must use the full project-scoped form
   `https://your-account.services.ai.azure.com/api/projects/your-project`, including the `/api/projects/your-project`
   path.
-- Set a stable `user_id` in `state["user_id"]` or `session.state["user_id"]` for long-term,
-  cross-session memory. Without it, memory scopes to the ephemeral session id and the provider
-  logs a one-time warning.
+- Set a stable `user_id` in the provider-scoped state for long-term, cross-session memory:
+  `session.state.setdefault(provider.source_id, {})["user_id"] = "user-123"`.
+  Without it, memory scopes to the ephemeral session id.
 - Background fact extraction runs out-of-band after each turn. Call `provider.flush()` before
   shutdown so in-flight extraction completes before the client closes.
 - See `README.md` for full configuration, authentication, and processor-tuning options.

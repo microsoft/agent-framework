@@ -18,20 +18,26 @@ from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     Annotation,
+    BaseChatClient,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
     Content,
+    ContextProvider,
+    FunctionInvocationLayer,
     FunctionTool,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     TextSpanRegion,
     ToolMode,
     UsageDetails,
+    agent_middleware,
     detect_media_type_from_base64,
     get_namespaced_value,
     merge_additional_properties,
@@ -1369,6 +1375,25 @@ def test_chat_message_text():
 
     # Ensure the instance is of type BaseContent
     assert isinstance(message.contents[0], Content)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [Message("user", "Hello, how are you?"), Message(role="user", contents="Hello, how are you?")],
+    ids=["positional", "keyword"],
+)
+def test_chat_message_with_single_string_contents(message: Message) -> None:
+    """A bare string is one text content, not a sequence of single-character contents."""
+    assert len(message.contents) == 1
+    assert message.contents[0].type == "text"
+    assert message.text == "Hello, how are you?"
+
+
+def test_chat_message_with_empty_string_contents() -> None:
+    message = Message("user", "")
+
+    assert len(message.contents) == 1
+    assert message.text == ""
 
 
 def test_chat_message_contents():
@@ -4705,6 +4730,77 @@ def test_function_result_items_roundtrip_via_dict():
     assert restored.items[1].type == "data"
 
 
+@pytest.mark.parametrize("serialization", ["dict", "dict_with_none", "json"])
+def test_tool_result_nested_content_roundtrips(serialization: str):
+    """Test that nested Content in image generation and MCP server tool results survives a round trip."""
+    image = Content.from_uri("data:image/png;base64,iVBORw0KGgo=")
+    output = [
+        Content.from_text("42", annotations=[{"type": "citation", "url": "https://example.com/source"}]),
+        Content.from_uri("https://example.com/report.pdf", media_type="application/pdf"),
+        Content.from_hosted_file("file_1"),
+        Content.from_function_result(call_id="call_1", result=[Content.from_text("done")]),
+    ]
+    message = Message(
+        "assistant",
+        [
+            Content.from_image_generation_tool_result(image_id="ig_1", outputs=image),
+            Content.from_mcp_server_tool_result("mcp_1", output=output),
+        ],
+    )
+
+    if serialization == "dict":
+        restored = Message.from_dict(message.to_dict())
+    elif serialization == "dict_with_none":
+        restored = Message.from_dict(message.to_dict(exclude_none=False))
+    else:
+        restored = Message.from_json(message.to_json())
+    restored_image, restored_mcp = restored.contents
+
+    assert isinstance(restored_image.outputs, Content)
+    assert restored_image.outputs == image
+    assert restored_mcp.output is not None
+    assert all(isinstance(item, Content) for item in restored_mcp.output)
+    assert restored_mcp.output == output
+
+
+@pytest.mark.parametrize(
+    "tool_json",
+    [
+        {"type": "text", "value": 1},
+        {"type": "text", "text": "x"},
+        {"type": "data", "data": "AAAA", "media_type": "image/png"},
+        {"type": "text", "text": "x", "annotations": {"audience": ["user"]}},
+        {"type": "text", "function_call": {"a": 1}},
+    ],
+    ids=["unknown_field", "text_shape", "data_with_str_data", "mcp_annotations", "invalid_nested_content"],
+)
+def test_tool_result_json_with_content_type_name_roundtrips(tool_json: dict[str, Any]):
+    """Test that tool JSON whose type is a content type name is kept as it is in a round trip."""
+    mcp_result = Content.from_mcp_server_tool_result("mcp_1", output=[Content.from_text("42"), tool_json])
+    image_result = Content.from_image_generation_tool_result(image_id="ig_1", outputs=tool_json)
+
+    restored_mcp = Content.from_dict(mcp_result.to_dict())
+    restored_image = Content.from_dict(image_result.to_dict())
+
+    assert restored_mcp.output == [Content.from_text("42"), tool_json]
+    assert isinstance(restored_mcp.output[1], dict)
+    assert restored_image.outputs == tool_json
+    assert restored_mcp.to_dict()["output"][1] == tool_json
+    assert restored_image.to_dict()["outputs"] == tool_json
+
+
+def test_tool_result_plain_outputs_roundtrip_via_dict():
+    """Test that output values that are not serialized Content stay unchanged in a round trip."""
+    output = ["plain", {"type": "object", "value": 1}, {"type": ["x"]}, {"answer": 42}]
+    mcp_result = Content.from_mcp_server_tool_result("mcp_1", output=output)
+    image_result = Content.from_image_generation_tool_result(
+        image_id="ig_1", outputs={"url": "https://example.com/a.png"}
+    )
+
+    assert Content.from_dict(mcp_result.to_dict()).output == output
+    assert Content.from_dict(image_result.to_dict()).outputs == {"url": "https://example.com/a.png"}
+
+
 def test_from_function_result_with_non_content_list():
     """Test Content.from_function_result with a list of non-Content objects falls back to str."""
     result = Content.from_function_result(call_id="test-789", result=["hello", "world"])
@@ -4975,6 +5071,15 @@ def test_parse_content_list_with_content_objects():
 def test_parse_content_list_with_dicts():
     """Test _parse_content_list converts dicts to Content."""
     result = _parse_content_list([{"type": "text", "text": "hello"}])
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
+
+
+def test_parse_content_list_with_single_string():
+    """Test _parse_content_list treats a bare string as one text item, not one per character."""
+    result = _parse_content_list("hello")
 
     assert len(result) == 1
     assert result[0].type == "text"
@@ -5516,6 +5621,51 @@ class TestResponseStreamCleanupHooks:
                 pass
 
         assert events == ["iterator"]
+
+    @pytest.mark.parametrize("buffered", [False, True])
+    @pytest.mark.parametrize("failure", [RuntimeError("hook failed"), asyncio.CancelledError()])
+    async def test_outer_stream_error_skips_after_run_with_agent_middleware(
+        self, span_exporter: Any, failure: BaseException, buffered: bool
+    ) -> None:
+        """An error in a middleware-wrapped agent stream reaches the inner stream, so after_run does not fire."""
+
+        class StreamingClient(FunctionInvocationLayer, BaseChatClient):
+            def _inner_get_response(self, *, messages: Any, stream: bool, options: Any, **kwargs: Any) -> Any:
+                async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                    for i in range(3):
+                        yield ChatResponseUpdate(contents=[Content.from_text(f"part{i} ")], role="assistant")
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        class RecordingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__("recorder")
+                self.after_run_calls = 0
+
+            async def after_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+                self.after_run_calls += 1
+
+        @agent_middleware
+        async def passthrough(context: Any, call_next: Any) -> None:
+            await call_next()
+
+        def failing_hook(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            raise failure
+
+        recorder = RecordingProvider()
+        history = InMemoryHistoryProvider()
+        agent = Agent(client=StreamingClient(), context_providers=[history, recorder], middleware=[passthrough])
+        session = agent.create_session()
+
+        stream = agent.run("hi", stream=True, session=session).with_transform_hook(failing_hook)
+        if buffered:
+            stream = stream.buffer_updates()
+        with pytest.raises(type(failure)):
+            async for _ in stream:
+                pass
+
+        assert recorder.after_run_calls == 0
+        assert await history.get_messages(session.session_id, state=session.state.get(history.source_id, {})) == []
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""

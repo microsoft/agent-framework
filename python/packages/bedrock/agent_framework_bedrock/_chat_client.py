@@ -420,7 +420,7 @@ class BedrockChatClient(
 
         async def _get_response() -> ChatResponse:
             raw_response = await asyncio.to_thread(self._invoke_converse, request)
-            return self._process_converse_response(raw_response, options)
+            return self._process_converse_response(raw_response, options, model=request["modelId"])
 
         return _get_response()
 
@@ -498,7 +498,11 @@ class BedrockChatClient(
         ):
             if (value := options.get(key)) is not None:
                 run_options[key] = value
-        if ":prompt/" in model:
+        # Per-call client kwargs (for example Bedrock-native fields passed through
+        # client_kwargs) join the request before the prompt-ARN cleanup so that
+        # branch still strips fields Converse rejects, mirroring the other clients.
+        run_options.update(kwargs)
+        if ":prompt/" in run_options["modelId"]:
             # A Prompt Management ARN takes these fields from the prompt, and Converse rejects requests that set them.
             if run_options["inferenceConfig"] == {"maxTokens": DEFAULT_MAX_TOKENS}:
                 del run_options["inferenceConfig"]  # only the client default, nothing the caller asked for
@@ -754,9 +758,12 @@ class BedrockChatClient(
         )
 
     def _process_converse_response(
-        self, response: dict[str, Any], options: Mapping[str, Any] | None = None
+        self, response: dict[str, Any], options: Mapping[str, Any] | None = None, *, model: str | None = None
     ) -> ChatResponse:
-        """Convert Bedrock Converse API response to ChatResponse."""
+        """Convert Bedrock Converse API response to ChatResponse.
+
+        Converse does not return the model id, so ``model`` should be the ``modelId`` the request was sent with.
+        """
         output = response.get("output") or {}
         message = output.get("message") or {}
         content_blocks = message.get("content") or []
@@ -766,7 +773,7 @@ class BedrockChatClient(
         usage_details = self._parse_usage(usage_source)
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
-        model = response.get("modelId") or output.get("modelId") or self.model
+        model = response.get("modelId") or output.get("modelId") or model or self.model
         return ChatResponse(
             response_id=response_id,
             messages=[chat_message],

@@ -24,7 +24,20 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable, ismethod
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    Generic,
+    Literal,
+    NamedTuple,
+    NewType,
+    TypeAlias,
+    cast,
+    get_args,
+    overload,
+)
 
 from typing_extensions import Required, TypedDict
 
@@ -56,11 +69,16 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
     """Parse a list of content data into appropriate Content objects.
 
     Args:
-        contents_data: List of content data (strings, dicts, or already constructed objects)
+        contents_data: List of content data (strings, dicts, or already constructed objects).
+            A single string is treated as one text item.
 
     Returns:
         List of Content objects with unknown types logged and ignored
     """
+    if isinstance(contents_data, str):
+        # A string is itself a sequence of strings, so iterating it would create one text
+        # content per character.
+        contents_data = [contents_data]
     contents: list[Content] = []
     for content_data in contents_data:
         if content_data is None:
@@ -441,6 +459,8 @@ _MERGEABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "code_interpreter_tool_call",
     "code_interpreter_tool_result",
 })
+
+_CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
 
 
 class TextSpanRegion(TypedDict, total=False):
@@ -964,7 +984,7 @@ class Content:
                 content = Content.from_data(data=image_bytes, media_type="image/png")
 
                 # If you have a base64 string and need to detect media type
-                base64_string = "iVBORw0KGgo..."
+                base64_string = "iVBORw0KGgo="
                 media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
@@ -1003,7 +1023,7 @@ class Content:
         """Create content from a URI, can be both data URI or external URI.
 
         Use this when you already have a properly formed data URI
-        (e.g., "data:image/png;base64,iVBORw0KGgo...").
+        (e.g., "data:image/png;base64,iVBORw0KGgo=").
         Or when you receive a link to a online resource (e.g., "https://example.com/image.png").
 
         Args:
@@ -1029,10 +1049,10 @@ class Content:
         Examples:
             .. code-block:: python
 
-                from agent_framework import Content
+                from agent_framework import Content, detect_media_type_from_base64
 
                 # Create from a data URI
-                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo...", media_type="image/png")
+                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo=", media_type="image/png")
                 assert content.type == "data"
 
                 # Create from an external URI
@@ -1040,12 +1060,9 @@ class Content:
                 assert content.type == "uri"
 
                 # When receiving a raw already encode data string, you can do this:
-                raw_base64_string = "iVBORw0KGgo..."
-                content = Content.from_uri(
-                    uri=f"data:{(detect_media_type_from_base64(data_str=raw_base64_string) or 'image/png')};base64,{
-                        raw_base64_string
-                    }"
-                )
+                raw_base64_string = "iVBORw0KGgo="
+                media_type = detect_media_type_from_base64(data_str=raw_base64_string) or "image/png"
+                content = Content.from_uri(uri=f"data:{media_type};base64,{raw_base64_string}")
         """
         return cls(
             **_validate_uri(uri, media_type),
@@ -1906,6 +1923,13 @@ class Content:
             remaining["outputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in output_items]  # type: ignore[reportUnknownVariableType]
         if (content_items := remaining.get("items")) and isinstance(content_items, list):
             remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
+        # A single nested Content (e.g., outputs in image_generation_tool_result) and Content items in a tool output
+        # (e.g., output in mcp_server_tool_result). These fields can also hold plain values such as tool JSON.
+        # A list in outputs was converted above and passes through unchanged.
+        if (single_output := remaining.get("outputs")) is not None:
+            remaining["outputs"] = cls._from_serialized_value(single_output)
+        if (tool_output := remaining.get("output")) and isinstance(tool_output, list):
+            remaining["output"] = [cls._from_serialized_value(item) for item in cast(list[Any], tool_output)]
 
         return cls(
             type=content_type,
@@ -1914,6 +1938,30 @@ class Content:
             raw_representation=raw_representation,
             **remaining,
         )
+
+    @classmethod
+    def _from_serialized_value(cls: type[ContentT], value: Any) -> Any:
+        """Rebuild a Content from its serialized mapping, or return the value unchanged.
+
+        A mapping is rebuilt only when it has a known content type and the rebuilt Content serializes back to the
+        same mapping, with or without ``None`` values. Any other value, such as tool JSON that only shares a
+        content type name, is kept as it is. A mapping identical to a serialized Content (including its
+        ``additional_properties``) cannot be told apart from one and is rebuilt.
+        """
+        if not isinstance(value, dict):
+            return value
+        mapping = cast(dict[str, Any], value)
+        content_type = mapping.get("type")
+        if not isinstance(content_type, str) or content_type not in _CONTENT_TYPES:
+            return mapping
+        try:
+            content = cls.from_dict(mapping)
+            if content.to_dict() == mapping or content.to_dict(exclude_none=False) == mapping:
+                return content
+        except Exception:
+            # The mapping is not a serialized Content (for example tool JSON with other fields), so keep it.
+            return mapping
+        return mapping
 
     def __add__(self, other: Content) -> Content:
         """Concatenate or merge two Content instances."""
@@ -2270,7 +2318,7 @@ class Message(SerializationMixin):
             # Create a message with mixed content types
             assistant_msg = Message(
                 "assistant",
-                ["The weather is sunny!", Content.from_image_uri("https://...")],
+                ["The weather is sunny!", Content.from_uri("https://example.com/image.png", media_type="image/png")],
             )
             print(assistant_msg.text)  # "The weather is sunny!"
 
@@ -2306,7 +2354,8 @@ class Message(SerializationMixin):
         Args:
             role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
             contents: A sequence of content items. Can be Content objects, strings (auto-converted
-                to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
+                to TextContent), or dicts (parsed via Content.from_dict). A single string is
+                treated as one text item. Defaults to empty list.
 
         Keyword Args:
             author_name: Optional name of the author of the message.
@@ -3245,13 +3294,16 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse, ChatResponseUpdate, ChatClient
+                from agent_framework import ChatResponse, ChatResponseUpdate, Content
 
-                client = ChatClient()  # should be a concrete implementation
-                response = await ChatResponse.from_update_generator(
-                    client.get_streaming_response("Hello, how are you?")
-                )
-                print(response.text)
+
+                async def updates():
+                    yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
+                    yield ChatResponseUpdate(contents=[Content.from_text(text=" How can I help you?")])
+
+
+                response = await ChatResponse.from_update_generator(updates())
+                print(response.text)  # "Hello How can I help you?"
 
         Args:
             updates: An async iterable of ChatResponseUpdate objects to combine.
@@ -4542,7 +4594,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._stream_error = exc
         try:
             # close() also runs the hooks if releasing the iterator fails.
-            await self.close()
+            await self.close(exc)
         finally:
             self._stream_error = None
 
@@ -4728,22 +4780,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 logger.warning("Stream cleanup hook failed while handling an existing exception.", exc_info=True)
             finally:
                 try:
-                    await self.close()
+                    await self.close(exc)
                 except Exception:
                     logger.warning("Stream cleanup failed while handling an existing exception.", exc_info=True)
             raise
 
-    async def close(self) -> None:
+    async def close(self, exc: BaseException | None = None) -> None:
         """Close the active iterator and run cleanup hooks.
 
         This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+
+        Args:
+            exc: The error that ended the stream, recorded on this and nested streams while cleanup hooks run.
         """
         iterator_failed = False
         try:
             iterator: AsyncIterator[UpdateT] | None = self._iterator
             if iterator is not None:
                 if isinstance(iterator, ResponseStream):
-                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                    await cast(ResponseStream[UpdateT, Any], iterator).close(exc)
                 else:
                     close = getattr(iterator, "aclose", None)
                     if close is not None:
@@ -4754,7 +4809,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         finally:
             self._consumed = True
             try:
-                await self._run_cleanup_hooks()
+                if exc is None:
+                    await self._run_cleanup_hooks()
+                else:
+                    await self._handle_stream_error(exc)
             except Exception:
                 if not iterator_failed:
                     raise
@@ -5201,7 +5259,7 @@ def normalize_tools(
             tools = normalize_tools(my_tool)
 
             # List of tools
-            tools = normalize_tools([my_tool, another_tool])
+            tools = normalize_tools([my_tool])
     """
     from ._tools import normalize_tools as _normalize_tools
 
@@ -5237,7 +5295,7 @@ async def validate_tools(
             tools = await validate_tools(my_tool)
 
             # List of tools
-            tools = await validate_tools([my_tool, another_tool])
+            tools = await validate_tools([my_tool])
     """
     # Use normalize_tools for common sync logic (converts callables to FunctionTool)
     normalized = normalize_tools(tools)

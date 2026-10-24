@@ -4,7 +4,7 @@
 #     "agent-framework-foundry",
 #     "agent-framework-hosting-mcp",
 #     "azure-identity",
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 #     "starlette>=0.40",
 #     "uvicorn>=0.30",
 # ]
@@ -25,13 +25,15 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_hosting_mcp import mcp_from_run, mcp_to_run
 from azure.identity.aio import DefaultAzureCredential
-from mcp import types
+from mcp import MCPError, types
+from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
@@ -46,7 +48,52 @@ CHAT_OPTION_ARGUMENTS = {
     }
 }
 
-server = Server("agent-framework-hosting-mcp-manual-sample")
+
+async def list_tools(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None
+) -> types.ListToolsResult:
+    """Return the app-owned native MCP tool definition."""
+    return types.ListToolsResult(
+        tools=[
+            types.Tool(
+                name="run_agent_manually",
+                description=agent.description or "",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        TASK_ARGUMENT: {
+                            "type": "string",
+                            "description": "The request for the hosted agent.",
+                        },
+                        **CHAT_OPTION_ARGUMENTS,
+                    },
+                    "required": [TASK_ARGUMENT],
+                    "additionalProperties": False,
+                },
+            )
+        ]
+    )
+
+
+async def call_tool(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+) -> types.CallToolResult:
+    """Convert, run, and render without the agent-backed adapter."""
+    name = params.name
+    arguments = params.arguments or {}
+
+    if name != "run_agent_manually":
+        raise MCPError(types.INVALID_PARAMS, f"Unknown MCP tool: {name}")
+    run = mcp_to_run(
+        arguments,
+        argument_name=TASK_ARGUMENT,
+        chat_option_arguments=CHAT_OPTION_ARGUMENTS,
+    )
+    result = await agent.run(run["messages"], options=run["options"])
+    return types.CallToolResult(content=mcp_from_run(result))
+
+
+server = Server("agent-framework-hosting-mcp-manual-sample", on_list_tools=list_tools, on_call_tool=call_tool)
 credential = DefaultAzureCredential()
 agent = Agent(
     client=FoundryChatClient(
@@ -58,43 +105,6 @@ agent = Agent(
     description="Answer requests through a manually defined MCP tool.",
     instructions="Answer the user's request clearly and concisely.",
 )
-
-
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
-    """Return the app-owned native MCP tool definition."""
-    return [
-        types.Tool(
-            name="run_agent_manually",
-            description=agent.description or "",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    TASK_ARGUMENT: {
-                        "type": "string",
-                        "description": "The request for the hosted agent.",
-                    },
-                    **CHAT_OPTION_ARGUMENTS,
-                },
-                "required": [TASK_ARGUMENT],
-                "additionalProperties": False,
-            },
-        )
-    ]
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, object] | None) -> list[types.ContentBlock]:
-    """Convert, run, and render without the agent-backed adapter."""
-    if name != "run_agent_manually":
-        raise ValueError(f"Unknown MCP tool: {name}")
-    run = mcp_to_run(
-        arguments,
-        argument_name=TASK_ARGUMENT,
-        chat_option_arguments=CHAT_OPTION_ARGUMENTS,
-    )
-    result = await agent.run(run["messages"], options=run["options"])
-    return mcp_from_run(result)
 
 
 session_manager = StreamableHTTPSessionManager(

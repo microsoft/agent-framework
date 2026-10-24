@@ -17,6 +17,7 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 ## Types
 
 - **`AGUIRequest`** / **`AGUIChatOptions`** - Request types
+- **`AuthorizationScopeResolver`** - FastAPI dependency callable that resolves authenticated endpoint ownership
 - **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Thread snapshot model with client-replayable data,
   private Session Continuation State, and a scoped async store protocol
 - **`availableInterrupts` / `resume`** - Optional canonical AG-UI `Interrupt` and `ResumeEntry` protocol data
@@ -108,25 +109,56 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - AG-UI Thread and Run ids are client-owned protocol correlation ids. Service-session mode stores provider conversation
   or response ids privately in the thread snapshot. Set `service_session_id_from_thread_id=True` only for compatibility
   when the application intentionally uses a provider continuation id as its AG-UI Thread id.
+- A workflow run resolves its Thread id once. A generated id for an omitted `threadId` is the id reported in
+  `RUN_STARTED`, keys the `workflow_factory` cache and Thread Snapshot, and owns the run's live `request_info`
+  interrupts, so a continuation must send it back. A `workflow_factory` request without `threadId` that carries a
+  `resume` entry or a tool or approval-response message (as `_extract_responses_from_messages` defines them) is
+  rejected with `WORKFLOW_RESUME_NOT_FOUND` before a workflow instance is built. Checkpoint ownership binds only
+  client-supplied Thread ids; a checkpoint of a run without one also records the generated id as an alias, so both
+  the reported id and legacy id-less restores resume it.
 - A configured Snapshot Scope and the client-owned Thread id are combined into a deterministic internal
   `AgentSession.session_id`. Keep the raw Thread id for protocol events and snapshot addressing so equal Thread ids
   in different trusted scopes cannot collide in context-provider state. The deprecated
   `legacy_session_id_from_thread_id=True` compatibility option preserves raw provider keys only for explicit
   migrations and must warn because it disables that isolation; it is unsafe for shared multi-tenant deployments.
-  A configured endpoint resolver must return a non-empty string. Reject invalid results before accessing state or
-  invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
+  Endpoint registration must explicitly provide `authorization_scope_resolver`, retain the compatible
+  `snapshot_scope_resolver`, or declare `single_user=True`. The authorization resolver is a FastAPI dependency and
+  must return a non-empty string derived from authenticated request context. Reject invalid results before accessing
+  state or invoking the runner; never fall back to single-user or unscoped operation after a configured resolver fails.
+  `single_user=True` assigns one opaque authorization scope for the lifetime of that endpoint registration and must not
+  be used for callers with distinct authorization. Use an explicit resolver when snapshots, checkpoints, or provider
+  state must retain the same scope across process restarts.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
-  tool-approval state, history/context-provider namespaces, message-injection state, and provider-owned keys.
+  tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
+  state, and provider-owned keys.
   When state is exposed to the model, keep it in an explicitly untrusted user-data message; never promote request
   state values into system/developer instruction authority.
   Agents declare the latter through a `service_session_state_keys` attribute, but that resolves against the agent
   object AG-UI is handed, so a wrapper agent that does not forward it would silently drop the protection.
   `_RESERVED_SERVICE_SESSION_STATE_KEYS` therefore reserves such keys unconditionally; add a key there whenever
   it names a remote resource that the server's own credentialed call addresses.
+- `ToolApprovalMiddleware` names its session state with an application-chosen `source_id`, which a wrapper can hide
+  from the agent AG-UI is handed. Tool approval authority is therefore also protected by shape, not only by name: a
+  client Shared State value holding a non-empty `rules`, `queued_approval_requests` or `collected_approval_responses`
+  list is never merged into `AgentSession.state`, whatever its item encoding (`ToolApprovalState` loads more than
+  JSON objects), and a key that already holds that state in restored server state, as a mapping or a
+  `ToolApprovalState` object, cannot be replaced by client values. An ignored key stays in Shared State and the
+  model context; it is only not mirrored into the session.
+  Wrapper agents should still forward `middleware`, `context_providers` and `service_session_state_keys`, and
+  `_TOOL_APPROVAL_STATE_FIELDS` must stay in sync with `ToolApprovalState`.
 - Provider-owned keys identify remote resources that the server's own credentialed call addresses — for example
   the Foundry hosted-agent session ID, which selects a VM-isolated sandbox with a persistent filesystem. Never let
   request state choose one. `AgentSession.service_session_id` is deliberately a separate attribute rather than a
   `state` entry, so conversation continuation is unreachable from client input by construction; keep it that way.
+- Standalone FIDES security middleware (`LabelTrackingFunctionMiddleware`, `PolicyEnforcementFunctionMiddleware`)
+  keeps its context label, hidden variables, and pending policy approvals in `AgentSession.state` under
+  `_FIDES_SESSION_STATE_KEY` or the `session_state_key` it was configured with. Request and stored Shared State must
+  never supply that state. The default key is always protected; a configured key is discovered from middleware visible
+  on the agent or its client before the run, so middleware injected later or hidden behind a wrapper that does not
+  expose its key is not covered. Use `SecureAgentConfig`, whose state lives under its provider `source_id`. These keys
+  are protected from request state only: never add them to `_RESERVED_SERVICE_SESSION_STATE_KEYS` or
+  `service_session_state_keys`, which also drop them from private Session Continuation State and would discard the
+  server's own context label.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - Configured stateless agent Thread Snapshot stores persist after function/MCP tool-result and approval safe points,
@@ -166,7 +198,7 @@ from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from fastapi import FastAPI
 
 app = FastAPI()
-add_agent_framework_fastapi_endpoint(app, agent)
+add_agent_framework_fastapi_endpoint(app, agent, single_user=True)
 ```
 
 ## Import Path

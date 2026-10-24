@@ -619,18 +619,22 @@ class BackgroundAgentsProvider(ContextProvider):
 
             # Find which ID completed.
             completed_id: int | None = None
+            completed_task: asyncio.Task[AgentResponse[Any]] | None = None
             for tid, task in waitable:
                 if task in done:
                     completed_id = tid
+                    completed_task = task
                     break
 
             # Finalize the completed task.
             tasks = _get_tasks(provider_state)
             task_info = next((t for t in tasks if t.id == completed_id), None)
-            if task_info is not None and completed_id is not None:
-                completed_task = runtime.get_execution(completed_id, task_info.generation)
-                if completed_task is not None:
-                    _finalize_task(task_info, completed_task)
+            if task_info is not None and completed_task is not None:
+                # Report the waited-on execution without overwriting a newer one: persist only if the
+                # record's generation still refers to the execution this waiter observed.
+                is_current_task = runtime.get_execution(task_info.id, task_info.generation) is completed_task
+                _finalize_task(task_info, completed_task)
+                if is_current_task:
                     _save_tasks(provider_state, tasks)
                     _save_provider_state(session, provider_state, source_id=source_id)
 

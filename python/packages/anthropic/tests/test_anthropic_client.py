@@ -1417,6 +1417,82 @@ async def test_prepare_options_with_tool_choice_auto(
     assert "allow_multiple_tool_calls" not in run_options
 
 
+async def test_prepare_options_allow_multiple_tool_calls_without_tool_choice(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """allow_multiple_tool_calls=False must disable parallel tool use even when tool_choice is unset."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(approval_mode="never_require")
+    def get_weather(city: str) -> str:
+        """Get the weather."""
+        return f"sunny in {city}"
+
+    messages = [Message(role="user", contents=["Weather in Paris and Rome?"])]
+    run_options = client._prepare_options(messages, {"tools": [get_weather], "allow_multiple_tool_calls": False})
+
+    assert run_options["tool_choice"]["type"] == "auto"
+    assert run_options["tool_choice"]["disable_parallel_tool_use"] is True
+
+
+async def test_function_loop_keeps_parallel_tool_use_disabled_after_required_tool_choice(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """After the loop resets tool_choice='required', later requests must still disable parallel tool use."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(approval_mode="never_require")
+    def get_weather(city: str) -> str:
+        """Get the weather."""
+        return f"sunny in {city}"
+
+    usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_anthropic_client.beta.messages.create.side_effect = [
+        BetaMessage(
+            id="msg_1",
+            type="message",
+            role="assistant",
+            model="claude-test",
+            content=[BetaToolUseBlock(type="tool_use", id="toolu_1", name="get_weather", input={"city": "Paris"})],
+            stop_reason="tool_use",
+            usage=usage,
+        ),
+        BetaMessage(
+            id="msg_2",
+            type="message",
+            role="assistant",
+            model="claude-test",
+            content=[BetaToolUseBlock(type="tool_use", id="toolu_2", name="get_weather", input={"city": "Rome"})],
+            stop_reason="tool_use",
+            usage=usage,
+        ),
+        BetaMessage(
+            id="msg_3",
+            type="message",
+            role="assistant",
+            model="claude-test",
+            content=[BetaTextBlock(type="text", text="Sunny in both.")],
+            stop_reason="end_turn",
+            usage=usage,
+        ),
+    ]
+
+    await client.get_response(
+        [Message(role="user", contents=["Weather in Paris and Rome?"])],
+        options={"tools": [get_weather], "tool_choice": "required", "allow_multiple_tool_calls": False},
+    )
+
+    calls = mock_anthropic_client.beta.messages.create.call_args_list
+    assert len(calls) == 3
+    assert calls[0].kwargs["tool_choice"]["type"] == "any"
+    assert calls[0].kwargs["tool_choice"]["disable_parallel_tool_use"] is True
+    for call in calls[1:]:
+        tool_choice = call.kwargs.get("tool_choice")
+        assert tool_choice is not None
+        assert tool_choice["type"] == "auto"
+        assert tool_choice["disable_parallel_tool_use"] is True
+
+
 async def test_prepare_options_with_tool_choice_required(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -4269,3 +4345,33 @@ def test_option_translations_single_stop_string_becomes_list() -> None:
     options = {"stop": ["END", "STOP"]}
     _apply_option_translations(options)
     assert options == {"stop_sequences": ["END", "STOP"]}
+
+
+def test_parse_bash_execution_result_with_files(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Bash result files stay nested in the shell tool result outputs (#9342)."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_file = MagicMock()
+    mock_file.file_id = "file_456"
+
+    mock_content = MagicMock()
+    mock_content.stdout = "Output text"
+    mock_content.stderr = None
+    mock_content.return_code = 0
+    mock_content.content = [mock_file]
+
+    mock_block = MagicMock()
+    mock_block.type = "bash_code_execution_tool_result"
+    mock_block.tool_use_id = "call_bash4"
+    mock_block.content = mock_content
+
+    result = client._parse_contents_from_anthropic([mock_block])
+
+    assert len(result) == 1
+    assert result[0].type == "shell_tool_result"
+    assert result[0].outputs is not None
+    hosted_files = [output for output in result[0].outputs if output.type == "hosted_file"]
+    assert len(hosted_files) == 1
+    assert hosted_files[0].file_id == "file_456"

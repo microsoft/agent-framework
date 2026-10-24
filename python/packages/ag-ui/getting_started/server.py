@@ -11,7 +11,7 @@ from agent_framework import Agent, tool
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 
 load_dotenv()
@@ -56,11 +56,14 @@ API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 EXPECTED_API_KEY = os.environ.get("AG_UI_API_KEY")
 
 
-async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None:
-    """Verify the API key provided in the request header.
+async def resolve_authorization_scope(api_key: str | None = Security(API_KEY_HEADER)) -> str:
+    """Verify the API key and return its stable authorization scope.
 
     Args:
         api_key: The API key from the X-API-Key header
+
+    Returns:
+        The authorization scope shared by requests using the configured API key.
 
     Raises:
         HTTPException: If the API key is missing or invalid
@@ -73,7 +76,7 @@ async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None
             "The endpoint is accessible without authentication. "
             "Set AG_UI_API_KEY to enable API key authentication."
         )
-        return
+        return "local-single-user"
 
     if not api_key:
         raise HTTPException(
@@ -86,6 +89,7 @@ async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None
             status_code=403,
             detail="Invalid API key.",
         )
+    return "configured-api-key"
 
 
 # Server-side tool (executes on server)
@@ -129,13 +133,12 @@ agent = Agent(
 # Create FastAPI app
 app = FastAPI(title="AG-UI Server")
 
-# Register the AG-UI endpoint with authentication
-# The dependencies parameter accepts FastAPI Depends() objects that run before the handler
+# Register the AG-UI endpoint with authentication-backed authorization scoping.
 add_agent_framework_fastapi_endpoint(
     app,
     agent,
     "/",
-    dependencies=[Depends(verify_api_key)],
+    authorization_scope_resolver=resolve_authorization_scope,
 )
 
 if __name__ == "__main__":

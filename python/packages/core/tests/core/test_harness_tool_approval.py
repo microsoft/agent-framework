@@ -37,6 +37,7 @@ from agent_framework import (
     SessionContext,
     SupportsAgentRun,
     ToolApprovalMiddleware,
+    ToolApprovalRule,
     ToolApprovalState,
     create_always_approve_tool_response,
     create_always_approve_tool_with_arguments_response,
@@ -64,6 +65,14 @@ def _approval_requests(messages: list[Message]) -> list[Content]:
 def _function_call(request: Content) -> Content:
     assert request.function_call is not None
     return request.function_call
+
+
+def test_tool_approval_rule_preserves_tool_name_whitespace() -> None:
+    """Tool approval rules must preserve the exact approved tool identity."""
+    rule = ToolApprovalRule("run_shell ")
+
+    assert rule.tool_name == "run_shell "
+    assert ToolApprovalRule.from_dict(rule.to_dict()).tool_name == "run_shell "
 
 
 class _MarkUntrusted(FunctionMiddleware):

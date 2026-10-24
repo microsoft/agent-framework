@@ -270,7 +270,7 @@ internal sealed class HttpRequestExecutor(
             return null;
         }
 
-        long value = this.Evaluator.GetValue(this.Model.RequestTimeoutInMilliseconds).Value;
+        long value = this.GetRequestValue(this.Evaluator.GetValue(this.Model.RequestTimeoutInMilliseconds), "timeout");
         return value > 0 ? TimeSpan.FromMilliseconds(value) : null;
     }
 

@@ -468,7 +468,7 @@ disables enforcement for every error, not just transient ones.
 Every content item on a message is submitted for evaluation, not just its text: binary/data content is
 sent as Purview binary content, and function calls, function results and other structured content are
 serialized to text. Only `usage` content is skipped, because it carries token counts rather than user
-data.
+data. Annotations on text content, such as citations, are submitted as additional text entries.
 
 Evaluation covers the response as it stands when the middleware runs. Because middleware can replace
 the response afterwards, what is evaluated depends on where the middleware is attached — see
