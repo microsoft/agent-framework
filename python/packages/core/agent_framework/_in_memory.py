@@ -209,8 +209,10 @@ _RESTORE_IN_MEMORY_VALUE_TYPES: dict[str, Callable[[str], Any]] = {
     "Decimal": Decimal,
 }
 _SERIALIZED_SCALAR_TYPE_NAMES = frozenset(_RESTORE_IN_MEMORY_VALUE_TYPES)
+_TEXT_STORED_TYPE_NAMES = _SERIALIZED_SCALAR_TYPE_NAMES - {"Decimal"}
 _COMPARISON_OPERATORS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte"})
 _SEQUENCE_OPERAND_OPERATORS = frozenset({"between", "in", "not_in"})
+_COLLECTION_OPERATORS = frozenset({"contains", "contains_any", "contains_all"})
 
 
 def _restore_in_memory_value(value: Any, type_tag: str | None) -> Any:
@@ -554,10 +556,14 @@ def _validate_in_memory_filter(
 
 
 def _filter_operand_values(item: Filter) -> tuple[Any, ...]:
-    """Return the operands a filter compares against the field value."""
+    """Return the operands a filter compares against the field value.
+
+    The collection operators compare their operands element by element, so
+    their values count as operands too.
+    """
     if item.operator in _COMPARISON_OPERATORS:
         return (item.value,)
-    if item.operator in _SEQUENCE_OPERAND_OPERATORS:
+    if item.operator in _SEQUENCE_OPERAND_OPERATORS or item.operator in _COLLECTION_OPERATORS:
         value = item.value
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return tuple(cast(Sequence[Any], value))
@@ -566,13 +572,18 @@ def _filter_operand_values(item: Filter) -> tuple[Any, ...]:
 
 
 def _operand_matches_field_type(field_type: str, operand: Any) -> bool:
-    """Return True when the operand can be compared in the type the field declares."""
+    """Return True when the operand can be compared in the type the field declares.
+
+    A field stored as a native value compares exactly with Python's own numeric
+    equality and ordering, so numeric operands fit any of those fields; only
+    the types the serializer writes as text can never be compared against them.
+    """
     if operand is None:
         return True
     operand_type = type(operand).__name__
     if field_type in _SERIALIZED_SCALAR_TYPE_NAMES:
         return operand_type == field_type
-    return operand_type not in _SERIALIZED_SCALAR_TYPE_NAMES
+    return operand_type not in _TEXT_STORED_TYPE_NAMES
 
 
 def _reject_incompatible_filter_operands(
@@ -586,7 +597,9 @@ def _reject_incompatible_filter_operands(
     type cannot be compared in the field's own semantics, so it is rejected
     instead of quietly matching no record. The text operators are exempt:
     they compare the stored string itself, and their operand is already
-    required to be a string by the shared filter validation.
+    required to be a string by the shared filter validation. A collection
+    field stores its elements as the serializer writes them, so an operand
+    element of a text-stored type can never match there and is rejected too.
     """
     for item in _walk_filters(expression):
         field = definition.try_get_field(item.field_name)

@@ -1090,7 +1090,6 @@ async def test_in_memory_filter_rejects_an_operand_of_another_type(field_name: s
     ("field_name", "value"),
     [
         ("label", datetime(2026, 10, 16, 1, 0, tzinfo=timezone.utc)),
-        ("count", Decimal("5")),
     ],
 )
 async def test_in_memory_filter_rejects_a_native_scalar_operand_for_another_field_type(
@@ -1102,6 +1101,30 @@ async def test_in_memory_filter_rejects_a_native_scalar_operand_for_another_fiel
 
     with pytest.raises(TypeError, match="cannot compare field"):
         await collection.get(filter=Filter(field_name, "eq", value))
+
+
+@pytest.mark.parametrize(
+    ("operator", "value"),
+    [
+        ("eq", Decimal("5")),
+        ("gte", Decimal("5")),
+        ("lte", Decimal("5")),
+    ],
+)
+async def test_in_memory_numeric_operand_compares_exactly_with_a_native_numeric_field(
+    operator: str,
+    value: Any,
+) -> None:
+    """A numeric operand compares exactly with a field stored as a native number.
+
+    ``5 == Decimal("5")`` and its ordering are exact in Python, and the issue
+    lists integer filters among the comparisons that worked before.
+    """
+    collection = await _scalar_filter_collection()
+
+    matched = await collection.get(filter=Filter("count", operator, value))
+
+    assert [record.id for record in matched] == ["one"]
 
 
 async def test_in_memory_search_rejects_an_operand_of_another_type() -> None:
@@ -1263,3 +1286,42 @@ async def test_in_memory_restores_the_largest_duration_exactly() -> None:
     matched = await collection.get(filter=Filter("span", "eq", timedelta.max))
 
     assert [record.id for record in matched] == ["long"]
+
+
+@vectorstoremodel(collection_name="tag_filter_records")
+@dataclass
+class TagFilterRecord:
+    id: Annotated[str, VectorStoreField("key")]
+    tags: Annotated[list[UUID], VectorStoreField("data")]
+    vector: Annotated[list[float] | None, VectorStoreField("vector", dimensions=2)] = None
+
+
+async def _tag_filter_collection() -> InMemoryCollection[str, TagFilterRecord]:
+    collection = InMemoryCollection(TagFilterRecord)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [TagFilterRecord("one", [UUID("00000000-0000-0000-0000-000000000001")])],
+        generate_vectors=False,
+    )
+    return collection
+
+
+async def test_in_memory_collection_field_rejects_a_native_element_operand() -> None:
+    """A native element operand can never match the stored text elements.
+
+    A ``list[UUID]`` field is stored as a list of strings, so a ``UUID``
+    operand quietly matched nothing; it now fails loudly like the scalar case.
+    """
+    collection = await _tag_filter_collection()
+
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.get(filter=Filter("tags", "contains", UUID("00000000-0000-0000-0000-000000000001")))
+
+
+async def test_in_memory_collection_field_still_matches_a_string_element_operand() -> None:
+    """The stored form of the element keeps matching, as it did before."""
+    collection = await _tag_filter_collection()
+
+    matched = await collection.get(filter=Filter("tags", "contains", "00000000-0000-0000-0000-000000000001"))
+
+    assert [record.id for record in matched] == ["one"]
