@@ -15,7 +15,7 @@ from a chat client.
 | Compaction | Context-window management (sliding window + tool result compaction) |
 | TodoProvider | Todo list management for planning and tracking |
 | AgentModeProvider | Plan/execute mode tracking |
-| MemoryContextProvider | File-based durable memory (when `memory_store` provided) |
+| FileMemoryProvider | Session-scoped file memory (enabled by default) |
 | SkillsProvider | File-based skill discovery and progressive loading |
 | Shell tool | Shell command execution + environment probing (when `shell_executor` provided) |
 | Tool approval | "Don't ask again" standing rules + heuristic auto-approval (enabled by default) |
@@ -23,6 +23,10 @@ from a chat client.
 | OpenTelemetry | Built-in observability |
 
 Each feature can be disabled or customized via keyword arguments.
+
+File memory is enabled by default and uses `FileSystemAgentFileStore` rooted at
+`{cwd}/agent-file-memory`. Pass `file_memory_store` to provide a custom store, or
+set `disable_file_memory=True` to omit the file-memory provider.
 
 ## Samples
 
