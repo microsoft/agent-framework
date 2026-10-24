@@ -3493,8 +3493,8 @@ class SecureAgentConfig(ContextProvider):
         """Bind this config's client to each active tracker, including replacements."""
         for middleware in middleware_stack:
             if isinstance(middleware, LabelTrackingFunctionMiddleware):
-                middleware._quarantine_client_bound = True
-                middleware._quarantine_client_override = self._quarantine_chat_client
+                middleware._quarantine_client_bound = True  # pyright: ignore[reportPrivateUsage]
+                middleware._quarantine_client_override = self._quarantine_chat_client  # pyright: ignore[reportPrivateUsage]
         return middleware_stack
 
     def _middleware_for_scope(self, scope: _SecurityScope) -> list[FunctionMiddleware]:
@@ -3982,8 +3982,8 @@ async def quarantined_llm(
     # Build the response - use real LLM if quarantine client is configured
     # Scoped security middleware wins, including an explicitly missing client.
     quarantine_client = (
-        middleware._quarantine_client_override
-        if middleware is not None and middleware._quarantine_client_bound
+        middleware._quarantine_client_override  # pyright: ignore[reportPrivateUsage]
+        if middleware is not None and middleware._quarantine_client_bound  # pyright: ignore[reportPrivateUsage]
         else get_quarantine_client()
     )
 
