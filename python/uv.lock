@@ -183,11 +183,19 @@ dependencies = [
     { name = "agent-framework-core" },
 ]
 
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-orchestrations" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", specifier = ">=1.0.0,<2" },
     { name = "agent-framework-core", editable = "packages/core" },
 ]
+
+[package.metadata.requires-dev]
+test = [{ name = "agent-framework-orchestrations", editable = "packages/orchestrations" }]
 
 [[package]]
 name = "agent-framework-ag-ui"
