@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from agent_framework import (
     Agent,
+    AgentExecutorRequest,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
@@ -18,6 +19,10 @@ from agent_framework import (
     FunctionInvocationLayer,
     Message,
     ResponseStream,
+    WorkflowAgent,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
     tool,
 )
 
@@ -78,3 +83,15 @@ def make_tenant_agent(
         tools=[read_tenant_data],
         default_options={"additional_function_arguments": {"tenant_id": TRUSTED_TENANT_ID}},
     )
+
+
+def make_tenant_workflow_agent(seen_tenants: list[Any]) -> WorkflowAgent:
+    """Wrap the tenant agent in a legacy ``WorkflowAgent`` so the workflow hosting path can be exercised."""
+
+    @executor
+    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+    inner = make_tenant_agent(seen_tenants, approval_mode="never_require")
+    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
+    return WorkflowAgent(workflow=workflow, name="Tenant Workflow Agent")

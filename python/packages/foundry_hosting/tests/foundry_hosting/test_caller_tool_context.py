@@ -16,6 +16,7 @@ from tool_context_helpers import (  # pyrefly: ignore[missing-import] # pyright:
     TRUSTED_TENANT_ID,
     ToolCallingClient,
     make_tenant_agent,
+    make_tenant_workflow_agent,
 )
 
 from agent_framework_foundry_hosting import HostedResponseRequest, ResponsesHostServer
@@ -103,6 +104,35 @@ class TestCallerCannotOverrideToolContext:
         assert "failed" in response.text
         assert seen == []
         assert cast(ToolCallingClient, agent.client).calls == 0
+
+    @pytest.mark.filterwarnings("ignore:Hosting WorkflowAgent through agent=.*:DeprecationWarning")
+    @pytest.mark.parametrize("location", ["top_level", "extra_body"])
+    async def test_forged_tool_context_is_rejected_for_legacy_workflow_agents(
+        self, location: Literal["top_level", "extra_body"]
+    ) -> None:
+        seen: list[Any] = []
+        server = _make_server(make_tenant_workflow_agent(seen))
+        payload: dict[str, Any] = {"input": "go", "stream": False}
+        if location == "top_level":
+            payload.update(FORGED_TENANT_CONTEXT)
+        else:
+            payload["extra_body"] = FORGED_TENANT_CONTEXT
+
+        response = await _post_json(server, payload)
+
+        assert "additional_function_arguments" in response.text
+        assert response.json()["status"] == "failed"
+        assert seen == []
+
+    @pytest.mark.filterwarnings("ignore:Hosting WorkflowAgent through agent=.*:DeprecationWarning")
+    async def test_legacy_workflow_agent_without_forged_context_still_runs(self) -> None:
+        seen: list[Any] = []
+        server = _make_server(make_tenant_workflow_agent(seen))
+
+        response = await _post_json(server, {"input": "go", "stream": False})
+
+        assert response.json()["status"] == "completed"
+        assert seen == [TRUSTED_TENANT_ID]
 
     async def test_hook_can_still_supply_trusted_tool_context(self) -> None:
         seen: list[Any] = []

@@ -130,18 +130,32 @@ def _reject_caller_controls(names: Iterable[str]) -> None:
         )
 
 
+def reject_caller_tool_context(request: CreateResponse) -> None:
+    """Reject caller-supplied agent-controlled tool context, at the top level or in ``extra_body``.
+
+    This applies to every hosted Responses request, whichever agent or workflow shape serves it, so callers can
+    never replace trusted values configured by the developer.
+
+    Raises:
+        ValueError: If the request sets an agent-controlled field.
+    """
+    _reject_caller_controls(cast(Mapping[str, Any], request))
+    extra_body = request.get("extra_body")
+    if isinstance(extra_body, Mapping):
+        _reject_caller_controls(cast(Mapping[str, Any], extra_body))
+
+
 def response_run_options(request: CreateResponse) -> dict[str, Any]:
     """Translate native generation fields, with flattened extra-body values winning collisions.
 
     Raises:
-        ValueError: If the caller supplies agent-controlled tool-execution context, at the top level or in
-            ``extra_body``, so it can never replace trusted values configured by the developer.
+        ValueError: If the caller supplies agent-controlled tool-execution context.
     """
+    reject_caller_tool_context(request)
     native: dict[str, Any] = {}
     extra: dict[str, Any] = {}
     nested_extra: dict[str, Any] = {}
     for name, value in request.items():
-        _reject_caller_controls((name,))
         if value is None or (name == "model" and value == ""):
             continue
         if name == "extra_body":
@@ -151,7 +165,6 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
                 raise TypeError("extra_body must be a mapping of model options.")
             if "extra_body" in value:
                 raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
-            _reject_caller_controls(cast(Mapping[str, Any], value))
             nested_extra.update(cast(Mapping[str, Any], value))
         elif name in _HOST_CONTROLLED_FIELDS:
             continue
