@@ -58,21 +58,25 @@ async def main() -> None:
     print("=== Basic Foundry Local Client Agent Example ===")
 
     client = FoundryLocalClient(model="phi-4-mini")
-    print(f"Client Model ID: {client.model}\n")
-    print("Other available models (tool calling supported only):")
-    for model in client.manager.list_catalog_models():
-        if model.supports_tool_calling:
-            print(
-                f"- {model.alias} for {model.task} - id={model.id} - {(model.file_size_mb / 1000):.2f} GB - {model.license}"
-            )
-    agent = Agent(
-        client=client,
-        name="LocalAgent",
-        instructions="You are a helpful agent.",
-        tools=get_weather,
-    )
-    await non_streaming_example(agent)
-    await streaming_example(agent)
+    try:
+        print(f"Client Model ID: {client.model}\n")
+        print("Other available models (tool calling supported only):")
+        for model in client.manager.catalog.list_models():
+            if model.supports_tool_calling:
+                info = model.info
+                size = f"{info.file_size_mb / 1000:.2f} GB" if info.file_size_mb is not None else "size unknown"
+                print(f"- {model.alias} for {info.task} - id={model.id} - {size} - {info.license}")
+        agent = Agent(
+            client=client,
+            name="LocalAgent",
+            instructions="You are a helpful agent.",
+            tools=get_weather,
+        )
+        await non_streaming_example(agent)
+        await streaming_example(agent)
+    finally:
+        await client.client.close()
+        client.manager.close()
 
 
 if __name__ == "__main__":

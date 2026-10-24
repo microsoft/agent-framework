@@ -53,7 +53,7 @@ all = [
     "agent-framework-durabletask>=1.0.0b260922,<2",
     "agent-framework-foundry>=1.15.0,<2",
     "agent-framework-foundry-hosting>=1.0.0b261022,<2",
-    "agent-framework-foundry-local>=1.0.0b261015,<2",
+    "agent-framework-foundry-local>=1.0.0b261015,<2; python_version >= '3.11' and python_version < '3.15'",
     "agent-framework-gemini>=1.0.0b261022,<2",
     "agent-framework-github-copilot>=2.1.0,<3; python_version >= '3.11'",
     "agent-framework-hyperlight>=1.0.0b261022,<2; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
