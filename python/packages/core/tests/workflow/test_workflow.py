@@ -39,6 +39,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._workflows._const import EXECUTOR_STATE_KEY
 
 
 @dataclass
@@ -1481,6 +1482,203 @@ async def test_workflow_partial_stream_does_not_clobber_successor_active_run() -
     del ref_b
     gc.collect()
     await asyncio.sleep(0)
+
+
+async def test_workflow_partial_stream_does_not_discard_successor_state_writes() -> None:
+    """A stale runner finalizer must not discard a successor run's pending state writes.
+
+    Same GC-finalizer race as
+    ``test_workflow_partial_stream_does_not_clobber_successor_active_run`` but inside a
+    superstep: stream A is dropped while its executor has staged a write, stream B stages
+    its own write, then A's deferred ``finally`` runs. It must only discard A's superstep,
+    so B's write is committed when B completes.
+    """
+    a_staged = asyncio.Event()
+    b_staged = asyncio.Event()
+    release_b = asyncio.Event()
+
+    class _Writer(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            if message == "A":
+                ctx.set_state("a_key", "from-run-A")
+                a_staged.set()
+                await asyncio.Event().wait()
+            else:
+                ctx.set_state("b_key", "from-run-B")
+                b_staged.set()
+                await release_b.wait()
+                await ctx.yield_output("b-done")
+
+    workflow = WorkflowBuilder(start_executor=_Writer(id="writer")).build()
+
+    # Drive stream A until its executor has staged a write and is blocked, then drop it.
+    stream_a = workflow.run("A", stream=True)
+    aiter_a = stream_a.__aiter__()
+    while (await aiter_a.__anext__()).type != "executor_invoked":
+        pass
+    await a_staged.wait()
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    async def consume_b() -> WorkflowRunResult:
+        return await workflow.run("B", stream=True).get_final_response()
+
+    task_b = asyncio.create_task(consume_b())
+    await asyncio.wait_for(b_staged.wait(), 5)
+
+    # Let stream A's scheduled aclose run its finally while B's write is pending.
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+    release_b.set()
+    result_b = await asyncio.wait_for(task_b, 5)
+
+    assert result_b.get_outputs() == ["b-done"]
+    assert result_b.get_final_state() == WorkflowRunState.IDLE
+    assert workflow._runner.state.get("b_key") == "from-run-B"  # pyright: ignore[reportPrivateUsage]
+    assert workflow._runner.state.get("a_key") is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_workflow_partial_stream_does_not_discard_successor_entry_checkpoint_snapshots() -> None:
+    """A stale runner finalizer must not discard snapshots staged by a successor's entry checkpoint.
+
+    Stream A is dropped mid-superstep. Stream B's entry checkpoint stages the writer's snapshot,
+    then suspends in the next executor's ``on_checkpoint_save`` while A's deferred ``finally``
+    runs. B's entry checkpoint must still hold B's writer snapshot.
+    """
+    a_staged = asyncio.Event()
+    hook_suspended = asyncio.Event()
+    release_hook = asyncio.Event()
+    gate_armed = False
+
+    class _Writer(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.saves = 0
+
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            if message == "A":
+                a_staged.set()
+                await asyncio.Event().wait()
+            else:
+                await ctx.yield_output("b-done")
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            self.saves += 1
+            return {"saves": self.saves}
+
+    class _SuspendingSave(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:
+            pass
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            if gate_armed:
+                hook_suspended.set()
+                await release_hook.wait()
+            return {}
+
+    storage = InMemoryCheckpointStorage()
+    writer = _Writer(id="writer")
+    workflow = (
+        WorkflowBuilder(start_executor=writer, checkpoint_storage=storage)
+        .add_edge(writer, _SuspendingSave(id="gate"))
+        .build()
+    )
+
+    stream_a = workflow.run("A", stream=True)
+    aiter_a = stream_a.__aiter__()
+    while (await aiter_a.__anext__()).type != "executor_invoked":
+        pass
+    await a_staged.wait()
+    a_checkpoint_ids = set(await storage.list_checkpoint_ids(workflow_name=workflow.name))
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    gate_armed = True
+    task_b = asyncio.create_task(workflow.run("B", stream=True).get_final_response())
+    await asyncio.wait_for(hook_suspended.wait(), 5)
+
+    # Let stream A's scheduled aclose run its finally while B's writer snapshot is pending.
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+    release_hook.set()
+    result_b = await asyncio.wait_for(task_b, 5)
+    assert result_b.get_outputs() == ["b-done"]
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    [b_entry] = [c for c in checkpoints if c.checkpoint_id not in a_checkpoint_ids and c.iteration_count == 0]
+    assert b_entry.state[EXECUTOR_STATE_KEY]["writer"] == {"saves": 2}
+
+
+async def test_workflow_partial_stream_cancellation_write_not_committed_by_successor() -> None:
+    """A dropped run's cancellation cleanup must not write into a successor run's state.
+
+    Stream A is dropped while its executor is blocked. Stream B passes its run start and stages its
+    own write, then A is finalized: its executor's ``finally`` writes state during cancellation.
+    B's superstep commit must keep B's write and must not persist A's cleanup write.
+    """
+    a_blocked = asyncio.Event()
+    b_staged = asyncio.Event()
+    release_b = asyncio.Event()
+
+    class _Router(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message, target_id=f"worker_{message.lower()}")
+
+    class _WorkerA(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:
+            try:
+                a_blocked.set()
+                await asyncio.Event().wait()
+            finally:
+                ctx.set_state("a_cleanup", "from-run-A")
+
+    class _WorkerB(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            ctx.set_state("b_key", "from-run-B")
+            b_staged.set()
+            await release_b.wait()
+            await ctx.yield_output("b-done")
+
+    # Separate workers so B's superstep is not serialized behind A's blocked handler.
+    router = _Router(id="router")
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_edge(router, _WorkerA(id="worker_a"))
+        .add_edge(router, _WorkerB(id="worker_b"))
+        .build()
+    )
+
+    stream_a = workflow.run("A", stream=True)
+    aiter_a = stream_a.__aiter__()
+    while (event := await aiter_a.__anext__()).type != "executor_invoked" or event.executor_id != "worker_a":
+        pass
+    await a_blocked.wait()
+    # Keep A's generator so its finalization can be ordered after B's run start.
+    generator_a = cast(Any, stream_a)._iterator
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    task_b = asyncio.create_task(workflow.run("B", stream=True).get_final_response())
+    await asyncio.wait_for(b_staged.wait(), 5)
+
+    # Finalize A the way the event loop does for a dropped stream.
+    await generator_a.aclose()
+    release_b.set()
+    result_b = await asyncio.wait_for(task_b, 5)
+
+    assert result_b.get_outputs() == ["b-done"]
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert committed["b_key"] == "from-run-B"
+    assert "a_cleanup" not in committed
 
 
 async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None:

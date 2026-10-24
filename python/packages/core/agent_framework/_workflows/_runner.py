@@ -125,9 +125,10 @@ class RunnerImpl:
             yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
             committed = False
+            superstep_epoch = self._state.begin_epoch()
             try:
                 # Wake on either a live event or iteration completion, including silent supersteps.
-                iteration_task = asyncio.create_task(self._run_iteration())
+                iteration_task = self._state.bound_context().run(asyncio.create_task, self._run_iteration())
                 event_task: asyncio.Task[WorkflowEvent] | None = None
                 try:
                     while not iteration_task.done():
@@ -167,7 +168,8 @@ class RunnerImpl:
                 self._state.commit()
                 committed = True
             finally:
-                if not committed:
+                # A stale run's finalizer must not discard pending writes owned by a newer superstep.
+                if not committed and self._state.epoch is superstep_epoch:
                     self._state.discard()
 
             # Create checkpoint after each superstep iteration
@@ -243,6 +245,7 @@ class RunnerImpl:
         This is used by checkpoint capture paths that need a complete, restorable
         state payload without necessarily writing to a checkpoint storage backend.
         """
+        self._state.begin_epoch()
         await self._save_executor_states()
         self._save_edge_runner_states()
         self._state.commit()
