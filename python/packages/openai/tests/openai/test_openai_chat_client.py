@@ -9750,6 +9750,49 @@ def test_streaming_error_event_raises_chat_client_exception() -> None:
     assert "OpenAI streaming error: server_error: The response stream failed. (parameter: input)" in str(exc_info.value)
 
 
+@pytest.mark.parametrize("request_path", ["create", "structured", "resume"])
+@pytest.mark.parametrize("code", ["server_error", "rate_limit_exceeded", None])
+@pytest.mark.parametrize("error_param", ["input", None])
+async def test_streaming_error_event_preserves_provider_details(
+    request_path: str, code: str | None, error_param: str | None
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    error_event = ResponseErrorEvent(
+        code=code,
+        message="The response stream failed.",
+        param=error_param,
+        sequence_number=2,
+        type="error",
+    )
+    events = _FakeAsyncEventStream([error_event])
+    options: OpenAIChatOptions[Any] = {}
+    if request_path == "structured":
+        options["response_format"] = OutputStruct
+        request_patch = patch.object(client.client.responses, "stream", return_value=events)
+    else:
+        method = "retrieve" if request_path == "resume" else "create"
+        request_patch = patch.object(client.client.responses.with_raw_response, method, return_value=events)
+        if request_path == "resume":
+            options["continuation_token"] = {"response_id": "resp_stream_error"}
+
+    with request_patch, pytest.raises(ChatClientException) as exc_info:
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], stream=True, options=options
+        )
+        assert isinstance(stream, ResponseStream)
+        async for _ in stream:
+            pytest.fail("An error event must not yield a response update.")
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, RuntimeError)
+    assert getattr(cause, "code", None) == code
+    assert getattr(cause, "message", None) == error_event.message
+    assert getattr(cause, "param", None) == error_param
+    assert getattr(cause, "event", None) is error_event
+    if request_path == "resume":
+        assert "continuation_token" not in options
+
+
 async def test_resumed_stream_error_clears_continuation_token() -> None:
     """A failed resumed stream should clear its caller-owned continuation token."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
