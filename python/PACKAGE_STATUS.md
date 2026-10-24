@@ -52,6 +52,7 @@ column records whether `pip install agent-framework` installs the workspace pack
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` | `yes` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` | `no` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` | `yes` |
+| `agent-framework-milvus` | `python/packages/milvus` | `alpha` | `no` |
 | `agent-framework-mistral` | `python/packages/mistral` | `beta` | `yes` |
 | `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` | `no` |
 | `agent-framework-monty` | `python/packages/monty` | `beta` | `yes` |
