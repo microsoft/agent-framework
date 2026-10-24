@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,13 +12,6 @@ import httpx
 import pytest
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse
-from tool_context_helpers import (  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
-    FORGED_TENANT_CONTEXT,
-    TRUSTED_TENANT_ID,
-    ToolCallingClient,
-    make_tenant_agent,
-    make_tenant_workflow_agent,
-)
 
 from agent_framework_foundry_hosting import HostedResponseRequest, ResponsesHostServer
 from agent_framework_foundry_hosting._request import (
@@ -26,6 +20,9 @@ from agent_framework_foundry_hosting._request import (
     validate_request_options,
 )
 from agent_framework_foundry_hosting._scope import FoundryRequestScope
+
+TRUSTED_TENANT_ID = "trusted"
+FORGED_TENANT_CONTEXT: dict[str, Any] = {"additional_function_arguments": {"tenant_id": "forged"}}
 
 
 @pytest.mark.parametrize(
@@ -75,9 +72,9 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
 
 @pytest.mark.xdist_group("session_isolation")
 class TestCallerCannotOverrideToolContext:
-    async def test_baseline_uses_trusted_tool_context(self) -> None:
+    async def test_baseline_uses_trusted_tool_context(self, tenant_agent_factory: Callable[..., Any]) -> None:
         seen: list[Any] = []
-        server = _make_server(make_tenant_agent(seen, approval_mode="never_require"))
+        server = _make_server(tenant_agent_factory(seen, approval_mode="never_require"))
 
         response = await _post_json(server, {"input": "go", "stream": False})
 
@@ -87,10 +84,10 @@ class TestCallerCannotOverrideToolContext:
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("location", ["top_level", "extra_body"])
     async def test_forged_tool_context_is_rejected_before_any_tool_runs(
-        self, location: Literal["top_level", "extra_body"], stream: bool
+        self, tenant_agent_factory: Callable[..., Any], location: Literal["top_level", "extra_body"], stream: bool
     ) -> None:
         seen: list[Any] = []
-        agent = make_tenant_agent(seen, approval_mode="never_require")
+        agent = tenant_agent_factory(seen, approval_mode="never_require")
         server = _make_server(agent)
         payload: dict[str, Any] = {"input": "go", "stream": stream}
         if location == "top_level":
@@ -103,15 +100,15 @@ class TestCallerCannotOverrideToolContext:
         assert "additional_function_arguments" in response.text
         assert "failed" in response.text
         assert seen == []
-        assert cast(ToolCallingClient, agent.client).calls == 0
+        assert cast(Any, agent.client).calls == 0
 
     @pytest.mark.filterwarnings("ignore:Hosting WorkflowAgent through agent=.*:DeprecationWarning")
     @pytest.mark.parametrize("location", ["top_level", "extra_body"])
     async def test_forged_tool_context_is_rejected_for_legacy_workflow_agents(
-        self, location: Literal["top_level", "extra_body"]
+        self, tenant_workflow_agent_factory: Callable[..., Any], location: Literal["top_level", "extra_body"]
     ) -> None:
         seen: list[Any] = []
-        server = _make_server(make_tenant_workflow_agent(seen))
+        server = _make_server(tenant_workflow_agent_factory(seen))
         payload: dict[str, Any] = {"input": "go", "stream": False}
         if location == "top_level":
             payload.update(FORGED_TENANT_CONTEXT)
@@ -125,19 +122,21 @@ class TestCallerCannotOverrideToolContext:
         assert seen == []
 
     @pytest.mark.filterwarnings("ignore:Hosting WorkflowAgent through agent=.*:DeprecationWarning")
-    async def test_legacy_workflow_agent_without_forged_context_still_runs(self) -> None:
+    async def test_legacy_workflow_agent_without_forged_context_still_runs(
+        self, tenant_workflow_agent_factory: Callable[..., Any]
+    ) -> None:
         seen: list[Any] = []
-        server = _make_server(make_tenant_workflow_agent(seen))
+        server = _make_server(tenant_workflow_agent_factory(seen))
 
         response = await _post_json(server, {"input": "go", "stream": False})
 
         assert response.json()["status"] == "completed"
         assert seen == [TRUSTED_TENANT_ID]
 
-    async def test_hook_can_still_supply_trusted_tool_context(self) -> None:
+    async def test_hook_can_still_supply_trusted_tool_context(self, tenant_agent_factory: Callable[..., Any]) -> None:
         seen: list[Any] = []
         server = _make_server(
-            make_tenant_agent(seen, approval_mode="never_require"),
+            tenant_agent_factory(seen, approval_mode="never_require"),
             prepare_options=lambda request, options: {
                 **options,
                 "additional_function_arguments": {"tenant_id": f"from-hook:{request.scope.user_id}"},
@@ -150,9 +149,11 @@ class TestCallerCannotOverrideToolContext:
         assert len(seen) == 1
         assert str(seen[0]).startswith("from-hook:")
 
-    async def test_forged_context_on_approval_resume_is_rejected_without_consuming_approval(self) -> None:
+    async def test_forged_context_on_approval_resume_is_rejected_without_consuming_approval(
+        self, tenant_agent_factory: Callable[..., Any]
+    ) -> None:
         seen: list[Any] = []
-        server = _make_server(make_tenant_agent(seen, approval_mode="always_require"))
+        server = _make_server(tenant_agent_factory(seen, approval_mode="always_require"))
 
         first = await _post_json(server, {"input": "go", "stream": False, "store": True})
         first_body = first.json()
