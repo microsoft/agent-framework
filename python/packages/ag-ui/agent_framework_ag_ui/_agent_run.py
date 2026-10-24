@@ -2801,6 +2801,22 @@ def _split_service_session_input(
     return snapshot_messages[len(stored_snapshot_messages) :], snapshot_messages
 
 
+def _mark_fides_state_covered_messages(
+    agent: SupportsAgentRun,
+    messages: Sequence[Message],
+    *,
+    prefix_length: int,
+) -> None:
+    """Mark backend-restored replay messages for FIDES without importing the experimental module."""
+    if prefix_length <= 0:
+        return
+    covered_messages = messages[: min(prefix_length, len(messages))]
+    for provider in getattr(agent, "context_providers", ()):
+        marker = getattr(provider, "_mark_replay_state_covered_messages", None)
+        if callable(marker):
+            marker(covered_messages)
+
+
 def _legacy_tool_message_approval_resume(
     messages: Sequence[Mapping[str, Any]],
     *,
@@ -3004,6 +3020,7 @@ async def _run_agent_stream(
     )
 
     stored_snapshot = snapshot_session.stored
+    state_covered_prefix_length = 0
     stored_pending_approval_interrupt_ids: set[str] = set()
     seeded_resume_from_snapshot = False
     if stored_snapshot is not None:
@@ -3073,6 +3090,8 @@ async def _run_agent_stream(
                 stored_interrupt=stored_snapshot.interrupt,
             )
             raw_messages = provider_suffix
+        if not config.use_service_session:
+            state_covered_prefix_length = len(stored_snapshot.messages)
 
     # Initialize flow state with stored state plus request-provided overrides;
     # endpoint-deferred defaults apply only to keys missing from both.
@@ -3198,6 +3217,11 @@ async def _run_agent_stream(
         raw_messages,
         sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
         protected_tool_call_ids=protected_tool_call_ids,
+    )
+    _mark_fides_state_covered_messages(
+        agent,
+        messages,
+        prefix_length=state_covered_prefix_length,
     )
 
     if snapshot_seed_messages is not None:

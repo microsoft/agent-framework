@@ -1674,6 +1674,39 @@ async def test_exhausted_aggregate_budget_rejects_meta_before_copy(monkeypatch: 
     assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in function_result.additional_properties
 
 
+async def test_exhausted_aggregate_budget_preserves_ifc_security_label() -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private result")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="helper",
+        parse_tool_results=lambda _: "model projection",
+        max_host_payload_size_bytes=128,
+    )
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert "_meta" not in function_result.additional_properties
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "trusted",
+        "confidentiality": "private",
+    }
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+
+
 async def test_oversized_mcp_meta_is_omitted_from_host_and_model_items() -> None:
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="ok")],
