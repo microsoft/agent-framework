@@ -238,7 +238,11 @@ Native CreateResponse generation fields become MAF runtime options (notably `max
 **last**. A sync or async `prepare_options(request: HostedResponseRequest, options: dict)` hook can remove or replace
 *caller* options before `Agent.run`; removed values fall back to the developer's unchanged agent defaults. Hosting
 filters caller platform IDs and private continuation/storage controls from model options and rejects attempts to
-reintroduce them through the hook. Nested `extra_body` transport overrides are rejected for both caller
+reintroduce them through the hook. Callers cannot supply `additional_function_arguments` (the hidden tool-execution
+context that reaches `FunctionInvocationContext.kwargs`), at the top level or in `extra_body`, on any request including
+an approval resume: the request fails before any tool runs and pending approvals remain usable. Set trusted values in
+the agent's `default_options` or return them from a `prepare_options` hook (for example, derived from
+`request.scope`). Nested `extra_body` transport overrides are rejected for both caller
 input and developer hooks, because they could override the host's `store=False` after the OpenAI SDK merges
 the body. Developer defaults also cannot use this transport channel for host-controlled fields on
 explicit history modes or unstored requests. A custom agent cannot accept MAF runtime options: choose
