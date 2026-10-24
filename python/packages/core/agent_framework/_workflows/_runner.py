@@ -81,6 +81,13 @@ class RunnerImpl:
         self._max_iterations = max_iterations
         self._state = state
 
+        # Incremented once per drive of ``run_until_convergence``. A dropped
+        # stream's late finalizer (GeneratorExit arrives after a successor run
+        # already drives this shared state) must not discard the successor's
+        # pending writes, so the superstep cleanup below is epoch-guarded
+        # (#9473).
+        self._run_epoch = 0
+
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
 
@@ -105,6 +112,20 @@ class RunnerImpl:
         """
         self._iteration = 0
 
+    def begin_run(self) -> int:
+        """Stamp a new run's ownership of this shared state, synchronously.
+
+        Advances the run epoch and sweeps a dropped predecessor's leftover
+        pending writes. Must run before the new run stages anything (the entry
+        checkpoint's executor snapshots land in the same pending map), so
+        Workflow.run() calls it from its synchronous section, ahead of any
+        await point (#9473). The stale finalizer's epoch check then fails even
+        during the successor's checkpoint staging.
+        """
+        self._run_epoch += 1
+        self._state.discard()
+        return self._run_epoch
+
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent.
 
@@ -114,6 +135,12 @@ class RunnerImpl:
         to entering this loop, since only the workflow knows how the run was started
         (fresh input vs. checkpoint resume vs. responses).
         """
+        # The epoch is advanced synchronously by Workflow.run() (see
+        # begin_run), before this generator's first pull: the entry checkpoint
+        # staging that precedes this loop already writes state, so claiming
+        # ownership here would leave that window uncovered (#9473 review).
+        my_epoch = self._run_epoch
+
         # Emit any events already produced prior to entering loop
         if await self._ctx.has_events():
             logger.info("Yielding pre-loop events")
@@ -167,7 +194,10 @@ class RunnerImpl:
                 self._state.commit()
                 committed = True
             finally:
-                if not committed:
+                if not committed and self._run_epoch == my_epoch:
+                    # Stale finalizers (a successor run has already bumped the
+                    # epoch) leave the pending writes alone: they now belong to
+                    # the successor, which swept ours at its own entry (#9473).
                     self._state.discard()
 
             # Create checkpoint after each superstep iteration
