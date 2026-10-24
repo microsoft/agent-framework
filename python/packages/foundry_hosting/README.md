@@ -2,6 +2,14 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
+Chat-client exceptions retain their original SDK exception through the standard
+`inner_exception`/`__cause__` chain. Foundry Responses hosting copies the SDK's
+existing `code`, `message`, `status_code`, and body fields without interpreting
+the body or inferring an error title from HTTP status. Non-chat-client and
+malformed errors retain the generic sanitized fallback. Providers and
+application backends own the content and disclosure policy of the errors they
+return.
+
 ## Agent instances and factories
 
 `ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a zero-argument callable through the

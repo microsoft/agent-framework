@@ -52,7 +52,10 @@ from agent_framework import (
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
-from agent_framework.exceptions import AgentFrameworkException
+from agent_framework.exceptions import (
+    AgentFrameworkException,
+    ChatClientException,
+)
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
@@ -147,6 +150,39 @@ _PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 
 _HistorySource = Literal["agent_server", "agent", "service"]
 _AGENT_SOURCE_UNSET = object()
+
+
+def _provider_error_from_chat_client(exception: BaseException) -> dict[str, Any] | None:
+    """Copy the original SDK error already carried by a chat client exception."""
+    if not isinstance(exception, ChatClientException):
+        return None
+    inner: Exception | None = exception.__cause__ if isinstance(exception.__cause__, Exception) else None
+    if inner is None:
+        inner = next((arg for arg in exception.args[1:] if isinstance(arg, Exception)), None)
+    if inner is None:
+        return None
+    try:
+        code = getattr(inner, "code", None)
+        message = getattr(inner, "message", None)
+        status_code = getattr(inner, "status_code", None)
+        body = getattr(inner, "body", None)
+        if not isinstance(message, str) or not message:
+            return None
+        payload = (
+            {key: value for key, value in cast(Mapping[object, object], body).items() if isinstance(key, str)}
+            if isinstance(body, Mapping)
+            else {}
+        )
+        payload.setdefault("code", code if isinstance(code, str) and code else "server_error")
+        payload.setdefault("message", message)
+        if not isinstance(payload["code"], str) or not isinstance(payload["message"], str):
+            return None
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            payload["status_code"] = status_code
+        json.dumps(payload, allow_nan=False)
+        return payload
+    except Exception:
+        return None
 
 
 class _PublicResponseFailure(Exception):
@@ -2349,11 +2385,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """Log ``ex`` and yield a terminal ``response.failed`` event.
 
         Drains any in-progress streaming output item first so the resulting
-        SSE stream stays well-formed, then emits ``response.failed`` carrying a
-        stable public message unless the caller explicitly supplies a safe
-        validation message. Any error raised while draining the tracker is
-        logged and otherwise ignored so that the original failure remains the
-        terminal failure.
+        SSE stream stays well-formed, then emits ``response.failed`` with a
+        supported HTTP classification and the originating provider message when
+        one is available. Vetted validation messages remain public, while
+        unexpected failures retain the stable fallback. Any tracker cleanup
+        error is logged and otherwise ignored so the original failure remains
+        terminal.
         """
         _log_response_failure(phase, response_id, ex)
         if tracker is not None:
@@ -2363,12 +2400,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 _log_response_failure("failed tracker cleanup", response_id, close_error)
             tracker.discard_pending_container_file_citations()
         if public_message is not None:
+            code = "server_error"
             message = public_message
         elif isinstance(ex, _PublicResponseFailure):
+            code = "server_error"
             message = ex.public_message
         else:
-            message = _PUBLIC_STREAM_FAILURE_MESSAGE
-        yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
+            provider_error = _provider_error_from_chat_client(ex)
+            code = cast(str, provider_error["code"]) if provider_error is not None else "server_error"
+            message = (
+                cast(str, provider_error["message"]) if provider_error is not None else _PUBLIC_STREAM_FAILURE_MESSAGE
+            )
+        failed_event = response_event_stream.emit_failed(
+            code=code, message=message, usage=tracker.usage if tracker is not None else None
+        )
+        if not isinstance(ex, _PublicResponseFailure) and isinstance(ex, ChatClientException):
+            provider_error = _provider_error_from_chat_client(ex)
+            if provider_error is not None:
+                failed_payload = cast(dict[str, Any], failed_event)
+                failed_response = cast(dict[str, Any], failed_payload["response"])
+                failed_error = cast(dict[str, Any], failed_response["error"])
+                failed_error.update(provider_error)
+                failed_error.setdefault("code", code)
+                failed_error.setdefault("message", message)
+        yield failed_event
 
 
 # endregion ResponsesHostServer

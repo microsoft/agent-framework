@@ -21,6 +21,7 @@ from agent_framework import (
     ResponseStream,
     UsageDetails,
 )
+from agent_framework.exceptions import ChatClientException
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
@@ -1470,6 +1471,83 @@ class TestResponsesRunHelpers:
         assert error["message"] == "An internal server error occurred."
         assert "partial" in events[-1]
         assert private_error_detail not in "".join(events)
+
+    @pytest.mark.parametrize(
+        "status, code",
+        [
+            (400, "invalid_request_error"),
+            (403, "permission_denied"),
+            (429, "token_rate_limit_exceeded"),
+            (503, "backend_overloaded"),
+        ],
+    )
+    @pytest.mark.parametrize("wrapper", ["cause", "inner_exception"])
+    async def test_stream_classifies_provider_http_failures(self, status: int, code: str, wrapper: str) -> None:
+        class ProviderError(Exception):
+            status_code = status
+            message = "rendered SDK exception"
+
+            def __init__(self) -> None:
+                super().__init__(self.message)
+                self.code = code
+                self.body = {
+                    "code": code,
+                    "message": "provider details",
+                    "type": "invalid_request_error",
+                    "param": "input",
+                    "request_id": "req_test",
+                }
+
+        provider_error = ProviderError()
+        if wrapper == "cause":
+            error = ChatClientException("provider wrapper")
+            error.__cause__ = provider_error
+        else:
+            error = ChatClientException("provider wrapper", inner_exception=provider_error)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+            raise error
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_http_failure")]
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+        failure = cast("dict[str, object]", response["error"])
+        assert payload["type"] == "response.failed"
+        assert failure["code"] == code
+        assert failure["message"] == "provider details"
+        assert failure["type"] == "invalid_request_error"
+        assert failure["param"] == "input"
+        assert failure["request_id"] == "req_test"
+        assert failure["status_code"] == status
+        assert "partial" in events[-1]
+
+    @pytest.mark.parametrize("unsafe_value", [b"not-json", object(), float("nan")])
+    async def test_stream_rejects_non_json_provider_body(self, unsafe_value: object) -> None:
+        class ProviderError(Exception):
+            code = "provider_error"
+            message = "private provider details"
+            status_code = 500
+            body = {"unsafe": unsafe_value}
+
+        error = ChatClientException("provider wrapper", inner_exception=ProviderError())
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            raise error
+            yield  # pragma: no cover
+
+        events = [
+            event
+            async for event in responses_from_streaming_run(
+                ResponseStream(updates(), finalizer=AgentResponse.from_updates),
+                response_id="resp_unsafe_provider_error",
+            )
+        ]
+        response = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        failure = cast("dict[str, object]", response["error"])
+        assert failure == {"code": "server_error", "message": "An internal server error occurred."}
+        assert events[-1].startswith("event: response.failed")
 
     async def test_failed_stream_preserves_partial_marked_refusal(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:

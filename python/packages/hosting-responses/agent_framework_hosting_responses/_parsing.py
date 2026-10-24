@@ -32,6 +32,7 @@ from agent_framework import (
     get_namespaced_value,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework.exceptions import ChatClientException
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework_hosting import AgentRunArgs
 from openai.types.responses import (
@@ -79,6 +80,39 @@ _RESPONSES_CONTINUATION_KEYS = ("previous_response_id", "conversation", "convers
 _RESPONSES_INPUT_MESSAGE_ROLES = frozenset({"user", "assistant", "system", "developer"})
 _RESPONSES_STATUSES = frozenset({"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"})
 _STREAMING_TERMINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
+
+
+def _provider_error_from_chat_client(exception: Exception) -> dict[str, Any] | None:
+    """Copy the original SDK error already carried by a chat client exception."""
+    if not isinstance(exception, ChatClientException):
+        return None
+    inner: Exception | None = exception.__cause__ if isinstance(exception.__cause__, Exception) else None
+    if inner is None:
+        inner = next((arg for arg in exception.args[1:] if isinstance(arg, Exception)), None)
+    if inner is None:
+        return None
+    try:
+        code = getattr(inner, "code", None)
+        message = getattr(inner, "message", None)
+        status_code = getattr(inner, "status_code", None)
+        body = getattr(inner, "body", None)
+        if not isinstance(message, str) or not message:
+            return None
+        payload = (
+            {key: value for key, value in cast(Mapping[object, object], body).items() if isinstance(key, str)}
+            if isinstance(body, Mapping)
+            else {}
+        )
+        payload.setdefault("code", code if isinstance(code, str) and code else "server_error")
+        payload.setdefault("message", message)
+        if not isinstance(payload["code"], str) or not isinstance(payload["message"], str):
+            return None
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            payload["status_code"] = status_code
+        json.dumps(payload, allow_nan=False)
+        return payload
+    except Exception:
+        return None
 
 
 def _log_stream_failure(response_id: str, exc: Exception) -> None:
@@ -1523,6 +1557,11 @@ async def responses_from_streaming_run(
         partial_contents = [
             content for update in updates for content in update.contents if content.type == "text" and content.text
         ]
+        provider_error = _provider_error_from_chat_client(exc)
+        error_code = cast(str, provider_error["code"]) if provider_error is not None else "server_error"
+        error_message = (
+            cast(str, provider_error["message"]) if provider_error is not None else _PUBLIC_STREAM_FAILURE_MESSAGE
+        )
         response_kwargs: dict[str, Any] = {
             "id": response_id,
             "object": "response",
@@ -1535,13 +1574,20 @@ async def responses_from_streaming_run(
             "tools": [],
             "metadata": {},
             "error": {
+                # The OpenAI SDK model currently restricts error codes to its
+                # own known literals; validate the response shape first, then
+                # restore the provider-defined structured code below.
                 "code": "server_error",
-                "message": _PUBLIC_STREAM_FAILURE_MESSAGE,
+                "message": error_message,
             },
         }
         if conversation_id is not None:
             response_kwargs["conversation"] = {"id": conversation_id}
         failed_response = _response_payload(OpenAIResponse(**response_kwargs))
+        if provider_error is not None:
+            failed_response["error"].update(provider_error)
+        failed_response["error"].setdefault("code", error_code)
+        failed_response["error"].setdefault("message", error_message)
         apply_streamed_message_ids(failed_response)
         yield event(
             "response.failed",
