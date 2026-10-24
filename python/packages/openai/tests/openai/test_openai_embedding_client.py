@@ -200,6 +200,54 @@ async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: 
     assert call_kwargs["encoding_format"] == "base64"
 
 
+async def test_openai_does_not_forward_unknown_options(openai_unit_test_env: dict[str, str]) -> None:
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=_make_openai_response(embeddings=[[0.1]]))
+
+    await client.get_embeddings(["test"], options=cast(Any, {"input_type": "query"}))
+
+    call_kwargs = client.client.embeddings.create.call_args[1]
+    assert set(call_kwargs) == {"input", "model"}
+
+
+async def test_subclass_extra_request_options_are_forwarded(openai_unit_test_env: dict[str, str]) -> None:
+    class CompatibleEmbeddingClient(OpenAIEmbeddingClient):
+        def _prepare_extra_request_options(self, options: Any) -> dict[str, Any]:
+            return {"extra_body": {"input_type": options["input_type"]}}
+
+    client = CompatibleEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=_make_openai_response(embeddings=[[0.1]]))
+
+    await client.get_embeddings(["test"], options=cast(Any, {"input_type": "query", "dimensions": 8}))
+
+    call_kwargs = client.client.embeddings.create.call_args[1]
+    assert call_kwargs["extra_body"] == {"input_type": "query"}
+    assert call_kwargs["dimensions"] == 8
+
+
+async def test_rejected_extra_request_options_send_nothing(openai_unit_test_env: dict[str, str]) -> None:
+    class CompatibleEmbeddingClient(OpenAIEmbeddingClient):
+        def _prepare_extra_request_options(self, options: Any) -> dict[str, Any]:
+            raise ValueError("unsupported option")
+
+    client = CompatibleEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=_make_openai_response(embeddings=[[0.1]]))
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    with pytest.raises(ValueError, match="unsupported option"):
+        await client.get_embeddings(["test"])
+
+    client.client.embeddings.create.assert_not_awaited()
+    assert get_feature_token() is None
+
+
 async def test_openai_base64_decoding(openai_unit_test_env: dict[str, str]) -> None:
     import base64
     import struct
