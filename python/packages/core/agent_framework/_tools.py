@@ -1413,13 +1413,15 @@ class FunctionTool(SerializationMixin):
                     parsed_items.append(item)
                 else:
                     dumpable = FunctionTool._make_dumpable(item)
-                    text = dumpable if isinstance(dumpable, str) else json.dumps(dumpable, default=str)
+                    text = (
+                        dumpable if isinstance(dumpable, str) else json.dumps(dumpable, default=str, ensure_ascii=False)
+                    )
                     parsed_items.append(Content.from_text(text))
             return parsed_items
         dumpable = FunctionTool._make_dumpable(result)
         if isinstance(dumpable, str):
             return [Content.from_text(dumpable)]
-        return [Content.from_text(json.dumps(dumpable, default=str))]
+        return [Content.from_text(json.dumps(dumpable, default=str, ensure_ascii=False))]
 
     def to_json_schema_spec(self) -> dict[str, Any]:
         """Convert a FunctionTool to the JSON Schema function specification format.
