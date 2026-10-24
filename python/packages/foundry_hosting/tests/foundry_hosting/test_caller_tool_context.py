@@ -100,7 +100,7 @@ class TestCallerCannotOverrideToolContext:
         assert "additional_function_arguments" in response.text
         assert "failed" in response.text
         assert seen == []
-        assert cast(Any, agent.client).calls == 0
+        assert agent.client.calls == 0
 
     @pytest.mark.filterwarnings("ignore:Hosting WorkflowAgent through agent=.*:DeprecationWarning")
     @pytest.mark.parametrize("location", ["top_level", "extra_body"])
