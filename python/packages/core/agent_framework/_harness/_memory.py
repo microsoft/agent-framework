@@ -897,25 +897,25 @@ class MemoryFileStore(MemoryStore):
         state_path = self._get_state_path(session, source_id=source_id)
         if not state_path.exists():
             return _default_state()
-        failing_text = state_path.read_text(encoding="utf-8")
+        failing_bytes = state_path.read_bytes()
         while True:
             try:
-                raw_state = self.loads(failing_text)
+                raw_state = self.loads(failing_bytes.decode("utf-8"))
             except ValueError as exc:
                 # Another process can atomically replace the file with a valid
                 # one after our read; only quarantine when the payload is still
-                # the exact text that failed to parse (mirrors the session
+                # the exact bytes that failed to parse (mirrors the session
                 # store's _quarantine_corrupt_snapshot), otherwise the valid
                 # replacement would be moved aside and its metadata lost.
                 try:
-                    current_text = state_path.read_text(encoding="utf-8")
+                    current_bytes = state_path.read_bytes()
                 except OSError:
-                    current_text = None
-                if current_text is None:
+                    current_bytes = None
+                if current_bytes is None:
                     # the file is gone (replaced by nothing): nothing to quarantine
                     return _default_state()
-                if current_text != failing_text:
-                    failing_text = current_text
+                if current_bytes != failing_bytes:
+                    failing_bytes = current_bytes
                     continue
                 quarantine_path = state_path.with_name(f".{state_path.name}.{uuid.uuid4().hex}.corrupt")
                 try:

@@ -309,6 +309,25 @@ def test_memory_file_store_quarantines_corrupt_state_file(tmp_path: Path) -> Non
     ]
 
 
+def test_memory_file_store_quarantines_non_utf8_state_file(tmp_path: Path) -> None:
+    """Non-text bytes follow the same quarantine path as malformed JSON."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    state_path = store._get_state_path(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = b"\xff\xfe garbage"
+    state_path.write_bytes(payload)
+
+    assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
+        "last_consolidated_at": None,
+        "sessions_since_consolidation": [],
+    }
+    quarantined = list(state_path.parent.glob(".state.json.*.corrupt"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == payload
+
+
 def test_memory_file_store_does_not_quarantine_a_valid_replacement(tmp_path: Path) -> None:
     """A valid file that lands between the read and the rename is kept, not quarantined.
 
