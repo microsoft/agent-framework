@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -69,6 +70,8 @@ public sealed class LoopAgent : DelegatingAIAgent
 
     private readonly IReadOnlyList<LoopEvaluator> _evaluators;
     private readonly int _maxIterations;
+    private readonly long? _maxTokens;
+    private readonly System.TimeSpan? _maxDuration;
     private readonly bool _freshContextPerIteration;
     private readonly string? _onBehalfOfAuthorName;
     private readonly bool _excludeOnBehalfOfMessages;
@@ -121,6 +124,8 @@ public sealed class LoopAgent : DelegatingAIAgent
         this._evaluators = evaluatorArray;
 
         this._maxIterations = Throw.IfLessThan(options?.MaxIterations ?? DefaultMaxIterations, 1);
+        this._maxTokens = options?.MaxTokens;
+        this._maxDuration = options?.MaxDuration;
         this._freshContextPerIteration = options?.FreshContextPerIteration ?? false;
         this._onBehalfOfAuthorName = options?.OnBehalfOfAuthorName;
         this._excludeOnBehalfOfMessages = options?.ExcludeOnBehalfOfMessages ?? false;
@@ -159,6 +164,11 @@ public sealed class LoopAgent : DelegatingAIAgent
         IEnumerable<ChatMessage> currentMessages = initialMessages;
         int iteration = 0;
 
+        // Budget tracking (tokens and wall-clock time) for the whole run.
+        long tokensUsed = 0;
+        bool tokenUsageMissingLogged = false;
+        Stopwatch? budgetStopwatch = this._maxDuration.HasValue ? Stopwatch.StartNew() : null;
+
         // Aggregates the full transcript across iterations: each iteration's surfaced on-behalf-of input messages
         // followed by that iteration's response messages. Unused when only the final response is returned.
         List<ChatMessage> transcript = [];
@@ -180,6 +190,11 @@ public sealed class LoopAgent : DelegatingAIAgent
 
             UsageAggregator.Accumulate(ref aggregatedUsage, response.Usage);
 
+            if (this._maxTokens.HasValue)
+            {
+                tokensUsed += this.CountTokens(response.Usage, iteration, ref tokenUsageMissingLogged);
+            }
+
             // Record this iteration's on-behalf-of input (before the response it elicited) and the response itself.
             transcript.AddRange(currentSurfaced);
             transcript.AddRange(response.Messages);
@@ -198,11 +213,28 @@ public sealed class LoopAgent : DelegatingAIAgent
                 return this.BuildResult(response, transcript, aggregatedUsage);
             }
 
+            // Budget pre-checks — run before the cap and evaluators so an expensive judge is not called once a budget is exhausted.
+            if (budgetStopwatch is not null && budgetStopwatch.Elapsed >= this._maxDuration)
+            {
+                AgentResponse budgetResult = this.BuildResult(response, transcript, aggregatedUsage);
+                (budgetResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.TimeBudgetExceeded;
+                return budgetResult;
+            }
+
+            if (this._maxTokens.HasValue && tokensUsed >= this._maxTokens.Value)
+            {
+                AgentResponse budgetResult = this.BuildResult(response, transcript, aggregatedUsage);
+                (budgetResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.TokenBudgetExceeded;
+                return budgetResult;
+            }
+
             // Enforce the global safety cap regardless of what the evaluators want.
             if (iteration >= this._maxIterations)
             {
                 this.LogMaxIterationsReached(iteration);
-                return this.BuildResult(response, transcript, aggregatedUsage);
+                AgentResponse capResult = this.BuildResult(response, transcript, aggregatedUsage);
+                (capResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.IterationCapReached;
+                return capResult;
             }
 
             // Ask the evaluators whether to continue; stop when none of them request a re-invocation.
@@ -210,6 +242,14 @@ public sealed class LoopAgent : DelegatingAIAgent
             if (!step.ShouldContinue)
             {
                 return this.BuildResult(response, transcript, aggregatedUsage);
+            }
+
+            // Re-check the duration budget so a slow evaluator cannot exhaust it and still start another iteration.
+            if (budgetStopwatch is not null && budgetStopwatch.Elapsed >= this._maxDuration)
+            {
+                AgentResponse budgetResult = this.BuildResult(response, transcript, aggregatedUsage);
+                (budgetResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.TimeBudgetExceeded;
+                return budgetResult;
             }
 
             currentMessages = step.Messages;
@@ -246,6 +286,11 @@ public sealed class LoopAgent : DelegatingAIAgent
         List<string?> feedbackLog = [];
         IEnumerable<ChatMessage> currentMessages = initialMessages;
         int iteration = 0;
+
+        // Budget tracking (tokens and wall-clock time) for the whole run.
+        long tokensUsed = 0;
+        bool tokenUsageMissingLogged = false;
+        Stopwatch? budgetStopwatch = this._maxDuration.HasValue ? Stopwatch.StartNew() : null;
 
         // The loop-synthesized on-behalf-of messages that drive the current iteration (none for the first iteration).
         IReadOnlyList<ChatMessage> currentSurfaced = [];
@@ -307,6 +352,18 @@ public sealed class LoopAgent : DelegatingAIAgent
                 yield break;
             }
 
+            // Budget pre-checks (no exit-reason stamping in streaming; consistent with the iteration cap).
+            if (this._maxTokens.HasValue)
+            {
+                tokensUsed += this.CountTokens(response.Usage, iteration, ref tokenUsageMissingLogged);
+            }
+
+            if ((budgetStopwatch is not null && budgetStopwatch.Elapsed >= this._maxDuration)
+                || (this._maxTokens.HasValue && tokensUsed >= this._maxTokens.Value))
+            {
+                yield break;
+            }
+
             // Enforce the global safety cap regardless of what the evaluators want.
             if (iteration >= this._maxIterations)
             {
@@ -317,6 +374,12 @@ public sealed class LoopAgent : DelegatingAIAgent
             // Ask the evaluators whether to continue; stop when none of them request a re-invocation.
             LoopNextStep step = await this.EvaluateAndBuildNextAsync(context, feedbackLog, initialSessionSnapshot, cancellationToken).ConfigureAwait(false);
             if (!step.ShouldContinue)
+            {
+                yield break;
+            }
+
+            // Re-check the duration budget so a slow evaluator cannot exhaust it and still start another iteration.
+            if (budgetStopwatch is not null && budgetStopwatch.Elapsed >= this._maxDuration)
             {
                 yield break;
             }
@@ -475,6 +538,38 @@ public sealed class LoopAgent : DelegatingAIAgent
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Returns the number of tokens reported by <paramref name="usage"/>: <see cref="UsageDetails.TotalTokenCount"/>, falling
+    /// back to <see cref="UsageDetails.InputTokenCount"/> plus <see cref="UsageDetails.OutputTokenCount"/>. When the response
+    /// carries no token counts, returns zero and logs a warning (once per run) because the token budget cannot be enforced.
+    /// </summary>
+    private long CountTokens(UsageDetails? usage, int iteration, ref bool tokenUsageMissingLogged)
+    {
+        if (usage is not null && (usage.TotalTokenCount.HasValue || usage.InputTokenCount.HasValue || usage.OutputTokenCount.HasValue))
+        {
+            return usage.TotalTokenCount ?? ((usage.InputTokenCount ?? 0) + (usage.OutputTokenCount ?? 0));
+        }
+
+        if (!tokenUsageMissingLogged)
+        {
+            tokenUsageMissingLogged = true;
+            this.LogTokenUsageMissing(iteration);
+        }
+
+        return 0;
+    }
+
+    private void LogTokenUsageMissing(int iteration)
+    {
+        if (this._logger.IsEnabled(LogLevel.Warning))
+        {
+            this._logger.LogWarning(
+                "LoopAgent has MaxTokens set to {MaxTokens}, but the inner agent's response for iteration {Iteration} reported no token usage, so the token budget cannot be enforced for that response.",
+                this._maxTokens,
+                iteration);
+        }
     }
 
     private void LogMaxIterationsReached(int iteration)
