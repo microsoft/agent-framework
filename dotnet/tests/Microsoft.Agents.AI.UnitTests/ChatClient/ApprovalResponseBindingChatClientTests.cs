@@ -671,6 +671,10 @@ public class ApprovalResponseBindingChatClientTests
         Assert.Equal("req2", responses[1].RequestId);
         Assert.False(responses[1].Approved);
         Assert.Equal("call2", responses[1].ToolCall.CallId);
+        Assert.NotNull(capture.Messages);
+        var result = Assert.Single(capture.Messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>());
+        Assert.Equal("call2", result.CallId);
+        Assert.Equal("Tool call invocation rejected. No approval response was provided for this approval required tool call.", result.Result);
     }
 
     [Theory]
@@ -714,7 +718,7 @@ public class ApprovalResponseBindingChatClientTests
         Assert.IsType<TextContent>(Assert.Single(message.Contents));
         if (!emptyInput)
         {
-            Assert.Same(message, capture.Messages![1]);
+            Assert.Same(message, capture.Messages![3]);
         }
 
         var responses = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().ToList();
@@ -726,6 +730,15 @@ public class ApprovalResponseBindingChatClientTests
             Assert.False(r.Approved);
             Assert.Equal("No approval response was provided for this approval required tool call.", r.Reason);
         });
+        Assert.NotNull(capture.Messages);
+        Assert.Equal(ChatRole.Assistant, capture.Messages[1].Role);
+        Assert.Equal(new[] { "call1", "call2" }, capture.Messages[1].Contents.OfType<FunctionCallContent>().Select(c => c.CallId));
+        Assert.All(capture.Messages[1].Contents, c => Assert.True(Assert.IsType<FunctionCallContent>(c).InformationalOnly));
+        Assert.Equal(ChatRole.Tool, capture.Messages[2].Role);
+        var results = capture.Messages[2].Contents.Cast<FunctionResultContent>().ToList();
+        Assert.Equal(new[] { "call1", "call2" }, results.Select(r => r.CallId));
+        Assert.All(results, r => Assert.Equal(
+            "Tool call invocation rejected. No approval response was provided for this approval required tool call.", r.Result));
         Assert.False(HasPendingRequest(session, RequestId));
         Assert.False(HasPendingRequest(session, "req2"));
     }
@@ -821,7 +834,9 @@ public class ApprovalResponseBindingChatClientTests
         Assert.Equal(2, capture.Messages[1].Contents.OfType<ToolApprovalRequestContent>().Count());
         Assert.True(Assert.Single(capture.Messages[2].Contents.OfType<ToolApprovalResponseContent>()).Approved);
         Assert.False(Assert.Single(capture.Messages[3].Contents.OfType<ToolApprovalResponseContent>()).Approved);
-        Assert.Same(nextQuestion, capture.Messages[4]);
+        Assert.Equal("call2", Assert.IsType<FunctionCallContent>(Assert.Single(capture.Messages[4].Contents)).CallId);
+        Assert.Equal("call2", Assert.IsType<FunctionResultContent>(Assert.Single(capture.Messages[5].Contents)).CallId);
+        Assert.Same(nextQuestion, capture.Messages[6]);
     }
 
     [Fact]
@@ -918,14 +933,22 @@ public class ApprovalResponseBindingChatClientTests
         Assert.Equal(processedDecision!.Reason, returnedDecision.Reason);
         Assert.NotSame(processedDecision.ToolCall, returnedDecision.ToolCall);
         Assert.False(Assert.IsType<FunctionCallContent>(returnedDecision.ToolCall).InformationalOnly);
-        Assert.Equal("Done.", response.Messages[1].Text);
+        var returnedCall = Assert.IsType<FunctionCallContent>(Assert.Single(response.Messages[1].Contents));
+        Assert.True(returnedCall.InformationalOnly);
+        Assert.NotSame(returnedDecision.ToolCall, returnedCall);
+        var returnedResult = Assert.IsType<FunctionResultContent>(Assert.Single(response.Messages[2].Contents));
+        Assert.Equal(returnedCall.CallId, returnedResult.CallId);
+        Assert.Equal("Tool call invocation rejected. No approval response was provided for this approval required tool call.", returnedResult.Result);
+        Assert.Equal("Done.", response.Messages[3].Text);
         Assert.False(HasPendingRequest(session, RequestId));
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task GetStreamingResponseAsync_GeneratedRejection_AbnormalEndRetainsPendingRequestAsync(bool stopAfterDecision)
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task GetStreamingResponseAsync_GeneratedRejection_AbnormalEndRetainsPendingRequestAsync(int stopAfterUpdates)
     {
         // Arrange
         var session = new ChatClientAgentSession();
@@ -945,7 +968,7 @@ public class ApprovalResponseBindingChatClientTests
                 await foreach (var update in decorator.GetStreamingResponseAsync([], null, ct))
                 {
                     updates.Add(update);
-                    if (stopAfterDecision)
+                    if (updates.Count == stopAfterUpdates)
                     {
                         break;
                     }
@@ -956,7 +979,7 @@ public class ApprovalResponseBindingChatClientTests
         };
 
         // Act
-        if (stopAfterDecision)
+        if (stopAfterUpdates > 0)
         {
             await agent.RunAsync([], session);
         }
@@ -966,13 +989,30 @@ public class ApprovalResponseBindingChatClientTests
         }
 
         // Assert
-        var decisionUpdate = Assert.Single(updates);
+        Assert.Equal(stopAfterUpdates == 0 ? 3 : stopAfterUpdates, updates.Count);
+        var decisionUpdate = updates[0];
         Assert.Equal(ChatRole.User, decisionUpdate.Role);
         Assert.NotNull(decisionUpdate.MessageId);
         var decision = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(decisionUpdate.Contents));
         Assert.Equal(RequestId, decision.RequestId);
         Assert.False(decision.Approved);
-        Assert.Equal(stopAfterDecision ? 0 : 1, innerCalls);
+        if (updates.Count > 1)
+        {
+            Assert.Equal(ChatRole.Assistant, updates[1].Role);
+            var call = Assert.IsType<FunctionCallContent>(Assert.Single(updates[1].Contents));
+            Assert.Equal("call1", call.CallId);
+            Assert.True(call.InformationalOnly);
+        }
+
+        if (updates.Count > 2)
+        {
+            Assert.Equal(ChatRole.Tool, updates[2].Role);
+            var result = Assert.IsType<FunctionResultContent>(Assert.Single(updates[2].Contents));
+            Assert.Equal("call1", result.CallId);
+            Assert.Equal("Tool call invocation rejected. No approval response was provided for this approval required tool call.", result.Result);
+        }
+
+        Assert.Equal(stopAfterUpdates > 0 ? 0 : 1, innerCalls);
         Assert.True(HasPendingRequest(session, RequestId));
     }
 

@@ -400,6 +400,61 @@ public class ChatClientAgent_ApprovalRetryTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
+    public async Task RunAsync_WhenAutomaticRejectionIsCanceled_RestoredRequestCanBeApprovedAsync(
+        bool streaming, bool perServiceCallPersistence)
+    {
+        // Arrange
+        using var cancellationSource = new CancellationTokenSource();
+        int serviceCalls = 0;
+        int toolInvocations = 0;
+        var client = CreateChatClient((_, _, ct) =>
+        {
+            if (++serviceCalls == 2)
+            {
+                cancellationSource.Cancel();
+                ct.ThrowIfCancellationRequested();
+            }
+
+            return Task.FromResult(serviceCalls == 1
+                ? new ChatResponse([new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather")])])
+                : new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done.")]));
+        });
+        var agent = CreateAgent(client, () => { toolInvocations++; return "Sunny"; }, perServiceCallPersistence);
+        var session = await agent.CreateSessionAsync();
+        Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, CancellationToken ct = default) => streaming
+            ? agent.RunStreamingAsync(messages, session, cancellationToken: ct).ToAgentResponseAsync()
+            : agent.RunAsync(messages, session, cancellationToken: ct);
+        var first = await RunAsync([new ChatMessage(ChatRole.User, "Weather?")]);
+        var request = Assert.Single(GetApprovalRequests(first));
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunAsync(
+            [new ChatMessage(ChatRole.User, "Never mind.")], cancellationSource.Token));
+
+        // Assert: cancellation must not settle the request or persist the generated result.
+        Assert.True(HasPendingApprovalRequests(session));
+        Assert.Equal(0, toolInvocations);
+        Assert.False(Assert.IsType<FunctionCallContent>(request.ToolCall).InformationalOnly);
+        Assert.Empty(ChatClientAgentTestHelper.GetPersistedHistory(agent, session)
+            .SelectMany(m => m.Contents).OfType<FunctionResultContent>());
+
+        session = await agent.DeserializeSessionAsync(await agent.SerializeSessionAsync(session));
+        var response = await RunAsync([new ChatMessage(ChatRole.User, [request.CreateResponse(approved: true)])]);
+
+        Assert.Equal("Done.", response.Text);
+        Assert.Equal(1, toolInvocations);
+        Assert.False(HasPendingApprovalRequests(session));
+        var result = Assert.Single(ChatClientAgentTestHelper.GetPersistedHistory(agent, session)
+            .SelectMany(m => m.Contents).OfType<FunctionResultContent>());
+        Assert.Equal("call1", result.CallId);
+        Assert.Equal("Sunny", result.Result?.ToString());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
     public async Task RunAsync_ServiceOwnedHistory_MixedDecisionsPrecedeNewContentAsync(
         bool streaming, bool perServiceCallPersistence)
     {
@@ -465,6 +520,10 @@ public class ChatClientAgent_ApprovalRetryTests
         Assert.Contains("Approved", invoked);
         Assert.Contains("Automatic", invoked);
         Assert.Equal(4, outgoing.SelectMany(m => m.Contents).OfType<FunctionResultContent>().Count());
+        var unansweredResult = Assert.Single(outgoing.SelectMany(m => m.Contents).OfType<FunctionResultContent>(),
+            r => r.CallId == "unanswered");
+        Assert.Equal("Tool call invocation rejected. No approval response was provided for this approval required tool call.",
+            unansweredResult.Result);
         int lastResultIndex = outgoing.FindLastIndex(m => m.Contents.Any(c => c is FunctionResultContent));
         Assert.True(lastResultIndex < outgoing.FindIndex(m => m.Text == "A new question."));
         Assert.True(lastResultIndex < outgoing.FindIndex(m => m.Text == "Text accompanying the answer."));
