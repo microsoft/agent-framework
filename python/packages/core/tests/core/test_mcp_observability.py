@@ -327,6 +327,8 @@ async def test_mcp_tools_call_second_connection_loss_log_respects_sensitive_data
     """Second connection loss should retain an error log without exporting exception details by default."""
     private_error_detail = "founder-secret-token"
     tool = _make_connected_mcp_tool()
+    tool.trust_server_idempotency_hints = True
+    tool._tool_annotations_by_name["get-weather"] = types.ToolAnnotations(idempotent_hint=True)
     tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
         side_effect=[
             MCPError(-32000, f"session terminated: {private_error_detail}"),
@@ -342,6 +344,7 @@ async def test_mcp_tools_call_second_connection_loss_log_respects_sensitive_data
     ):
         await tool.call_tool("get-weather")
 
+    assert tool.session.call_tool.await_count == 2
     assert (private_error_detail in caplog.text) is enable_sensitive_data
     if not enable_sensitive_data:
         assert "MCP tool call connection closed after reconnection (MCPError)." in caplog.text

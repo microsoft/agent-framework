@@ -2906,7 +2906,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
 
     server = TestServer(name="test_server", trust_server_idempotency_hints=True)
     await server.connect()
-    server._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
+    server._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotent_hint=True)
 
     result = await server.call_tool("test_tool", param="test_value")
 
@@ -2978,7 +2978,7 @@ async def test_mcp_tool_call_not_replayed_on_hint_alone_without_client_trust():
 
     server = TestServer(name="test_server")
     await server.connect()
-    server._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
+    server._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotent_hint=True)
 
     with pytest.raises(ToolExecutionException, match="outcome is unknown"):
         await server.call_tool("test_tool", param="test_value")
@@ -3026,7 +3026,7 @@ async def test_connect_discovery_failure_rolls_back_annotations_snapshot():
     _connect_on_owner must restore the pre-discovery annotations map along with the
     other metadata, or a later replay decision reads hints from the failed session."""
     tool = MCPStdioTool(name="test", command="test-command")
-    sentinel_annotations = {"prev_tool": types.ToolAnnotations(readOnlyHint=True)}
+    sentinel_annotations = {"prev_tool": types.ToolAnnotations(read_only_hint=True)}
     sentinel_meta = {"prev_tool": {"version": 0}}
     sentinel_params = {"prev_tool": {"q"}}
     tool._tool_annotations_by_name = dict(sentinel_annotations)
@@ -3052,8 +3052,8 @@ async def test_connect_discovery_failure_rolls_back_annotations_snapshot():
             tools=[
                 types.Tool(
                     name="fresh_tool",
-                    inputSchema={"type": "object", "properties": {}},
-                    annotations=types.ToolAnnotations(idempotentHint=True),
+                    input_schema={"type": "object", "properties": {}},
+                    annotations=types.ToolAnnotations(idempotent_hint=True),
                 )
             ]
         )
@@ -4151,7 +4151,7 @@ async def test_mcp_connection_reset_integration():
 
         # The query tool is read-only, so a lost response is safe to replay: mark it as such.
         remote_name = (func.additional_properties or {}).get("_mcp_remote_name") or func.name
-        tool._tool_annotations_by_name[remote_name] = types.ToolAnnotations(readOnlyHint=True)
+        tool._tool_annotations_by_name[remote_name] = types.ToolAnnotations(read_only_hint=True)
 
         # Simulate connection failure by making call_tool raise ClosedResourceError once
         call_count = 0
@@ -7200,7 +7200,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         load_tools=True,
         trust_server_idempotency_hints=True,
     )
-    tool._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
+    tool._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotent_hint=True)
 
     # Mock the session
     mock_session = MagicMock()
@@ -7448,7 +7448,7 @@ async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> Non
         tool,
         Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
     )
-    tool._tool_annotations_by_name["remote_tool"] = types.ToolAnnotations(idempotentHint=True)
+    tool._tool_annotations_by_name["remote_tool"] = types.ToolAnnotations(idempotent_hint=True)
 
     with (
         patch.object(tool, "connect", AsyncMock()) as mock_connect,
