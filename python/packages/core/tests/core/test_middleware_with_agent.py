@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import threading
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterator
 from typing import Any, cast
 
 import pytest
@@ -12,6 +12,7 @@ from agent_framework import (
     Agent,
     AgentContext,
     AgentMiddleware,
+    AgentResponse,
     AgentResponseUpdate,
     ChatContext,
     ChatMiddleware,
@@ -51,6 +52,43 @@ class _IterableAgentMiddleware(AgentMiddleware):
 
 class TestChatAgentClassBasedMiddleware:
     """Test cases for class-based middleware integration with Agent."""
+
+    async def test_agent_run_returns_termination_result(self) -> None:
+        client = MockBaseChatClient()
+        expected = AgentResponse(messages=[Message(role="assistant", contents=["terminated response"])])
+
+        class TerminatingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareTermination(result=expected)
+
+        agent = Agent(client=client, middleware=[TerminatingMiddleware()])
+        response = await agent.run("hi")
+
+        assert isinstance(response, AgentResponse)
+        assert response.text == "terminated response"
+        assert client.call_count == 0
+
+    async def test_agent_run_returns_termination_stream(self) -> None:
+        client = MockBaseChatClient()
+        async def updates() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("terminated stream")])
+
+        expected = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        class TerminatingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareTermination(result=expected)
+
+        agent = Agent(client=client, middleware=[TerminatingMiddleware()])
+        stream = agent.run("hi", stream=True)
+        streamed_updates = [update async for update in stream]
+        final_response = await stream.get_final_response()
+
+        assert [update.text for update in streamed_updates] == ["terminated stream"]
+        assert all(isinstance(update, AgentResponseUpdate) for update in streamed_updates)
+        assert isinstance(final_response, AgentResponse)
+        assert final_response.text == "terminated stream"
+        assert client.call_count == 0
 
     async def test_class_based_agent_middleware_with_chat_agent(self, client: SupportsChatGetResponse) -> None:
         """Test class-based agent middleware with Agent."""

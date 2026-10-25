@@ -10,6 +10,8 @@ from agent_framework import (
     Agent,
     AgentResponse,
     AgentResponseUpdate,
+    ChatResponse,
+    ChatResponseUpdate,
     Content,
     Message,
     ResponseStream,
@@ -19,9 +21,13 @@ from agent_framework._middleware import (
     AgentContext,
     AgentMiddleware,
     AgentMiddlewarePipeline,
+    ChatContext,
+    ChatMiddleware,
+    ChatMiddlewarePipeline,
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionMiddlewarePipeline,
+    MiddlewareTermination,
 )
 from agent_framework._tools import FunctionTool
 
@@ -36,6 +42,193 @@ class FunctionTestArgs(BaseModel):
 
 class TestResultOverrideMiddleware:
     """Test cases for middleware result override functionality."""
+
+    async def test_agent_middleware_termination_returns_exception_result(self, mock_agent: SupportsAgentRun) -> None:
+        expected = AgentResponse(messages=[Message(role="assistant", contents=["terminated response"])])
+
+        class TerminatingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareTermination(result=expected)
+
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["test"])])
+
+        async def final_handler(_: AgentContext) -> AgentResponse:
+            raise AssertionError("final handler should not run after termination")
+
+        result = await AgentMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert result is expected
+        assert isinstance(result, AgentResponse)
+        assert result.text == "terminated response"
+
+    async def test_agent_middleware_termination_applies_stream_hooks(self, mock_agent: SupportsAgentRun) -> None:
+        async def updates() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("agent update")])
+
+        response_stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        class TerminatingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                context.stream_update_transforms.append(
+                    lambda update: AgentResponseUpdate(contents=[Content.from_text(f"{update.text} transformed")])
+                )
+                context.stream_result_transforms.append(
+                    lambda response: AgentResponse(
+                        messages=[Message(role="assistant", contents=[f"{response.text} finalized"])]
+                    )
+                )
+                raise MiddlewareTermination(result=response_stream)
+
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["test"])], stream=True)
+
+        async def final_handler(_: AgentContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            raise AssertionError("final handler should not run after termination")
+
+        result = await AgentMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert isinstance(result, ResponseStream)
+        streamed_updates = [update async for update in result]
+        final_response = await result.get_final_response()
+
+        assert [update.text for update in streamed_updates] == ["agent update transformed"]
+        assert all(isinstance(update, AgentResponseUpdate) for update in streamed_updates)
+        assert isinstance(final_response, AgentResponse)
+        # Finalizers aggregate the original updates; result hooks transform that response separately.
+        assert final_response.text == "agent update finalized"
+
+    async def test_chat_middleware_termination_returns_exception_result(self) -> None:
+        expected = ChatResponse(messages=[Message(role="assistant", contents=["terminated response"])])
+
+        class TerminatingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareTermination(result=expected)
+
+        context = ChatContext(client=MagicMock(), messages=[Message(role="user", contents=["test"])], options={})
+
+        async def final_handler(_: ChatContext) -> ChatResponse:
+            raise AssertionError("final handler should not run after termination")
+
+        result = await ChatMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert result is expected
+        assert isinstance(result, ChatResponse)
+        assert result.text == "terminated response"
+
+    async def test_chat_middleware_termination_applies_stream_hooks(self) -> None:
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            yield ChatResponseUpdate(contents=[Content.from_text("chat update")])
+
+        response_stream = ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        class TerminatingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                context.stream_update_transforms.append(
+                    lambda update: ChatResponseUpdate(contents=[Content.from_text(f"{update.text} transformed")])
+                )
+                context.stream_result_transforms.append(
+                    lambda response: ChatResponse(
+                        messages=[Message(role="assistant", contents=[f"{response.text} finalized"])]
+                    )
+                )
+                raise MiddlewareTermination(result=response_stream)
+
+        context = ChatContext(
+            client=MagicMock(),
+            messages=[Message(role="user", contents=["test"])],
+            options={},
+            stream=True,
+        )
+
+        async def final_handler(_: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            raise AssertionError("final handler should not run after termination")
+
+        result = await ChatMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert isinstance(result, ResponseStream)
+        streamed_updates = [update async for update in result]
+        final_response = await result.get_final_response()
+
+        assert [update.text for update in streamed_updates] == ["chat update transformed"]
+        assert all(isinstance(update, ChatResponseUpdate) for update in streamed_updates)
+        assert isinstance(final_response, ChatResponse)
+        # Finalizers aggregate the original updates; result hooks transform that response separately.
+        assert final_response.text == "chat update finalized"
+
+    async def test_agent_context_result_precedes_termination_result(self, mock_agent: SupportsAgentRun) -> None:
+        context_response = AgentResponse(messages=[Message(role="assistant", contents=["context response"])])
+        termination_response = AgentResponse(messages=[Message(role="assistant", contents=["exception response"])])
+
+        class TerminatingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                raise MiddlewareTermination(result=termination_response)
+
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["test"])])
+
+        async def final_handler(_: AgentContext) -> AgentResponse:
+            return context_response
+
+        result = await AgentMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert result is context_response
+
+    async def test_chat_context_result_precedes_termination_result(self) -> None:
+        context_response = ChatResponse(messages=[Message(role="assistant", contents=["context response"])])
+        termination_response = ChatResponse(messages=[Message(role="assistant", contents=["exception response"])])
+
+        class TerminatingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                raise MiddlewareTermination(result=termination_response)
+
+        context = ChatContext(client=MagicMock(), messages=[Message(role="user", contents=["test"])], options={})
+
+        async def final_handler(_: ChatContext) -> ChatResponse:
+            return context_response
+
+        result = await ChatMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert result is context_response
+
+    @pytest.mark.parametrize("termination_result", [None, "exception response"])
+    async def test_agent_context_result_precedes_optional_termination_result(
+        self, mock_agent: SupportsAgentRun, termination_result: object | None
+    ) -> None:
+        expected = AgentResponse(messages=[Message(role="assistant", contents=["context response"])])
+
+        class TerminatingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                context.result = expected
+                raise MiddlewareTermination(result=termination_result)
+
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["test"])])
+
+        async def final_handler(_: AgentContext) -> AgentResponse:
+            raise AssertionError("final handler should not run after termination")
+
+        result = await AgentMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert result is expected
+
+    @pytest.mark.parametrize("termination_result", [None, "exception response"])
+    async def test_chat_context_result_precedes_optional_termination_result(
+        self, termination_result: object | None
+    ) -> None:
+        expected = ChatResponse(messages=[Message(role="assistant", contents=["context response"])])
+
+        class TerminatingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                context.result = expected
+                raise MiddlewareTermination(result=termination_result)
+
+        context = ChatContext(client=MagicMock(), messages=[Message(role="user", contents=["test"])], options={})
+
+        async def final_handler(_: ChatContext) -> ChatResponse:
+            raise AssertionError("final handler should not run after termination")
+
+        result = await ChatMiddlewarePipeline(TerminatingMiddleware()).execute(context, final_handler)
+
+        assert result is expected
 
     async def test_agent_middleware_response_override_non_streaming(self, mock_agent: SupportsAgentRun) -> None:
         """Test that agent middleware can override response for non-streaming execution."""
