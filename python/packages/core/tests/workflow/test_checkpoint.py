@@ -3577,18 +3577,56 @@ async def test_file_checkpoint_storage_get_latest_rejects_invalid_metadata(
     "contents",
     ["{ invalid json }", "[]", "null", "{}", '{"workflow_name": null}', '{"workflow_name": 1}'],
 )
-@pytest.mark.parametrize("has_older_checkpoint", [False, True])
-async def test_file_checkpoint_storage_get_latest_rejects_unidentifiable_files(
-    tmp_path: Path, contents: str, has_older_checkpoint: bool
+@pytest.mark.parametrize("has_healthy_checkpoint", [False, True])
+async def test_file_checkpoint_storage_get_latest_quarantines_unidentifiable_files(
+    tmp_path: Path, contents: str, has_healthy_checkpoint: bool
 ) -> None:
+    """A file whose owner cannot be identified is skipped, not fatal.
+
+    One malformed or legacy file must not poison get_latest() for every workflow
+    sharing the storage root, so it is quarantined (skipped with a warning) and
+    left in place for inspection. Healthy checkpoints for the requested workflow
+    are still returned.
+    """
     storage = FileCheckpointStorage(tmp_path)
-    if has_older_checkpoint:
-        await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
+    healthy_id: str | None = None
+    if has_healthy_checkpoint:
+        healthy_id = await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
     corrupt = tmp_path / "unidentifiable.json"
     corrupt.write_text(contents)
-    with pytest.raises(WorkflowCheckpointException, match="unidentifiable.json"):
-        await storage.get_latest(workflow_name="recovery-workflow")
+
+    latest = await storage.get_latest(workflow_name="recovery-workflow")
+
+    if has_healthy_checkpoint:
+        assert latest is not None
+        assert latest.checkpoint_id == healthy_id
+    else:
+        assert latest is None
     assert corrupt.read_text() == contents
+
+
+async def test_file_checkpoint_storage_get_latest_shared_root_is_not_poisoned_by_foreign_files(
+    tmp_path: Path,
+) -> None:
+    """Regression: corruption owned by one workflow must not break another's recovery.
+
+    Two workflows share one storage root. 'recovery-workflow' is healthy, while the
+    root also holds an unparseable file and a valid-but-foreign checkpoint with a
+    newer timestamp. get_latest() must still return the healthy newest checkpoint.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    ours_id = await storage.save(_stamped_checkpoint({"stage": "ours"}, "2026-01-01T10:00:00+00:00"))
+    (tmp_path / "legacy-broken.json").write_text("{ not valid json")
+    foreign = _stamped_checkpoint({"stage": "theirs"}, "2026-01-01T11:00:00+00:00")
+    foreign_dict = foreign.to_dict()
+    foreign_dict["workflow_name"] = "other-workflow"
+    (tmp_path / f"{foreign.checkpoint_id}.json").write_text(json.dumps(encode_checkpoint_value(foreign_dict)))
+
+    latest = await storage.get_latest(workflow_name="recovery-workflow")
+
+    assert latest is not None
+    assert latest.checkpoint_id == ours_id
+    assert latest.state == {"stage": "ours"}
 
 
 @pytest.mark.parametrize("deny_directory", [False, True])
@@ -3609,27 +3647,31 @@ async def test_file_checkpoint_storage_get_latest_surfaces_permission_errors(
     assert isinstance(exc.value.__cause__, PermissionError)
 
 
-@pytest.mark.parametrize("change", ["create", "replace", "delete", "overwrite"])
-async def test_file_checkpoint_storage_get_latest_rejects_changes_during_read(
+@pytest.mark.parametrize("change", ["create", "replace", "overwrite"])
+async def test_file_checkpoint_storage_get_latest_returns_fresh_snapshot_after_concurrent_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
+    """A concurrent change invalidates the scan once; the internal retry returns fresh state.
+
+    The first attempt detects the mutation and retries instead of failing; the
+    second attempt observes the change and returns the new, consistent snapshot.
+    """
     storage = FileCheckpointStorage(tmp_path)
     checkpoint = _stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00")
     checkpoint_id = await storage.save(checkpoint)
     path = tmp_path / f"{checkpoint_id}.json"
     original_load = json.load
-    changed = False
+    mutated = False
 
-    def change_after_read(stream: Any, **kwargs: Any) -> Any:
-        nonlocal changed
+    def mutate_once(stream: Any, **kwargs: Any) -> Any:
+        nonlocal mutated
         data = original_load(stream, **kwargs)
         # Release the read handle before deleting or replacing the file on Windows:
         # an open file handle blocks unlink() and os.replace() with PermissionError,
-        # which get_latest() would wrap as WorkflowCheckpointException without
-        # actually exercising the mutation-detection path under test.
+        # so the mutation below would not land while the scan holds the handle.
         stream.close()
-        if not changed:
-            changed = True
+        if not mutated:
+            mutated = True
             if change == "create":
                 newer = _stamped_checkpoint({}, "2026-01-01T11:00:00+00:00")
                 encoded_newer = encode_checkpoint_value(newer.to_dict())
@@ -3637,8 +3679,6 @@ async def test_file_checkpoint_storage_get_latest_rejects_changes_during_read(
                     json.dumps(encoded_newer, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
-            elif change == "delete":
-                path.unlink()
             else:
                 replacement = checkpoint.to_dict()
                 replacement["state"] = {"stage": "other-different-content"}
@@ -3657,9 +3697,116 @@ async def test_file_checkpoint_storage_get_latest_rejects_changes_during_read(
                     )
         return data
 
-    monkeypatch.setattr(json, "load", change_after_read)
-    with pytest.raises(WorkflowCheckpointException):
+    monkeypatch.setattr(json, "load", mutate_once)
+
+    latest = await storage.get_latest(workflow_name="recovery-workflow")
+
+    assert latest is not None
+    if change == "create":
+        assert latest.state == {}
+    else:
+        assert latest.state == {"stage": "other-different-content"}
+
+
+async def test_file_checkpoint_storage_get_latest_returns_none_when_file_removed_during_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a concurrent deletion the fresh snapshot honestly contains no checkpoints.
+
+    The removal invalidates the first attempt; the retry rescans, finds no
+    checkpoint files, and returns None instead of stale data or an error.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint_id = await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
+    path = tmp_path / f"{checkpoint_id}.json"
+    original_load = json.load
+    mutated = False
+
+    def mutate_once(stream: Any, **kwargs: Any) -> Any:
+        nonlocal mutated
+        data = original_load(stream, **kwargs)
+        # Release the read handle before unlinking on Windows.
+        stream.close()
+        if not mutated:
+            mutated = True
+            path.unlink()
+        return data
+
+    monkeypatch.setattr(json, "load", mutate_once)
+
+    assert await storage.get_latest(workflow_name="recovery-workflow") is None
+
+
+async def test_file_checkpoint_storage_get_latest_raises_after_exhausting_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the directory changes on every attempt, get_latest raises a clear error.
+
+    Each attempt is invalidated by a new foreign checkpoint file appearing during
+    the scan. After the bounded number of internal retries is exhausted, the error
+    tells the caller the storage root is under heavy concurrent writes.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint_id = await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
+    counter = 0
+    original_load = json.load
+
+    def churn_on_every_read(stream: Any, **kwargs: Any) -> Any:
+        nonlocal counter
+        data = original_load(stream, **kwargs)
+        stream.close()
+        churn = _stamped_checkpoint({}, f"2026-01-01T12:0{counter}:00+00:00")
+        churn_dict = churn.to_dict()
+        churn_dict["workflow_name"] = "churn-workflow"
+        (tmp_path / f"{churn.checkpoint_id}.json").write_text(json.dumps(encode_checkpoint_value(churn_dict)))
+        counter += 1
+        return data
+
+    monkeypatch.setattr(json, "load", churn_on_every_read)
+
+    with pytest.raises(WorkflowCheckpointException, match="kept changing"):
         await storage.get_latest(workflow_name="recovery-workflow")
+
+    assert (tmp_path / f"{checkpoint_id}.json").exists()
+
+
+async def test_file_checkpoint_storage_get_latest_survives_concurrent_foreign_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An atomic save for a different workflow during the scan must not fail recovery.
+
+    Regression for the shared-root invalidation comment: the optimistic scan is
+    retried internally, the second attempt skips the foreign checkpoint, and the
+    requested workflow's checkpoint is returned instead of a 'changed during the
+    scan' error.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint_id = await storage.save(_stamped_checkpoint({"stage": "ours"}, "2026-01-01T10:00:00+00:00"))
+    original_load = json.load
+    injected = False
+
+    def inject_foreign_save(stream: Any, **kwargs: Any) -> Any:
+        nonlocal injected
+        data = original_load(stream, **kwargs)
+        stream.close()
+        if not injected:
+            injected = True
+            foreign = _stamped_checkpoint({"stage": "theirs"}, "2026-01-01T11:00:00+00:00")
+            foreign_dict = foreign.to_dict()
+            foreign_dict["workflow_name"] = "another-workflow"
+            (tmp_path / f"{foreign.checkpoint_id}.json").write_text(
+                json.dumps(encode_checkpoint_value(foreign_dict)),
+                encoding="utf-8",
+            )
+        return data
+
+    monkeypatch.setattr(json, "load", inject_foreign_save)
+
+    latest = await storage.get_latest(workflow_name="recovery-workflow")
+
+    assert latest is not None
+    assert latest.checkpoint_id == checkpoint_id
+    assert latest.state == {"stage": "ours"}
 
 
 async def test_file_checkpoint_storage_list_checkpoints_still_skips_undecodable_entries():
@@ -3703,20 +3850,25 @@ async def test_file_checkpoint_storage_get_latest_reads_selected_file_once(
     assert reads == 1
 
 
-async def test_file_checkpoint_storage_get_latest_rejects_duplicate_json_keys(tmp_path: Path) -> None:
-    """A matching-workflow file with a duplicate workflow_name key must raise.
+async def test_file_checkpoint_storage_get_latest_quarantines_duplicate_workflow_name_keys(
+    tmp_path: Path,
+) -> None:
+    """A file with a duplicated workflow_name key has ambiguous ownership.
 
-    A duplicated workflow_name key means ownership is ambiguous: the file might
-    belong to the requested workflow even if the last-wins value says otherwise.
-    Reject before trusting the parsed workflow_name.
+    It might belong to any workflow sharing the root, so it is quarantined (skipped
+    with a warning) instead of poisoning get_latest() for all of them. Ownership is
+    never trusted from a duplicated key.
     """
     storage = FileCheckpointStorage(tmp_path)
-    await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
+    saved_id = await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
     (tmp_path / "ambiguous.json").write_text(
         '{"workflow_name": "recovery-workflow", "workflow_name": "other-workflow"}'
     )
-    with pytest.raises(WorkflowCheckpointException, match="Duplicate checkpoint JSON key"):
-        await storage.get_latest(workflow_name="recovery-workflow")
+
+    latest = await storage.get_latest(workflow_name="recovery-workflow")
+
+    assert latest is not None
+    assert latest.checkpoint_id == saved_id
 
 
 async def test_file_checkpoint_storage_get_latest_rejects_duplicate_metadata_keys_in_matching_workflow(
@@ -3748,9 +3900,7 @@ async def test_file_checkpoint_storage_get_latest_ignores_duplicate_keys_in_fore
     determined, not rejected during parsing.
     """
     storage = FileCheckpointStorage(tmp_path)
-    newest_id = await storage.save(
-        _stamped_checkpoint({"stage": "first"}, "2026-01-01T11:00:00+00:00")
-    )
+    newest_id = await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T11:00:00+00:00"))
     (tmp_path / "foreign.json").write_text(
         '{"workflow_name": "other-workflow", '
         '"timestamp": "2026-01-01T10:00:00+00:00", '

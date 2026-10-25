@@ -30,6 +30,17 @@ if TYPE_CHECKING:
 # Type alias for checkpoint IDs in case we want to change the
 # underlying type in the future (e.g., to UUID or a custom class)
 CheckpointID: TypeAlias = str
+_MAX_GET_LATEST_ATTEMPTS = 3
+_GET_LATEST_RETRY_DELAY_SECONDS = 0.05
+
+
+class _CheckpointScanInvalidated(WorkflowCheckpointException):
+    """Internal signal that an optimistic scan was invalidated by concurrent changes.
+
+    Raised only inside the worker thread used by ``get_latest`` and always consumed
+    by its retry loop. Callers see a plain :class:`WorkflowCheckpointException`
+    only when every attempt is invalidated.
+    """
 
 
 @dataclass(slots=True)
@@ -854,14 +865,20 @@ class FileCheckpointStorage:
         """Get the latest checkpoint for a given workflow name.
 
         Select from stored metadata and decode only the selected checkpoint, using the same
-        data that was read during selection. Unreadable files and files without a valid
-        workflow name raise because they might hide a newer checkpoint for the requested
-        workflow. Invalid metadata for a known different workflow is ignored.
+        data that was read during selection. Files whose owning workflow cannot be
+        identified (unparseable JSON, a missing or non-string ``workflow_name``, or
+        duplicate ``workflow_name`` keys) are quarantined: they are skipped with a
+        warning so a single malformed or legacy file cannot permanently break recovery
+        for every workflow sharing this storage root. Invalid content in a file that IS
+        identified as belonging to the requested workflow still raises, and invalid
+        metadata for a known different workflow is ignored.
         File versions and directory membership are checked before accepting the scan.
-        Detected concurrent changes raise rather than returning a potentially stale
-        checkpoint; the caller can retry. Writes after validation belong to a subsequent
-        snapshot. This relies on the filesystem reporting file changes and writers using
-        atomic replacement, as ``save`` does.
+        Concurrent changes under the storage root, including an atomic save for a
+        different workflow, invalidate the optimistic scan; the scan is retried
+        internally a bounded number of times before raising, so ordinary concurrent
+        checkpointing does not fail unrelated recovery. Writes after validation belong
+        to a subsequent snapshot. This relies on the filesystem reporting file changes
+        and writers using atomic replacement, as ``save`` does.
         Checkpoints with equal timestamps retain directory iteration order.
         Nested directories are included, with in-tree directory aliases visited only once.
         Reading and decoding run in a worker thread so decoding does not block the event
@@ -875,9 +892,9 @@ class FileCheckpointStorage:
             checkpoints exist.
 
         Raises:
-            WorkflowCheckpointException: If the directory or a checkpoint cannot be read,
-                a file's workflow cannot be identified, matching metadata is invalid, the
-                scan changes, or the selected checkpoint cannot be decoded.
+            WorkflowCheckpointException: If a checkpoint owned by ``workflow_name`` cannot
+                be read or decoded, the directory cannot be read, matching metadata is
+                invalid, or the scan changes on every retry attempt.
         """
 
         def _version(info: os.stat_result) -> tuple[int, int, int]:
@@ -952,14 +969,25 @@ class FileCheckpointStorage:
                     with open(file_path, encoding="utf-8") as f:
                         stored: dict[str, Any] = json.load(f, object_pairs_hook=hook)
                     versions[file_path] = version
-                    if "workflow_name" in duplicate_keys:
-                        raise ValueError("Duplicate checkpoint JSON key: workflow_name")
-                    if not isinstance(stored, dict) or not isinstance(stored.get("workflow_name"), str):
-                        raise ValueError("checkpoint workflow_name must be a string")
+                    owner: str | None = None
+                    if (
+                        isinstance(stored, dict)
+                        and "workflow_name" not in duplicate_keys
+                        and isinstance(stored.get("workflow_name"), str)
+                    ):
+                        owner = stored["workflow_name"]
+                    if owner is None:
+                        logger.warning(
+                            "Quarantining unidentifiable checkpoint file %s while finding "
+                            "the latest checkpoint for workflow '%s'",
+                            file_path,
+                            workflow_name,
+                        )
+                        continue
+                    if owner != workflow_name:
+                        continue
                     if "__pickled__" in stored or "__type__" in stored:
                         raise ValueError("Top-level pickle markers are not checkpoint metadata")
-                    if stored["workflow_name"] != workflow_name:
-                        continue
                     if duplicate_keys:
                         raise ValueError(f"Duplicate checkpoint JSON key: {duplicate_keys[0]}")
                     timestamp = datetime.fromisoformat(stored["timestamp"])
@@ -970,13 +998,28 @@ class FileCheckpointStorage:
                         raise ValueError("checkpoint_id does not match its checkpoint file")
                     if latest is None or timestamp > latest[0]:
                         latest = (timestamp, stored)
+                except (json.JSONDecodeError, UnicodeDecodeError) as ex:
+                    logger.warning(
+                        "Quarantining checkpoint file %s that is not valid JSON while "
+                        "finding the latest checkpoint for workflow '%s': %s",
+                        file_path,
+                        workflow_name,
+                        ex,
+                    )
+                    continue
                 except Exception as e:
                     raise WorkflowCheckpointException(
                         f"Failed to read checkpoint metadata for workflow {workflow_name} from {file_path}: {e}"
                     ) from e
             for file_path, version in versions.items():
-                if _version(file_path.stat()) != version:
-                    raise WorkflowCheckpointException(
+                try:
+                    current = _version(file_path.stat())
+                except FileNotFoundError as ex:
+                    raise _CheckpointScanInvalidated(
+                        f"Checkpoint {file_path} was removed during the scan; retry get_latest"
+                    ) from ex
+                if current != version:
+                    raise _CheckpointScanInvalidated(
                         f"Checkpoint {file_path} changed during the scan; retry get_latest"
                     )
             current_paths, current_directories = _checkpoint_paths(root)
@@ -986,23 +1029,43 @@ class FileCheckpointStorage:
                 or any(_version(path.stat()) != version for path, version in directories.items())
                 or self.storage_path.resolve() != root
             ):
-                raise WorkflowCheckpointException(
+                raise _CheckpointScanInvalidated(
                     f"Checkpoint directory {self.storage_path} changed during the scan; retry get_latest"
                 )
             return self._decode_checkpoint(latest[1]) if latest else None
 
-        try:
-            checkpoint = await asyncio.to_thread(_read_latest)
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                checkpoint = await asyncio.to_thread(_read_latest)
+            except _CheckpointScanInvalidated as exc:
+                if attempt >= _MAX_GET_LATEST_ATTEMPTS:
+                    raise WorkflowCheckpointException(
+                        f"Checkpoint directory {self.storage_path} kept changing during "
+                        f"get_latest for workflow '{workflow_name}' after "
+                        f"{_MAX_GET_LATEST_ATTEMPTS} attempts; retry once concurrent "
+                        "checkpoint writes settle"
+                    ) from exc
+                logger.debug(
+                    "Checkpoint directory changed while finding the latest checkpoint for "
+                    "workflow '%s' (attempt %d of %d); retrying",
+                    workflow_name,
+                    attempt,
+                    _MAX_GET_LATEST_ATTEMPTS,
+                )
+                await asyncio.sleep(_GET_LATEST_RETRY_DELAY_SECONDS * attempt)
+                continue
+            except WorkflowCheckpointException:
+                raise
+            except Exception as e:
+                raise WorkflowCheckpointException(
+                    f"Failed to get latest checkpoint for workflow {workflow_name} from {self.storage_path}: {e}"
+                ) from e
             if checkpoint is None:
                 return None
-        except WorkflowCheckpointException:
-            raise
-        except Exception as e:
-            raise WorkflowCheckpointException(
-                f"Failed to get latest checkpoint for workflow {workflow_name} from {self.storage_path}: {e}"
-            ) from e
-        logger.debug(f"Latest checkpoint for workflow {workflow_name} is {checkpoint.checkpoint_id}")
-        return checkpoint
+            logger.debug(f"Latest checkpoint for workflow {workflow_name} is {checkpoint.checkpoint_id}")
+            return checkpoint
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.
