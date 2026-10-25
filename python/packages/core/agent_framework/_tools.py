@@ -1363,8 +1363,8 @@ class FunctionTool(SerializationMixin):
         """Recursively convert a value to a JSON-dumpable form."""
         from ._types import Content
 
-        if isinstance(value, list):
-            list_value = cast(list[object], value)
+        if isinstance(value, (list, tuple)):
+            list_value = cast(list[object] | tuple[object, ...], value)
             return [FunctionTool._make_dumpable(item) for item in list_value]
         if isinstance(value, dict):
             dict_value = cast(dict[object, object], value)
@@ -1406,7 +1406,7 @@ class FunctionTool(SerializationMixin):
             return [Content.from_text(result)]
         if isinstance(result, Content):
             return [result]
-        if isinstance(result, list) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
+        if isinstance(result, (list, tuple)) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
             parsed_items: list[Content] = []
             for item in result:  # type: ignore[reportUnknownVariableType]
                 if isinstance(item, Content):

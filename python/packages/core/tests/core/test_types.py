@@ -4497,6 +4497,28 @@ def test_parse_result_pydantic_model_in_list():
     assert "sunny" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
+def test_parse_result_pydantic_model_in_tuple():
+    """Test that tuples containing Pydantic models serialize like lists."""
+    model = WeatherResult(temperature=22.5, condition="sunny")
+
+    tuple_result = FunctionTool.parse_result((model,))
+    list_result = FunctionTool.parse_result([model])
+
+    assert json.loads(tuple_result[0].text) == [model.model_dump()]
+    assert json.loads(tuple_result[0].text) == json.loads(list_result[0].text)
+
+
+def test_parse_result_nested_tuple_of_pydantic_models():
+    """Test that tuples nested in lists and dictionaries are recursively serialized."""
+    model = WeatherResult(temperature=18.0, condition="rainy")
+
+    list_result = FunctionTool.parse_result([(model,)])
+    dict_result = FunctionTool.parse_result({"models": (model,)})
+
+    assert json.loads(list_result[0].text) == [[model.model_dump()]]
+    assert json.loads(dict_result[0].text) == {"models": [model.model_dump()]}
+
+
 def test_parse_result_pydantic_model_in_dict():
     """Test that dicts containing Pydantic models are properly serialized."""
     results = {
@@ -4651,6 +4673,39 @@ def test_parse_result_mixed_content_list():
     assert len(result) == 2
     assert result[0].type == "text"
     assert result[1].type == "data"
+
+
+def test_parse_result_tuple_of_content_preserves_order_and_uri():
+    """Test that tuples of Content preserve their original items and metadata."""
+    text_content = Content.from_text("Analysis complete")
+    uri_content = Content.from_uri("https://example.com/chart.png", media_type="image/png")
+
+    result = FunctionTool.parse_result((text_content, uri_content))
+
+    assert result == [text_content, uri_content]
+    assert result[0] is text_content
+    assert result[1] is uri_content
+    assert result[1].uri == "https://example.com/chart.png"
+    assert result[1].media_type == "image/png"
+
+
+def test_parse_result_tuple_preserves_content_and_serializes_other_values():
+    """Test that tuples with Content follow the list handling semantics."""
+    text_content = Content.from_text("Analysis complete")
+
+    result = FunctionTool.parse_result((text_content, {"status": "ok"}))
+
+    assert result[0] is text_content
+    assert result[0].text == "Analysis complete"
+    assert result[1].text == '{"status": "ok"}'
+
+
+def test_parse_result_empty_tuple_serializes_as_empty_list():
+    """Test that an empty tuple serializes to an empty JSON array."""
+    result = FunctionTool.parse_result(())
+
+    assert len(result) == 1
+    assert json.loads(result[0].text) == []
 
 
 def test_from_function_result_with_content_list():
