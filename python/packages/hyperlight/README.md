@@ -27,9 +27,9 @@ pip install agent-framework-hyperlight --pre
 
 This package depends on `hyperlight-sandbox`, the packaged Python guest, and the
 Wasm backend package on supported platforms. The backend is currently installed
-for Python 3.10 through 3.14. If a compatible backend is not published for your
-current platform and Python version, `execute_code` will fail at runtime when it
-tries to create the sandbox.
+for Python 3.10 through 3.15 on Linux x86_64 and Windows AMD64. If a compatible
+backend is not published for your current platform and Python version,
+`execute_code` will fail at runtime when it tries to create the sandbox.
 
 ## Quick start
 
