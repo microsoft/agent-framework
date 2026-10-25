@@ -2758,6 +2758,15 @@ async def test_filesystem_delete_is_file_only_and_delete_directory_matches_in_me
     assert await fs_store.delete_directory("sessions/s1") is False
     assert await memory_store.delete_directory("sessions/s1") is False
 
+    # The empty path is the store root, not an explicitly created directory:
+    # both backends must refuse it identically (previously the filesystem
+    # backend rmdir'd its configured root and returned True while the
+    # in-memory store raised on the same call).
+    for empty in ("", "   "):
+        assert await fs_store.delete_directory(empty) is False
+        assert await memory_store.delete_directory(empty) is False
+    assert fs_store._root_path.is_dir()
+
 
 async def test_in_memory_store_delete_is_file_only() -> None:
     """delete() must stay file-only: a directory path is never removed, matching

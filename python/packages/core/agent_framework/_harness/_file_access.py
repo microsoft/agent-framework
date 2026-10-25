@@ -1181,7 +1181,12 @@ class InMemoryAgentFileStore(AgentFileStore):
         file-only ``delete`` contract while giving session-scoped directories a
         lifecycle instead of staying in the shared map forever.
         """
-        key = self._key(_normalize_relative_path(path, is_directory=True))
+        normalized = _normalize_relative_path(path, is_directory=True)
+        if not normalized:
+            # The empty path is the store root, which is not an explicitly
+            # created directory this method releases.
+            return False
+        key = normalized.lower()
         async with self._lock:
             if key not in self._explicit_dirs:
                 return False
@@ -1578,7 +1583,12 @@ class FileSystemAgentFileStore(AgentFileStore):
         that is missing, is a file, or still holds entries returns ``False``
         instead of raising, matching :class:`InMemoryAgentFileStore`.
         """
-        full_path = self._resolve_safe_directory_path(path)
+        normalized = _normalize_relative_path(path, is_directory=True)
+        if not normalized:
+            # The empty path resolves to the configured store root, which is
+            # not an explicitly created directory this method releases.
+            return False
+        full_path = self._resolve_safe_directory_path(normalized)
         return await asyncio.to_thread(self._delete_directory_sync, full_path)
 
     @staticmethod
