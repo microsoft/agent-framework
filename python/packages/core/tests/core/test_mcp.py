@@ -558,7 +558,7 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
 
 
-async def test_load_tools_skips_task_capable_tools(caplog: pytest.LogCaptureFixture) -> None:
+async def test_load_tools_skips_only_required_task_capable_tools(caplog: pytest.LogCaptureFixture) -> None:
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -573,7 +573,7 @@ async def test_load_tools_skips_task_capable_tools(caplog: pytest.LogCaptureFixt
                 ),
                 types.Tool(
                     name="optional",
-                    input_schema={"type": "object", "properties": {}},
+                    input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
                     execution=types.ToolExecution(task_support="optional"),
                     _meta={"mode": "optional"},
                 ),
@@ -593,19 +593,38 @@ async def test_load_tools_skips_task_capable_tools(caplog: pytest.LogCaptureFixt
     with caplog.at_level(logging.WARNING, logger=logger.name):
         await tool.load_tools()
 
-    assert [function.name for function in tool.functions] == ["forbidden", "ordinary"]
-    assert tool._tool_call_meta_by_name == {}
-    assert set(tool._tool_param_names_by_name) == {"forbidden", "ordinary"}
-    for tool_name in ("required", "optional"):
-        assert (
-            f"Skipping MCP tool '{tool_name}' because it (might) require the Tasks extension, "
-            "which MCP Python SDK 2.2 does not implement."
-        ) in caplog.messages
+    assert [function.name for function in tool.functions] == ["optional", "forbidden", "ordinary"]
+    assert tool._tool_call_meta_by_name == {"optional": {"mode": "optional"}}
+    assert tool._tool_param_names_by_name == {
+        "optional": {"query"},
+        "forbidden": set(),
+        "ordinary": set(),
+    }
+    assert "required" not in tool._tool_call_meta_by_name
+    assert "required" not in tool._tool_param_names_by_name
+    assert caplog.messages == [
+        "Skipping MCP tool 'required' because it requires the Tasks extension, "
+        "which MCP Python SDK 2.2 does not implement."
+    ]
 
-    for function in tool.functions:
+    optional_function = tool.functions[0]
+    optional_result = await optional_function.invoke(arguments={"query": "search term"})
+    assert _mcp_result_to_text(optional_result) == "ok"
+    optional_call = mock_session.call_tool.await_args
+    assert optional_call is not None
+    assert optional_call.args == ("optional",)
+    assert set(optional_call.kwargs) == {"arguments", "meta"}
+    assert optional_call.kwargs["arguments"] == {"query": "search term"}
+    assert optional_call.kwargs["meta"]["mode"] == "optional"
+
+    for function in tool.functions[1:]:
         await function.invoke(arguments={})
 
-    assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["forbidden", "ordinary"]
+    assert [call.args[0] for call in mock_session.call_tool.await_args_list] == [
+        "optional",
+        "forbidden",
+        "ordinary",
+    ]
 
 
 async def test_tool_refresh_preserves_prompt_when_server_advertises_same_raw_name() -> None:
