@@ -1193,7 +1193,8 @@ class TestCheckpointing:
 
         release_task = asyncio.create_task(release_after_settlement_starts())
         try:
-            with pytest.raises(asyncio.CancelledError, match="sibling cancellation"):
+            # Cancellation messages are not preserved consistently across supported Python versions.
+            with pytest.raises(asyncio.CancelledError):
                 await wf.run(0)
         finally:
             release_save.set()
