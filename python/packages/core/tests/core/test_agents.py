@@ -4674,6 +4674,57 @@ async def test_psc_history_load_precedes_fides_replay_reconstruction(stream: boo
     assert any(entry["type"] == "untrusted_context" for entry in security.get_audit_log(session))
 
 
+@pytest.mark.parametrize("per_service_call", [False, True], ids=["once-per-run", "per-service-call"])
+@_psc_stream_params
+async def test_history_load_precedes_fides_approval_execution(stream: bool, per_service_call: bool) -> None:
+    """FIDES folds stored history before an approved tool can execute."""
+    provider = _PscSpyHistoryProvider()
+    executed = False
+
+    @tool(
+        name="approved_public_sink",
+        approval_mode="always_require",
+        additional_properties={
+            "accepts_untrusted": False,
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    def approved_public_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=False,
+        script=[("call", "call-approved-sink", "approved_public_sink", "{}")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=client,
+        tools=[approved_public_sink],
+        context_providers=[security, provider],
+        require_per_service_call_history_persistence=per_service_call,
+    )
+    session = agent.create_session()
+    first_response = await agent.run("Prepare the approved sink.", session=session)
+    approval_response = first_response.user_input_requests[0].to_function_approval_response(approved=True)
+    session.state.pop(security.source_id, None)
+    provider._messages.insert(  # pyright: ignore[reportPrivateUsage]
+        0,
+        Message(role="assistant", contents=["Historical untrusted private data."]),
+    )
+
+    if stream:
+        async for _ in agent.run(approval_response, session=session, stream=True):
+            pass
+    else:
+        await agent.run(approval_response, session=session)
+
+    assert executed is False
+    assert any(entry["type"] == "untrusted_context" for entry in security.get_audit_log(session))
+
+
 @_psc_stream_params
 async def test_psc_flag_on_stores_by_default_persists_after_each_service_call(
     stream: bool, caplog: pytest.LogCaptureFixture

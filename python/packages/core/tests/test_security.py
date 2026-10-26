@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import warnings
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -8146,6 +8147,122 @@ class TestVariableArgumentPolicy:
 
         assert secret not in observed
         assert executed is False
+
+    async def test_callable_policy_blocks_before_hidden_value_validation(self) -> None:
+        """A wrapped policy callable still authorizes before hidden-value validation."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        secret = "wrapped-policy-validator-secret"
+        variable_id = tracker.get_variable_store().store(
+            secret,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        observed: list[str] = []
+        executed = False
+
+        class SinkArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def observe_value(cls, value: str) -> str:
+                observed.append(value)
+                return value
+
+        async def sink(value: str) -> str:
+            nonlocal executed
+            executed = True
+            return value
+
+        sink_tool = FunctionTool(
+            func=sink,
+            name="wrapped_policy_sink",
+            input_model=SinkArgs,
+            additional_properties={
+                "accepts_untrusted": False,
+                "max_allowed_confidentiality": "private",
+                "source_integrity": "trusted",
+            },
+        )
+
+        with pytest.raises(MiddlewareTermination):
+            await _auto_invoke_function(
+                Content.from_function_call(
+                    call_id="wrapped-policy-validator",
+                    name=sink_tool.name,
+                    arguments={"value": f"[{variable_id}]"},
+                ),
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink_tool.name: sink_tool},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy.process),
+            )
+
+        assert secret not in observed
+        assert executed is False
+
+    async def test_hidden_argument_retry_rematerializes_from_original_reference(self) -> None:
+        """A retrying outer middleware gets a fresh hidden-value materialization."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        secret = "retry-hidden-secret"
+        variable_id = tracker.get_variable_store().store(
+            secret,
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+            ),
+        )
+        attempts = 0
+        received: list[str] = []
+
+        class SinkArgs(BaseModel):
+            value: str
+
+        async def sink(value: str) -> str:
+            nonlocal attempts
+            attempts += 1
+            received.append(value)
+            if attempts == 1:
+                raise RuntimeError("retry once")
+            return value
+
+        class RetryOnceMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                call_next: Callable[[], Awaitable[None]],
+            ) -> None:
+                del context
+                try:
+                    await call_next()
+                except RuntimeError:
+                    await call_next()
+
+        sink_tool = FunctionTool(
+            func=sink,
+            name="retry_hidden_sink",
+            input_model=SinkArgs,
+            additional_properties={
+                "accepts_untrusted": True,
+                "max_allowed_confidentiality": "private",
+                "source_integrity": "trusted",
+            },
+        )
+
+        function_result = await _auto_invoke_function(
+            Content.from_function_call(
+                call_id="retry-hidden",
+                name=sink_tool.name,
+                arguments={"value": f"[{variable_id}]"},
+            ),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={sink_tool.name: sink_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(RetryOnceMiddleware(), tracker, policy),
+        )
+
+        assert function_result.result == secret
+        assert attempts == 2
+        assert received == [secret, secret]
 
     @pytest.mark.parametrize("value", ["[var_0123456789abcdef]", "var_0123456789abcdef"])
     async def test_unknown_references_remain_literal(self, value: str) -> None:

@@ -1841,6 +1841,43 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
+        approval_history_consumers = [
+            (provider, prepare)
+            for provider in self.context_providers
+            if callable(prepare := getattr(provider, "_prepare_approval_history", None))
+        ]
+        if approval_history_consumers:
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when approval history is prepared.")
+            approval_history_context = session_context
+            if per_service_call_history_required:
+                approval_history_context = SessionContext(
+                    session_id=provider_session.session_id,
+                    service_session_id=provider_session.service_session_id,
+                    input_messages=list(session_context.input_messages),
+                    options=dict(session_context.options),
+                    metadata=dict(session_context.metadata),
+                )
+                for provider in self.context_providers:
+                    if not isinstance(provider, HistoryProvider) or not provider.load_messages:
+                        continue
+                    await provider.before_run(
+                        agent=self,
+                        session=provider_session,
+                        context=approval_history_context,
+                        state=provider_session.state.setdefault(provider.source_id, {}),
+                    )
+
+            for provider, prepare in approval_history_consumers:
+                prepared = prepare(
+                    agent=self,
+                    session=provider_session,
+                    context=approval_history_context,
+                    state=provider_session.state.setdefault(provider.source_id, {}),
+                )
+                if isawaitable(prepared):
+                    await prepared
+
         # Merge provider-contributed tools into chat_options
         if session_context.tools:
             if chat_options.get("tools") is not None:

@@ -119,6 +119,7 @@ _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
 _MAX_REPLAY_CONTENT_DEPTH = 32
 _REPLAY_STATE_COVERED_KEY = "_agent_framework_fides_replay_state_covered"
 _REPLAY_STATE_COVERED_MARKER = object()
+_APPROVAL_HISTORY_RECONSTRUCTION_KEY = "_agent_framework_fides_reconstruct_history_unstamped"
 
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
@@ -1076,6 +1077,7 @@ def _replayed_content_labels(
 
     active_ids.add(content_id)
     nested_items_are_authenticated_hidden = True
+    hidden_text_parts: list[str] = []
     try:
         for index, item in enumerate(content.items):
             if not isinstance(item, Content):
@@ -1093,10 +1095,16 @@ def _replayed_content_labels(
             nested_items_are_authenticated_hidden = (
                 nested_items_are_authenticated_hidden and item_is_authenticated_hidden
             )
+            if item_is_authenticated_hidden and item.type == "text" and item.text:
+                hidden_text_parts.append(item.text)
+            elif item_is_authenticated_hidden:
+                nested_items_are_authenticated_hidden = False
     finally:
         active_ids.remove(content_id)
     is_authenticated_hidden_wrapper = (
-        content.type == "function_result" and content.result is None and nested_items_are_authenticated_hidden
+        content.type == "function_result"
+        and nested_items_are_authenticated_hidden
+        and content.result == "\n".join(hidden_text_parts)
     )
     return labels, is_authenticated_hidden_wrapper
 
@@ -2334,6 +2342,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 context.metadata["security_original_runtime_kwargs"] = dict(context.kwargs)
             else:
                 context.kwargs = dict(cast(dict[str, Any], context.metadata["security_original_runtime_kwargs"]))
+            context.metadata.pop(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY, None)
 
             tool_policy = _parse_tool_security_policy(
                 context.function,
@@ -2399,8 +2410,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             context.metadata["argument_label"] = argument_label
             context.metadata["effective_invocation_label"] = combine_labels(context_label, argument_label)
 
-            active_pipeline = _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get() or ()
-            if not any(isinstance(middleware, PolicyEnforcementFunctionMiddleware) for middleware in active_pipeline):
+            if not _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get():
                 self._materialize_arguments(context)
             materialization_token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set((
                 context,
@@ -3977,6 +3987,60 @@ class SecureAgentConfig(ContextProvider):
         for message in messages:
             message.additional_properties[_REPLAY_STATE_COVERED_KEY] = _REPLAY_STATE_COVERED_MARKER
 
+    def _approval_history_metadata_key(self) -> str:
+        """Return the run-local SessionContext metadata key for this provider."""
+        return f"{_APPROVAL_HISTORY_RECONSTRUCTION_KEY}:{self.source_id}"
+
+    @staticmethod
+    def _history_source_ids(agent: Any) -> set[str]:
+        """Return the loadable history providers visible on an agent."""
+        return {
+            provider.source_id
+            for provider in getattr(agent, "context_providers", ())
+            if isinstance(provider, HistoryProvider) and provider.load_messages
+        }
+
+    @staticmethod
+    def _fold_history_labels(
+        scope: _SecurityScope,
+        context: SessionContext,
+        *,
+        history_source_ids: set[str],
+        reconstruct_history_unstamped: bool,
+    ) -> None:
+        """Fold loaded history-provider messages into one FIDES scope."""
+        history_labels: list[ContentLabel] = []
+        for source_id in history_source_ids:
+            history_labels.extend(
+                _replayed_message_label(
+                    message,
+                    reconstruct_unstamped=reconstruct_history_unstamped,
+                    scope=scope,
+                )
+                for message in context.context_messages.get(source_id, ())
+            )
+        if history_labels:
+            scope.context_label = combine_labels(scope.context_label, *history_labels)
+
+    async def _prepare_approval_history(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Fold complete loaded history before function approval replay can execute."""
+        reconstruct_history_unstamped = context.metadata.get(self._approval_history_metadata_key())
+        if not isinstance(reconstruct_history_unstamped, bool):
+            reconstruct_history_unstamped = _STATE_CONTEXT_LABEL not in state
+        self._fold_history_labels(
+            _SecurityScope(state, scope_id=session.session_id),
+            context,
+            history_source_ids=self._history_source_ids(agent),
+            reconstruct_history_unstamped=reconstruct_history_unstamped,
+        )
+
     async def before_run(
         self,
         *,
@@ -3998,13 +4062,10 @@ class SecureAgentConfig(ContextProvider):
             state: The provider-scoped mutable state dict.
         """
         reconstruct_history_unstamped = _STATE_CONTEXT_LABEL not in state
+        context.metadata[self._approval_history_metadata_key()] = reconstruct_history_unstamped
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
-        history_source_ids = {
-            provider.source_id
-            for provider in getattr(agent, "context_providers", ())
-            if isinstance(provider, HistoryProvider)
-        }
+        history_source_ids = self._history_source_ids(agent)
         input_labels = [
             _replayed_message_label(
                 message,
@@ -4013,22 +4074,17 @@ class SecureAgentConfig(ContextProvider):
             )
             for message in context.input_messages
         ]
-        history_labels: list[ContentLabel] = []
-        for source_id in history_source_ids:
-            history_labels.extend(
-                _replayed_message_label(
-                    message,
-                    reconstruct_unstamped=reconstruct_history_unstamped,
-                    scope=scope,
-                )
-                for message in context.context_messages.get(source_id, ())
-            )
-        if input_labels or history_labels:
+        if input_labels:
             scope.context_label = combine_labels(
                 scope.context_label,
                 *input_labels,
-                *history_labels,
             )
+        self._fold_history_labels(
+            scope,
+            context,
+            history_source_ids=history_source_ids,
+            reconstruct_history_unstamped=reconstruct_history_unstamped,
+        )
         middleware.append(
             _ReplaySecurityChatMiddleware(
                 scope,

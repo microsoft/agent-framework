@@ -2173,10 +2173,14 @@ def _finalize_function_result(
         updated_item.additional_properties = dict(updated_item.additional_properties)
         for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
             updated_item.additional_properties.pop(key, None)
-        updated_item.additional_properties = merge_additional_properties(
-            updated_item.additional_properties,
-            carrier.item_additional_properties,
+        is_hidden_variable_reference = (
+            updated_item.type == "text" and updated_item.additional_properties.get("_variable_reference") is True
         )
+        if not is_hidden_variable_reference:
+            updated_item.additional_properties = merge_additional_properties(
+                updated_item.additional_properties,
+                carrier.item_additional_properties,
+            )
         updated_items[index] = updated_item
     function_result.items = updated_items
     return function_result
