@@ -70,6 +70,27 @@ logger = logging.getLogger(__name__)
 
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
+_INPUT_REFERENCE_RE = re.compile(r"(?<![\w.])(?:inputs|Workflow\.Inputs)\.([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _bind_missing_input_references(formula: str, symbols: dict[str, Any]) -> dict[str, Any]:
+    """Expose inputs the formula references but the caller did not supply as blank.
+
+    PowerFx rejects ``inputs.name`` at compile time when ``name`` is not a field of the
+    inputs record, which turns the whole expression into ``None`` and defeats defaults
+    such as ``If(IsBlank(inputs.name), "World", inputs.name)``. Binding the missing
+    fields to blank only for this evaluation makes them behave like an explicit ``None``
+    input without changing the workflow state.
+    """
+    inputs = symbols.get("inputs")
+    if not isinstance(inputs, Mapping):
+        return symbols
+    input_values = cast(Mapping[str, Any], inputs)
+    missing = {name for name in _INPUT_REFERENCE_RE.findall(formula) if name not in input_values}
+    if not missing:
+        return symbols
+    bound_inputs: dict[str, Any] = {**input_values, **dict.fromkeys(sorted(missing))}
+    return {**symbols, "Workflow": {**symbols["Workflow"], "Inputs": bound_inputs}, "inputs": bound_inputs}
 
 
 @dataclass(frozen=True)
@@ -605,7 +626,7 @@ class DeclarativeWorkflowState:
                     f"Install dotnet and the powerfx package for full PowerFx support."
                 )
 
-            symbols = self._to_powerfx_symbols()
+            symbols = _bind_missing_input_references(formula, self._to_powerfx_symbols())
             # Use setlocale(category) query form so we can restore the exact prior value.
             # getlocale() returns a normalized tuple and is not always a lossless
             # round-trip for setlocale across platforms/locales.

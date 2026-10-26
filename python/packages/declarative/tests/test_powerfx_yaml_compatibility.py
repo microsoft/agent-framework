@@ -104,6 +104,23 @@ class TestPowerFxBuiltinFunctions:
         result = state.eval('=If(IsBlank(Workflow.Inputs.name), "World", Workflow.Inputs.name)')
         assert result == "Alice"
 
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '=If(IsBlank(inputs.name), "World", inputs.name)',
+            '=If(IsBlank(Workflow.Inputs.name), "World", Workflow.Inputs.name)',
+        ],
+    )
+    async def test_if_with_isblank_when_input_is_missing(self, mock_state, expression):
+        """Test that an input the caller did not supply is blank, so IsBlank defaults apply."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) == "World"
+        assert state.eval("=IsBlank(inputs.name)") is True
+        # The missing input is only bound for evaluation, not written to state.
+        assert "name" not in state.get_state_data()["Inputs"]
+
     async def test_not_function(self, mock_state):
         """Test Not function."""
         state = DeclarativeWorkflowState(mock_state)
