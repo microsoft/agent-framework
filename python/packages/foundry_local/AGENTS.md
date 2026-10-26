@@ -20,12 +20,16 @@ Clients own their HTTP connections, not the shared native manager.
 Failed setup stops a web service it started on an existing manager without closing
 that manager or stopping a previously running service.
 
-`FoundryLocalChatOptions` adds `top_k`, `do_sample`, and `early_stopping`.
-Request preparation maps these to string-valued native decoder metadata and
+`FoundryLocalChatOptions` adds `top_k`.
+Request preparation maps it to string-valued native decoder metadata and
 unwraps OpenAI's JSON-schema envelope for the HTTP service. Explicit decoder
 controls override conflicting metadata without mutating caller options.
+`do_sample` and `early_stopping` raise `ValueError`, including in metadata or
+`extra_body`, because the HTTP service does not forward them to the decoder.
 Required tool calls use tool grammar before structured-output grammar; the standard
 function loop applies the structured format to the final reply.
+Structured output with available tools and omitted/auto tool choice raises
+`ValueError`; callers must require a tool or request the structured final reply separately.
 
 ## Main Classes
 

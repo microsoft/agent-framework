@@ -6,7 +6,7 @@ import asyncio
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from threading import Event, Lock
-from typing import Any, ClassVar, Generic, Literal, overload
+from typing import Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
@@ -88,9 +88,8 @@ class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModel
         store: Not applicable for local inference.
         # Foundry Local-specific options:
         top_k: Number of highest-probability tokens to consider; 0 disables the limit.
-        do_sample: Whether to sample instead of using greedy decoding.
-        early_stopping: Whether to stop beam search early.
         metadata: Native decoder settings encoded as string-valued metadata.
+            The HTTP service supports top_k and random_seed, not do_sample or early_stopping.
         extra_body: Additional request body parameters to pass to the model.
             Can be used for model-specific options not covered by standard API.
 
@@ -106,12 +105,6 @@ class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModel
 
     top_k: int
     """Number of highest-probability tokens to consider; 0 disables the limit."""
-
-    do_sample: bool
-    """Whether to sample instead of using greedy decoding."""
-
-    early_stopping: bool
-    """Whether to stop beam search early."""
 
     # ChatOptions fields not applicable for local inference
     user: None  # type: ignore[misc]
@@ -148,7 +141,7 @@ class FoundryLocalSettings(TypedDict, total=False):
 
 
 class FoundryLocalClient(
-    FunctionInvocationLayer[FoundryLocalChatOptionsT | FoundryLocalChatOptions[Any]],
+    FunctionInvocationLayer[FoundryLocalChatOptionsT],
     ChatMiddlewareLayer[FoundryLocalChatOptionsT],
     ChatTelemetryLayer[FoundryLocalChatOptionsT],
     RawOpenAIChatCompletionClient[FoundryLocalChatOptionsT],
@@ -213,6 +206,22 @@ class FoundryLocalClient(
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from the Foundry Local chat client with all standard layers enabled."""
+        # Validate before the function loop resets a required choice for the final response.
+        if options and options.get("tools"):
+            request_options = cast("Mapping[str, Any]", options)
+            tool_choice: str | Mapping[str, Any] | None = request_options.get("tool_choice")
+            if isinstance(tool_choice, Mapping):
+                tool_choice = tool_choice.get("mode")
+            response_format: Mapping[str, Any] | type[BaseModel] | None = request_options.get("response_format")
+            if (
+                tool_choice in (None, "auto")
+                and response_format is not None
+                and not (isinstance(response_format, Mapping) and response_format.get("type") == "text")
+            ):
+                raise ValueError(
+                    "Foundry Local does not support structured output with automatic tool selection. "
+                    "Use a required or named tool choice, or request the structured final response separately."
+                )
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             effective_client_kwargs["middleware"] = middleware
@@ -220,7 +229,7 @@ class FoundryLocalClient(
             return super().get_response(
                 messages=messages,
                 stream=True,
-                options=options,
+                options=cast("FoundryLocalChatOptionsT | ChatOptions[Any] | None", options),
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
                 function_invocation_kwargs=function_invocation_kwargs,
@@ -229,7 +238,7 @@ class FoundryLocalClient(
         return super().get_response(
             messages=messages,
             stream=False,
-            options=options,
+            options=cast("FoundryLocalChatOptionsT | ChatOptions[Any] | None", options),
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             function_invocation_kwargs=function_invocation_kwargs,
@@ -282,10 +291,8 @@ class FoundryLocalClient(
     def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
         prepared = super()._prepare_options(messages, options)
         native_metadata: dict[str, str] = {}
-        for key in ("top_k", "do_sample", "early_stopping"):
-            value = prepared.pop(key, None)
-            if value is not None:
-                native_metadata[key] = str(value).lower() if isinstance(value, bool) else str(value)
+        if (top_k := prepared.pop("top_k", None)) is not None:
+            native_metadata["top_k"] = str(top_k)
         extra_body: Mapping[str, Any] | None = prepared.get("extra_body")
         if extra_body is not None and not isinstance(extra_body, Mapping):
             raise ValueError("extra_body must be a mapping.")
@@ -294,6 +301,9 @@ class FoundryLocalClient(
         for name, value in (("metadata", metadata), ("extra_body metadata", extra_metadata)):
             if value is not None and not isinstance(value, Mapping):
                 raise ValueError(f"{name} must be a mapping.")
+        for key in ("do_sample", "early_stopping"):
+            if any(key in source for source in (options, extra_body or {}, metadata or {}, extra_metadata or {})):
+                raise ValueError(f"{key} is not supported by the Foundry Local HTTP service.")
         if native_metadata or (metadata is not None and extra_metadata is not None):
             merged_metadata: dict[str, Any] = {
                 **(metadata or {}),

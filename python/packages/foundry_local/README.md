@@ -108,11 +108,12 @@ owns registration and manager shutdown.
 ## Chat Options
 
 `FoundryLocalChatOptions` includes the standard generation settings and native
-`top_k`, `do_sample`, and `early_stopping` controls. The client encodes these three
-controls as the HTTP service's string-valued decoder metadata, preserving zero
-and `False` values. Explicit controls take precedence over conflicting values in
-`metadata` or `extra_body["metadata"]`. Other native settings can be supplied
-through these dictionaries.
+`top_k` control. The client encodes `top_k` as the HTTP service's string-valued
+decoder metadata, preserving zero. The explicit control takes precedence over
+conflicting values in `metadata` or `extra_body["metadata"]`. The HTTP service
+also accepts `random_seed` through these dictionaries.
+`do_sample` and `early_stopping` are not supported by the HTTP service and raise
+`ValueError`, including when supplied through metadata or `extra_body`.
 
 Pydantic response models and JSON schemas use the native HTTP service's bare-schema
 format automatically. JSON-object mode constrains output to an object; it does
@@ -136,7 +137,6 @@ options: FoundryLocalChatOptions[Answer] = {
     "max_tokens": 128,
     "temperature": 0.0,
     "top_k": 1,
-    "do_sample": False,
 }
 response = await client.get_response(
     [Message(role="user", contents=["What is 2 + 2?"])],
@@ -154,6 +154,10 @@ When a tool is required (including a named tool), the request uses the native to
 grammar first, then applies the requested structured format to the final reply
 after automatic tool execution. With automatic execution disabled, the caller
 must handle the returned function call before requesting a structured final reply.
+Structured output with available tools and omitted or `"auto"` tool choice raises
+`ValueError`: the SDK's output schema would override automatic tool selection.
+Use a required or named tool choice, or perform tool selection/execution first
+and request the structured final response separately without tools.
 
 ## Scope
 

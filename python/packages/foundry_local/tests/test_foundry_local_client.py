@@ -986,8 +986,6 @@ async def test_foundry_local_generation_options_and_usage(mock_foundry_local_man
         "max_tokens": 32,
         "seed": 0,
         "top_k": 0,
-        "do_sample": False,
-        "early_stopping": False,
         "frequency_penalty": 0.0,
         "presence_penalty": 0.0,
         "stop": ["END"],
@@ -1029,8 +1027,6 @@ async def test_foundry_local_generation_options_and_usage(mock_foundry_local_man
     assert payload["messages"][0] == {"role": "system", "content": "Be concise."}
     assert payload["metadata"] == {
         "top_k": "0",
-        "do_sample": "false",
-        "early_stopping": "false",
         "native_custom": "keep",
     }
     assert all(key not in payload for key in ("top_k", "do_sample", "early_stopping", "max_completion_tokens"))
@@ -1050,7 +1046,7 @@ async def test_foundry_local_decoder_metadata_passthrough(mock_foundry_local_man
         return _completion_response({"content": "Hello"}, stream=stream)
 
     options: FoundryLocalChatOptions[None] = {
-        "metadata": {"do_sample": "false"},
+        "metadata": {"random_seed": "0"},
         "extra_body": {"metadata": {"top_k": "8"}},
     }
     original_options = deepcopy(options)
@@ -1060,7 +1056,41 @@ async def test_foundry_local_decoder_metadata_passthrough(mock_foundry_local_man
             await client.get_response(messages, stream=True, options=options).get_final_response()
         else:
             await client.get_response(messages, options=options)
-    assert payloads[0]["metadata"] == {"top_k": "8", "do_sample": "false"}
+    assert payloads[0]["metadata"] == {"top_k": "8", "random_seed": "0"}
+    assert options == original_options
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("control", ["do_sample", "early_stopping"])
+@pytest.mark.parametrize("value", [False, True])
+@pytest.mark.parametrize("location", ["options", "metadata", "extra_body", "extra_metadata"])
+async def test_foundry_local_rejects_unsupported_decoder_controls(
+    mock_foundry_local_manager: MagicMock, stream: bool, control: str, value: bool, location: str
+) -> None:
+    requests: list[Any] = []
+
+    def respond(request: Any) -> Any:
+        requests.append(request)
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    controls: dict[str, Any] = {control: str(value).lower() if location in ("metadata", "extra_metadata") else value}
+    options = cast(
+        FoundryLocalChatOptions[None],
+        controls
+        if location == "options"
+        else {"extra_body": {"metadata": controls}}
+        if location == "extra_metadata"
+        else {location: controls},
+    )
+    original_options = deepcopy(options)
+    async with _client_with_transport(respond) as client:
+        with pytest.raises(ValueError, match=f"{control} is not supported"):
+            messages = [Message(role="user", contents=["Hi"])]
+            if stream:
+                await client.get_response(messages, stream=True, options=options).get_final_response()
+            else:
+                await client.get_response(messages, options=options)
+    assert not requests
     assert options == original_options
 
 
@@ -1186,8 +1216,9 @@ async def test_foundry_local_structured_responses(
 
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("tool_choice", [None, "auto", "required"])
 async def test_foundry_local_agent_tool_loop(
-    mock_foundry_local_manager: MagicMock, stream: bool, enabled: bool
+    mock_foundry_local_manager: MagicMock, stream: bool, enabled: bool, tool_choice: Literal["auto", "required"] | None
 ) -> None:
     payloads: list[dict[str, Any]] = []
     invocations: list[tuple[int, int]] = []
@@ -1217,19 +1248,18 @@ async def test_foundry_local_agent_tool_loop(
             )
         return _completion_response({"content": "5"}, stream=stream)
 
+    options: ChatOptions[None] = {"allow_multiple_tool_calls": False}
+    if tool_choice is not None:
+        options["tool_choice"] = tool_choice
     async with _client_with_transport(respond, function_invocation_configuration={"enabled": enabled}) as client:
         agent = Agent(client=client, tools=add, instructions="Use the calculator.")
         if stream:
-            response = await agent.run(
-                "What is 2+3?", stream=True, options={"tool_choice": "required", "allow_multiple_tool_calls": False}
-            ).get_final_response()
+            response = await agent.run("What is 2+3?", stream=True, options=options).get_final_response()
         else:
-            response = await agent.run(
-                "What is 2+3?", options={"tool_choice": "required", "allow_multiple_tool_calls": False}
-            )
+            response = await agent.run("What is 2+3?", options=options)
 
     assert payloads[0]["tools"][0]["function"]["name"] == "add"
-    assert payloads[0]["tool_choice"] == "required"
+    assert payloads[0]["tool_choice"] == (tool_choice or "auto")
     assert payloads[0]["parallel_tool_calls"] is False
     if enabled:
         assert invocations == [(2, 3)]
@@ -1243,6 +1273,75 @@ async def test_foundry_local_agent_tool_loop(
         assert invocations == []
         assert len(payloads) == 1
         assert any(content.type == "function_call" for message in response.messages for content in message.contents)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("tool_choice", [None, "auto", {"mode": "auto", "allowed_tools": ["add"]}])
+@pytest.mark.parametrize("json_object", [False, True])
+async def test_foundry_local_rejects_automatic_tools_with_structured_output(
+    mock_foundry_local_manager: MagicMock, stream: bool, tool_choice: Any, json_object: bool
+) -> None:
+    class Answer(BaseModel):
+        answer: int
+
+    requests: list[Any] = []
+    invocations: list[tuple[int, int]] = []
+
+    @tool
+    def add(a: int, b: int) -> int:
+        """Add two integers."""
+        invocations.append((a, b))
+        return a + b
+
+    def respond(request: Any) -> Any:
+        requests.append(request)
+        return _completion_response({"content": '{"answer":5}'}, stream=stream)
+
+    options: ChatOptions[Answer] = {"response_format": {"type": "json_object"} if json_object else Answer}
+    if tool_choice is not None:
+        options["tool_choice"] = tool_choice
+    original_options = deepcopy(options)
+    async with _client_with_transport(respond) as client:
+        agent = Agent(client=client, tools=add)
+        with pytest.raises(ValueError, match="structured output with automatic tool selection"):
+            if stream:
+                await agent.run("What is 2+3?", stream=True, options=options).get_final_response()
+            else:
+                await agent.run("What is 2+3?", options=options)
+    assert not requests
+    assert not invocations
+    assert options == original_options
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("tool_choice", [None, "auto", "none"])
+async def test_foundry_local_structured_output_without_active_tools(
+    mock_foundry_local_manager: MagicMock, stream: bool, tool_choice: str | None
+) -> None:
+    @tool
+    def add(a: int, b: int) -> int:
+        """Add two integers."""
+        raise AssertionError("Disabled tools must not execute.")
+
+    payloads: list[dict[str, Any]] = []
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": '{"answer":5}'}, stream=stream)
+
+    options: ChatOptions[None] = {"response_format": {"type": "json_object"}}
+    if tool_choice is not None:
+        options["tool_choice"] = cast(Literal["auto", "none"], tool_choice)
+    if tool_choice == "none":
+        options["tools"] = [add]
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["What is 2+3?"])]
+        if stream:
+            response = await client.get_response(messages, stream=True, options=options).get_final_response()
+        else:
+            response = await client.get_response(messages, options=options)
+    assert response.value == {"answer": 5}
+    assert payloads[0]["response_format"] == {"type": "json_object"}
 
 
 @pytest.mark.parametrize("stream", [False, True])
