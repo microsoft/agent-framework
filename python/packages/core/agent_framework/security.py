@@ -1030,7 +1030,12 @@ def _authenticated_hidden_reference_label(content: Content, *, scope: _SecurityS
         "_variable_reference": True,
         "security_label": stored_label_data,
     }
-    if payload_mapping != expected_payload or content.additional_properties != expected_properties:
+    expected_text = json.dumps(expected_payload)
+    if (
+        content.text != expected_text
+        or payload_mapping != expected_payload
+        or content.additional_properties != expected_properties
+    ):
         return None
 
     return ContentLabel(
@@ -3991,6 +3996,21 @@ class SecureAgentConfig(ContextProvider):
         """Mark trusted transport-restored messages as already represented by session state."""
         for message in messages:
             message.additional_properties[_REPLAY_STATE_COVERED_KEY] = _REPLAY_STATE_COVERED_MARKER
+
+    def _fold_uncovered_replay_messages(self, session: AgentSession, messages: Sequence[Message]) -> None:
+        """Fold new transport messages before a snapshot-only return persists them."""
+        state = session.state.setdefault(self.source_id, {})
+        if not isinstance(state, dict):
+            raise ValueError("Security provider state must be a dictionary.")
+        scope = _SecurityScope(cast(dict[str, Any], state), scope_id=session.session_id)
+        replay_labels = [
+            _replayed_message_label(message, reconstruct_unstamped=True, scope=scope)
+            for message in messages
+            if not _is_replay_state_covered(message)
+        ]
+        if replay_labels:
+            scope.context_label = combine_labels(scope.context_label, *replay_labels)
+        _clear_replay_state_covered_markers(messages)
 
     def _approval_history_metadata_key(self) -> str:
         """Return the run-local SessionContext metadata key for this provider."""

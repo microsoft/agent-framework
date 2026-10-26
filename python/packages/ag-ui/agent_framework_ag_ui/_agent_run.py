@@ -2818,6 +2818,18 @@ def _mark_fides_state_covered_messages(
             marker(messages)
 
 
+def _fold_fides_uncovered_replay_messages(
+    agent: SupportsAgentRun,
+    session: AgentSession,
+    messages: Sequence[Message],
+) -> None:
+    """Fold uncovered replay into FIDES state before a snapshot-only return."""
+    for provider in getattr(agent, "context_providers", ()):
+        fold = getattr(provider, "_fold_uncovered_replay_messages", None)
+        if callable(fold):
+            fold(session, messages)
+
+
 def _legacy_tool_message_approval_resume(
     messages: Sequence[Mapping[str, Any]],
     *,
@@ -3676,6 +3688,7 @@ async def _run_agent_stream(
 
     # Handle confirm_changes response (state confirmation flow - emit confirmation and stop)
     if is_confirm_changes_response:
+        _fold_fides_uncovered_replay_messages(agent, session, messages)
         confirm_additional_properties = cast(dict[str, Any], messages[-1].additional_properties or {})
         confirm_interrupt_id = confirm_additional_properties.get("tool_call_id")
         confirm_remaining_interrupts = remaining_stored_interrupts(
