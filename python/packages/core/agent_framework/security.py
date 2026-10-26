@@ -973,14 +973,85 @@ def _uninspectable_replay_label() -> ContentLabel:
     )
 
 
+def _authenticated_hidden_reference_label(content: Content, *, scope: _SecurityScope) -> ContentLabel | None:
+    """Return the authoritative label for a canonical session-owned hidden placeholder."""
+    if (
+        content.type != "text"
+        or content.text is None
+        or content.items
+        or content.result is not None
+        or content.additional_properties.get("_variable_reference") is not True
+    ):
+        return None
+    try:
+        payload = json.loads(content.text)
+    except (TypeError, ValueError, RecursionError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload_mapping = cast(dict[str, Any], payload)
+    if payload_mapping.get("type") != "variable_reference":
+        return None
+    variable_id = payload_mapping.get("variable_id")
+    if not isinstance(variable_id, str) or not variable_id:
+        return None
+
+    try:
+        entry = scope.variables.get(variable_id)
+        metadata = scope.variable_metadata.get(variable_id)
+    except ValueError:
+        return None
+    if not isinstance(entry, dict) or not isinstance(metadata, dict):
+        return None
+    entry_mapping = cast(dict[str, Any], entry)
+    metadata_mapping = cast(dict[str, Any], metadata)
+    if entry_mapping.get("owner") != scope.scope_id:
+        return None
+    function_name = metadata_mapping.get("function_name")
+    if not isinstance(function_name, str) or not function_name:
+        return None
+    try:
+        stored_label = _content_label_from_state(
+            entry_mapping.get("security_label"),
+            path="variable label",
+            durable=scope.durable,
+        )
+    except ValueError:
+        return None
+
+    stored_label_data = stored_label.to_dict()
+    expected_payload = VariableReferenceContent(
+        variable_id=variable_id,
+        label=stored_label,
+        description=f"Result from {function_name}",
+    ).to_dict()
+    expected_properties = {
+        "_variable_reference": True,
+        "security_label": stored_label_data,
+    }
+    if payload_mapping != expected_payload or content.additional_properties != expected_properties:
+        return None
+
+    return ContentLabel(
+        integrity=IntegrityLabel.TRUSTED,
+        confidentiality=stored_label.confidentiality,
+        metadata=deepcopy(stored_label.metadata),
+    )
+
+
 def _replayed_content_labels(
     content: Content,
     *,
     source: str,
+    scope: _SecurityScope,
     depth: int = 0,
     active_content_ids: set[int] | None = None,
-) -> list[ContentLabel]:
-    """Collect labels from a content item and nested function-result items."""
+) -> tuple[list[ContentLabel], bool]:
+    """Collect replay labels and whether content contains only authenticated hidden references."""
+    authenticated_hidden_label = _authenticated_hidden_reference_label(content, scope=scope)
+    if authenticated_hidden_label is not None:
+        return [authenticated_hidden_label], True
+
     labels: list[ContentLabel] = []
     label_data = content.additional_properties.get("security_label")
     if isinstance(label_data, MutableMapping):
@@ -992,55 +1063,78 @@ def _replayed_content_labels(
             labels.append(parsed)
 
     if not content.items:
-        return labels
+        return labels, False
     if depth >= _MAX_REPLAY_CONTENT_DEPTH:
         labels.append(_uninspectable_replay_label())
-        return labels
+        return labels, False
 
     active_ids: set[int] = active_content_ids if active_content_ids is not None else set()
     content_id = id(content)
     if content_id in active_ids:
         labels.append(_uninspectable_replay_label())
-        return labels
+        return labels, False
 
     active_ids.add(content_id)
+    nested_items_are_authenticated_hidden = True
     try:
         for index, item in enumerate(content.items):
             if not isinstance(item, Content):
                 labels.append(_uninspectable_replay_label())
+                nested_items_are_authenticated_hidden = False
                 continue
-            labels.extend(
-                _replayed_content_labels(
-                    item,
-                    source=f"{source}.items[{index}]",
-                    depth=depth + 1,
-                    active_content_ids=active_ids,
-                )
+            item_labels, item_is_authenticated_hidden = _replayed_content_labels(
+                item,
+                source=f"{source}.items[{index}]",
+                scope=scope,
+                depth=depth + 1,
+                active_content_ids=active_ids,
+            )
+            labels.extend(item_labels)
+            nested_items_are_authenticated_hidden = (
+                nested_items_are_authenticated_hidden and item_is_authenticated_hidden
             )
     finally:
         active_ids.remove(content_id)
-    return labels
+    is_authenticated_hidden_wrapper = (
+        content.type == "function_result" and content.result is None and nested_items_are_authenticated_hidden
+    )
+    return labels, is_authenticated_hidden_wrapper
 
 
-def _replayed_message_label(message: Message, *, reconstruct_unstamped: bool) -> ContentLabel:
+def _replayed_message_label(
+    message: Message,
+    *,
+    reconstruct_unstamped: bool,
+    scope: _SecurityScope,
+) -> ContentLabel:
     """Return a restriction-only label for caller-replayed or stored history."""
     role = str(message.role)
+    content_labels: list[ContentLabel] = []
+    has_data_bearing_content = False
     control_content_types = {
         "function_call",
         "function_approval_request",
         "function_approval_response",
     }
-    has_data_bearing_content = any(
-        not isinstance(content, Content) or content.type not in control_content_types for content in message.contents
-    )
+    for index, content in enumerate(message.contents):
+        if not isinstance(content, Content):
+            has_data_bearing_content = True
+            continue
+        replayed_labels, is_authenticated_hidden = _replayed_content_labels(
+            content,
+            source=f"replayed content[{index}]",
+            scope=scope,
+        )
+        content_labels.extend(replayed_labels)
+        if content.type not in control_content_types and not is_authenticated_hidden:
+            has_data_bearing_content = True
+
     fallback = (
         ContentLabel()
         if role in {"user", "system"} or not reconstruct_unstamped
         else ContentLabel(
             integrity=IntegrityLabel.UNTRUSTED,
-            confidentiality=(
-                ConfidentialityLabel.PRIVATE if has_data_bearing_content else ConfidentialityLabel.PUBLIC
-            ),
+            confidentiality=(ConfidentialityLabel.PRIVATE if has_data_bearing_content else ConfidentialityLabel.PUBLIC),
             metadata={"source": "unstamped_replayed_message"},
         )
     )
@@ -1058,10 +1152,7 @@ def _replayed_message_label(message: Message, *, reconstruct_unstamped: bool) ->
         if parsed is not None:
             labels.append(parsed)
 
-    for index, content in enumerate(message.contents):
-        if not isinstance(content, Content):
-            continue
-        labels.extend(_replayed_content_labels(content, source=f"replayed content[{index}]"))
+    labels.extend(content_labels)
 
     return combine_labels(*labels)
 
@@ -1113,6 +1204,7 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
                 _replayed_message_label(
                     message,
                     reconstruct_unstamped=self._reconstruct_history_unstamped,
+                    scope=self._scope,
                 )
                 for message in context.messages
                 if self._is_history_message(message)
@@ -2030,9 +2122,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         security_kwargs = {
             key: kwargs[key]
             for key in {
-                path[0]
-                for path in kwargs_rewritten_paths
-                if path and isinstance(path[0], str) and path[0] in kwargs
+                path[0] for path in kwargs_rewritten_paths if path and isinstance(path[0], str) and path[0] in kwargs
             }
         }
         authority_token = _security_invocation_authority_token(
@@ -2312,9 +2402,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             active_pipeline = _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get() or ()
             if not any(isinstance(middleware, PolicyEnforcementFunctionMiddleware) for middleware in active_pipeline):
                 self._materialize_arguments(context)
-            materialization_token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set(
-                (context, self._materialize_arguments)
-            )
+            materialization_token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set((
+                context,
+                self._materialize_arguments,
+            ))
             await call_next()
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 return
@@ -3477,9 +3568,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 context_label=context_label,
                 errors=tool_policy.errors,
             )
-        accepts_untrusted = (
-            function_name in self.allow_untrusted_tools or tool_policy.accepts_untrusted
-        )
+        accepts_untrusted = function_name in self.allow_untrusted_tools or tool_policy.accepts_untrusted
         violations: list[dict[str, Any]] = []
 
         if context_label.integrity == IntegrityLabel.UNTRUSTED and not accepts_untrusted:
@@ -3651,10 +3740,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         # Context confidentiality must be <= max allowed level
         # This prevents PRIVATE data from being written to PUBLIC destinations
         max_allowed_level = tool_policy.max_allowed_confidentiality
-        if (
-            max_allowed_level is not None
-            and conf_hierarchy[label.confidentiality] > conf_hierarchy[max_allowed_level]
-        ):
+        if max_allowed_level is not None and conf_hierarchy[label.confidentiality] > conf_hierarchy[max_allowed_level]:
             return {
                 "passed": False,
                 "failure_type": "max_allowed_confidentiality",
@@ -3922,9 +4008,8 @@ class SecureAgentConfig(ContextProvider):
         input_labels = [
             _replayed_message_label(
                 message,
-                reconstruct_unstamped=(
-                    reconstruct_history_unstamped if _is_replay_state_covered(message) else True
-                ),
+                reconstruct_unstamped=(reconstruct_history_unstamped if _is_replay_state_covered(message) else True),
+                scope=scope,
             )
             for message in context.input_messages
         ]
@@ -3934,6 +4019,7 @@ class SecureAgentConfig(ContextProvider):
                 _replayed_message_label(
                     message,
                     reconstruct_unstamped=reconstruct_history_unstamped,
+                    scope=scope,
                 )
                 for message in context.context_messages.get(source_id, ())
             )

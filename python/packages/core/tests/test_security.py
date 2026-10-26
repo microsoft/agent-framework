@@ -38,6 +38,7 @@ from agent_framework._middleware import (
 )
 from agent_framework._tools import (
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    FunctionInvocationLayer,
     FunctionTool,
     _auto_invoke_function,
     _resolve_approval_responses,
@@ -3358,6 +3359,139 @@ class TestSecureAgentSessionIsolation:
             assert "_agent_framework_fides_replay_state_covered" not in restored_message.additional_properties
 
         await replay_middleware.process(chat_context, call_next)
+
+    async def test_hidden_history_placeholder_does_not_taint_restored_context(self) -> None:
+        """A framework-owned hidden placeholder stays integrity-clean on a later run."""
+        executed: list[str] = []
+        responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="external-call",
+                                name="fetch_external",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["First turn complete."])]),
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="protected-call",
+                                name="protected_action",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Second turn complete."])]),
+        ]
+
+        class ScriptedClient:
+            def __init__(self, *, responses: list[ChatResponse]) -> None:
+                self.responses = list(responses)
+
+            async def get_response(
+                self,
+                messages: Any,
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                del messages, options, kwargs
+                assert stream is False
+                return self.responses.pop(0)
+
+        client_type = type("FunctionInvokingScriptedClient", (FunctionInvocationLayer, ScriptedClient), {})
+        client = client_type(responses=responses)
+
+        def fetch_external() -> str:
+            return "external payload"
+
+        def protected_action() -> str:
+            executed.append("protected")
+            return "protected result"
+
+        fetch_tool = FunctionTool(
+            func=fetch_external,
+            name="fetch_external",
+            description="Fetch external content",
+            additional_properties={
+                "source_integrity": "untrusted",
+                "confidentiality": "private",
+            },
+        )
+        protected_tool = FunctionTool(
+            func=protected_action,
+            name="protected_action",
+            description="Run a trusted action",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+            },
+        )
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="hidden-placeholder-replay")
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[fetch_tool, protected_tool],
+            context_providers=[history, config],
+        )
+
+        await agent.run("Fetch the external data.", session=session)
+        await agent.run("Run the unrelated protected action.", session=session)
+
+        assert executed == ["protected"]
+        context_label = json.loads(session.state[config.source_id]["context_label"])
+        assert context_label["integrity"] == "trusted"
+        assert context_label["confidentiality"] == "private"
+
+    async def test_modified_hidden_placeholder_is_not_authenticated_by_client_flag(self) -> None:
+        """A real variable ID does not authenticate a client-modified placeholder."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="modified-hidden-placeholder")
+        tracker, _ = await _get_session_security_middleware(config, session)
+        hidden = tracker._hide_item(  # pyright: ignore[reportPrivateUsage]
+            Content.from_text("external payload"),
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+            ),
+            "fetch_external",
+        )
+        assert hidden.text is not None
+        payload = json.loads(hidden.text)
+        payload["description"] = "Client-controlled description"
+        hidden.text = json.dumps(payload)
+        replayed = Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="external-call", result=[hidden])],
+        )
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_tracker = provider_context.get_middleware()[0]
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        label = scoped_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
     async def test_replayed_function_result_preserves_nested_user_identity_label(self) -> None:
         """Function-result wrappers propagate labels stored on their nested items."""
@@ -6965,9 +7099,7 @@ class TestMCPIFCMetaLabels:
         ids=["malformed", "partial"],
     )
     @pytest.mark.parametrize("trust_server_ifc", [False, True])
-    def test_stamp_contents_invalid_meta_fails_closed(
-        self, server_meta: dict[str, Any], trust_server_ifc: bool
-    ):
+    def test_stamp_contents_invalid_meta_fails_closed(self, server_meta: dict[str, Any], trust_server_ifc: bool):
         from agent_framework.security import _stamp_mcp_content_labels
 
         static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)

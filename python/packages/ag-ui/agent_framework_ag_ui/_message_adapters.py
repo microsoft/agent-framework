@@ -10,6 +10,7 @@ import copy
 import json
 import logging
 from collections import Counter
+from collections.abc import Sequence
 from typing import Any, cast, get_args
 from urllib.parse import urlsplit
 
@@ -49,6 +50,25 @@ _VALID_CONTENT_TYPES = frozenset(get_args(ContentType))
 _ALLOWED_MULTIMODAL_URI_SCHEMES = frozenset({"data", "http", "https"})
 _APPROVAL_DECISION_IS_BOOLEAN_KEY = "_ag_ui_approval_decision_is_boolean"
 _LEGACY_MEDIA_PLACEHOLDER = "[Unsupported legacy media omitted by AG-UI URI policy.]"
+_BACKEND_SNAPSHOT_ORIGIN_KEY = "_agent_framework_ag_ui_backend_snapshot_origin"
+_BACKEND_SNAPSHOT_ORIGIN_MARKER = object()
+
+
+def _copy_backend_snapshot_origin(source: Message, target: Message) -> None:
+    """Preserve private backend-snapshot provenance on a derived provider message."""
+    if source.additional_properties.get(_BACKEND_SNAPSHOT_ORIGIN_KEY) is _BACKEND_SNAPSHOT_ORIGIN_MARKER:
+        target.additional_properties[_BACKEND_SNAPSHOT_ORIGIN_KEY] = _BACKEND_SNAPSHOT_ORIGIN_MARKER
+
+
+def _take_backend_snapshot_messages(messages: Sequence[Message]) -> list[Message]:
+    """Return normalized backend-snapshot messages and clear their private transport marker."""
+    snapshot_messages: list[Message] = []
+    for message in messages:
+        if message.additional_properties.get(_BACKEND_SNAPSHOT_ORIGIN_KEY) is not _BACKEND_SNAPSHOT_ORIGIN_MARKER:
+            continue
+        message.additional_properties.pop(_BACKEND_SNAPSHOT_ORIGIN_KEY, None)
+        snapshot_messages.append(message)
+    return snapshot_messages
 
 
 def _append_synthetic_tool_results(
@@ -159,6 +179,7 @@ def _sanitize_tool_history(
                 if filtered_contents:
                     # Create a new message without confirm_changes to avoid mutating the input
                     filtered_msg = Message(role=msg.role, contents=filtered_contents)
+                    _copy_backend_snapshot_origin(msg, filtered_msg)
                     sanitized.append(filtered_msg)
                 # If no contents left after filtering, don't append anything
 
@@ -661,6 +682,7 @@ def normalize_agui_input_messages(
     *,
     sanitize_tool_history: bool = True,
     protected_tool_call_ids: set[str] | None = None,
+    backend_snapshot_message_ids: set[int] | None = None,
 ) -> tuple[list[Message], list[dict[str, Any]]]:
     """Normalize raw AG-UI messages into provider and snapshot formats.
 
@@ -671,8 +693,13 @@ def normalize_agui_input_messages(
             where pending-request responses must come explicitly from interrupt resume.
         protected_tool_call_ids: Server-owned tool calls that are still eligible
             to complete and must not receive synthetic skipped results.
+        backend_snapshot_message_ids: Object identities of raw messages restored
+            from the backend-owned Thread Snapshot.
     """
-    provider_messages = agui_messages_to_agent_framework(messages)
+    provider_messages = agui_messages_to_agent_framework(
+        messages,
+        backend_snapshot_message_ids=backend_snapshot_message_ids,
+    )
     if sanitize_tool_history:
         provider_messages = _sanitize_tool_history(provider_messages, protected_tool_call_ids=protected_tool_call_ids)
     provider_messages = _deduplicate_messages(provider_messages)
@@ -698,11 +725,17 @@ def _deserialize_model_replay_items(serialized_items: Any) -> list[Content] | No
         return None
 
 
-def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Message]:
+def agui_messages_to_agent_framework(
+    messages: list[dict[str, Any]],
+    *,
+    backend_snapshot_message_ids: set[int] | None = None,
+) -> list[Message]:
     """Convert AG-UI messages to Agent Framework format.
 
     Args:
-        messages: List of AG-UI messages
+        messages: List of AG-UI messages.
+        backend_snapshot_message_ids: Object identities of messages restored
+            from the backend-owned Thread Snapshot.
 
     Returns:
         List of Agent Framework Message objects
@@ -801,6 +834,12 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
         return {key: value for key, value in modified_args.items() if key in allowed_keys}
 
     result: list[Message] = []
+
+    def _append_message(raw_message: dict[str, Any], message: Message) -> None:
+        if backend_snapshot_message_ids is not None and id(raw_message) in backend_snapshot_message_ids:
+            message.additional_properties[_BACKEND_SNAPSHOT_ORIGIN_KEY] = _BACKEND_SNAPSHOT_ORIGIN_MARKER
+        result.append(message)
+
     for msg in messages:
         # Handle standard tool result messages early (role="tool") to preserve provider invariants
         # This path maps AG‑UI tool messages to function_result content with the correct tool_call_id
@@ -850,7 +889,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 )
                 if "id" in msg:
                     chat_msg.message_id = msg["id"]
-                result.append(chat_msg)
+                _append_message(msg, chat_msg)
                 continue
 
             if msg.get(_AGUI_HOST_PAYLOAD_OMITTED_KEY) is True:
@@ -861,7 +900,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 )
                 if "id" in msg:
                     chat_msg.message_id = msg["id"]
-                result.append(chat_msg)
+                _append_message(msg, chat_msg)
                 continue
 
             is_approval = parsed is not None and "accepted" in parsed
@@ -993,7 +1032,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                     )
                 if "id" in msg:
                     chat_msg.message_id = msg["id"]
-                result.append(chat_msg)
+                _append_message(msg, chat_msg)
                 continue
 
             # Cast result_content to acceptable type for function_result content
@@ -1012,7 +1051,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
             )
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
-            result.append(chat_msg)
+            _append_message(msg, chat_msg)
             continue
 
         # Backend tool rendering payloads without an explicit role
@@ -1028,7 +1067,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
             )
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
-            result.append(chat_msg)
+            _append_message(msg, chat_msg)
             continue
 
         # If assistant message includes tool calls, convert to Content.from_function_call(s)
@@ -1064,7 +1103,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
             chat_msg = Message(role="assistant", contents=contents)
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
-            result.append(chat_msg)
+            _append_message(msg, chat_msg)
             continue
 
         # No special handling required for assistant/plain messages here
@@ -1108,7 +1147,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
         if "id" in msg:
             chat_msg.message_id = msg["id"]
 
-        result.append(chat_msg)
+        _append_message(msg, chat_msg)
 
     return result
 

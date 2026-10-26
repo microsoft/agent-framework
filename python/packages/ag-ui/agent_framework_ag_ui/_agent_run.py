@@ -90,7 +90,11 @@ from ._approval_execution import (
     InRunPendingToolTransitionOwner,
 )
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
-from ._message_adapters import _APPROVAL_DECISION_IS_BOOLEAN_KEY, normalize_agui_input_messages
+from ._message_adapters import (
+    _APPROVAL_DECISION_IS_BOOLEAN_KEY,
+    _take_backend_snapshot_messages,
+    normalize_agui_input_messages,
+)
 from ._predictive_state import PredictiveStateHandler
 from ._tooling import collect_server_tools, merge_tools
 from ._run_common import (
@@ -2804,17 +2808,14 @@ def _split_service_session_input(
 def _mark_fides_state_covered_messages(
     agent: SupportsAgentRun,
     messages: Sequence[Message],
-    *,
-    prefix_length: int,
 ) -> None:
     """Mark backend-restored replay messages for FIDES without importing the experimental module."""
-    if prefix_length <= 0:
+    if not messages:
         return
-    covered_messages = messages[: min(prefix_length, len(messages))]
     for provider in getattr(agent, "context_providers", ()):
         marker = getattr(provider, "_mark_replay_state_covered_messages", None)
         if callable(marker):
-            marker(covered_messages)
+            marker(messages)
 
 
 def _legacy_tool_message_approval_resume(
@@ -3020,7 +3021,7 @@ async def _run_agent_stream(
     )
 
     stored_snapshot = snapshot_session.stored
-    state_covered_prefix_length = 0
+    backend_snapshot_message_ids: set[int] = set()
     stored_pending_approval_interrupt_ids: set[str] = set()
     seeded_resume_from_snapshot = False
     if stored_snapshot is not None:
@@ -3091,7 +3092,7 @@ async def _run_agent_stream(
             )
             raw_messages = provider_suffix
         if not config.use_service_session:
-            state_covered_prefix_length = len(stored_snapshot.messages)
+            backend_snapshot_message_ids = {id(message) for message in raw_messages[: len(stored_snapshot.messages)]}
 
     # Initialize flow state with stored state plus request-provided overrides;
     # endpoint-deferred defaults apply only to keys missing from both.
@@ -3217,12 +3218,9 @@ async def _run_agent_stream(
         raw_messages,
         sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
         protected_tool_call_ids=protected_tool_call_ids,
+        backend_snapshot_message_ids=backend_snapshot_message_ids,
     )
-    _mark_fides_state_covered_messages(
-        agent,
-        messages,
-        prefix_length=state_covered_prefix_length,
-    )
+    _mark_fides_state_covered_messages(agent, _take_backend_snapshot_messages(messages))
 
     if snapshot_seed_messages is not None:
         _, snapshot_messages = normalize_agui_input_messages(
