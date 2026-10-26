@@ -1680,8 +1680,9 @@ class _LineEdit(BaseModel):
             default=None,
             description=(
                 "Optional: the text you believe is currently on that line, as reported by "
-                "file_access_grep. Give the line's own text only: file_access_read_lines prefixes "
-                "each line with its number and a tab, and that prefix is not part of the line. "
+                "`file_access_grep`, which may have the same configured prefix as the enclosing tool. "
+                "Give the line's own text only: `file_access_read_lines`, with the same optional prefix, "
+                "prefixes each line with its number and a tab, and that prefix is not part of the line. "
                 "When supplied, the edit is rejected unless it matches, which catches an "
                 "out-of-date line number or a file that changed since you looked. The trailing "
                 "newline is ignored in the comparison."
@@ -2132,7 +2133,7 @@ class FileAccessProvider(ContextProvider):
             approval_mode=readonly_approval,
         )
         async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
-            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
+            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a `new_line` value by `file_access_replace_lines`, which may have the same configured prefix as this tool. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(_session_path(normalized))
@@ -2259,10 +2260,12 @@ class FileAccessProvider(ContextProvider):
             or ``"reports/*"`` to restrict the search to the ``reports`` subtree.
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
-            (directly usable with file_access_read), along with snippets and matching lines with line numbers.
+            (directly usable with `file_access_read`, which may have the same configured prefix as this tool),
+            along with snippets and matching lines with line numbers.
             Stores are expected to report each matching line verbatim, including its own line
-            terminator, so it can normally be reused as a file_access_replace_lines new_line; a
-            custom store may not, so prefer file_access_read_lines when the exact text matters.
+            terminator, so it can normally be reused as a `new_line` value by `file_access_replace_lines`
+            with the same optional prefix; a custom store may not, so prefer `file_access_read_lines`
+            with the same optional prefix when the exact text matters.
             Line numbers count lines split on \n only, with a final empty line when content ends in a
             newline.
             The regex_pattern must be 256 characters or fewer.
