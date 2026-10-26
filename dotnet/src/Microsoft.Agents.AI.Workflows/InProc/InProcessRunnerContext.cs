@@ -402,15 +402,44 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
-    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
+    internal async Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
-        return Task.WhenAll(this._executors.Values.Select(InvokeCheckpointRestoredAsync));
-
-        async Task InvokeCheckpointRestoredAsync(Task<Executor> executorTask)
+        Executor[] executors = await Task.WhenAll(this._executors.Values).ConfigureAwait(false);
+        List<object> sharedStateKeys = [];
+        List<Task> restorationTasks = [];
+        foreach (Executor executor in executors)
         {
-            Executor executor = await executorTask.ConfigureAwait(false);
+            List<Func<IWorkflowContext, CancellationToken, ValueTask>> callbacks = [];
+            foreach (var registration in executor.CheckpointRestoringCallbacks)
+            {
+                if (registration.SharedStateKey is { } sharedStateKey)
+                {
+                    if (sharedStateKeys.Any(key => ReferenceEquals(key, sharedStateKey)))
+                    {
+                        continue;
+                    }
+                    sharedStateKeys.Add(sharedStateKey);
+                }
+                callbacks.Add(registration.Callback);
+            }
+            restorationTasks.Add(RestoreStateAsync(executor, callbacks));
+        }
+        // Shared state must finish restoring before any subclass post-load hook runs.
+        await Task.WhenAll(restorationTasks).ConfigureAwait(false);
+        await Task.WhenAll(executors.Select(InvokeCheckpointRestoredAsync)).ConfigureAwait(false);
+
+        async Task RestoreStateAsync(Executor executor, List<Func<IWorkflowContext, CancellationToken, ValueTask>> callbacks)
+        {
+            foreach (Func<IWorkflowContext, CancellationToken, ValueTask> restore in callbacks)
+            {
+                await restore(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        async Task InvokeCheckpointRestoredAsync(Executor executor)
+        {
             await executor.OnCheckpointRestoredAsync(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
@@ -502,25 +531,40 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         if (Interlocked.Exchange(ref this._runEnded, 1) == 0)
         {
-            foreach (string executorId in this._executors.Keys)
+            try
             {
-                Task<Executor> executorTask = this._executors[executorId];
-                Executor executor = await executorTask.ConfigureAwait(false);
+                foreach (string executorId in this._executors.Keys)
+                {
+                    Task<Executor> executorTask = this._executors[executorId];
+                    Executor executor;
+                    try
+                    {
+                        executor = await executorTask.ConfigureAwait(false);
+                    }
+                    catch (Exception) when (executorTask.IsFaulted || executorTask.IsCanceled)
+                    {
+                        // Creating this executor failed or was cancelled, so there is no instance to dispose. A
+                        // creation failure is reported while the run executes.
+                        continue;
+                    }
 
-                if (executor is IAsyncDisposable asyncDisposable)
-                {
-                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-                }
-                else if (executor is IDisposable disposable)
-                {
-                    disposable.Dispose();
+                    if (executor is IAsyncDisposable asyncDisposable)
+                    {
+                        await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                    }
+                    else if (executor is IDisposable disposable)
+                    {
+                        disposable.Dispose();
+                    }
                 }
             }
-
-            if (this._ownsWorkflow)
+            finally
             {
-                await this._workflow.ReleaseOwnershipAsync(this, this._previousOwnership).ConfigureAwait(false);
-                this._ownsWorkflow = false;
+                if (this._ownsWorkflow)
+                {
+                    await this._workflow.ReleaseOwnershipAsync(this, this._previousOwnership).ConfigureAwait(false);
+                    this._ownsWorkflow = false;
+                }
             }
         }
     }

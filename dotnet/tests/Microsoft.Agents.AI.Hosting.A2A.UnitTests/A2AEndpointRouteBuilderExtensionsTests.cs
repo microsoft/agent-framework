@@ -2,9 +2,18 @@
 
 using System;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using A2A;
+using A2A.AspNetCore;
 using Microsoft.Agents.AI.Hosting.A2A.UnitTests.Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -16,6 +25,84 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 /// </summary>
 public sealed class A2AEndpointRouteBuilderExtensionsTests
 {
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    public async Task MapA2A_WithServerOptions_RejectsUnsupportedRequestsBeforeInvokingHandlerAsync(
+        bool jsonRpc, bool streaming, bool supportsStreaming)
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var (app, handler) = await CreateServerOptionsTestHostAsync(supportsStreaming, cts.Token);
+        await using var appScope = app;
+        using var client = app.GetTestClient();
+        bool streamingDisabled = streaming && !supportsStreaming;
+        Part part = streamingDisabled ? Part.FromText("Hello") : Part.FromRaw([1, 2, 3], "image/png");
+
+        // Act
+        using var response = await SendServerOptionsTestRequestAsync(client, jsonRpc, streaming, part, cts.Token);
+        string body = await response.Content.ReadAsStringAsync(cts.Token);
+
+        // Assert
+        Assert.Equal(jsonRpc ? "application/json" : "application/a2a+json", response.Content.Headers.ContentType?.MediaType);
+        using var document = JsonDocument.Parse(body);
+        JsonElement error = document.RootElement.GetProperty("error");
+        if (jsonRpc)
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(
+                (int)(streamingDisabled ? A2AErrorCode.UnsupportedOperation : A2AErrorCode.ContentTypeNotSupported),
+                error.GetProperty("code").GetInt32());
+        }
+        else
+        {
+            Assert.False(response.IsSuccessStatusCode);
+            Assert.Contains(error.GetProperty("details").EnumerateArray(), detail =>
+                string.Equals(detail.GetProperty("reason").GetString(),
+                    streamingDisabled ? "UNSUPPORTED_OPERATION" : "CONTENT_TYPE_NOT_SUPPORTED", StringComparison.Ordinal));
+        }
+
+        handler.Verify(h => h.ExecuteAsync(
+            It.IsAny<RequestContext>(), It.IsAny<AgentEventQueue>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task MapA2A_WithServerOptions_AcceptsTextAndExplicitlyEnabledStreamingAsync(bool jsonRpc, bool streaming)
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var (app, handler) = await CreateServerOptionsTestHostAsync(supportsStreaming: streaming, cts.Token);
+        await using var appScope = app;
+        using var client = app.GetTestClient();
+
+        // Act
+        using var response = await SendServerOptionsTestRequestAsync(client, jsonRpc, streaming, Part.FromText("Hello"), cts.Token);
+        string body = await response.Content.ReadAsStringAsync(cts.Token);
+        using var cardResponse = await client.GetAsync(new Uri("/.well-known/agent-card.json", UriKind.Relative), cts.Token);
+        string cardJson = await cardResponse.Content.ReadAsStringAsync(cts.Token);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("Reply", body);
+        Assert.Equal(
+            streaming ? "text/event-stream" : jsonRpc ? "application/json" : "application/a2a+json",
+            response.Content.Headers.ContentType?.MediaType);
+        cardResponse.EnsureSuccessStatusCode();
+        using var cardDocument = JsonDocument.Parse(cardJson);
+        Assert.Equal(streaming, cardDocument.RootElement.GetProperty("capabilities").GetProperty("streaming").GetBoolean());
+        Assert.Equal("text/plain", Assert.Single(cardDocument.RootElement.GetProperty("defaultInputModes").EnumerateArray()).GetString());
+        handler.Verify(h => h.ExecuteAsync(
+            It.IsAny<RequestContext>(), It.IsAny<AgentEventQueue>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public void MapA2AJsonRpc_MarksFeatureUsed()
     {
@@ -603,5 +690,60 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
 
         Assert.Contains("agent", exception.Message);
         Assert.Contains("AddA2AServer", exception.Message);
+    }
+
+    private static async Task<(WebApplication App, Mock<IAgentHandler> Handler)> CreateServerOptionsTestHostAsync(
+        bool supportsStreaming, CancellationToken cancellationToken)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        var agent = new Mock<AIAgent>();
+        agent.SetupGet(a => a.Name).Returns("policy-agent");
+        var handler = new Mock<IAgentHandler>();
+        handler.Setup(h => h.ExecuteAsync(It.IsAny<RequestContext>(), It.IsAny<AgentEventQueue>(), It.IsAny<CancellationToken>()))
+            .Returns((RequestContext _, AgentEventQueue queue, CancellationToken ct) => queue.EnqueueMessageAsync(
+                new Message { MessageId = "reply", Role = Role.Agent, Parts = [Part.FromText("Reply")] }, ct).AsTask());
+        builder.Services.AddKeyedSingleton(agent.Object.Name, handler.Object);
+        builder.AddA2AServer(agent.Object, options => options.ServerOptions = new A2AServerOptions
+        {
+            SupportsStreaming = supportsStreaming,
+            SupportedInputModes = ["text/plain"]
+        });
+        var app = builder.Build();
+        app.MapA2AHttpJson(agent.Object, "/a2a");
+        app.MapA2AJsonRpc(agent.Object, "/a2a");
+        app.MapWellKnownAgentCard(new AgentCard
+        {
+            Name = "policy-agent",
+            Description = "Test agent",
+            Version = "1.0.0",
+            Capabilities = new() { Streaming = supportsStreaming },
+            DefaultInputModes = ["text/plain"],
+            DefaultOutputModes = ["text/plain"],
+            Skills = [],
+            SupportedInterfaces = []
+        });
+        await app.StartAsync(cancellationToken);
+        return (app, handler);
+    }
+
+    private static async Task<HttpResponseMessage> SendServerOptionsTestRequestAsync(
+        HttpClient client, bool jsonRpc, bool streaming, Part part, CancellationToken cancellationToken)
+    {
+        var request = new SendMessageRequest
+        {
+            Message = new Message { MessageId = "request", Role = Role.User, Parts = [part] }
+        };
+        string json = jsonRpc
+            ? JsonSerializer.Serialize(new JsonRpcRequest
+            {
+                Id = "request",
+                Method = streaming ? "SendStreamingMessage" : "SendMessage",
+                Params = JsonSerializer.SerializeToElement(request, A2AJsonUtilities.DefaultOptions)
+            }, A2AJsonUtilities.DefaultOptions)
+            : JsonSerializer.Serialize(request, A2AJsonUtilities.DefaultOptions);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var uri = new Uri(jsonRpc ? "/a2a" : streaming ? "/a2a/message:stream" : "/a2a/message:send", UriKind.Relative);
+        return await client.PostAsync(uri, content, cancellationToken);
     }
 }

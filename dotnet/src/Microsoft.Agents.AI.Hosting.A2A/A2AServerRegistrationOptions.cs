@@ -25,6 +25,9 @@ public sealed class A2AServerRegistrationOptions
     /// </summary>
     /// <remarks>
     /// When <see langword="null"/>, no custom server options are applied.
+    /// Publishing an agent card does not configure these options. Set
+    /// <see cref="A2AServerOptions.SupportsStreaming"/> and <see cref="A2AServerOptions.SupportedInputModes"/>
+    /// to match the card's streaming capability and its default and skill-specific input modes.
     /// </remarks>
     public A2AServerOptions? ServerOptions { get; set; }
 }

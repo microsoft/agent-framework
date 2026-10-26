@@ -1217,7 +1217,8 @@ async def test_replacing_supplied_session_invalidates_bound_header_identity() ->
     )
     tool._bind_session_headers({"Authorization": "A"})
 
-    tool.session = replacement_session
+    with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+        tool.session = replacement_session
 
     with pytest.raises(ToolExecutionException, match="identity is unknown"):
         await tool._ensure_session_identity({"Authorization": "A"}, {})

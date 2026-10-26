@@ -149,65 +149,6 @@ class AgentFrameworkExecutor:
             }
             logger.debug("Tracked approval request: %s for function: %s", request_id, fc.get("name", "unknown"))
 
-    async def _ensure_mcp_connections(self, agent: Any) -> None:
-        """Ensure MCP tool connections are healthy before agent execution.
-
-        This is a workaround for an Agent Framework bug where MCP tool connections
-        can become stale (underlying streams closed) but is_connected remains True.
-        This happens when HTTP streaming responses end and GeneratorExit propagates.
-
-        This method detects stale connections and reconnects them. It's designed to
-        be a no-op once the Agent Framework fixes this issue upstream.
-
-        Args:
-            agent: Agent object that may have MCP tools
-        """
-        if not hasattr(agent, "mcp_tools"):
-            return
-
-        for mcp_tool in agent.mcp_tools:
-            if not getattr(mcp_tool, "is_connected", False):
-                continue
-
-            tool_name = getattr(mcp_tool, "name", "unknown")
-
-            try:
-                # Check if underlying write stream is closed
-                session = getattr(mcp_tool, "session", None)
-                if session is None:
-                    continue
-
-                write_stream = getattr(session, "_write_stream", None)
-                if write_stream is None:
-                    continue
-
-                # Detect stale connection: is_connected=True but stream is closed
-                is_closed = getattr(write_stream, "_closed", False)
-                if not is_closed:
-                    continue  # Connection is healthy
-
-                # Stale connection detected - reconnect
-                logger.warning(f"MCP tool '{tool_name}' has stale connection (stream closed), reconnecting...")
-
-                # Clean up old connection
-                try:
-                    if hasattr(mcp_tool, "close"):
-                        await mcp_tool.close()
-                except Exception as close_err:
-                    logger.debug(f"Error closing stale MCP tool '{tool_name}': {close_err}")
-                    # Force reset state
-                    mcp_tool.is_connected = False
-                    mcp_tool.session = None
-
-                # Reconnect
-                if hasattr(mcp_tool, "connect"):
-                    await mcp_tool.connect()
-                    logger.info(f"MCP tool '{tool_name}' reconnected successfully")
-
-            except Exception as e:
-                # If detection fails, log and continue - let it fail naturally during execution
-                logger.debug(f"Error checking MCP tool '{tool_name}' connection: {e}")
-
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
 
@@ -394,11 +335,6 @@ class AgentFrameworkExecutor:
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
                 logger.debug(f"Executing agent with multimodal Message: {type(user_message)}")
-
-            # Workaround for MCP tool stale connection bug (GitHub issue pending)
-            # When HTTP streaming ends, GeneratorExit can close MCP stdio streams
-            # but is_connected stays True. Detect and reconnect before execution.
-            await self._ensure_mcp_connections(agent)
 
             # Agent must have run() method - use stream=True for streaming
             if hasattr(agent, "run") and callable(agent.run):

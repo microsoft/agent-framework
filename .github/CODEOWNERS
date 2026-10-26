@@ -12,3 +12,6 @@
 
 # .NET owners
 /dotnet/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @baywet @peibekwe
+
+# Public Python consumer skill
+/skills/agent-framework-builder-python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @sophia-ramsey @TaoChenOSU @giles17

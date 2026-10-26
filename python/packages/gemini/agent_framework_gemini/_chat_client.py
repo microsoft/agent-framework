@@ -889,7 +889,7 @@ class RawGeminiChatClient(
         if response_schema is not None:
             kwargs["response_schema"] = response_schema
         elif (schema := self._extract_response_schema(response_format)) is not None:
-            kwargs["response_schema"] = schema
+            kwargs["response_json_schema"] = schema
         tools = self._prepare_tools(options)
         if tools:
             kwargs["tools"] = tools
@@ -1104,7 +1104,7 @@ class RawGeminiChatClient(
                 server reported in this stream, or the model resolved for this request.
 
         Returns:
-            A ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
+            An assistant ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
         """
         candidate = chunk.candidates[0] if chunk.candidates else None
         parts: list[types.Part] = (candidate.content.parts or []) if candidate and candidate.content else []
@@ -1119,6 +1119,7 @@ class RawGeminiChatClient(
             contents.append(Content.from_usage(usage_details=usage, merge_mode="replace"))
 
         return ChatResponseUpdate(
+            role="assistant",
             contents=contents,
             model=chunk.model_version or model,
             finish_reason=finish_reason,

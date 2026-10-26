@@ -40,6 +40,14 @@ Function approval denials complete without evaluating automatic-send settings.
 Older approved checkpoints without a captured setting still validate the current
 setting before invoking the function.
 
+### Expression result handling
+
+Blank expression results retain their input sensitivity metadata. Evaluation
+errors in sensitive expressions, including record fields and table rows, produce
+a blank result with the same metadata so data assignments can continue.
+Diagnostic warnings identify the referenced variable names, not their values.
+Non-sensitive expression errors retain their existing exception behavior.
+
 ### Function tool approval
 
 `InvokeFunctionTool` requests approval when `requireApproval` evaluates to `true`

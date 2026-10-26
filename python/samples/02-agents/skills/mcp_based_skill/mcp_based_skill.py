@@ -11,8 +11,7 @@ from agent_framework import Agent, MCPSkillsSource, SkillsProvider, ToolApproval
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp import Client
 
 """
 MCP-Based Agent Skills
@@ -42,15 +41,13 @@ async def main() -> None:
     print("Discovering MCP-based skills")
     print("-" * 60)
 
-    # 1. Connect to the MCP server over streamable HTTP.
-    async with streamable_http_client(url=mcp_url) as (read, write), ClientSession(read, write) as session:
-        await session.initialize()
-
+    # 1. Connect to the MCP server with the high-level MCP Client.
+    async with Client(mcp_url) as mcp_client:
         # 2. Build a SkillsProvider that discovers skills over MCP.
         #    MCPSkillsSource reads skill://index.json and creates one
         #    MCPSkill per skill-md entry; SKILL.md bodies are fetched
         #    on demand via resources/read.
-        skills_provider = SkillsProvider(MCPSkillsSource(client=session))
+        skills_provider = SkillsProvider(MCPSkillsSource(client=mcp_client))
 
         # 3. Run the agent.
         client = FoundryChatClient(

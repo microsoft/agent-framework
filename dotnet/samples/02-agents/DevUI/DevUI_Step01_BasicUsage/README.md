@@ -70,11 +70,16 @@ To add DevUI to your ASP.NET Core application:
    agent directly from a `Workflow`, opt in with
    `workflow.AsAIAgent(includeWorkflowOutputsInResponse: true)`.
 
-3. Add OpenAI services and map the endpoints for OpenAI and DevUI:
+3. Register OpenAI and DevUI services before building the app, then map their endpoints:
    ```csharp
    // Register services for OpenAI responses and conversations (also required for DevUI)
    builder.Services.AddOpenAIResponses();
    builder.Services.AddOpenAIConversations();
+
+   if (builder.Environment.IsDevelopment())
+   {
+       builder.AddDevUI();
+   }
 
    var app = builder.Build();
 

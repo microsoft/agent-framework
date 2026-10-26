@@ -127,6 +127,29 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
     }
 
     [Theory]
+    [InlineData(true, "If(Env.Setting, false)")]
+    [InlineData(false, "If(Env.Setting, false)")]
+    [InlineData(true, "If(Env.Setting, 1 / 0 = 0, false)")]
+    [InlineData(false, "If(Env.Setting, 1 / 0 = 0, false)")]
+    public async Task ConditionGroupValidatesConditionalResultsAsync(bool value, string expression)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New(value), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        ConditionGroup.Builder builder = this.CreateModel(
+            nameof(ConditionGroupValidatesConditionalResultsAsync), [true], includeElse: true).ToBuilder();
+        builder.Conditions[0].Condition = BoolExpression.Expression(expression).ToBuilder();
+        ConditionGroupExecutor action = new(AssignParent<ConditionGroup>(builder), this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("condition", exception.Message);
+        Assert.DoesNotContain("ErrDivByZero", exception.Message);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task ConditionGroupAllowsNonSensitiveConditionAsync(bool matches)

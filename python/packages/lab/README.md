@@ -53,9 +53,9 @@ pip install "agent-framework-lab[tau2]"
 pip install "agent-framework-lab[lightning]"
 ```
 
-Lab currently supports Python 3.10–3.14. The GAIA extra depends on a PyArrow
-release without Python 3.15 wheels, while the Tau2 dependency chain includes
-`cachebox` 5.x, whose PyO3 version rejects Python 3.15 builds.
+Lab currently supports Python 3.10–3.14. PyArrow 26 now provides Python 3.15
+wheels for the GAIA extra, but the Tau2 dependency chain still includes
+DeepDiff with `cachebox` 5.x, whose PyO3 version rejects Python 3.15 builds.
 
 ## Usage
 
@@ -78,6 +78,14 @@ cd python/packages/lab
 uv sync --all-extras --all-groups
 uv run poe test
 uv run poe pyright
+```
+
+Lab release artifacts are built and published separately from the root
+`python-release.yml` workflow. From this directory, maintainers can create the
+standalone wheel and source distribution in the shared Python release directory:
+
+```bash
+uv build --out-dir ../../dist
 ```
 
 Lightning observability tests intentionally exercise heavier tracing paths and are marked as `resource_intensive`:

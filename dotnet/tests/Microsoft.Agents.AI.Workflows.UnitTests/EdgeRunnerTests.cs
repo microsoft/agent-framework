@@ -152,6 +152,85 @@ public class EdgeRunnerTests
     }
 
     [Fact]
+    public async Task Test_FanOutEdgeRunner_DeduplicatesAssignedTargetsAsync()
+    {
+        // Arrange
+        TestRunContext runContext = new();
+        runContext.ConfigureExecutors([
+                new ForwardMessageExecutor<string>("executor1"),
+                new ForwardMessageExecutor<string>("executor2"),
+                new ForwardMessageExecutor<string>("executor3")
+            ]);
+
+        // The assigner names executor3 twice, and names it before executor2.
+        FanOutEdgeData edgeData = new("executor1", ["executor2", "executor3"], new EdgeId(0), (message, count) => [1, 0, 1]);
+        FanOutEdgeRunner runner = new(runContext, edgeData);
+
+        // Act
+        DeliveryMapping? mapping = await runner.ChaseEdgeAsync(new("test", "executor1"), stepTracer: null, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(mapping);
+        Assert.Equal(["executor3", "executor2"], mapping.Deliveries.Select(delivery => delivery.TargetId));
+    }
+
+    [Fact]
+    public async Task Test_FanOutEdgeRunner_DeduplicatesRepeatedSinksAsync()
+    {
+        // Arrange
+        TestRunContext runContext = new();
+        runContext.ConfigureExecutors([
+                new ForwardMessageExecutor<string>("executor1"),
+                new ForwardMessageExecutor<string>("executor2")
+            ]);
+
+        // No assigner, and the target list names executor2 twice.
+        FanOutEdgeData edgeData = new("executor1", ["executor2", "executor2"], new EdgeId(0));
+        FanOutEdgeRunner runner = new(runContext, edgeData);
+
+        // Act
+        DeliveryMapping? mapping = await runner.ChaseEdgeAsync(new("test", "executor1"), stepTracer: null, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(mapping);
+        Assert.Equal(["executor2"], mapping.Deliveries.Select(delivery => delivery.TargetId));
+    }
+
+    [Fact]
+    public async Task Test_FanOutEdge_TargetAssignedTwiceRunsOnceAsync()
+    {
+        // Arrange
+        int billingCalls = 0;
+        int techCalls = 0;
+
+        ForwardMessageExecutor<string> triage = new("triage");
+        Func<string, ValueTask> billingHandler = _ =>
+        {
+            Interlocked.Increment(ref billingCalls);
+            return default;
+        };
+        Func<string, ValueTask> techHandler = _ =>
+        {
+            Interlocked.Increment(ref techCalls);
+            return default;
+        };
+        ExecutorBinding billing = billingHandler.BindAsExecutor("billing");
+        ExecutorBinding tech = techHandler.BindAsExecutor("tech");
+
+        // The selector names the billing executor twice, as when two tags on a message route to it.
+        Workflow workflow = new WorkflowBuilder(triage)
+            .AddFanOutEdge<string>(triage, [billing, tech], (message, count) => [0, 0])
+            .Build();
+
+        // Act
+        await using Run run = await InProcessExecution.RunAsync(workflow, "charged twice, want my money back");
+
+        // Assert
+        Assert.Equal(1, billingCalls);
+        Assert.Equal(0, techCalls);
+    }
+
+    [Fact]
     public async Task Test_FanInEdgeRunnerAsync()
     {
         TestRunContext runContext = new();

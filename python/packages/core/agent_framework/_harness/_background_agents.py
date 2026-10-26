@@ -229,7 +229,9 @@ def _finalize_task(
         else:
             task_info.status = BackgroundTaskStatus.COMPLETED
             task_info.result_text = completed_task.result().text
-    runtime.in_flight_tasks.pop(task_info.id, None)
+    # A stale waiter may observe a task ID already reused by a continuation.
+    if runtime.in_flight_tasks.get(task_info.id) is completed_task:
+        runtime.in_flight_tasks.pop(task_info.id, None)
 
 
 def _refresh_task_state(
@@ -559,18 +561,21 @@ class BackgroundAgentsProvider(ContextProvider):
 
             # Find which ID completed.
             completed_id: int | None = None
+            completed_task: asyncio.Task[AgentResponse[Any]] | None = None
             for tid, task in waitable:
                 if task in done:
                     completed_id = tid
+                    completed_task = task
                     break
 
             # Finalize the completed task.
             tasks = _get_tasks(provider_state)
             task_info = next((t for t in tasks if t.id == completed_id), None)
-            if task_info is not None and completed_id is not None:
-                completed_task = runtime.in_flight_tasks.get(completed_id)
-                if completed_task is not None:
-                    _finalize_task(task_info, completed_task, runtime)
+            if task_info is not None and completed_task is not None:
+                # Report the waited-on execution without overwriting a newer one.
+                is_current_task = runtime.in_flight_tasks.get(task_info.id) is completed_task
+                _finalize_task(task_info, completed_task, runtime)
+                if is_current_task:
                     _save_tasks(provider_state, tasks)
                     _save_provider_state(session, provider_state, source_id=source_id)
 

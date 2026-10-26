@@ -77,6 +77,26 @@ def _capture_hash_writes(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     return write
 
 
+@pytest.mark.asyncio
+async def test_context_manager_closes_owned_index_only(
+    redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exiting the context manager closes the connection an owned index created and
+    leaves a borrowed index under the caller's control."""
+    closes = AsyncMock(wraps=redis_client.aclose)
+    monkeypatch.setattr(redis_client, "aclose", closes)
+
+    for borrowed, expected_waits in ((False, 1), (True, 0)):
+        closes.reset_mock()
+        provider = _provider(redis_client, borrowed=borrowed)
+        # The index connects lazily on first use, so model an index that has been
+        # used (before_run runs exists/create through it) before the provider exits.
+        await provider.redis_index.set_client(redis_client)
+        async with provider:
+            pass
+        assert closes.await_count == expected_waits
+
+
 @pytest.mark.parametrize("borrowed", [False, True], ids=["owned-index", "borrowed-index"])
 @pytest.mark.parametrize("all_scopes", [False, True], ids=["user-scope", "all-scopes"])
 async def test_after_run_encodes_messages_with_optional_fields_omitted(

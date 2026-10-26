@@ -130,19 +130,25 @@ pip install agent-framework-monty agent-framework-foundry --pre
 
 Every sample file follows this order:
 
-1. PEP 723 inline script metadata (if external dependencies are needed)
-2. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
-3. Required imports
-4. Module docstring explaining the purpose and key components
-5. Helper functions
-6. Main function(s) demonstrating functionality
-7. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+1. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
+2. PEP 723 inline script metadata (if external dependencies are needed)
+3. Module docstring explaining the purpose and key components
+4. `from __future__ import annotations` when applicable
+5. Required imports
+6. Helper functions
+7. Main function(s) demonstrating functionality
+8. Entry point: use `if __name__ == "__main__": asyncio.run(main())` for async samples or
+   `if __name__ == "__main__": main()` for synchronous samples
 
 Use PEP 723 inline script metadata for external sample-only dependencies; do not add sample-only dependencies to
 the root `pyproject.toml` dev group.
 PEP 723 dependencies must list the minimal specific Agent Framework distributions used by the script (for example,
 `agent-framework-core`, `agent-framework-foundry`, or `agent-framework-openai`), never the `agent-framework`
 meta-package.
+
+When a change adds, removes, or renames a sample-facing environment variable in repo-level samples or package-local
+sample documentation for a package included by `agent-framework-core[all]`, update the consolidated inventory in
+`samples/README.md` in the same change.
 
 ## Syntax checking
 

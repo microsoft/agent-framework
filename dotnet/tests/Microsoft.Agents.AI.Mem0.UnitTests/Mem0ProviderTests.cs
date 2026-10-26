@@ -405,6 +405,80 @@ public sealed class Mem0ProviderTests : IDisposable
             Times.Once);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InvokingAsync_WhenRequestIsCanceled_PropagatesOnlyCallerCancellationAsync(bool cancelCaller)
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        this._handler.OnSend = cancellationToken =>
+        {
+            if (cancelCaller)
+            {
+                cts.Cancel();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            throw new TaskCanceledException("Request timed out.");
+        };
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }), loggerFactory: this._loggerFactoryMock.Object);
+        var message = new ChatMessage(ChatRole.User, "What is my name?");
+        var context = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), new AIContext { Messages = [message] });
+
+        // Act & Assert
+        if (cancelCaller)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.InvokingAsync(context, cts.Token).AsTask());
+        }
+        else
+        {
+            var result = await sut.InvokingAsync(context, cts.Token);
+            Assert.Same(message, Assert.Single(result.Messages!));
+        }
+
+        Assert.Single(this._handler.Requests);
+        this._loggerMock.Verify(
+            logger => logger.Log(LogLevel.Error, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(), It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            cancelCaller ? Times.Never() : Times.Once());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InvokedAsync_WhenRequestIsCanceled_PropagatesOnlyCallerCancellationAsync(bool cancelCaller)
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        this._handler.OnSend = cancellationToken =>
+        {
+            if (cancelCaller)
+            {
+                cts.Cancel();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            throw new TaskCanceledException("Request timed out.");
+        };
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }), loggerFactory: this._loggerFactoryMock.Object);
+        var context = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Remember my name.")], []);
+
+        // Act & Assert
+        if (cancelCaller)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.InvokedAsync(context, cts.Token).AsTask());
+        }
+        else
+        {
+            await sut.InvokedAsync(context, cts.Token);
+        }
+
+        Assert.Single(this._handler.Requests);
+        this._loggerMock.Verify(
+            logger => logger.Log(LogLevel.Error, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(), It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            cancelCaller ? Times.Never() : Times.Once());
+    }
+
     [Fact]
     public async Task StateInitializer_IsCalledOnceAndStoredInStateBagAsync()
     {
@@ -655,6 +729,7 @@ public sealed class Mem0ProviderTests : IDisposable
     {
         private readonly Queue<HttpResponseMessage> _responses = new();
         public List<(HttpRequestMessage RequestMessage, string RequestBody)> Requests { get; } = [];
+        public Action<CancellationToken>? OnSend { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -664,6 +739,7 @@ public sealed class Mem0ProviderTests : IDisposable
             var requestBody = await (request.Content?.ReadAsStringAsync() ?? Task.FromResult(string.Empty));
 #endif
             this.Requests.Add((request, requestBody));
+            this.OnSend?.Invoke(cancellationToken);
             if (this._responses.Count > 0)
             {
                 return this._responses.Dequeue();
