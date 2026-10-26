@@ -1046,6 +1046,105 @@ def test_memory_file_store_encodes_non_ascii_owner_ids(tmp_path) -> None:
     assert roots[0] != roots[1]
 
 
+def test_memory_topic_record_round_trips_backslash_hash_lines() -> None:
+    """Lines starting with backslash hash must survive a round trip unchanged.
+
+    Escaping such a line used to add a second backslash the reader never
+    stripped, so every reload corrupted the memory a little more.
+    """
+    record = MemoryTopicRecord(
+        topic="notes",
+        summary="\\# summary line",
+        memories=["\\# literal fact", "# heading shaped memory", "\\\\# two backslashes"],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+
+    parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="notes")
+
+    assert parsed.memories == ["\\# literal fact", "# heading shaped memory", "\\\\# two backslashes"]
+
+
+def test_memory_topic_record_marks_files_with_the_escape_format_version() -> None:
+    """Every written record carries the v2 marker, so a reader can tell the
+    invertible encoding from files written by the previous implementation."""
+    record = MemoryTopicRecord(
+        topic="notes",
+        summary="plain",
+        memories=["fact"],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+    markdown = record.to_markdown()
+    assert "<!-- agent-framework-memory-escape: v2 -->" in markdown
+    parsed = MemoryTopicRecord.from_markdown(markdown, fallback_topic="notes")
+    assert parsed.summary == "plain"
+    assert parsed.memories == ["fact"]
+
+
+def test_memory_topic_record_round_trips_every_backslash_run_length() -> None:
+    """Runs from zero through five backslashes before a hash decode exactly."""
+    for run_length in range(6):
+        run = "\\" * run_length
+        record = MemoryTopicRecord(
+            topic="notes",
+            summary=f"{run}# summary",
+            memories=[f"{run}# memory"],
+            updated_at="2026-10-26T00:00:00+00:00",
+        )
+        parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="notes")
+        assert parsed.summary == f"{run}# summary", run_length
+        assert parsed.memories == [f"{run}# memory"], run_length
+
+
+def test_memory_topic_record_preserves_odd_runs_in_unversioned_files() -> None:
+    """Odd backslash runs written by the previous implementation are verbatim
+    original content, not an encoding, and must survive a load unchanged.
+
+    The previous writer left runs of two or more backslashes untouched and its
+    reader stripped one backslash only from a body starting backslash hash;
+    treating odd runs as the new encoding would silently delete characters and
+    persist the corruption on the next write.
+    """
+    three = chr(92) * 3
+    five = chr(92) * 5
+    seven = chr(92) * 7
+    legacy = "\n".join([
+        "# notes",
+        "",
+        "Updated: 2026-10-26T00:00:00+00:00",
+        "Sessions: -",
+        "",
+        "## Summary",
+        three + "# three backslashes",
+        "",
+        "## Memories",
+        "- " + five + "# five backslashes",
+        "- " + seven + "# seven backslashes",
+    ])
+    parsed = MemoryTopicRecord.from_markdown(legacy, fallback_topic="notes")
+    assert parsed.summary == three + "# three backslashes"
+    assert parsed.memories == [five + "# five backslashes", seven + "# seven backslashes"]
+
+
+def test_memory_topic_record_keeps_single_backslash_hash_decode_for_unversioned_files() -> None:
+    """An unversioned backslash hash line decodes exactly as the previous
+    reader did: one backslash stripped, no more."""
+    legacy = "\n".join([
+        "# notes",
+        "",
+        "Updated: 2026-10-26T00:00:00+00:00",
+        "Sessions: -",
+        "",
+        "## Summary",
+        "\\# single",
+        "",
+        "## Memories",
+        "- \\# another single",
+    ])
+    parsed = MemoryTopicRecord.from_markdown(legacy, fallback_topic="notes")
+    assert parsed.summary == "# single"
+    assert parsed.memories == ["# another single"]
+
+
 def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -> None:
     """Safe identifiers are readable on disk rather than opaque encoded segments."""
     store = MemoryFileStore(tmp_path, owner_prefix="user_", owner_state_key="owner_id")

@@ -108,19 +108,67 @@ def _normalize_memory_text(memory: str) -> str:
     return normalized
 
 
+_LEADING_BACKSLASHES_BEFORE_HASH: re.Pattern[str] = re.compile(r"^(\\+)#")
+
+# Format marker written into every topic file that uses the invertible escape
+# encoding. Files without it were written by the previous implementation,
+# which left backslash runs of two or more unchanged, and are decoded with the
+# legacy reader.
+_MEMORY_ESCAPE_MARKER = "<!-- agent-framework-memory-escape: v2 -->"
+
+
 def _escape_markdown_line(line: str) -> str:
-    """Escape a markdown line so it cannot be re-interpreted as a heading on a later read."""
-    if line.lstrip().startswith(("#", "\\#")):
-        return f"\\{line}"
+    """Escape a markdown line so it cannot be re-interpreted as a heading on a later read.
+
+    A line starting with ``#`` gets one backslash. A line that already starts
+    with backslashes before ``#`` gets one more than it had, so a reader can
+    always recover the exact original run: prepending a single backslash to an
+    escaped hash produced a two backslash prefix the old reader never stripped,
+    corrupting the round trip.
+    """
+    leading_whitespace_length = len(line) - len(line.lstrip())
+    body = line[leading_whitespace_length:]
+    match = _LEADING_BACKSLASHES_BEFORE_HASH.match(body)
+    if match:
+        run_length = len(match.group(1))
+        escaped_run = "\\" * (2 * run_length + 1)
+        return line[:leading_whitespace_length] + escaped_run + body[run_length:]
+    if body.startswith("#"):
+        return "\\" + line
     return line
 
 
 def _unescape_markdown_line(line: str) -> str:
-    """Reverse :func:`_escape_markdown_line` when reading persisted memory content."""
+    """Reverse :func:`_escape_markdown_line` when reading persisted memory content.
+
+    An odd backslash run before ``#`` is one this module wrote (``n`` originals
+    become ``n + 1``), so the reader keeps ``(run - 1) // 2`` originals. An even
+    run was not produced here and is left untouched.
+    """
+    leading_whitespace_length = len(line) - len(line.lstrip())
+    body = line[leading_whitespace_length:]
+    match = _LEADING_BACKSLASHES_BEFORE_HASH.match(body)
+    if match and len(match.group(1)) % 2 == 1:
+        original_length = (len(match.group(1)) - 1) // 2
+        original_run = "\\" * original_length
+        return line[:leading_whitespace_length] + original_run + body[len(match.group(1)) :]
+    return line
+
+
+def _unescape_markdown_line_legacy(line: str) -> str:
+    r"""Decode a line persisted by the previous escape implementation.
+
+    The previous writer prepended a single backslash to ``#`` and ``\\#``
+    lines and left every longer run verbatim, and the previous reader stripped
+    one backslash only from a body starting ``\\#``. Unversioned files must
+    keep that exact behavior: runs of two or more backslashes are original
+    content, not an encoding, and eating them would corrupt the record on load
+    and then persist the corruption on the next write.
+    """
     leading_whitespace_length = len(line) - len(line.lstrip())
     body = line[leading_whitespace_length:]
     if body.startswith("\\#"):
-        return f"{line[:leading_whitespace_length]}{body[1:]}"
+        return line[:leading_whitespace_length] + body[1:]
     return line
 
 
@@ -452,6 +500,8 @@ class MemoryTopicRecord:
         return "\n".join([
             f"# {self.topic}",
             "",
+            _MEMORY_ESCAPE_MARKER,
+            "",
             f"Updated: {self.updated_at}",
             f"Sessions: {session_line}",
             "",
@@ -484,10 +534,15 @@ class MemoryTopicRecord:
         summary_lines: list[str] = []
         memories: list[str] = []
         current_section: str | None = None
+        # Files written before the invertible encoding carry no marker and must
+        # be decoded exactly as the previous reader did.
+        unescape = _unescape_markdown_line_legacy if _MEMORY_ESCAPE_MARKER not in markdown else _unescape_markdown_line
 
         for raw_line in markdown.splitlines():
             line = raw_line.rstrip()
             stripped = line.strip()
+            if stripped == _MEMORY_ESCAPE_MARKER:
+                continue
             if stripped.startswith("# "):
                 topic = stripped[2:].strip()
                 current_section = None
@@ -511,10 +566,10 @@ class MemoryTopicRecord:
                 continue
             if current_section == "summary":
                 if stripped:
-                    summary_lines.append(_unescape_markdown_line(stripped))
+                    summary_lines.append(unescape(stripped))
                 continue
             if current_section == "memories" and stripped.startswith("- "):
-                memory_text = _unescape_markdown_line(stripped[2:].strip())
+                memory_text = unescape(stripped[2:].strip())
                 if memory_text and memory_text != DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
                     memories.append(memory_text)
 
