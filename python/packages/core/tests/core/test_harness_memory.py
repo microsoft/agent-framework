@@ -1078,6 +1078,74 @@ async def test_memory_consolidation_retires_only_turns_in_its_snapshot(tmp_path:
     }
 
 
+class _LegacyStateMemoryStore(MemoryFileStore):
+    """Custom store that persists only the maintenance fields that existed before ``pending_turn_ids``."""
+
+    def __init__(self, base_path: Path, *, state: dict[str, Any]) -> None:
+        super().__init__(base_path, owner_state_key="owner_id")
+        self.state = state
+
+    def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
+        del session, source_id
+        return {
+            "last_consolidated_at": self.state["last_consolidated_at"],
+            "sessions_since_consolidation": list(self.state["sessions_since_consolidation"]),
+        }
+
+    def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
+        del session, source_id
+        self.state = {
+            "last_consolidated_at": state["last_consolidated_at"],
+            "sessions_since_consolidation": list(state["sessions_since_consolidation"]),
+        }
+
+
+async def test_memory_provider_accepts_custom_store_state_without_turn_ids(tmp_path: Path) -> None:
+    """A custom store returning state without ``pending_turn_ids`` still registers finished turns."""
+    store = _LegacyStateMemoryStore(tmp_path, state={"last_consolidated_at": None, "sessions_since_consolidation": []})
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=10)
+    client = _MemoryHarnessClient(extraction_payload={"memories": []})
+    agent = Agent(client=client, context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    await agent.run("Hello.", session=_owned_session("session-1"))
+    await agent.run("Hello again.", session=_owned_session("session-2"))
+
+    assert client.calls == ["agent", "extract", "agent", "extract"]
+    assert store.state == {"last_consolidated_at": None, "sessions_since_consolidation": ["session-1", "session-2"]}
+
+
+async def test_memory_consolidation_accepts_custom_store_state_without_turn_ids(tmp_path: Path) -> None:
+    """A pass over state without ``pending_turn_ids`` retires the sessions it saw, as before turn ids."""
+    session = _owned_session("session-b")
+    store = _LegacyStateMemoryStore(
+        tmp_path, state={"last_consolidated_at": None, "sessions_since_consolidation": ["session-a", "session-b"]}
+    )
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="Old",
+            summary="Old summary.",
+            memories=["Old fact"],
+            updated_at="2026-10-01T00:00:00+00:00",
+            session_ids=["session-a"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    client = _MemoryHarnessClient(consolidation_payload={"summary": "Old summary.", "memories": ["Old fact"]})
+
+    consolidated_count = await provider._run_consolidation(  # pyright: ignore[reportPrivateUsage]
+        client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        session=session,
+        force=False,
+        now=datetime(2026, 10, 8, tzinfo=timezone.utc),
+    )
+
+    assert consolidated_count == 1
+    assert client.calls == ["consolidate"]
+    assert store.state == {"last_consolidated_at": "2026-10-08T00:00:00+00:00", "sessions_since_consolidation": []}
+
+
 class _TwoTopicExtractionClient:
     """Chat client whose extraction returns two memories in different topics."""
 

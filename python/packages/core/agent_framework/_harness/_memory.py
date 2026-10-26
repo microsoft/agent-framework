@@ -229,6 +229,21 @@ def _default_state() -> dict[str, Any]:
     return {"last_consolidated_at": None, "sessions_since_consolidation": [], "pending_turn_ids": {}}
 
 
+def _normalize_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Return ``state`` with every maintenance field present and of the expected type.
+
+    Stores may return state saved before a field existed, such as state without ``pending_turn_ids``.
+    """
+    normalized = {**_default_state(), **state}
+    if not isinstance(normalized.get("sessions_since_consolidation"), list):
+        normalized["sessions_since_consolidation"] = []
+    if not isinstance(normalized.get("pending_turn_ids"), dict):
+        normalized["pending_turn_ids"] = {}
+    if not isinstance(normalized.get("last_consolidated_at"), (str, type(None))):
+        normalized["last_consolidated_at"] = None
+    return normalized
+
+
 def _format_search_results(results: Sequence[Mapping[str, Any]]) -> str:
     return json.dumps(list(results), ensure_ascii=False)
 
@@ -897,14 +912,7 @@ class MemoryFileStore(MemoryStore):
         raw_state = self.loads(state_path.read_text(encoding="utf-8"))
         if not isinstance(raw_state, dict):
             raise ValueError("Memory state file must contain a JSON object.")
-        state = {**_default_state(), **cast(dict[str, Any], raw_state)}
-        if not isinstance(state.get("sessions_since_consolidation"), list):
-            state["sessions_since_consolidation"] = []
-        if not isinstance(state.get("pending_turn_ids"), dict):
-            state["pending_turn_ids"] = {}
-        if not isinstance(state.get("last_consolidated_at"), (str, type(None))):
-            state["last_consolidated_at"] = None
-        return state
+        return _normalize_state(cast(dict[str, Any], raw_state))
 
     def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
         """Persist the maintenance state for the current owner."""
@@ -1089,6 +1097,10 @@ class MemoryContextProvider(HistoryProvider):
 
     def _state_async_lock(self, session: AgentSession) -> asyncio.Lock:
         return self._store_async_lock(session, kind="state", key="maintenance")
+
+    def _read_maintenance_state(self, session: AgentSession) -> dict[str, Any]:
+        # Custom stores may return state saved before newer fields existed, so fill them in here.
+        return _normalize_state(self.store.read_state(session, source_id=self.source_id))
 
     def _create_history_provider(self, session: AgentSession) -> FileHistoryProvider:
         return FileHistoryProvider(
@@ -1428,7 +1440,7 @@ class MemoryContextProvider(HistoryProvider):
             # A fresh turn id is recorded even when the session is already pending: runs on the same
             # session can overlap, and a pass that snapshotted an earlier turn must not retire this one.
             async with self._state_async_lock(session):
-                maintenance_state = self.store.read_state(session, source_id=self.source_id)
+                maintenance_state = self._read_maintenance_state(session)
                 session_ids_since_consolidation = cast(list[str], maintenance_state["sessions_since_consolidation"])
                 if session.session_id not in session_ids_since_consolidation:
                     session_ids_since_consolidation.append(session.session_id)
@@ -1562,7 +1574,7 @@ class MemoryContextProvider(HistoryProvider):
         # making LLM calls so concurrent before/after_run invocations don't have to wait through
         # multi-second consolidation calls.
         async with self._state_async_lock(session):
-            maintenance_state = self.store.read_state(session, source_id=self.source_id)
+            maintenance_state = self._read_maintenance_state(session)
             if not force and not self._should_consolidate(maintenance_state, now=now):
                 return 0
             topic_records = self.store.list_topics(session, source_id=self.source_id)
@@ -1599,7 +1611,7 @@ class MemoryContextProvider(HistoryProvider):
         # session IDs so the next after_run will retry instead of silently sliding the window.
         if success_count > 0:
             async with self._state_async_lock(session):
-                maintenance_state = self.store.read_state(session, source_id=self.source_id)
+                maintenance_state = self._read_maintenance_state(session)
                 maintenance_state["last_consolidated_at"] = _timestamp(now)
                 pending_turn_ids = cast(dict[str, str], maintenance_state["pending_turn_ids"])
                 remaining_session_ids = [
