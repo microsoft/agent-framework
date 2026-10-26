@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
@@ -43,6 +44,14 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// resolved at request time through <see cref="GetToolboxToolsAsync"/>. Unknown toolboxes are
 /// rejected when <see cref="FoundryToolboxOptions.StrictMode"/> is <see langword="true"/> and
 /// lazily connected otherwise.
+/// </para>
+/// <para>
+/// Discovered tools with <c>_meta.tool_configuration.require_approval</c> set to <c>always</c>
+/// require approval for each call through <see cref="ApprovalRequiredAIFunction"/>. An explicit
+/// unsupported or malformed configuration also requires approval and is logged as a warning.
+/// Existing approval requirements exposed by the function's services take precedence over metadata.
+/// Tools with no approval configuration, or with <c>require_approval</c> set to <c>never</c>,
+/// retain their normal invocation behavior.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
@@ -893,12 +902,56 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         var wrapped = new List<AITool>(mcpTools.Count);
         foreach (var tool in mcpTools)
         {
-            wrapped.Add(new ConsentAwareMcpClientAIFunction(tool, toolboxName));
+            AIFunction function = new ConsentAwareMcpClientAIFunction(tool, toolboxName);
+            wrapped.Add(this.RequiresToolApproval(tool, toolboxName)
+                ? new ApprovalRequiredAIFunction(function)
+                : function);
         }
 
         _ = version; // reserved for future version-specific routing; currently handled server-side by the proxy.
 
         return new ToolboxOpenResult(new CachedToolbox(client!, httpClient, wrapped), Consents: null);
+    }
+
+    internal bool RequiresToolApproval(AIFunction tool, string toolboxName)
+    {
+        if (tool.GetService<ApprovalRequiredAIFunction>() is not null)
+        {
+            return true;
+        }
+
+        if (tool.GetService<McpClientTool>()?.ProtocolTool.Meta is not { } meta
+            || !meta.TryGetPropertyValue("tool_configuration", out var configuration))
+        {
+            return false;
+        }
+
+        if (configuration is JsonObject toolConfiguration)
+        {
+            if (!toolConfiguration.TryGetPropertyValue("require_approval", out var approval))
+            {
+                return false;
+            }
+
+            if (approval is JsonValue value && value.TryGetValue<string>(out var policy))
+            {
+                if (string.Equals(policy, "always", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                if (string.Equals(policy, "never", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+        }
+
+        this._logger.LogWarning(
+            "Tool '{ToolName}' in toolbox '{ToolboxName}' has an unsupported approval configuration; requiring approval for every call.",
+            tool.Name,
+            toolboxName);
+        return true;
     }
 
     /// <inheritdoc/>

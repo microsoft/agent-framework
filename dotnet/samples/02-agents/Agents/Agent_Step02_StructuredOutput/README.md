@@ -14,21 +14,21 @@ This sample demonstrates how to configure ChatClientAgent to produce structured 
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure OpenAI service endpoint and deployment configured
+- Microsoft Foundry project endpoint and model configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource
 
 **Note**: This sample uses Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource and have the `Cognitive Services OpenAI Contributor` role. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Foundry project and have the `Cognitive Services OpenAI Contributor` role. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
 ## Environment Variables
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Foundry project endpoint
+$env:FOUNDRY_MODEL="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
 ```
 
 ## Run the sample

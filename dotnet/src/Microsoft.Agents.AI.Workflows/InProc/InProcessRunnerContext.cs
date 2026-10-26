@@ -531,25 +531,40 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         if (Interlocked.Exchange(ref this._runEnded, 1) == 0)
         {
-            foreach (string executorId in this._executors.Keys)
+            try
             {
-                Task<Executor> executorTask = this._executors[executorId];
-                Executor executor = await executorTask.ConfigureAwait(false);
+                foreach (string executorId in this._executors.Keys)
+                {
+                    Task<Executor> executorTask = this._executors[executorId];
+                    Executor executor;
+                    try
+                    {
+                        executor = await executorTask.ConfigureAwait(false);
+                    }
+                    catch (Exception) when (executorTask.IsFaulted || executorTask.IsCanceled)
+                    {
+                        // Creating this executor failed or was cancelled, so there is no instance to dispose. A
+                        // creation failure is reported while the run executes.
+                        continue;
+                    }
 
-                if (executor is IAsyncDisposable asyncDisposable)
-                {
-                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-                }
-                else if (executor is IDisposable disposable)
-                {
-                    disposable.Dispose();
+                    if (executor is IAsyncDisposable asyncDisposable)
+                    {
+                        await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                    }
+                    else if (executor is IDisposable disposable)
+                    {
+                        disposable.Dispose();
+                    }
                 }
             }
-
-            if (this._ownsWorkflow)
+            finally
             {
-                await this._workflow.ReleaseOwnershipAsync(this, this._previousOwnership).ConfigureAwait(false);
-                this._ownsWorkflow = false;
+                if (this._ownsWorkflow)
+                {
+                    await this._workflow.ReleaseOwnershipAsync(this, this._previousOwnership).ConfigureAwait(false);
+                    this._ownsWorkflow = false;
+                }
             }
         }
     }
