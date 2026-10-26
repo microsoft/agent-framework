@@ -3519,12 +3519,14 @@ async def test_agent_triggered_compaction_applies_before_next_model_call(
         ]
 
     captured_roles: list[list[str]] = []
+    captured_texts: list[list[str | None]] = []
     original_inner = chat_client_base._inner_get_response
 
     def capture_inner(
         *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
     ) -> Any:
         captured_roles.append([message.role for message in messages])
+        captured_texts.append([message.text for message in messages])
         return original_inner(messages=messages, stream=stream, options=options, **kwargs)
 
     agent = Agent(
@@ -3534,13 +3536,23 @@ async def test_agent_triggered_compaction_applies_before_next_model_call(
     )
 
     with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        run_messages = [
+            Message(role="user", contents=["original task"]),
+            Message(role="assistant", contents=["obsolete planning detail"]),
+            Message(role="user", contents=["plan"]),
+        ]
         if stream:
-            result_text = "".join([update.text or "" async for update in agent.run("plan", stream=True)])
+            result_text = "".join([update.text or "" async for update in agent.run(run_messages, stream=True)])
         else:
-            result_text = (await agent.run("plan")).text
+            result_text = (await agent.run(run_messages)).text
 
     assert result_text == "done"
-    assert captured_roles == [["user"], ["user", "assistant", "tool"]]
+    assert captured_roles == [
+        ["user", "assistant", "user"],
+        ["user", "user", "assistant", "tool"],
+    ]
+    assert "obsolete planning detail" in captured_texts[0]
+    assert "obsolete planning detail" not in captured_texts[1]
 
 
 async def test_chat_agent_uses_client_compaction_defaults_when_agent_unset(chat_client_base: Any) -> None:

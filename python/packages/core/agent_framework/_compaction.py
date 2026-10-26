@@ -56,6 +56,7 @@ _TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
     "code_interpreter_tool_call",
     "shell_tool_call",
     "image_generation_tool_call",
+    "search_tool_call",
 }
 
 
@@ -1411,6 +1412,7 @@ class AgentTriggeredCompactionStrategy:
     async def __call__(self, messages: list[Message]) -> bool:
         """Run the wrapped strategy once for the latest completed trigger call."""
         annotate_message_groups(messages)
+        grouped = _group_messages_by_id(messages)
         trigger_group = _latest_included_group(messages)
         trigger_calls = _completed_function_calls(
             trigger_group,
@@ -1419,6 +1421,21 @@ class AgentTriggeredCompactionStrategy:
         if not trigger_calls:
             return False
 
+        groups_to_hide: list[list[Message]] = [trigger_group]
+        trigger_group_ids = {id(message) for message in trigger_group}
+        for group in grouped.values():
+            if any(id(message) in trigger_group_ids for message in group):
+                continue
+            if not any(
+                message.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is True
+                and not message.additional_properties.get(EXCLUDED_KEY, False)
+                for message in group
+            ):
+                continue
+            if self._is_trigger_only_group(group):
+                groups_to_hide.append(group)
+
+        hidden_messages = [message for group in groups_to_hide for message in group]
         trigger_state = [
             (
                 message,
@@ -1427,9 +1444,9 @@ class AgentTriggeredCompactionStrategy:
                 EXCLUDE_REASON_KEY in message.additional_properties,
                 message.additional_properties.get(EXCLUDE_REASON_KEY),
             )
-            for message in trigger_group
+            for message in hidden_messages
         ]
-        for message in trigger_group:
+        for message in hidden_messages:
             set_excluded(message, excluded=True, reason="agent_compaction_trigger")
 
         try:
@@ -1441,21 +1458,36 @@ class AgentTriggeredCompactionStrategy:
         for message in trigger_group:
             message.additional_properties[_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY] = True
 
-        has_unrelated_tool_calls = any(
-            content.type in _TOOL_CALL_CONTENT_TYPES
-            and not (content.type == "function_call" and content.name == self.tool.name)
-            for message in trigger_group
-            for content in message.contents
-        )
+        has_unrelated_tool_calls = not self._is_trigger_only_group(trigger_group, include_excluded=True)
         trigger_message_ids = {id(message) for message in trigger_group}
         has_other_included_context = any(
             id(message) not in trigger_message_ids and not message.additional_properties.get(EXCLUDED_KEY, False)
             for message in messages
         )
         trigger_changed = self.exclude_trigger and not has_unrelated_tool_calls and has_other_included_context
+        prior_trigger_state = [state for state in trigger_state if id(state[0]) not in trigger_message_ids]
+        self._restore_trigger_group(prior_trigger_state)
         if not trigger_changed:
-            self._restore_trigger_group(trigger_state)
+            current_trigger_state = [state for state in trigger_state if id(state[0]) in trigger_message_ids]
+            self._restore_trigger_group(current_trigger_state)
         return changed or trigger_changed
+
+    def _is_trigger_only_group(
+        self,
+        group: Sequence[Message],
+        *,
+        include_excluded: bool = False,
+    ) -> bool:
+        tool_calls = [
+            content
+            for message in group
+            if include_excluded or not message.additional_properties.get(EXCLUDED_KEY, False)
+            for content in message.contents
+            if content.type in _TOOL_CALL_CONTENT_TYPES
+        ]
+        return bool(tool_calls) and all(
+            content.type == "function_call" and content.name == self.tool.name for content in tool_calls
+        )
 
     @staticmethod
     def _restore_trigger_group(

@@ -990,6 +990,80 @@ async def test_agent_trigger_in_mixed_tool_batch_is_position_independent_and_ret
     assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
 
 
+async def test_agent_trigger_in_mixed_search_batch_is_retained() -> None:
+    strategy = AgentTriggeredCompactionStrategy(
+        SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0),
+        exclude_trigger=True,
+    )
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("old-work", "old_work"),
+        _tool_result("old-work", "old result"),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="compact-1", name=strategy.tool.name, arguments={}),
+                Content.from_search_tool_call(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    arguments={"query": "latest"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="compact-1", result="Compaction requested."),
+                Content.from_search_tool_result(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    result="search result",
+                ),
+            ],
+        ),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[3].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
+
+
+async def test_successive_triggers_do_not_consume_tool_group_retention() -> None:
+    strategy = AgentTriggeredCompactionStrategy(SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=2))
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("work-1", "work_tool"),
+        _tool_result("work-1", "work result 1"),
+        _assistant_named_function_call("work-2", "work_tool"),
+        _tool_result("work-2", "work result 2"),
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        _tool_result("compact-1", "Compaction requested."),
+    ]
+
+    assert await strategy(messages) is False
+
+    messages.extend([
+        _assistant_named_function_call("work-3", "work_tool"),
+        _tool_result("work-3", "work result 3"),
+        _assistant_named_function_call("compact-2", strategy.tool.name),
+        _tool_result("compact-2", "Compaction requested."),
+    ])
+
+    assert await strategy(messages) is True
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[3].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[5].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[6].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[7].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[8].additional_properties.get(EXCLUDED_KEY) is not True
+
+
 async def test_agent_triggered_compaction_restores_request_when_inner_strategy_fails() -> None:
     class _FailingStrategy:
         async def __call__(self, messages: list[Message]) -> bool:
@@ -1272,6 +1346,45 @@ async def test_unload_skills_compaction_preserves_group_with_hosted_tool_call() 
             ],
         ),
         _tool_result("load-pdf", "pdf instructions"),
+        _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
+        _tool_result("unload-pdf", "Skill 'pdf' will be unloaded."),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_unload_skills_compaction_preserves_group_with_search_tool_call() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-pdf",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                ),
+                Content.from_search_tool_call(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    arguments={"query": "pdf"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="load-pdf", result="pdf instructions"),
+                Content.from_search_tool_result(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    result="search result",
+                ),
+            ],
+        ),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
         _tool_result("unload-pdf", "Skill 'pdf' will be unloaded."),
     ]
