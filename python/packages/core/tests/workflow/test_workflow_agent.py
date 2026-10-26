@@ -1028,12 +1028,18 @@ class TestWorkflowAgent:
         agent = WorkflowBuilder(start_executor=usage_only_executor).build().as_agent("usage-only-agent")
 
         non_streaming = await agent.run("hello")
-        streaming = await agent.run("hello", stream=True).get_final_response()
+        stream = agent.run("hello", stream=True)
+        updates = [update async for update in stream]
+        streaming = await stream.get_final_response()
 
         assert non_streaming.usage_details == usage
         assert streaming.usage_details == usage
         assert streaming.text == non_streaming.text
         assert len(streaming.messages) == len(non_streaming.messages)
+        # The filtered messages must not reach the caller through a raw representation either.
+        assert all(update.raw_representation is None for update in updates)
+        raw = streaming.raw_representation
+        assert not any(isinstance(item, AgentResponse) for item in (raw if isinstance(raw, list) else [raw]))
 
     async def test_workflow_as_agent_stream_usage_only_update_does_not_split_a_message(self) -> None:
         """A usage-only AgentResponse between chunks of one streamed message leaves that message whole."""

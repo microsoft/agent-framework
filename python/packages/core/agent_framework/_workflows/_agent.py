@@ -786,7 +786,6 @@ class WorkflowAgent(BaseAgent):
                             response_id=data.response_id or response_id,
                             created_at=data.created_at
                             or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                            raw_representation=cast(AgentResponse[Any], data),
                         )
                     )
                 if updates:
