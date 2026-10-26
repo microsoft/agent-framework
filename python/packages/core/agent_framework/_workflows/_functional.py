@@ -1123,6 +1123,7 @@ class RunContext:
         current_task = asyncio.current_task()
         settled_tasks = self._pause_owned_tasks
         inspected_tasks: set[asyncio.Future[Any]] = set()
+        cancellation_from_settled_task = False
 
         def _pending_owned_tasks() -> list[asyncio.Future[Any]]:
             self._expand_pause_owned_tasks()
@@ -1136,6 +1137,7 @@ class RunContext:
             return pending
 
         def _raise_completed_failure() -> None:
+            nonlocal cancellation_from_settled_task
             for task in settled_tasks:
                 if task in inspected_tasks or not task.done():
                     continue
@@ -1166,6 +1168,7 @@ class RunContext:
                             and self._get_new_descendant_interruption(cast(asyncio.Task[Any], task), {}) is interruption
                         ):
                             continue
+                        cancellation_from_settled_task = True
                         raise
                 if task in self._pause_failure_boundaries:
                     if self._pause_boundary_was_handled(task):
@@ -1199,7 +1202,11 @@ class RunContext:
             if propagate_failures:
                 _raise_completed_failure()
         except BaseException as exc:
-            if isinstance(exc, asyncio.CancelledError) and not isinstance(exc, WorkflowInterrupted):
+            if (
+                isinstance(exc, asyncio.CancelledError)
+                and not isinstance(exc, WorkflowInterrupted)
+                and not cancellation_from_settled_task
+            ):
                 for save_task in list(self._checkpoint_save_tasks):
                     save_task.cancel()
             await self._cancel_workflow_tasks()
