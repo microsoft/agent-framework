@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
@@ -152,6 +153,19 @@ class ValidateAgentSkillLinksTests(unittest.TestCase):
 
         self.assertTrue(
             any("missing local resource: references/guide%20missing.md" in error for error in errors)
+        )
+
+    def test_rejects_percent_encoded_absolute_path_inside_skill(self) -> None:
+        details = self.skill / "references" / "details.md"
+        details.parent.mkdir()
+        details.write_text("# Details\n", encoding="utf-8")
+        encoded = quote(str(details.resolve()), safe="")
+        self.write_skill(f"[Details]({encoded})\n")
+
+        errors = validate_agent_skill_links(self.skills)
+
+        self.assertTrue(
+            any(f"absolute local link is not allowed: {encoded}" in error for error in errors)
         )
 
 

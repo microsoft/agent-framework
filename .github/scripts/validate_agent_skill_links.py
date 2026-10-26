@@ -57,6 +57,10 @@ def validate_agent_skill_links(skills_directory: Path) -> list[str]:
                     continue
 
                 target_path = Path(relative_target)
+                if target_path.is_absolute():
+                    errors.append(f"{markdown_path}: absolute local link is not allowed: {target}")
+                    continue
+
                 candidate = markdown_path.parent / target_path
                 try:
                     resolved_candidate = candidate.resolve(strict=True)
