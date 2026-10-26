@@ -881,7 +881,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "pymilvus", specifier = ">=2.5.3,<3" },
+    { name = "pymilvus", specifier = ">=2.6.0,<3" },
 ]
 
 [[package]]

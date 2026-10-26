@@ -24,8 +24,10 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    # 2.5.3+ provides AsyncMilvusClient.
-    "pymilvus>=2.5.3,<3",
+    # 2.6.0 is the first release whose AsyncMilvusClient exposes the full collection API
+    # this connector relies on (has_collection, list_collections, describe_collection,
+    # describe_index, and prepare_index_params); 2.5.x raises AttributeError on these.
+    "pymilvus>=2.6.0,<3",
 ]
 
 [tool.pytest.ini_options]
