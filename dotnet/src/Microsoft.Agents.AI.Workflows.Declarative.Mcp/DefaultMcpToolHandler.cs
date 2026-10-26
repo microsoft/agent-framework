@@ -268,6 +268,18 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         Uri endpoint = new(serverUrl, UriKind.Absolute);
+        HttpClientTransportOptions transportOptions = new()
+        {
+            Endpoint = endpoint,
+            Name = serverLabel ?? "McpClient",
+            AdditionalHeaders = headers,
+            // Use Streamable HTTP rather than AutoDetect so the client does not negotiate down to the
+            // legacy HTTP+SSE transport, which trusts a server-advertised message endpoint. That
+            // server-controlled endpoint is the primary vector for redirecting the Authorization token
+            // to a different origin; Streamable HTTP keeps every request on the configured origin.
+            TransportMode = HttpTransportMode.StreamableHttp
+        };
+
         HttpClient? httpClient = null;
         if (this._httpClientProvider is not null)
         {
@@ -299,18 +311,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             };
             httpClient = new HttpClient(pinningHandler);
         }
-
-        HttpClientTransportOptions transportOptions = new()
-        {
-            Endpoint = endpoint,
-            Name = serverLabel ?? "McpClient",
-            AdditionalHeaders = headers,
-            // Use Streamable HTTP rather than AutoDetect so the client does not negotiate down to the
-            // legacy HTTP+SSE transport, which trusts a server-advertised message endpoint. That
-            // server-controlled endpoint is the primary vector for redirecting the Authorization token
-            // to a different origin; Streamable HTTP keeps every request on the configured origin.
-            TransportMode = HttpTransportMode.StreamableHttp
-        };
 
         HttpClientTransport? transport = null;
         try

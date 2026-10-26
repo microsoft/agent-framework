@@ -48,6 +48,45 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Theory]
+    [InlineData("ftp://mcp.example/api", false, false)]
+    [InlineData("ftp://mcp.example/api", true, false)]
+    [InlineData("ftp://mcp.example/api", false, true)]
+    [InlineData("ws://mcp.example/api", false, false)]
+    [InlineData("ws://mcp.example/api", true, false)]
+    [InlineData("ws://mcp.example/api", false, true)]
+    public async Task UnsupportedScheme_DoesNotAcquireHttpClientAsync(string serverUrl, bool useProvider, bool useFactory)
+    {
+        // Arrange
+        using HttpClient client = new();
+        using HttpMessageHandler messageHandler = Mock.Of<HttpMessageHandler>();
+        bool clientAcquired = false;
+        HttpClient AcquireClient()
+        {
+            clientAcquired = true;
+            return client;
+        }
+
+        HttpMessageHandler CreateMessageHandler()
+        {
+            clientAcquired = true;
+            return messageHandler;
+        }
+
+        Mock<IHttpClientFactory> factory = new();
+        factory.Setup(f => f.CreateClient("workflow-mcp")).Returns(AcquireClient);
+        await using DefaultMcpToolHandler handler = useFactory
+            ? new(factory.Object, "workflow-mcp")
+            : new(useProvider ? (_, _) => Task.FromResult<HttpClient?>(AcquireClient()) : null, CreateMessageHandler);
+
+        // Act
+        await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(
+            serverUrl, null, "ping", null, null, null));
+
+        // Assert
+        Assert.False(clientAcquired);
+    }
+
+    [Theory]
     [InlineData("ping")]
     [InlineData(DefaultMcpToolHandler.ListToolsToolName)]
     public async Task Provider_SequentialInvocations_CreateAndDisposeSeparateSessionsAsync(string toolName)
