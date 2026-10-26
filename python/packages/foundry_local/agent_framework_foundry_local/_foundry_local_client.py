@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, cast, overload
 
@@ -51,6 +52,10 @@ _APP_NAME = "agent-framework"
 # The built-in web service performs no authentication; the OpenAI SDK still requires a value.
 _WEB_SERVICE_API_KEY = "none"
 
+# Guards first-use initialization: without it, two threads can both observe an
+# uninitialized singleton and the SDK rejects the second `initialize()` call.
+_MANAGER_LOCK = threading.Lock()
+
 
 def _resolve_foundry_local_manager() -> FoundryLocalManager:
     """Return the process-wide Foundry Local manager, initializing it on first use.
@@ -61,10 +66,14 @@ def _resolve_foundry_local_manager() -> FoundryLocalManager:
     manager = FoundryLocalManager.instance
     if manager is not None:
         return manager
-    FoundryLocalManager.initialize(Configuration(app_name=_APP_NAME))
-    manager = FoundryLocalManager.instance
-    if manager is None:  # pragma: no cover - initialize() sets the singleton
-        raise RuntimeError("Foundry Local manager could not be initialized.")
+    with _MANAGER_LOCK:
+        # Re-check under the lock: another thread may have initialized while we waited.
+        manager = FoundryLocalManager.instance
+        if manager is None:
+            FoundryLocalManager.initialize(Configuration(app_name=_APP_NAME))
+            manager = FoundryLocalManager.instance
+            if manager is None:  # pragma: no cover - initialize() sets the singleton
+                raise RuntimeError("Foundry Local manager could not be initialized.")
     return manager
 
 
@@ -305,6 +314,8 @@ class FoundryLocalClient(
                 running. Default is True. The client talks to Foundry Local over the
                 web service's OpenAI-compatible endpoint, so it needs to be running.
                 Pass False only when something else has already started it.
+                This also downloads and registers the execution providers that
+                accelerated (GPU/NPU) model variants need, unless `device` is CPU.
             timeout: Optional timeout for requests to Foundry Local.
                 This timeout is applied to any call to the Foundry Local service.
             prepare_model: Whether to download the model into the cache, and load the model into
@@ -397,6 +408,12 @@ class FoundryLocalClient(
         model_setting: str = settings["model"]  # type: ignore[assignment]
 
         manager = _resolve_foundry_local_manager()
+        if bootstrap and device is not DeviceType.CPU:
+            # A variant is only listed in the catalog once its execution provider has been
+            # downloaded and registered, so on a fresh installation asking for GPU or NPU
+            # (or letting the SDK auto-select) would otherwise report "not found" or
+            # silently fall back to CPU. This is a no-op when the providers are registered.
+            manager.download_and_register_eps()
         # The v2 SDK runs inference in-process; the optional built-in web service is what
         # exposes the OpenAI-compatible REST endpoint this client talks to.
         if bootstrap and not manager.urls:

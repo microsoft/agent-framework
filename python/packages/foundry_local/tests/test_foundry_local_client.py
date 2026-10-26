@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import inspect
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +13,10 @@ from agent_framework.foundry import FoundryLocalClient
 from foundry_local_sdk import DeviceType
 
 from agent_framework_foundry_local._feature_usage import FeatureIndex
-from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
+from agent_framework_foundry_local._foundry_local_client import (
+    FoundryLocalSettings,
+    _resolve_foundry_local_manager,
+)
 
 # Settings Tests
 
@@ -283,3 +288,73 @@ def test_foundry_local_client_init_calls_download_and_load(
 
         mock_foundry_local_model.download.assert_called_once_with()
         mock_foundry_local_model.load.assert_called_once_with()
+
+
+def test_foundry_local_client_registers_execution_providers_for_accelerated_device(
+    mock_foundry_local_manager: MagicMock, mock_foundry_local_model: MagicMock
+) -> None:
+    """Accelerated variants only exist in the catalog once their provider is registered."""
+    gpu_variant = MagicMock()
+    gpu_variant.info.runtime.device_type = DeviceType.GPU
+    mock_foundry_local_model.variants = [gpu_variant]
+
+    with patch(
+        "agent_framework_foundry_local._foundry_local_client._resolve_foundry_local_manager",
+        return_value=mock_foundry_local_manager,
+    ):
+        FoundryLocalClient(model="test-model-id", device=DeviceType.GPU)
+
+        mock_foundry_local_manager.download_and_register_eps.assert_called_once_with()
+
+
+def test_foundry_local_client_skips_execution_providers_for_cpu(
+    mock_foundry_local_manager: MagicMock, mock_foundry_local_model: MagicMock
+) -> None:
+    """An explicit CPU request should not download accelerated providers it will not use."""
+    cpu_variant = MagicMock()
+    cpu_variant.info.runtime.device_type = DeviceType.CPU
+    mock_foundry_local_model.variants = [cpu_variant]
+
+    with patch(
+        "agent_framework_foundry_local._foundry_local_client._resolve_foundry_local_manager",
+        return_value=mock_foundry_local_manager,
+    ):
+        FoundryLocalClient(model="test-model-id", device=DeviceType.CPU)
+
+        mock_foundry_local_manager.download_and_register_eps.assert_not_called()
+        mock_foundry_local_model.select_variant.assert_called_once_with(cpu_variant)
+
+
+def test_resolve_manager_initializes_once_under_concurrency() -> None:
+    """Two threads racing on first use must share one manager, not fail the second one."""
+    manager = MagicMock()
+    initialize_calls: list[int] = []
+    gate = threading.Barrier(2)
+
+    def _initialize(config: object) -> None:
+        initialize_calls.append(1)
+        # The SDK rejects a second initialization, so a race must never reach here twice.
+        assert len(initialize_calls) == 1
+        # Widen the window so both threads observe the uninitialized singleton.
+        time.sleep(0.05)
+        fake_manager_class.instance = manager
+
+    fake_manager_class = MagicMock()
+    fake_manager_class.instance = None
+    fake_manager_class.initialize.side_effect = _initialize
+
+    resolved: list[object] = []
+
+    def _worker() -> None:
+        gate.wait()
+        resolved.append(_resolve_foundry_local_manager())
+
+    with patch("agent_framework_foundry_local._foundry_local_client.FoundryLocalManager", fake_manager_class):
+        threads = [threading.Thread(target=_worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    assert len(initialize_calls) == 1
+    assert resolved == [manager, manager]
