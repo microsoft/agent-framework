@@ -196,8 +196,10 @@ class RawNvidiaEmbeddingClient(
                 base_url=settings.get("base_url") or DEFAULT_BASE_URL,
             )
 
+        # Pass the effective endpoint so serialization records it, rather than OPENAI_BASE_URL or nothing.
         super().__init__(
             model=model_setting,
+            base_url=str(async_client.base_url),
             async_client=async_client,
             additional_properties=additional_properties,
         )

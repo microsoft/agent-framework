@@ -166,6 +166,37 @@ async def test_close_leaves_an_injected_client_open() -> None:
     await async_client.close()
 
 
+@pytest.mark.parametrize("client_class", [RawNvidiaEmbeddingClient, NvidiaEmbeddingClient])
+def test_serialization_keeps_a_custom_endpoint(
+    client_class: type[RawNvidiaEmbeddingClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restored client must call the endpoint it was created with, not NVIDIA's hosted one."""
+    monkeypatch.delenv("OPENAI_ORG_ID", raising=False)
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://openai-env/v1")
+    client = client_class(model="test-model", base_url="http://nim.local:8000/v1")
+
+    data = client.to_dict()
+    restored = client_class.from_dict(data)
+
+    assert data["base_url"] == "http://nim.local:8000/v1/"
+    assert str(restored.client.base_url) == "http://nim.local:8000/v1/"
+
+
+@pytest.mark.parametrize("client_class", [RawNvidiaEmbeddingClient, NvidiaEmbeddingClient])
+def test_serialization_keeps_an_injected_clients_endpoint(
+    client_class: type[RawNvidiaEmbeddingClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_ORG_ID", raising=False)
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    async_client = AsyncOpenAI(api_key="test-key", base_url="http://injected/v1")
+    client = client_class(model="test-model", async_client=async_client)
+
+    restored = client_class.from_dict(client.to_dict())
+
+    assert str(restored.client.base_url) == "http://injected/v1/"
+
+
 # region: wiring
 
 
