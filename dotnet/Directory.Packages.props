@@ -28,10 +28,10 @@
     <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.7" />
     <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.9" />
     <PackageVersion Include="Azure.Search.Documents" Version="12.0.0" />
-    <PackageVersion Include="Azure.AI.Projects" Version="3.0.0-beta.3" />
-    <!-- Azure.AI.Projects 3.0.0-beta.3 declares a dependency on an unpublished 3.0.0-alpha build of this package,
+    <PackageVersion Include="Azure.AI.Projects" Version="3.0.0-beta.5" />
+    <!-- Azure.AI.Projects 3.0.0-beta.5 declares a dependency on an unpublished 3.0.0-alpha build of this package,
          which makes NuGet raise NU1603 and fall back to the stale 3.0.0-beta.1. Pin the matching beta explicitly. -->
-    <PackageVersion Include="Azure.AI.Extensions.OpenAI" Version="3.0.0-beta.3" />
+    <PackageVersion Include="Azure.AI.Extensions.OpenAI" Version="3.0.0-beta.5" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.Core" Version="1.63.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
