@@ -187,6 +187,7 @@ class RawFoundryChatClient(
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw Microsoft Foundry chat client.
 
@@ -207,6 +208,8 @@ class RawFoundryChatClient(
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         foundry_settings = load_settings(
             FoundrySettings,
@@ -255,9 +258,13 @@ class RawFoundryChatClient(
         if owns_project_client:
             openai_kwargs["http_client"] = create_foundry_feature_usage_http_client()
 
+        openai_client = project_client.get_openai_client(**openai_kwargs)
+        if timeout is not None:
+            openai_client = openai_client.with_options(timeout=timeout)
+
         super().__init__(
             model=resolved_model,
-            async_client=project_client.get_openai_client(**openai_kwargs),
+            async_client=openai_client,
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,
@@ -1129,6 +1136,7 @@ class FoundryChatClient(
         additional_properties: dict[str, Any] | None = None,
         middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry chat client.
 
@@ -1149,6 +1157,8 @@ class FoundryChatClient(
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middleware.
             function_invocation_configuration: Optional function invocation configuration.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -1165,4 +1175,5 @@ class FoundryChatClient(
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
+            timeout=timeout,
         )
