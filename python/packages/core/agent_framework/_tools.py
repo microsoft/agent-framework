@@ -2279,19 +2279,31 @@ async def _auto_invoke_function(
     # the innermost handler answers it before the tool runs.
     payload_is_not_an_object = _function_call_payload_is_not_an_object(function_call_content)
     parsed_args = dict(function_call_content.parse_arguments() or {})
-    wrapped_raw_value = parsed_args.get("raw") if payload_is_not_an_object and set(parsed_args) == {"raw"} else None
+    wrapped_raw_present = payload_is_not_an_object and set(parsed_args) == {"raw"}
+    wrapped_raw_value = parsed_args.get("raw") if wrapped_raw_present else None
 
     def _unrepaired_wrapper(arguments: Any) -> bool:
         """Return whether the arguments are still the wrapped malformed payload.
 
-        The wrapper counts as repaired only when middleware replaced it. Keeping
-        the original ``raw`` entry - which an argument-injecting middleware does
-        - leaves the call malformed, while a ``raw`` entry the tool itself
-        declares is ordinary arguments and never counts as the wrapper.
+        Wrapper presence is tracked separately from the wrapped value: ``None``
+        and ``NaN`` are legitimate contents of a wrapper, not signs that one is
+        absent. The wrapper counts as repaired only when middleware replaced
+        it. Keeping the original ``raw`` entry - which an argument-injecting
+        middleware does - leaves the call malformed, while a ``raw`` entry the
+        tool itself declares is ordinary arguments and never counts as the
+        wrapper.
         """
-        if wrapped_raw_value is None or _tool_declares_parameter(tool, "raw"):
+        if not wrapped_raw_present or _tool_declares_parameter(tool, "raw"):
             return False
-        return isinstance(arguments, Mapping) and cast("Mapping[str, Any]", arguments).get("raw") == wrapped_raw_value
+        if not isinstance(arguments, Mapping):
+            return False
+        raw_value = cast("Mapping[str, Any]", arguments).get("raw")
+        return raw_value == wrapped_raw_value or (
+            isinstance(raw_value, float)
+            and isinstance(wrapped_raw_value, float)
+            and raw_value != raw_value
+            and wrapped_raw_value != wrapped_raw_value
+        )
 
     # Filter out internal framework kwargs before passing to tools.
     # conversation_id is an internal tracking ID that should not be forwarded to tools.

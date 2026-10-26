@@ -2458,3 +2458,76 @@ def test_skip_parsing_is_singleton() -> None:
 
 
 # endregion
+
+
+@pytest.mark.parametrize("arguments", ["null", "NaN"])
+async def test_malformed_null_and_nan_payloads_are_answered_without_middleware(arguments: str) -> None:
+    """A wrapper whose raw entry is None or NaN is still a wrapper.
+
+    ``parse_arguments()`` wraps ``"null"`` as ``{"raw": None}`` and ``"NaN"``
+    as ``{"raw": <NaN>}``; neither the absence of a value nor the NaN
+    inequality may un-mark the wrapper.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments=arguments),
+        ],
+        tools=[account_tool],
+        config={},
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
+
+
+@pytest.mark.parametrize("arguments", ["null", "NaN"])
+async def test_injecting_middleware_does_not_unmark_null_or_nan_wrappers(arguments: str) -> None:
+    """An injecting middleware keeps the raw entry, so the call stays malformed.
+
+    The injected key changes the mapping but the wrapper survives with its
+    original None/NaN value, and the wrapper-presence check is value-safe for
+    both.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments=arguments),
+        ],
+        tools=[account_tool],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(_InjectUser()),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "not a JSON object" in str(result.exception)
