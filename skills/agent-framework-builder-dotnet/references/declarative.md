@@ -22,6 +22,11 @@ commitments.
 
 - Supply the chat clients, project clients, connections, tools, and external handlers the definition references.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
+- `DefaultMcpToolHandler` creates and disposes an MCP client per invocation, including discovery; it does not retain
+  implicit server-side session state across calls, approval waits, or checkpoint resumes. Use explicit state handles
+  or a custom handler with a documented session-lifetime contract when continuity is required.
+- Dispose the default MCP handler when its host scope ends; its HTTP handler is reusable across invocations, but
+  supplied `HttpClient` instances remain caller-owned.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.

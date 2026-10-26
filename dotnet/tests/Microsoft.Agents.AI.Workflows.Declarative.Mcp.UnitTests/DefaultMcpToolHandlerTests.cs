@@ -82,7 +82,7 @@ public sealed class DefaultMcpToolHandlerTests
         await handler.DisposeAsync();
         async Task actAsync() => await handler.DisposeAsync();
 
-        // Assert - Second dispose should throw ObjectDisposedException from the semaphore
+        // Assert
         await Assert.ThrowsAsync<ObjectDisposedException>(actAsync);
     }
 
@@ -227,7 +227,7 @@ public sealed class DefaultMcpToolHandlerTests
 
     #endregion
 
-    #region Caching Tests
+    #region Invocation Tests
 
     [Fact]
     public async Task InvokeToolAsync_SameServerUrl_ShouldCallProviderOncePerAttemptWhenConnectionFailsAsync()
@@ -247,8 +247,6 @@ public sealed class DefaultMcpToolHandlerTests
         try
         {
             // Act - Call twice with the same server URL
-            // Since there's no real server, the McpClient.CreateAsync will fail,
-            // so the client won't be cached and the provider will be called each time
             for (int i = 0; i < 2; i++)
             {
                 try
@@ -267,7 +265,7 @@ public sealed class DefaultMcpToolHandlerTests
                 }
             }
 
-            // Assert - Provider is called each time because McpClient creation fails before caching
+            // Assert
             Assert.Equal(2, providerCallCount);
         }
         finally
@@ -362,196 +360,13 @@ public sealed class DefaultMcpToolHandlerTests
                 }
             }
 
-            // Assert - Different headers should create different cache keys
+            // Assert
             Assert.Equal(2, providerCallCount);
         }
         finally
         {
             await handler.DisposeAsync();
         }
-    }
-
-    #endregion
-
-    #region ComputeHeadersHash Tests
-
-    [Fact]
-    public void ComputeHeadersHash_WithNullHeaders_ReturnsEmptyString()
-    {
-        // Act
-        string result = DefaultMcpToolHandler.ComputeHeadersHash(null);
-
-        // Assert
-        Assert.Equal(string.Empty, result);
-    }
-
-    [Fact]
-    public void ComputeHeadersHash_WithEmptyHeaders_ReturnsEmptyString()
-    {
-        // Act
-        string result = DefaultMcpToolHandler.ComputeHeadersHash(new Dictionary<string, string>());
-
-        // Assert
-        Assert.Equal(string.Empty, result);
-    }
-
-    [Fact]
-    public void ComputeHeadersHash_SameHeadersDifferentOrder_ReturnsSameHash()
-    {
-        // Arrange
-        Dictionary<string, string> headers1 = new()
-        {
-            ["Authorization"] = "Bearer token123",
-            ["X-Custom"] = "value1"
-        };
-        Dictionary<string, string> headers2 = new()
-        {
-            ["X-Custom"] = "value1",
-            ["Authorization"] = "Bearer token123"
-        };
-
-        // Act
-        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
-        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
-
-        // Assert
-        Assert.Equal(hash2, hash1);
-    }
-
-    [Fact]
-    public void ComputeHeadersHash_SameKeysDifferentCaseKeys_ReturnsSameHash()
-    {
-        // Arrange — RFC 7230: header names are case-insensitive
-        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token" };
-        Dictionary<string, string> headers2 = new() { ["authorization"] = "Bearer token" };
-
-        // Act
-        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
-        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
-
-        // Assert
-        Assert.Equal(hash2, hash1);
-    }
-
-    [Fact]
-    public void ComputeHeadersHash_SameKeysDifferentCaseValues_ReturnsDifferentHash()
-    {
-        // Arrange — RFC 7235: credentials are case-sensitive
-        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
-        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
-
-        // Act
-        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
-        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
-
-        // Assert
-        Assert.NotEqual(hash2, hash1);
-    }
-
-    [Fact]
-    public void ComputeHeadersHash_DifferentHeaders_ReturnsDifferentHash()
-    {
-        // Arrange
-        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token1" };
-        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer token2" };
-
-        // Act
-        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
-        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
-
-        // Assert
-        Assert.NotEqual(hash2, hash1);
-    }
-
-    #endregion
-
-    #region Cache Key Discrimination Tests
-
-    // These tests exercise BuildCacheKey directly because the integration path
-    // (InvokeToolAsync against a fake server) doesn't surface cache-hit behavior
-    // without standing up a real MCP server — McpClient.CreateAsync fails before
-    // _clients[key] = newClient runs, so nothing ever gets cached.
-    // Tuple equality on the returned 4-tuple verifies that the dimensions
-    // collectively discriminate cache entries.
-
-    [Fact]
-    public void BuildCacheKey_SameInputs_ReturnsEqualKeys()
-    {
-        // Arrange
-        Dictionary<string, string> headers = new() { ["Authorization"] = "Bearer token" };
-
-        // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
-
-        // Assert
-        Assert.Equal(key2, key1);
-    }
-
-    [Fact]
-    public void BuildCacheKey_DifferentConnectionName_ReturnsDifferentKeys()
-    {
-        // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-a", null);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-b", null);
-
-        // Assert
-        Assert.NotEqual(key2, key1);
-        Assert.Equal("connection-a", key1.Connection);
-        Assert.Equal("connection-b", key2.Connection);
-    }
-
-    [Fact]
-    public void BuildCacheKey_DifferentServerLabel_ReturnsDifferentKeys()
-    {
-        // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-a", null, null);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-b", null, null);
-
-        // Assert
-        Assert.NotEqual(key2, key1);
-        Assert.Equal("label-a", key1.Label);
-        Assert.Equal("label-b", key2.Label);
-    }
-
-    [Fact]
-    public void BuildCacheKey_CaseSensitiveUrlPath_ReturnsDifferentKeys()
-    {
-        // Arrange — RFC 3986: URL path is case-sensitive
-        // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/Tools", null, null, null);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/tools", null, null, null);
-
-        // Assert
-        Assert.NotEqual(key2, key1);
-    }
-
-    [Fact]
-    public void BuildCacheKey_HeaderValuesCaseSensitive_ReturnsDifferentKeys()
-    {
-        // Arrange — RFC 7235: credentials are case-sensitive
-        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
-        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
-
-        // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers1);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers2);
-
-        // Assert — header value case must propagate into the cache key
-        Assert.NotEqual(key2, key1);
-        Assert.NotEqual(key2.HeadersHash, key1.HeadersHash);
-    }
-
-    [Fact]
-    public void BuildCacheKey_NullLabelAndConnection_NormalizesToEmptyString()
-    {
-        // Act
-        var key = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, null);
-
-        // Assert — verifies null-safety contract callers rely on
-        Assert.Equal(string.Empty, key.Label);
-        Assert.Equal(string.Empty, key.Connection);
-        Assert.Equal(string.Empty, key.HeadersHash);
     }
 
     #endregion

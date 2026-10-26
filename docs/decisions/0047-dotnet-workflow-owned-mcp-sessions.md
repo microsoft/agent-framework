@@ -92,8 +92,9 @@ The remaining baseline continuity requirement is the **active invocation**, not
 the entire workflow execution. A completed call followed by an approval wait is
 different from a tool call that is still awaiting its result.
 
-This proposal is **documentation-only**, does not change the current runtime or
-SDK behavior, and does not change the Python implementation.
+The accompanying implementation changes the .NET default tool handler's client
+lifetime, not the supported MCP protocol or the workflow runtime's ownership
+model. It does not change the Python implementation.
 
 ## Decision Drivers
 
@@ -113,16 +114,14 @@ SDK behavior, and does not change the Python implementation.
 1. Retain the handler-wide bounded MCP cache and reference-counted HTTP sharing.
 2. Own MCP connections for the entire logical workflow session, with optional
    factory-managed HTTP handler reuse, as originally proposed in this ADR.
-3. Decouple connection lifetime from workflow state management, with optional
-   factory-managed HTTP handler reuse and a separately defined client-isolation
-   policy; invocation-scoped clients are one possible implementation.
+3. Use invocation-scoped MCP clients, with reusable HTTP handlers and a
+   separately defined client-isolation policy.
 4. Share one application-wide initialized MCP client or `HttpClient`.
 
 ## Decision Outcome
 
-Proposed chosen option: **decouple connection lifetime from workflow state
-management, with optional factory-managed HTTP handler reuse and explicit client
-security boundaries**.
+Proposed chosen option: **invocation-scoped MCP clients with reusable HTTP
+handlers**, decoupling connection lifetime from workflow state management.
 
 Do not introduce workflow-runtime resource ownership hooks solely to preserve MCP
 session state between completed tool calls. A workflow pause, approval wait, or
@@ -131,10 +130,10 @@ compatible HTTP handler and connection pool is independent of MCP client reuse.
 
 This revises the original workflow-lifetime ownership proposal. It does not
 establish that arbitrary MCP clients are interchangeable or safe to share across
-workflows. Whether clients should be invocation-scoped or retained within an
-explicit security boundary remains open. Exact API shape, migration of currently
-cached connections, and any optional stateful integration also remain subject to
-design review.
+workflows. The default handler uses invocation-scoped clients; applications
+requiring cross-call session continuity supply an explicitly scoped integration.
+The existing public invocation and provider contracts remain unchanged. Review
+of the changed no-provider lifetime and its migration guidance remains required.
 
 ### Security isolation remains a separate requirement
 
@@ -247,12 +246,11 @@ same HTTP client or `null`. Preserve that contract. The callback may select
 different credentials on successive invocations and must not silently become a
 once-per-workflow factory.
 
-The non-provider path currently caches initialized clients by server URL, label,
+The previous non-provider path cached initialized clients by server URL, label,
 connection name, and explicit headers. Moving that path to invocation-scoped
-clients would be a behavioral change for servers relying on implicit session
-state, and would add initialization cost for older protocol revisions. It needs
-explicit migration documentation, not a claim that all deployed MCP servers are
-stateless.
+clients is a behavioral change for servers relying on implicit session state,
+and adds initialization cost for older protocol revisions. It needs explicit
+migration documentation, not a claim that all deployed MCP servers are stateless.
 
 Applications that genuinely require cross-call MCP session continuity need an
 explicitly scoped integration, such as a custom `IMcpToolHandler`, with
@@ -331,7 +329,7 @@ handler/connection reuse before claiming a performance improvement.
 - Bad, because idle retention consumes resources and does not provide
   cross-process checkpoint continuity or justify safe client sharing.
 
-### 3. Independent client-isolation policy with optional HTTP factory reuse
+### 3. Invocation-scoped clients with reusable HTTP handlers
 
 - Good, because resource retention can follow actual security and operation
   requirements rather than the workflow's potentially long unattended lifetime.
@@ -386,10 +384,20 @@ This proposal targets the .NET declarative MCP integration. It does not implemen
 the new protocol, add interactive elicitation or subscriptions, redesign Python,
 change result conversion, or introduce durable MCP reconnection.
 
-Before implementation, deciders must approve the concrete client security
-boundary and retention policy, legacy-cache migration, factory API and
-transport configuration, and any explicitly stateful escape hatch. Preserve
-existing guards until their replacement lifecycle is implemented and validated.
+The implementation keeps one lazily created, handler-owned `HttpMessageInvoker`
+for the default HTTP pipeline. Each invocation owns a separate MCP client,
+transport, HTTP wrapper, and origin-policy handler. Its forwarding handler borrows
+the shared invoker rather than disposing it. Handler shutdown drains admitted
+invocations before disposing the shared HTTP pipeline. No workflow-runtime
+ownership hooks, connection registry, HTTP-client cache, or lease-counting pool
+are introduced.
+
+This does not add an `IHttpClientFactory` API or dependency. Factory integration
+above remains guidance for a future additive API. The existing provider callback
+continues to borrow application-supplied clients under its existing contract.
+
+Deciders must review the invocation boundary, legacy-cache migration, transport
+configuration, and explicitly stateful escape hatch before accepting the ADR.
 
 Confirm EM/architect involvement through the listed review participants before
 acceptance. Request `westey-m`'s review and inform `rhurey`; PR approval is the

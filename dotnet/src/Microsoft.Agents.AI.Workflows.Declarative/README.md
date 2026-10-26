@@ -58,16 +58,16 @@ resumes the registered invocation only after a matching approval response.
 
 ### MCP session lifetime
 
-`DefaultMcpToolHandler` caches MCP sessions by server URL, label, connection name,
-and explicit request headers when no custom HTTP client provider is configured.
-Dispose the handler when its owning scope ends.
+`DefaultMcpToolHandler` creates a separate MCP client for every invocation,
+including `tools/list`, and disposes it before completing. This applies with or
+without `httpClientProvider`, even when the provider returns the same
+`HttpClient` or `null`. The provider is still called for every invocation.
 
-When `httpClientProvider` is configured, each invocation (including `tools/list`)
-calls the provider, opens a separate MCP session, and disposes that session before
-completing. This also applies when the provider returns the same `HttpClient` or
-returns `null` for the default transport. Caller-supplied HTTP clients remain
-caller-owned; handler-created fallback clients are disposed with the invocation.
-Handler disposal waits for active provider-backed invocations to finish cleanup.
+Each handler-created HTTP client is disposed with its invocation. These clients
+reuse a handler-owned HTTP connection pool, while their request headers and
+endpoint-specific policy remain separate. Caller-supplied HTTP clients remain
+caller-owned. Dispose the handler when its owning scope ends; disposal waits for
+all active invocations to finish cleanup before releasing its HTTP handler.
 Disposal from within an active invocation (including a provider callback or its
 child tasks) throws `InvalidOperationException` without starting shutdown, rather
 than waiting on itself. Dispose the handler from its owning scope.
@@ -75,11 +75,14 @@ Non-cancellation session and transport cleanup failures are reported through
 `System.Diagnostics.Trace` warnings and do not replace a tool result or its
 original error.
 
-Provider-backed calls therefore incur session setup per invocation and do not
-preserve server-side session state between calls. Applications requiring session
-continuity should implement `IMcpToolHandler` with an explicit authentication
-ownership and session lifetime contract, rather than sharing sessions based only
-on the server address.
+This changes the previous no-provider behavior, which retained initialized MCP
+clients across calls. Calls now incur any protocol session setup per invocation
+and do not preserve implicit server-side session state between calls, including
+across approval waits or checkpoint resumes. Keep durable workflow state in
+workflow variables/checkpoints and pass explicit remote state handles as tool
+arguments where supported. Applications requiring session continuity should
+implement `IMcpToolHandler` with an explicit authentication ownership and session
+lifetime contract. HTTP connection pooling does not provide MCP session continuity.
 
 ### ⚙️ Foundry Actions
 

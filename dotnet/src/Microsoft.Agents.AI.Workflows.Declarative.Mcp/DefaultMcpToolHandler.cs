@@ -6,7 +6,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -26,10 +25,9 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// This provider supports per-server authentication via the <c>httpClientProvider</c> callback.
 /// The callback allows different MCP servers to use different authentication configurations by returning
 /// a pre-configured <see cref="HttpClient"/> for each server.
-/// Provider-backed invocations create and dispose a separate MCP session for every call, including
-/// <c>tools/list</c>, because provider authentication is not represented in the session cache key.
-/// Without a provider, sessions are cached by server URL, label, connection name, and explicit headers.
-/// Non-cancellation cleanup failures are reported through <see cref="Trace"/> warnings without replacing
+/// Every invocation creates and disposes a separate MCP client, including <c>tools/list</c>.
+/// Handler-created HTTP clients reuse an underlying HTTP handler without sharing MCP session state.
+/// Non-cancellation session and transport cleanup failures are reported through <see cref="Trace"/> warnings without replacing
 /// the invocation result or error.
 /// </remarks>
 public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
@@ -45,13 +43,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
-    private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
-    private readonly Dictionary<(string Url, string Label, string Connection, string HeadersHash), ClientConnection> _clients = [];
-    private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
-    private readonly SemaphoreSlim _clientLock = new(1, 1);
-    private readonly AsyncLocal<ProviderInvocationContext?> _providerInvocationContext = new();
-    private TaskCompletionSource<bool>? _providerInvocationsDrained;
-    private int _activeProviderInvocations;
+    private readonly Lazy<HttpMessageInvoker> _httpMessageInvoker;
+    private readonly object _invocationLock = new();
+    private readonly AsyncLocal<InvocationScope?> _currentInvocation = new();
+    private TaskCompletionSource<bool>? _invocationsDrained;
+    private int _activeInvocations;
     private bool _disposing;
 
     /// <summary>
@@ -63,9 +59,9 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     /// configured with any required authentication. Return <see langword="null"/> to use a default HttpClient with no auth.
     /// <para>
     /// The callback is invoked for each tool invocation. MCP sessions are not cached when a callback is
-    /// configured, even if it returns the same client or <see langword="null"/>. This adds session setup
-    /// per call and does not preserve server-side session state between calls. Supplied HTTP clients
-    /// remain caller-owned. Applications requiring session continuity should provide an
+    /// configured, even if it returns the same client or <see langword="null"/>. MCP clients are also
+    /// invocation-scoped without a callback; server-side session state is not preserved between calls.
+    /// Supplied HTTP clients remain caller-owned. Applications requiring session continuity should provide an
     /// <see cref="IMcpToolHandler"/> with an explicitly scoped authentication and session lifetime.
     /// </para>
     /// <para>
@@ -86,7 +82,8 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         Func<HttpMessageHandler> httpMessageHandlerFactory)
     {
         this._httpClientProvider = httpClientProvider;
-        this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
+        Throw.IfNull(httpMessageHandlerFactory);
+        this._httpMessageInvoker = new(() => new HttpMessageInvoker(httpMessageHandlerFactory(), disposeHandler: true));
     }
 
     /// <inheritdoc/>
@@ -119,55 +116,14 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             }
         }
 
-        if (this._httpClientProvider is not null)
+        cancellationToken.ThrowIfCancellationRequested();
+        using InvocationScope invocation = this.EnterInvocation();
+        ClientConnection connection = await this.CreateClientAsync(
+            serverUrl.Trim(), serverLabel, headers, cancellationToken).ConfigureAwait(false);
+        await using (connection.ConfigureAwait(false))
         {
-            TaskCompletionSource<bool> invocationCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                this.ThrowIfDisposing();
-                if (this._activeProviderInvocations++ == 0)
-                {
-                    this._providerInvocationsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                }
-            }
-            finally
-            {
-                this._clientLock.Release();
-            }
-
-            ProviderInvocationContext? previousInvocation = this._providerInvocationContext.Value;
-            this._providerInvocationContext.Value = new(invocationCompleted.Task, previousInvocation);
-            try
-            {
-                ClientConnection invocationClient = await this.CreateClientAsync(
-                    serverUrl.Trim(), serverLabel, headers, httpClientCacheKey: null, cancellationToken).ConfigureAwait(false);
-                await using (invocationClient.ConfigureAwait(false))
-                {
-                    return await InvokeClientAsync(invocationClient.Client, toolName, arguments, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            finally
-            {
-                await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-                try
-                {
-                    if (--this._activeProviderInvocations == 0)
-                    {
-                        this._providerInvocationsDrained!.SetResult(true);
-                    }
-                }
-                finally
-                {
-                    invocationCompleted.SetResult(true);
-                    this._providerInvocationContext.Value = previousInvocation;
-                    this._clientLock.Release();
-                }
-            }
+            return await InvokeClientAsync(connection.Client, toolName, arguments, cancellationToken).ConfigureAwait(false);
         }
-
-        McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, connectionName, cancellationToken).ConfigureAwait(false);
-        return await InvokeClientAsync(client, toolName, arguments, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<McpServerToolResultContent> InvokeClientAsync(
@@ -219,61 +175,36 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
     /// <inheritdoc/>
     /// <exception cref="InvalidOperationException">
-    /// Disposal is requested from an active provider-backed invocation, including a child execution context.
+    /// Disposal is requested from an active MCP invocation, including a child execution context.
     /// Dispose the handler from its owning scope instead.
     /// </exception>
     public async ValueTask DisposeAsync()
     {
-        for (ProviderInvocationContext? context = this._providerInvocationContext.Value; context is not null; context = context.Parent)
+        for (InvocationScope? context = this._currentInvocation.Value; context is not null; context = context.Parent)
         {
             if (!context.Completion.IsCompleted)
             {
-                throw new InvalidOperationException("Cannot dispose the MCP handler from an active provider-backed invocation.");
+                throw new InvalidOperationException("Cannot dispose the MCP handler from an active MCP invocation.");
             }
         }
 
-        Task? providerInvocations;
-        await this._clientLock.WaitAsync().ConfigureAwait(false);
-        try
+        Task? invocations;
+        lock (this._invocationLock)
         {
             this.ThrowIfDisposing();
             this._disposing = true;
-            providerInvocations = this._providerInvocationsDrained?.Task;
+            invocations = this._invocationsDrained?.Task;
         }
-        finally
+
+        if (invocations is not null)
         {
-            this._clientLock.Release();
+            await invocations.ConfigureAwait(false);
         }
 
-        if (providerInvocations is not null)
+        if (this._httpMessageInvoker.IsValueCreated)
         {
-            await providerInvocations.ConfigureAwait(false);
+            this._httpMessageInvoker.Value.Dispose();
         }
-
-        await this._clientLock.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            foreach (ClientConnection client in this._clients.Values)
-            {
-                await client.DisposeAsync().ConfigureAwait(false);
-            }
-
-            this._clients.Clear();
-
-            // Dispose only HttpClients that the handler created (not user-provided ones)
-            foreach (HttpClient httpClient in this._ownedHttpClients.Values)
-            {
-                httpClient.Dispose();
-            }
-
-            this._ownedHttpClients.Clear();
-        }
-        finally
-        {
-            this._clientLock.Release();
-        }
-
-        this._clientLock.Dispose();
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
@@ -286,66 +217,37 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
     }
 
-    private async Task<McpClient> GetOrCreateClientAsync(
-        string serverUrl,
-        string? serverLabel,
-        IDictionary<string, string>? headers,
-        string? connectionName,
-        CancellationToken cancellationToken)
+    private InvocationScope EnterInvocation()
     {
-        string trimmedUrl = serverUrl.Trim();
-        var clientCacheKey = BuildCacheKey(trimmedUrl, serverLabel, connectionName, headers);
-
-        await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        lock (this._invocationLock)
         {
             this.ThrowIfDisposing();
-            if (this._clients.TryGetValue(clientCacheKey, out ClientConnection? existingClient))
+            if (this._activeInvocations++ == 0)
             {
-                return existingClient.Client;
+                this._invocationsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
             }
+        }
 
-            ClientConnection newClient = await this.CreateClientAsync(trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
-            this._clients[clientCacheKey] = newClient;
-            return newClient.Client;
-        }
-        finally
-        {
-            this._clientLock.Release();
-        }
+        InvocationScope invocation = new(this, this._currentInvocation.Value);
+        this._currentInvocation.Value = invocation;
+        return invocation;
     }
-
-    /// <summary>
-    /// Builds the per-client cache key as a 4-tuple of
-    /// (trimmed serverUrl, serverLabel, connectionName, headers hash). All four components
-    /// participate so that callers using different labels/connections/headers receive
-    /// distinct <see cref="McpClient"/> instances even when targeting the same URL.
-    /// </summary>
-    internal static (string Url, string Label, string Connection, string HeadersHash) BuildCacheKey(
-        string trimmedUrl,
-        string? serverLabel,
-        string? connectionName,
-        IDictionary<string, string>? headers) =>
-        (trimmedUrl, serverLabel ?? string.Empty, connectionName ?? string.Empty, ComputeHeadersHash(headers));
 
     private async Task<ClientConnection> CreateClientAsync(
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
-        string? httpClientCacheKey,
         CancellationToken cancellationToken)
     {
-        // Only the no-provider path shares handler-owned HTTP clients.
+        Uri endpoint = new(serverUrl, UriKind.Absolute);
         HttpClient? httpClient = null;
-        bool ownsHttpClient = false;
-
         if (this._httpClientProvider is not null)
         {
             httpClient = await this._httpClientProvider(serverUrl, cancellationToken).ConfigureAwait(false);
         }
 
-        if (httpClient is null &&
-            (httpClientCacheKey is null || !this._ownedHttpClients.TryGetValue(httpClientCacheKey, out httpClient)))
+        bool ownsHttpClient = httpClient is null;
+        if (httpClient is null)
         {
             // Pin credential headers to the configured server origin as defense-in-depth. Forcing
             // StreamableHttp (below) already removes the primary vector (a server-advertised cross-origin
@@ -359,21 +261,16 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             // SDK's built-in OAuth flow. If OAuth support is ever added here, requests to the authorization
             // server (a different origin than the MCP resource server) legitimately carry credentials, so
             // those auth-server origins would need to be allow-listed to avoid breaking the token exchange.
-            OriginPinningHandler pinningHandler = new(new Uri(serverUrl)) { InnerHandler = this._httpMessageHandlerFactory() };
+            OriginPinningHandler pinningHandler = new(endpoint)
+            {
+                InnerHandler = new SharedHttpMessageHandler(this._httpMessageInvoker.Value)
+            };
             httpClient = new HttpClient(pinningHandler);
-            if (httpClientCacheKey is null)
-            {
-                ownsHttpClient = true;
-            }
-            else
-            {
-                this._ownedHttpClients[httpClientCacheKey] = httpClient;
-            }
         }
 
         HttpClientTransportOptions transportOptions = new()
         {
-            Endpoint = new Uri(serverUrl),
+            Endpoint = endpoint,
             Name = serverLabel ?? "McpClient",
             AdditionalHeaders = headers,
             // Use Streamable HTTP rather than AutoDetect so the client does not negotiate down to the
@@ -383,16 +280,24 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             TransportMode = HttpTransportMode.StreamableHttp
         };
 
-        HttpClientTransport transport = new(transportOptions, httpClient, ownsHttpClient: ownsHttpClient);
-
+        HttpClientTransport? transport = null;
         try
         {
+            transport = new(transportOptions, httpClient, ownsHttpClient: ownsHttpClient);
             McpClient client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
             return new ClientConnection(client, transport);
         }
         catch
         {
-            await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+            if (transport is not null)
+            {
+                await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+            }
+            else if (ownsHttpClient)
+            {
+                httpClient?.Dispose();
+            }
+
             throw;
         }
     }
@@ -406,11 +311,34 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             CheckCertificateRevocationList = true
         };
 
-    private sealed class ProviderInvocationContext(Task completion, ProviderInvocationContext? parent)
+    private sealed class InvocationScope(DefaultMcpToolHandler owner, InvocationScope? parent) : IDisposable
     {
-        public Task Completion { get; } = completion;
+        private readonly TaskCompletionSource<bool> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ProviderInvocationContext? Parent { get; } = parent;
+        public Task Completion => this._completion.Task;
+
+        public InvocationScope? Parent { get; } = parent;
+
+        public void Dispose()
+        {
+            lock (owner._invocationLock)
+            {
+                this._completion.SetResult(true);
+                if (--owner._activeInvocations == 0)
+                {
+                    owner._invocationsDrained!.SetResult(true);
+                }
+            }
+
+            owner._currentInvocation.Value = this.Parent;
+        }
+    }
+
+    // Each invocation disposes its own pipeline without disposing the handler-owned connection pool.
+    private sealed class SharedHttpMessageHandler(HttpMessageInvoker invoker) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            invoker.SendAsync(request, cancellationToken);
     }
 
     internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable
@@ -443,51 +371,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             Trace.TraceWarning("Failed to dispose MCP {0}: {1}", resourceName, exception);
         }
     }
-
-    /// <summary>
-    /// Computes a deterministic, order-independent hash of the header set.
-    /// Header names are lower-cased for case-insensitive matching (RFC 7230 §3.2).
-    /// Header values remain case-sensitive (RFC 7235 — credentials are case-sensitive).
-    /// </summary>
-#pragma warning disable CA1308 // RFC 7230 §3.2 requires lower-cased header names for case-insensitive comparison; CA1308's uppercase preference does not apply here
-    internal static string ComputeHeadersHash(IDictionary<string, string>? headers)
-    {
-        if (headers is null || headers.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        // Sort by lower-cased key for deterministic ordering, preserving value case.
-        SortedDictionary<string, string> sorted = new(StringComparer.Ordinal);
-        foreach (KeyValuePair<string, string> header in headers)
-        {
-            sorted[header.Key.ToLowerInvariant()] = header.Value;
-        }
-
-        StringBuilder payload = new();
-        foreach (KeyValuePair<string, string> kvp in sorted)
-        {
-            payload.Append(kvp.Key).Append(':').Append(kvp.Value).Append('\n');
-        }
-
-        byte[] inputBytes = Encoding.UTF8.GetBytes(payload.ToString());
-#if NET5_0_OR_GREATER
-        byte[] hashBytes = SHA256.HashData(inputBytes);
-#else
-        using SHA256 sha256 = SHA256.Create();
-        byte[] hashBytes = sha256.ComputeHash(inputBytes);
-#endif
-
-        // Convert to hex string (compatible with net472/netstandard2.0)
-        StringBuilder hex = new(hashBytes.Length * 2);
-        foreach (byte b in hashBytes)
-        {
-            hex.Append(b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
-        }
-
-        return hex.ToString();
-    }
-#pragma warning restore CA1308
 
     private static void ThrowIfListToolsArgumentsSpecified(IDictionary<string, object?>? arguments)
     {
