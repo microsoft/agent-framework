@@ -2295,9 +2295,9 @@ async def _auto_invoke_function(
         """
         if not wrapped_raw_present or _tool_declares_parameter(tool, "raw"):
             return False
-        if not isinstance(arguments, Mapping):
+        if not isinstance(arguments, Mapping) or "raw" not in arguments:
             return False
-        raw_value = cast("Mapping[str, Any]", arguments).get("raw")
+        raw_value = cast("Mapping[str, Any]", arguments)["raw"]
         return raw_value == wrapped_raw_value or (
             isinstance(raw_value, float)
             and isinstance(wrapped_raw_value, float)

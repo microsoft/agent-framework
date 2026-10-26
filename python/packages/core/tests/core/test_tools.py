@@ -2531,3 +2531,48 @@ async def test_injecting_middleware_does_not_unmark_null_or_nan_wrappers(argumen
     assert calls == []
     result = result_groups[0][0]
     assert "not a JSON object" in str(result.exception)
+
+
+class _ReplaceWithValidArguments(FunctionMiddleware):
+    """Middleware that replaces the arguments with a valid mapping.
+
+    The replacement drops any raw wrapper and supplies declared arguments,
+    which is a full repair.
+    """
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        context.arguments = {"limit": 5}
+        await call_next()
+
+
+async def test_middleware_that_replaces_null_wrapper_with_valid_arguments_repairs_the_call() -> None:
+    """A full-argument replacement is a repair, not an unrepaired wrapper.
+
+    The replacement no longer contains the ``raw`` entry, so the
+    ``None``-valued wrapper of ``"null"`` must not be misread from the
+    absent key, and the repaired call executes.
+    """
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="list_accounts")
+    def list_accounts(limit: int = 0) -> str:
+        calls.append({"limit": limit})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="list_accounts", arguments="null"),
+        ],
+        tools=[list_accounts],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(_ReplaceWithValidArguments()),
+    )
+
+    assert not should_terminate
+    assert calls == [{"limit": 5}]
+    assert result_groups[0][0].result == "ok"
