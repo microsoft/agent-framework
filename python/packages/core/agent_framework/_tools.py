@@ -138,9 +138,9 @@ _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
-_SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[
-    contextvars.ContextVar[tuple[Any, Callable[[Any], None]] | None]
-] = contextvars.ContextVar("_security_argument_materialization_context", default=None)
+_SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[contextvars.ContextVar[tuple[Any, Callable[[Any], None]] | None]] = (
+    contextvars.ContextVar("_security_argument_materialization_context", default=None)
+)
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
