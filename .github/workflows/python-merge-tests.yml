@@ -169,10 +169,12 @@ jobs:
       - name: Test Milvus package
         run: uv run poe test -P milvus
 
-  # Milvus integration tests run against a disposable single-node Milvus
-  # (embedded etcd + local storage) and need no cloud credentials, mirroring
-  # the Qdrant and MongoDB jobs. GitHub service containers cannot override the
-  # image command, which Milvus standalone requires, so it is started with docker.
+  # Milvus integration tests run against a disposable standalone Milvus and need
+  # no cloud credentials, mirroring the Qdrant and MongoDB jobs. Milvus standalone
+  # needs etcd and object storage and rejects embedded etcd in this mode, and
+  # GitHub service containers cannot override the image command these require, so
+  # the official standalone stack (etcd + MinIO + Milvus) is brought up with
+  # docker compose.
   python-tests-milvus-integration:
     name: Python Integration Tests - Milvus
     needs: paths-filter
@@ -201,27 +203,42 @@ jobs:
           os: ${{ runner.os }}
       - name: Start Milvus standalone
         run: |
-          cat > embedEtcd.yaml <<'EOF'
-          listen-client-urls: http://0.0.0.0:2379
-          advertise-client-urls: http://0.0.0.0:2379
-          quota:
-            limits:
-              maxCollectionNum: 65536
-              maxCollectionNumPerDB: 65536
+          cat > docker-compose.milvus.yml <<'EOF'
+          services:
+            etcd:
+              container_name: milvus-etcd
+              image: quay.io/coreos/etcd:v3.5.25
+              environment:
+                - ETCD_AUTO_COMPACTION_MODE=revision
+                - ETCD_AUTO_COMPACTION_RETENTION=1000
+                - ETCD_QUOTA_BACKEND_BYTES=4294967296
+                - ETCD_SNAPSHOT_COUNT=50000
+              command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+            minio:
+              container_name: milvus-minio
+              image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+              environment:
+                MINIO_ACCESS_KEY: minioadmin
+                MINIO_SECRET_KEY: minioadmin
+              command: minio server /minio_data --console-address ":9001"
+            standalone:
+              container_name: milvus-standalone
+              image: milvusdb/milvus:v2.6.20
+              command: ["milvus", "run", "standalone"]
+              security_opt:
+                - seccomp:unconfined
+              environment:
+                ETCD_ENDPOINTS: etcd:2379
+                MINIO_ADDRESS: minio:9000
+                MQ_TYPE: woodpecker
+              ports:
+                - "19530:19530"
+                - "9091:9091"
+              depends_on:
+                - etcd
+                - minio
           EOF
-          : > user.yaml
-          docker run -d --name milvus-standalone \
-            --security-opt seccomp:unconfined \
-            -e ETCD_USE_EMBED=true \
-            -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
-            -e ETCD_CONFIG_PATH=/milvus/configs/embedEtcd.yaml \
-            -e COMMON_STORAGETYPE=local \
-            -v "$(pwd)/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml" \
-            -v "$(pwd)/user.yaml:/milvus/configs/user.yaml" \
-            -p 19530:19530 \
-            -p 9091:9091 \
-            milvusdb/milvus:v2.6.20 \
-            milvus run standalone
+          docker compose -f docker-compose.milvus.yml up -d
       - name: Wait for Milvus
         run: |
           for i in {1..90}; do
@@ -231,7 +248,7 @@ jobs:
             sleep 2
           done
           echo "Milvus did not become ready in time." >&2
-          docker logs milvus-standalone || true
+          docker compose -f docker-compose.milvus.yml logs --tail=100 || true
           exit 1
       - name: Test with pytest (Milvus integration)
         run: >
