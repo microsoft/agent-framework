@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, TypedDict
 
 from agent_framework._settings import SecretString, load_settings
@@ -23,6 +24,28 @@ from ._feature_usage import FeatureIndex
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger(__name__)
+
+# Page size for get_latest's newest-first query. It is normally stopped after the first row
+# or a small group of rows sharing the newest timestamp, so a small page avoids reading many
+# full checkpoint documents that are then discarded.
+_LATEST_CHECKPOINT_PAGE_SIZE = 10
+
+
+def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
+    """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
+
+    Mirrors the tie-breaker used by the core checkpoint storages. Checkpoints taken at the
+    same superstep boundary can share a timestamp. Among the checkpoints with the newest
+    timestamp, one that another of them names as its ``previous_checkpoint_id`` is
+    superseded, so the result does not depend on the order the backend returns rows in.
+    If several unsuperseded candidates remain, the one with the greatest ``checkpoint_id``
+    is returned, so the choice among them is stable too.
+    """
+    newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
+    candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
+    superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
+    leaves = [cp for cp in candidates if cp.checkpoint_id not in superseded_ids]
+    return max(leaves or candidates, key=lambda cp: cp.checkpoint_id)
 
 
 class AzureCosmosCheckpointSettings(TypedDict, total=False):
@@ -353,7 +376,14 @@ class CosmosCheckpointStorage:
         """
         await self._ensure_container_proxy()
 
-        query = "SELECT * FROM c WHERE c.workflow_name = @workflow_name ORDER BY c.timestamp DESC OFFSET 0 LIMIT 1"
+        # Checkpoints taken at the same superstep boundary can share a timestamp, so collect
+        # every checkpoint at the newest timestamp and resolve the tie through lineage
+        # instead of letting the backend pick one row. The newest timestamp and its rows come
+        # from one query ordered newest first rather than a MAX query followed by a second
+        # query, so a checkpoint saved or deleted in between cannot leave the result pinned to
+        # a stale timestamp, or empty while older checkpoints remain. Iteration stops at the
+        # first older row, so only the pages holding the tied group are read.
+        query = "SELECT * FROM c WHERE c.workflow_name = @workflow_name ORDER BY c.timestamp DESC"
         parameters: list[dict[str, object]] = [
             {"name": "@workflow_name", "value": workflow_name},
         ]
@@ -362,18 +392,26 @@ class CosmosCheckpointStorage:
             query=query,
             parameters=parameters,
             partition_key=workflow_name,
+            max_item_count=_LATEST_CHECKPOINT_PAGE_SIZE,
         )
 
+        newest_documents: list[dict[str, Any]] = []
         async for item in items:
-            checkpoint = self._document_to_checkpoint(item)
-            logger.debug(
-                "Latest checkpoint for workflow %s is %s",
-                workflow_name,
-                checkpoint.checkpoint_id,
-            )
-            return checkpoint
+            if newest_documents and item.get("timestamp") != newest_documents[0].get("timestamp"):
+                break
+            newest_documents.append(item)
 
-        return None
+        if not newest_documents:
+            return None
+
+        candidates = [self._document_to_checkpoint(document) for document in newest_documents]
+        checkpoint = _select_latest_checkpoint(candidates)
+        logger.debug(
+            "Latest checkpoint for workflow %s is %s",
+            workflow_name,
+            checkpoint.checkpoint_id,
+        )
+        return checkpoint
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.

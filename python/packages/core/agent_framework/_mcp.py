@@ -1138,6 +1138,8 @@ class MCPTool:
             )
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
+        if request_timeout is not None and request_timeout <= 0:
+            raise ValueError("request_timeout must be positive or None.")
         allowed_modes = {
             "structured_first",
             "content_first",
@@ -2351,6 +2353,7 @@ class MCPTool:
             reset_discovery: If True, removes state derived from the previous session after its transport closes.
 
         Raises:
+            ValueError: If ``request_timeout`` was set to a non-positive value after construction.
             ToolException: If connection or session initialization fails.
         """
         log_level = _to_mcp_logging_level(logger.level)
@@ -2369,6 +2372,8 @@ class MCPTool:
             self._exit_stack = AsyncExitStack()
         connection = self._connection
         if connection is None:
+            if self.request_timeout is not None and self.request_timeout <= 0:
+                raise ValueError("request_timeout must be positive or None.")
             try:
                 try:
                     from mcp import Client, types

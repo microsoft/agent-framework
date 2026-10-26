@@ -20,7 +20,8 @@ When you register a `FunctionTool` declared with `approval_mode="always_require"
 do **not** supply your own `on_pre_tool_use` hook, `GitHubCopilotAgent` installs a default
 `on_pre_tool_use` hook that returns `"ask"` for that tool and defers (`None`) for all other
 tools. The `"ask"` decision routes to your `on_permission_request` handler, where you
-approve or deny the call:
+approve or deny the call. Other session hooks, such as `on_post_tool_use` or
+`on_session_start`, are preserved alongside this default approval hook:
 
 ```python
 from agent_framework import tool

@@ -87,6 +87,7 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.types.responses import (
     FunctionShellToolParam,
     ResponseCustomToolCall,
+    ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
     ResponseFunctionToolCallOutputItem,
@@ -161,6 +162,25 @@ logger = logging.getLogger("agent_framework.openai")
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 _TERMINAL_RESPONSE_STATUSES: Final[frozenset[str]] = frozenset({"completed", "failed", "incomplete", "cancelled"})
+
+
+class _OpenAIResponseStreamError(RuntimeError):
+    """Retain the provider metadata from a flat Responses API error event."""
+
+    def __init__(self, event: ResponseErrorEvent) -> None:
+        self.event = event
+        self.code = event.code
+        self.message = event.message
+        self.param = event.param
+        error_details = event.message
+        if event.code:
+            error_details = f"{event.code}: {error_details}"
+        if event.param:
+            error_details = f"{error_details} (parameter: {event.param})"
+        super().__init__(f"OpenAI streaming error: {error_details}")
+
+    def __reduce__(self) -> tuple[type[_OpenAIResponseStreamError], tuple[ResponseErrorEvent], dict[str, Any]]:
+        return type(self), (self.event,), self.__dict__
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -3936,12 +3956,7 @@ class RawOpenAIChatClient(
             # ResponseCustomToolCallInputDeltaEvent,
             # ResponseCustomToolCallInputDoneEvent,
             case "error":
-                error_details = event.message
-                if event.code:
-                    error_details = f"{event.code}: {error_details}"
-                if event.param:
-                    error_details = f"{error_details} (parameter: {event.param})"
-                self._handle_request_error(RuntimeError(f"OpenAI streaming error: {error_details}"))
+                self._handle_request_error(_OpenAIResponseStreamError(event))
             case "response.content_part.added":
                 event_part = event.part
                 match event_part.type:

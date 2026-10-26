@@ -1426,6 +1426,17 @@ def test_mcp_host_payload_size_limit_must_be_positive_or_none() -> None:
     assert unlimited.max_host_payload_size_bytes is None
 
 
+def test_mcp_request_timeout_must_be_positive_or_none() -> None:
+    with pytest.raises(ValueError, match="positive or None"):
+        MCPTool(name="invalid", request_timeout=0)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    with pytest.raises(ValueError, match="positive or None"):
+        MCPStdioTool(name="invalid", command="test-command", request_timeout=-1)
+
+    unlimited = MCPTool(name="unlimited", request_timeout=None)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    assert unlimited.request_timeout is None
+
+
 def test_mcp_host_payload_size_boundary_uri_serialization_and_early_abort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5417,6 +5428,25 @@ async def test_connect_preserves_request_timeout_over_24_hours() -> None:
 
         async with tool:
             assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
+
+
+async def test_connect_revalidates_request_timeout_cleared_after_construction() -> None:
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+        request_timeout=60,
+    )
+    tool.request_timeout = 0
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        with pytest.raises(ValueError, match="request_timeout must be positive or None."):
+            await tool.connect()
+
+        assert mock_client_class.call_count == 0
 
 
 async def test_connect_retains_and_close_clears_sdk_client() -> None:

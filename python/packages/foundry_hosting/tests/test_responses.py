@@ -624,6 +624,82 @@ async def test_output_item_tracker_emits_native_refusal_events_for_marked_text()
     ]
 
 
+@pytest.mark.parametrize(
+    ("outputs", "expected"),
+    [
+        (Content.from_uri("data:image/png;base64,iVBORw0KGgo="), "iVBORw0KGgo="),
+        ([Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        ((Content.from_uri("data:image/png;base64,iVBORw0KGgo="),), "iVBORw0KGgo="),
+        ([Content.from_text("caption"), Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        (["caption", Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        ("iVBORw0KGgo=", "iVBORw0KGgo="),
+        (Content.from_uri("data:image/png;name=cat.png;base64,iVBORw0KGgo="), "iVBORw0KGgo="),
+        (
+            [
+                Content.from_uri("data:image/png;base64,not-base64!"),
+                Content.from_uri("data:image/png;base64,iVBORw0KGgo="),
+            ],
+            "iVBORw0KGgo=",
+        ),
+        (Content.from_uri("https://example.com/cat.png", media_type="image/png"), ""),
+        (Content.from_uri("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"), ""),
+        (Content.from_uri("data:image/png;base64,not-base64!"), ""),
+        (Content.from_uri("data:image/png;base64,iVBORw0KGgo"), ""),
+        (Content.from_uri("data:image/png;base64,iVBOR\nw0KGgo="), ""),
+        (Content.from_uri("data:image/png;base64,"), ""),
+        (Content.from_uri("data:text/plain,x;base64,iVBORw0KGgo="), ""),
+        (Content.from_hosted_file("file_1"), ""),
+        ("https://example.com/cat.png", ""),
+        ("not-base64!", ""),
+        ("", ""),
+        (b"\x89PNG\r\n\x1a\n", ""),
+        ({"result": "iVBORw0KGgo="}, ""),
+    ],
+    ids=[
+        "data-uri-content",
+        "content-list",
+        "content-tuple",
+        "image-after-text",
+        "image-after-string",
+        "base64-string",
+        "data-uri-with-parameter",
+        "image-after-malformed-payload",
+        "https-uri-is-not-base64",
+        "data-uri-without-base64",
+        "data-uri-malformed-payload",
+        "data-uri-missing-padding",
+        "data-uri-whitespace-in-payload",
+        "data-uri-empty-payload",
+        "base64-marker-inside-payload",
+        "hosted-file",
+        "url-string-is-not-base64",
+        "malformed-string",
+        "empty-string",
+        "bytes",
+        "mapping",
+    ],
+)
+async def test_output_item_tracker_emits_image_generation_result_as_base64(
+    outputs: Any, expected: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    stream = ResponseEventStream(response_id="resp_image")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    events: list[Any] = []
+
+    with caplog.at_level(logging.WARNING):
+        async for event in tracker.handle(Content.from_image_generation_tool_result(image_id="ig_1", outputs=outputs)):
+            events.append(event)
+    events.extend(tracker.close())
+
+    done = [e for e in events if (e.get("type") if isinstance(e, Mapping) else e.type) == "response.output_item.done"]
+    assert len(done) == 1
+    assert done[0]["item"]["type"] == "image_generation_call"
+    assert done[0]["item"]["result"] == expected
+    assert ("has no base64 image" in caplog.text) is (expected == "")
+
+
 async def test_output_item_tracker_keeps_mixed_text_and_refusal_in_one_message() -> None:
     stream = ResponseEventStream(response_id="resp_mixed")
     stream.emit_created()

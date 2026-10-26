@@ -52,6 +52,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._workflows._agent import _StreamingRoleGate  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentFrameworkException
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.core import get_request_context
@@ -2326,13 +2327,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         TODO(@taochen): #7677
         """
+        role_gate = _StreamingRoleGate()
         async for event in agent.workflow.run(
             stream=True,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
         ):
             for update in agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
-                response_id, event
+                response_id, event, role_gate
             ):
                 yield update
 
@@ -2680,7 +2682,10 @@ class _OutputItemTracker:
         elif content.type == "image_generation_tool_result" and content.outputs is not None:
             for event in self._close():
                 yield event
-            async for event in self._stream.output_item_image_gen_call(str(content.outputs)):
+            result = _image_generation_result(content.outputs)
+            if result is None:
+                logger.warning("Image generation result has no base64 image; emitting it with an empty result.")
+            async for event in self._stream.output_item_image_gen_call(result or ""):
                 yield event
 
         elif content.type == "mcp_server_tool_call":
@@ -3808,6 +3813,38 @@ def _json_safe_to_str(value: Any | None) -> str:
         return json.dumps(value, default=_json_default)
     except (TypeError, ValueError):
         return json.dumps(str(value))
+
+
+def _image_generation_result(outputs: Any) -> str | None:
+    """Return the base64 image of an image generation tool result, as the Responses API expects.
+
+    Only a non-empty, valid base64 string or the valid base64 payload of a base64 data URI qualifies. Other URIs
+    (https, file, blob), data URIs without the base64 marker and malformed payloads are not base64, so they give
+    None.
+    """
+    if isinstance(outputs, str):
+        return outputs if _is_base64(outputs) else None
+    items: Sequence[Any] = [outputs]
+    if isinstance(outputs, Sequence) and not isinstance(outputs, (bytes, bytearray)):
+        items = cast(Sequence[Any], outputs)
+    for item in items:
+        if isinstance(item, Content) and item.uri and item.uri.startswith("data:"):
+            # RFC 2397: only the metadata before the first comma can carry the marker, as its last parameter.
+            metadata, _, payload = item.uri.partition(",")
+            if metadata.endswith(";base64") and _is_base64(payload):
+                return payload
+    return None
+
+
+def _is_base64(value: str) -> bool:
+    """Check whether a string is non-empty, valid base64."""
+    if not value:
+        return False
+    try:
+        base64.b64decode(value, validate=True)
+    except ValueError:
+        return False
+    return True
 
 
 def _reasoning_encrypted_content(content: Content) -> str | None:
