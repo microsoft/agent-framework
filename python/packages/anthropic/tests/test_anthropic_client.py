@@ -421,6 +421,36 @@ def test_prepare_message_for_anthropic_legacy_server_tool_call_uses_id_prefix(
     ]
 
 
+def test_prepare_message_for_anthropic_does_not_infer_server_tool_from_hosted(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Provider-neutral hosted calls remain ordinary tool_use without Anthropic provenance."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="hosted-call",
+                name="external_hosted_tool",
+                arguments={"value": "test"},
+                informational_only=True,
+                hosted=True,
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [
+        {
+            "type": "tool_use",
+            "id": "hosted-call",
+            "name": "external_hosted_tool",
+            "input": {"value": "test"},
+        }
+    ]
+
+
 def test_prepare_message_for_anthropic_function_result(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -2045,51 +2075,66 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     assert result[0].arguments == '"San Francisco"}'
 
 
-def test_parse_contents_server_tool_use_input_json_delta_ignored(
+def test_parse_contents_server_tool_use_input_json_delta_is_hosted_fragment(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Regression test: input_json_delta events are ignored after a server_tool_use block.
-
-    Server-managed tools have their execution handled server-side, so streaming
-    input_json_delta events must not produce Content.from_function_call(name='')
-    entries that would cause Anthropic API 400 errors on subsequent turns.
-    """
+    """Server-tool argument deltas remain hosted and survive finalization and persistence."""
     client = create_test_anthropic_client(mock_anthropic_client)
     request_state = _AnthropicRequestState()
 
-    # Simulate a server_tool_use event that establishes the hosted call type.
     server_tool_content = MagicMock()
     server_tool_content.type = "server_tool_use"
-    server_tool_content.id = "srvtool_abc"
+    server_tool_content.id = "srvtoolu_abc"
     server_tool_content.name = "web_search"
     server_tool_content.input = {}
 
-    result = client._parse_contents_from_anthropic([server_tool_content], request_state)
-    # server_tool_use falls through to informational-only function_call (not mcp_tool_use / code_execution)
-    assert len(result) == 1
-    assert result[0].type == "function_call"
-    assert result[0].informational_only is True
-    assert result[0].hosted is True
-    assert result[0].additional_properties == {"anthropic": {"server_tool_block": {"type": "server_tool_use"}}}
+    opening = client._parse_contents_from_anthropic([server_tool_content], request_state, streaming=True)
+    assert len(opening) == 1
+    assert opening[0].type == "function_call"
+    assert opening[0].informational_only is True
+    assert opening[0].hosted is True
+    assert opening[0].additional_properties == {"anthropic": {"server_tool_block": {"type": "server_tool_use"}}}
     assert request_state.active_call_content_type == "server_tool_use"
+    assert request_state.active_call_is_function_call is True
 
-    # input_json_delta events after server_tool_use must be silently ignored
-    delta_content = MagicMock()
-    delta_content.type = "input_json_delta"
-    delta_content.partial_json = '{"query": "latest news"}'
+    first_delta_content = MagicMock()
+    first_delta_content.type = "input_json_delta"
+    first_delta_content.partial_json = '{"query": "latest'
 
-    result = client._parse_contents_from_anthropic([delta_content], request_state)
-    assert result == [], "input_json_delta after server_tool_use should produce no content, but got: %r" % result
+    first_delta = client._parse_contents_from_anthropic([first_delta_content], request_state, streaming=True)
+    assert len(first_delta) == 1
+    assert first_delta[0].call_id == "srvtoolu_abc"
+    assert first_delta[0].informational_only is True
+    assert first_delta[0].hosted is True
+    assert first_delta[0].arguments == '{"query": "latest'
 
-    # A second delta must also be ignored
-    delta_content_2 = MagicMock()
-    delta_content_2.type = "input_json_delta"
-    delta_content_2.partial_json = '{"extra": true}'
+    second_delta_content = MagicMock()
+    second_delta_content.type = "input_json_delta"
+    second_delta_content.partial_json = ' news"}'
 
-    result = client._parse_contents_from_anthropic([delta_content_2], request_state)
-    assert result == [], (
-        "subsequent input_json_delta after server_tool_use should also be ignored, but got: %r" % result
-    )
+    second_delta = client._parse_contents_from_anthropic([second_delta_content], request_state, streaming=True)
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(role="assistant", contents=opening),
+        ChatResponseUpdate(contents=first_delta),
+        ChatResponseUpdate(contents=second_delta),
+    ])
+
+    assert len(response.messages[0].contents) == 1
+    finalized_call = response.messages[0].contents[0]
+    assert finalized_call.parse_arguments() == {"query": "latest news"}
+    assert finalized_call.informational_only is True
+    assert finalized_call.hosted is True
+
+    restored = Message.from_dict(response.messages[0].to_dict())
+    prepared = client._prepare_messages_for_anthropic([restored])
+    assert prepared[0]["content"] == [
+        {
+            "type": "server_tool_use",
+            "id": "srvtoolu_abc",
+            "name": "web_search",
+            "input": {"query": "latest news"},
+        }
+    ]
 
 
 # Stream Processing Tests
@@ -2594,6 +2639,8 @@ async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
     async def events() -> Any:
         yield _message_start_event("hosted-response")
         yield _tool_start_event(block_type="server_tool_use", call_id="hosted-call", name="local_tool")
+        yield _argument_delta_event('{"value":')
+        yield _argument_delta_event('"a"}')
         yield _content_block_stop_event()
         yield _message_delta_event("pause_turn")
         yield _message_stop_event()
@@ -2610,13 +2657,23 @@ async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
     updates = [update async for update in stream]
     response = await stream.get_final_response()
 
-    hosted_calls = [content for update in updates for content in update.contents if content.type == "function_call"]
+    assert all(
+        content.informational_only and content.hosted
+        for update in updates
+        for content in update.contents
+        if content.type == "function_call"
+    )
+    hosted_calls = [
+        content for message in response.messages for content in message.contents if content.type == "function_call"
+    ]
     assert len(hosted_calls) == 1
     assert hosted_calls[0].informational_only is True
+    assert hosted_calls[0].parse_arguments() == {"value": "a"}
     assert response.finish_reason == "stop"
     restored = Message.from_dict(response.messages[0].to_dict())
     prepared = client._prepare_messages_for_anthropic([restored])
     assert prepared[0]["content"][0]["type"] == "server_tool_use"
+    assert prepared[0]["content"][0]["input"] == {"value": "a"}
 
 
 async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
@@ -2709,11 +2766,11 @@ async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
     assert primary_calls[0].parse_arguments() == {"command": "pwd"}
 
     hosted_calls = [content for content in hosted_contents if content.type == "function_call"]
-    assert len(hosted_calls) == 1
-    assert hosted_calls[0].name == "web_search"
-    assert hosted_calls[0].call_id == "shared-call"
-    assert hosted_calls[0].arguments == {}
-    assert hosted_calls[0].informational_only is True
+    assert [(content.name, content.call_id, content.arguments) for content in hosted_calls] == [
+        ("web_search", "shared-call", {}),
+        ("", "shared-call", '{"query":"framework"}'),
+    ]
+    assert all(content.informational_only and content.hosted for content in hosted_calls)
 
 
 async def test_concurrent_streams_keep_approval_requests_request_local(

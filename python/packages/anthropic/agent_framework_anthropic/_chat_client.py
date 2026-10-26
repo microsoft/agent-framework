@@ -317,6 +317,7 @@ class _AnthropicRequestState:
 
     active_call_id: str | None = None
     active_call_content_type: str | None = None
+    active_call_is_function_call: bool = False
     tool_name_aliases: dict[str, str] = field(default_factory=dict[str, str])
 
 
@@ -1016,9 +1017,7 @@ class RawAnthropicClient(
     def _prepare_server_tool_call_for_anthropic(self, content: Content) -> dict[str, Any] | None:
         """Reconstruct an Anthropic server_tool_use block when this is a hosted call."""
         block = self._server_tool_block(content)
-        is_server_tool = bool(content.hosted) or bool(
-            content.call_id and content.call_id.startswith(_SERVER_TOOL_USE_ID_PREFIX)
-        )
+        is_server_tool = bool(content.call_id and content.call_id.startswith(_SERVER_TOOL_USE_ID_PREFIX))
         if block is not None:
             block_type = block.get("type")
             if block_type != "server_tool_use":
@@ -1523,6 +1522,7 @@ class RawAnthropicClient(
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     request_state.active_call_id = content_block.id
                     request_state.active_call_content_type = content_block.type
+                    request_state.active_call_is_function_call = False
                     if content_block.type == "mcp_tool_use":
                         contents.append(
                             Content.from_mcp_server_tool_call(
@@ -1548,6 +1548,7 @@ class RawAnthropicClient(
                             )
                         )
                     else:
+                        request_state.active_call_is_function_call = True
                         resolved_tool_name = request_state.tool_name_aliases.get(content_block.name, content_block.name)
                         contents.append(
                             Content.from_function_call(
@@ -1800,16 +1801,18 @@ class RawAnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # Skip argument deltas for MCP and server tools — execution is handled server-side.
-                    if request_state.active_call_content_type in ("mcp_tool_use", "server_tool_use"):
+                    if not request_state.active_call_is_function_call:
                         pass
                     else:
                         call_id = request_state.active_call_id or ""
+                        hosted = request_state.active_call_content_type == "server_tool_use"
                         contents.append(
                             Content.from_function_call(
                                 call_id=call_id,
                                 name="",
                                 arguments=content_block.partial_json,
+                                informational_only=hosted,
+                                hosted=hosted,
                                 merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
