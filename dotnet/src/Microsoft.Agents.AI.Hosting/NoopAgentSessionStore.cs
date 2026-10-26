@@ -32,4 +32,13 @@ public sealed class NoopAgentSessionStore : AgentSessionStore
     {
         return new((AgentSession?)null);
     }
+
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        return default;
+    }
 }

@@ -62,7 +62,7 @@ repos:
         additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
-    rev: 0.13.1
+    rev: 0.13.5
     hooks:
       # Update the uv lockfile
       - id: uv-lock

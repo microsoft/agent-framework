@@ -122,6 +122,7 @@
     <!-- A2A -->
     <PackageVersion Include="A2A" Version="1.0.0-preview3" />
     <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview3" />
+    <PackageVersion Include="A2A.Grpc" Version="1.0.0-preview3" />
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0" />

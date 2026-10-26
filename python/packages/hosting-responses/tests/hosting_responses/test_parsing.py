@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import warnings
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from agent_framework import (
     ResponseStream,
     UsageDetails,
 )
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
 import agent_framework_hosting_responses._parsing as parsing_module
@@ -1082,7 +1084,7 @@ class TestResponsesRunHelpers:
         assert deltas == ["Hello world"]
         assert done["text"] == "Hello world"
         assert failed["type"] == "response.failed"
-        assert "divergent replacement text snapshot" in cast(str, error["message"])
+        assert error == {"code": "server_error", "message": "An internal server error occurred."}
 
     async def test_responses_from_streaming_run_preserves_mixed_text_and_refusal_parts(self) -> None:
         marker = {"model_output_kind": "refusal"}
@@ -1437,9 +1439,11 @@ class TestResponsesRunHelpers:
         assert output[0]["code"] == "print('done')"
 
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
+        private_error_detail = "iterator-secret at C:\\sensitive\\iterator.py"
+
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
-            raise RuntimeError("upstream blew up")
+            raise RuntimeError(private_error_detail)
 
         stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
@@ -1460,9 +1464,12 @@ class TestResponsesRunHelpers:
         error = cast("dict[str, object]", response["error"])
         assert payload["type"] == "response.failed"
         assert response["status"] == "failed"
+        assert response["id"] == "resp_new"
         assert response["conversation"] == {"id": "conv_1"}
-        assert error["message"] == "upstream blew up"
+        assert error["code"] == "server_error"
+        assert error["message"] == "An internal server error occurred."
         assert "partial" in events[-1]
+        assert private_error_detail not in "".join(events)
 
     async def test_failed_stream_preserves_partial_marked_refusal(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -1576,14 +1583,16 @@ class TestResponsesRunHelpers:
 
         assert events[-1].startswith("event: response.failed")
         assert response["status"] == "failed"
-        assert f"unsupported status {status!r}" in cast(str, error["message"])
+        assert error == {"code": "server_error", "message": "An internal server error occurred."}
 
     async def test_responses_from_streaming_run_emits_failed_when_finalizer_raises(self) -> None:
+        private_error_detail = "finalizer-secret at C:\\sensitive\\finalizer.py"
+
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
 
         def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
-            raise RuntimeError("finalizer blew up")
+            raise RuntimeError(private_error_detail)
 
         stream = ResponseStream(updates(), finalizer=finalizer)
 
@@ -1596,4 +1605,70 @@ class TestResponsesRunHelpers:
         response = cast("dict[str, object]", payload["response"])
         error = cast("dict[str, object]", response["error"])
         assert response["status"] == "failed"
-        assert error["message"] == "finalizer blew up"
+        assert error == {"code": "server_error", "message": "An internal server error occurred."}
+        assert private_error_detail not in "".join(events)
+
+    async def test_responses_from_streaming_run_sanitizes_projection_failures(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        private_error_detail = "projection-secret at C:\\sensitive\\projection.py"
+
+        def fail_projection(content: Content) -> tuple[str, str] | None:
+            del content
+            raise RuntimeError(private_error_detail)
+
+        monkeypatch.setattr(parsing_module, "_code_interpreter_projection_key", fail_projection)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_call("call_1", "lookup", arguments={})],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_projection")]
+
+        assert _sse_types(events)[-1] == "response.failed"
+        assert "response.output_text.delta" in _sse_types(events)
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+        assert response["id"] == "resp_projection"
+        assert response["error"] == {"code": "server_error", "message": "An internal server error occurred."}
+        assert "partial" in events[-1]
+        assert private_error_detail not in "".join(events)
+
+    @pytest.mark.parametrize("sensitive_data", [False, True])
+    async def test_responses_from_streaming_run_failure_diagnostics_respect_sensitive_data(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        sensitive_data: bool,
+    ) -> None:
+        private_error_detail = "diagnostic-secret at C:\\sensitive\\diagnostic.py"
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_sensitive_data", sensitive_data)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+            raise RuntimeError(private_error_detail)
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_hosting_responses._parsing"):
+            events = [event async for event in responses_from_streaming_run(stream, response_id="resp_diagnostics")]
+
+        assert private_error_detail not in "".join(events)
+        assert "response_id=resp_diagnostics" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        assert (private_error_detail in caplog.text) is sensitive_data
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "agent_framework_hosting_responses._parsing"
+            and "response_id=resp_diagnostics" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert bool(records[0].exc_info) is sensitive_data
