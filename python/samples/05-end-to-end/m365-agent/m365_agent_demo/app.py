@@ -1,10 +1,10 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "microsoft-agents-hosting-aiohttp",
-#   "microsoft-agents-hosting-core",
-#   "microsoft-agents-authentication-msal",
-#   "microsoft-agents-activity",
+#   "microsoft-agents-hosting-aiohttp>=1.4.0",
+#   "microsoft-agents-hosting-core>=1.4.0",
+#   "microsoft-agents-authentication-msal>=1.4.0",
+#   "microsoft-agents-activity>=1.4.0",
 #     "agent-framework-foundry",
 #   "aiohttp"
 # ]
