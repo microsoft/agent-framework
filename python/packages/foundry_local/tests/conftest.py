@@ -42,14 +42,24 @@ def foundry_local_unit_test_env(monkeypatch: Any, exclude_list: list[str], overr
 
 
 @fixture
-def mock_foundry_local_manager() -> MagicMock:
+def mock_foundry_local_model() -> MagicMock:
+    """Fixture that provides a mock catalog model."""
+    mock_model = MagicMock()
+    mock_model.id = "test-model-id"
+    mock_model.alias = "test-model"
+    mock_model.variants = []
+
+    return mock_model
+
+
+@fixture
+def mock_foundry_local_manager(mock_foundry_local_model: MagicMock) -> MagicMock:
     """Fixture that provides a mock FoundryLocalManager."""
     mock_manager = MagicMock()
-    mock_manager.endpoint = "http://localhost:5272/v1"
-    mock_manager.api_key = "test-api-key"
-
-    mock_model_info = MagicMock()
-    mock_model_info.id = "test-model-id"
-    mock_manager.get_model_info.return_value = mock_model_info
+    # ``urls`` is populated by ``start_web_service()``; model a service that is already up.
+    mock_manager.urls = ["http://localhost:5272"]
+    mock_manager.catalog.get_model.return_value = mock_foundry_local_model
+    # An alias lookup is the primary path; leave the model-ID fallback empty by default.
+    mock_manager.catalog.get_model_variant.return_value = None
 
     return mock_manager
