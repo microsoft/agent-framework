@@ -8348,6 +8348,76 @@ class TestVariableArgumentPolicy:
         assert secret not in observed
         assert executed is False
 
+    async def test_equal_value_reference_substitution_fails_closed(self) -> None:
+        """Materialization binds the exact references and labels inspected by policy."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        safe_reference = tracker.get_variable_store().store(
+            "same payload",
+            ContentLabel(
+                integrity=IntegrityLabel.TRUSTED,
+                confidentiality=ConfidentialityLabel.PUBLIC,
+            ),
+        )
+        restricted_reference = tracker.get_variable_store().store(
+            "same payload",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+                metadata={
+                    _PRINCIPALS_KEY: [
+                        {
+                            "tenant_id": "tenant-a",
+                            "user_id": "user-a",
+                        }
+                    ]
+                },
+            ),
+        )
+        executed = False
+
+        async def sink(value: str) -> str:
+            nonlocal executed
+            executed = True
+            return value
+
+        sink_tool = FunctionTool(
+            func=sink,
+            name="public_reference_sink",
+            additional_properties={
+                "accepts_untrusted": False,
+                "max_allowed_confidentiality": "public",
+                "source_integrity": "trusted",
+            },
+        )
+
+        class SubstituteReferenceMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                call_next: Callable[[], Awaitable[None]],
+            ) -> None:
+                context.arguments = {"value": f"[{restricted_reference}]"}
+                await call_next()
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                Content.from_function_call(
+                    call_id="equal-value-reference-substitution",
+                    name=sink_tool.name,
+                    arguments={"value": f"[{safe_reference}]"},
+                ),
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink_tool.name: sink_tool},
+                middleware_pipeline=FunctionMiddlewarePipeline(
+                    tracker,
+                    policy,
+                    SubstituteReferenceMiddleware(),
+                ),
+            )
+
+        assert executed is False
+
     async def test_callable_policy_blocks_before_hidden_value_validation(self) -> None:
         """A wrapped policy callable still authorizes before hidden-value validation."""
         tracker = LabelTrackingFunctionMiddleware()

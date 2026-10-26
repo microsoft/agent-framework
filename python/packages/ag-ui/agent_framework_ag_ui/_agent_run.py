@@ -3397,6 +3397,23 @@ async def _run_agent_stream(
             ),
         )
 
+    def fold_fides_replay_before_snapshot_save() -> None:
+        complete_replay_snapshot = snapshot_messages
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            complete_replay_snapshot = snapshot_session.resume_seeded_messages(complete_replay_snapshot)
+        complete_replay_messages, _ = normalize_agui_input_messages(
+            complete_replay_snapshot,
+            sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
+            protected_tool_call_ids=protected_tool_call_ids,
+        )
+        _fold_fides_uncovered_replay_messages(
+            agent,
+            session,
+            messages,
+            complete_replay_messages=complete_replay_messages,
+        )
+        _mark_fides_state_covered_messages(agent, messages)
+
     authenticated_cancellations = [
         _approval_observer_response(occurrence, cancelled=True)
         for interrupt_id in cancelled_resume_ids
@@ -3649,6 +3666,7 @@ async def _run_agent_stream(
         persisted_messages = snapshot_messages
         if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+        fold_fides_replay_before_snapshot_save()
         await save_thread_snapshot(
             persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
@@ -3682,6 +3700,7 @@ async def _run_agent_stream(
         if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
         preserved_interrupts = remaining_stored_interrupts(retired_approval_interrupt_ids)
+        fold_fides_replay_before_snapshot_save()
         await save_thread_snapshot(
             persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
@@ -3690,20 +3709,7 @@ async def _run_agent_stream(
 
     # Handle confirm_changes response (state confirmation flow - emit confirmation and stop)
     if is_confirm_changes_response:
-        complete_replay_snapshot = snapshot_messages
-        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
-            complete_replay_snapshot = snapshot_session.resume_seeded_messages(complete_replay_snapshot)
-        complete_replay_messages, _ = normalize_agui_input_messages(
-            complete_replay_snapshot,
-            sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
-            protected_tool_call_ids=protected_tool_call_ids,
-        )
-        _fold_fides_uncovered_replay_messages(
-            agent,
-            session,
-            messages,
-            complete_replay_messages=complete_replay_messages,
-        )
+        fold_fides_replay_before_snapshot_save()
         confirm_additional_properties = cast(dict[str, Any], messages[-1].additional_properties or {})
         confirm_interrupt_id = confirm_additional_properties.get("tool_call_id")
         confirm_remaining_interrupts = remaining_stored_interrupts(

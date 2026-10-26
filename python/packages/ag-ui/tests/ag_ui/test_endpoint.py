@@ -13295,6 +13295,186 @@ async def test_agent_endpoint_rejected_approval_is_persisted_before_provider_con
     assert "Tool call invocation was rejected by user" in str(snapshot.messages)
 
 
+async def test_endpoint_fides_rejection_folds_client_result_before_provider_failure(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A pre-run rejection snapshot persists fresh client-result restrictions."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    phase = "pause"
+    executed: list[str] = []
+
+    def guarded_action() -> str:
+        return "guarded result"
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="guarded-call",
+                        name="guarded_action",
+                        arguments={},
+                    )
+                ],
+            )
+            return
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=guarded_action,
+                name="guarded_action",
+                description="Require approval",
+                approval_mode="always_require",
+            ),
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            ),
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-rejection-provider-failure",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/fides-rejection-provider-failure",
+            json={
+                "runId": "run-fides-rejection-pause",
+                "threadId": "thread-fides-rejection-provider-failure",
+                "messages": [{"id": "user-1", "role": "user", "content": "Prepare the guarded action"}],
+            },
+        )
+        pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+        approval_id = _run_finished_interrupts(pause_finished[-1])[0]["id"]
+        snapshot = await store.get(scope="test", thread_id="thread-fides-rejection-provider-failure")
+        assert snapshot is not None
+        assert snapshot.session_state is not None
+        initial_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+        assert initial_label["integrity"] == "trusted"
+        assert initial_label["confidentiality"] == "public"
+        snapshot.messages.append(
+            {
+                "id": "assistant-client-call",
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [
+                    {
+                        "id": "client-call",
+                        "type": "function",
+                        "function": {"name": "client_lookup", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
+        await store.save(
+            scope="test",
+            thread_id="thread-fides-rejection-provider-failure",
+            snapshot=snapshot,
+        )
+
+        original_run = agent.run
+
+        def failing_run(*args: Any, **kwargs: Any) -> Any:
+            if not kwargs.get("stream", False):
+                return original_run(*args, **kwargs)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                if False:  # pragma: no cover
+                    yield AgentResponseUpdate()
+                raise ResponseInvalidatedException("provider preparation failed")
+
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+        rejected_response = client.post(
+            "/fides-rejection-provider-failure",
+            json={
+                "runId": "run-fides-rejection-failure",
+                "threadId": "thread-fides-rejection-provider-failure",
+                "messages": [
+                    {
+                        "id": "client-result",
+                        "role": "tool",
+                        "toolCallId": "client-call",
+                        "content": "fresh external client result",
+                    }
+                ],
+                "resume": [
+                    {
+                        "interruptId": approval_id,
+                        "status": "resolved",
+                        "payload": {"approved": False},
+                    }
+                ],
+            },
+        )
+        rejected_events = _decode_sse_events(rejected_response)
+        assert [event["code"] for event in rejected_events if event.get("type") == "RUN_ERROR"] == [
+            "ResponseInvalidatedException"
+        ]
+        failed_snapshot = await store.get(scope="test", thread_id="thread-fides-rejection-provider-failure")
+        assert failed_snapshot is not None
+        assert failed_snapshot.session_state is not None
+        failed_label = json.loads(failed_snapshot.session_state[config.source_id]["context_label"])
+        assert failed_label["integrity"] == "untrusted"
+        assert failed_label["confidentiality"] == "private"
+
+        agent.run = original_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+        phase = "protected"
+        retry_response = client.post(
+            "/fides-rejection-provider-failure",
+            json={
+                "runId": "run-fides-rejection-retry",
+                "threadId": "thread-fides-rejection-provider-failure",
+                "messages": [{"id": "user-2", "role": "user", "content": "Run the protected action"}],
+            },
+        )
+
+    retry_events = _decode_sse_events(retry_response)
+    assert not [event for event in retry_events if event.get("type") == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in retry_events if event["type"] == "TOOL_CALL_RESULT"])
+
+
 async def test_agent_endpoint_approval_resume_preserves_other_stored_interrupts():
     """A successful approval continuation retains unrelated stored interrupts."""
     store = InMemoryAGUIThreadSnapshotStore()

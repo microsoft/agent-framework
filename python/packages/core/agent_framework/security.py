@@ -1343,15 +1343,22 @@ def _strict_json_value(
 
 def _security_invocation_authority_token(
     function_name: str,
-    arguments: Any,
-    kwargs: Mapping[str, Any],
+    *,
+    source_arguments: Any,
+    source_kwargs: Mapping[str, Any],
+    resolved_arguments: Any,
+    resolved_kwargs: Mapping[str, Any],
+    labels: Sequence[ContentLabel],
 ) -> Any:
-    """Build a comparable token without invoking application validators."""
+    """Bind inspected references, resolved values, and policy labels without validators."""
     return _argument_authority_token(
         {
             "name": function_name,
-            "arguments": arguments,
-            "kwargs": dict(kwargs),
+            "source_arguments": source_arguments,
+            "source_kwargs": dict(source_kwargs),
+            "resolved_arguments": resolved_arguments,
+            "resolved_kwargs": dict(resolved_kwargs),
+            "labels": [label.to_dict() for label in labels],
         },
         boundary="security policy",
     )
@@ -2076,8 +2083,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         rewritten_paths: set[tuple[str | int, ...]] = set()
         kwargs_rewritten_paths: set[tuple[str | int, ...]] = set()
 
-        arguments = context.arguments
-        kwargs = dict(context.kwargs)
+        source_arguments = context.arguments
+        source_kwargs = dict(context.kwargs)
+        arguments = source_arguments
+        kwargs = dict(source_kwargs)
         if context.function.name not in _VARIABLE_ID_CONSUMERS and arguments:
             arguments = self._resolve_value(
                 context.arguments,
@@ -2137,16 +2146,18 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             else:
                 rewritten_args[arg_name].add(-1)
 
-        security_kwargs = {
-            key: kwargs[key]
-            for key in {
-                path[0] for path in kwargs_rewritten_paths if path and isinstance(path[0], str) and path[0] in kwargs
-            }
+        security_kwarg_names = {
+            path[0] for path in kwargs_rewritten_paths if path and isinstance(path[0], str) and path[0] in kwargs
         }
+        source_security_kwargs = {key: source_kwargs[key] for key in security_kwarg_names}
+        security_kwargs = {key: kwargs[key] for key in security_kwarg_names}
         authority_token = _security_invocation_authority_token(
             context.function.name,
-            arguments,
-            security_kwargs,
+            source_arguments=source_arguments,
+            source_kwargs=source_security_kwargs,
+            resolved_arguments=arguments,
+            resolved_kwargs=security_kwargs,
+            labels=labels,
         )
         return _ResolvedInvocationArguments(
             arguments=arguments,
