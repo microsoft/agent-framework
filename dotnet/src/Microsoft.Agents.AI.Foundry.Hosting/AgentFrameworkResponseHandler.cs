@@ -964,7 +964,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
+            : $"Agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
@@ -1013,7 +1013,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
+            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
