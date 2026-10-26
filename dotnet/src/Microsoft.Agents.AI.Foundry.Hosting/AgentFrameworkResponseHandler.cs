@@ -230,7 +230,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 is { } workflowCheckpointRecovery)
         {
             string? checkpointId =
-                stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
+                stream.PersistedMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
                 && !string.IsNullOrWhiteSpace(persistedCheckpointId)
                     ? persistedCheckpointId
                     : null;
@@ -429,7 +429,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                                     // AgentServer persists its orchestrator-owned response snapshot.
                                     // Apply the updated internal metadata first, then request persistence.
                                     pendingEvents.Enqueue(checkpointStateEvent);
-                                    pendingEvents.Enqueue(stream.Checkpoint());
+                                    pendingEvents.Enqueue(stream.CreateCheckpointEvent());
                                 }
 
                                 continue;
@@ -657,7 +657,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 || session is null
                 || session.GetService<WorkflowSessionCheckpointRecovery>() is null
                 || agentSessionKey is null
-                || (stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
+                || (stream.PersistedMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
                     && string.Equals(lastCheckpointId, checkpoint.CheckpointId, StringComparison.Ordinal)))
             {
                 return null;
@@ -685,7 +685,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 return null;
             }
 
-            stream.InternalMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
+            stream.PersistedMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
             return stream.EmitInProgress();
         }
 

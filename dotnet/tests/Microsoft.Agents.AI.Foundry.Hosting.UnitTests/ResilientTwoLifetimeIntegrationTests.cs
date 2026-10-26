@@ -332,12 +332,15 @@ public sealed class ResilientTwoLifetimeIntegrationTests
 
     private static string GetPersistedResponsePath(
         string stateRoot,
-        string responseId) =>
-        Path.Combine(
-            stateRoot,
-            "responses",
-            "envelopes",
-            $"{responseId}.json");
+        string responseId)
+    {
+        string path = Directory.GetFiles(
+            Path.Combine(stateRoot, "responses", "partitions-v1", "anonymous", "envelopes"),
+            "*.json").Single();
+        return File.ReadAllText(path).Contains(responseId, StringComparison.Ordinal)
+            ? path
+            : throw new InvalidOperationException($"Persisted response '{responseId}' was not found.");
+    }
 
     private static string GetOutputText(JsonElement response)
     {
