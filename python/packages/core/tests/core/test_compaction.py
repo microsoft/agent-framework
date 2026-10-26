@@ -39,6 +39,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _SKILL_UNLOAD_SELECTION_KEY,
     _completed_function_calls,
     _format_summary_message,
     _select_summary_input_groups,
@@ -125,6 +126,23 @@ def _tool_result(call_id: str, result: str, message_id: str | None = None) -> Me
         role="tool",
         contents=[Content.from_function_result(call_id=call_id, result=result)],
         message_id=message_id,
+    )
+
+
+def _skill_unload_result(call_id: str, skill_names: list[str]) -> Message:
+    return Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id=call_id,
+                result=[
+                    Content.from_text(
+                        "Skills will be unloaded before the next model call.",
+                        additional_properties={_SKILL_UNLOAD_SELECTION_KEY: skill_names},
+                    )
+                ],
+            )
+        ],
     )
 
 
@@ -1076,7 +1094,42 @@ async def test_agent_triggered_compaction_restores_request_when_inner_strategy_f
     with pytest.raises(RuntimeError, match="compaction failed"):
         await strategy(messages)
 
-    assert "_agent_compaction_trigger_consumed" not in trigger_message.additional_properties
+    assert "_agent_compaction_trigger_consumed" not in trigger_message.contents[0].additional_properties
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+async def test_composed_trigger_tools_each_execute_once(reverse_order: bool) -> None:
+    first_inner = _RecordingCompactionStrategy(changed=False)
+    second_inner = _RecordingCompactionStrategy(changed=False)
+    first = AgentTriggeredCompactionStrategy(first_inner, tool_name="compact_first")
+    second = AgentTriggeredCompactionStrategy(second_inner, tool_name="compact_second")
+    messages = [
+        Message(role="user", contents=["work"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="first", name=first.tool.name, arguments={}),
+                Content.from_function_call(call_id="second", name=second.tool.name, arguments={}),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="first", result="First compaction requested."),
+                Content.from_function_result(call_id="second", result="Second compaction requested."),
+            ],
+        ),
+    ]
+    strategies = [second, first] if reverse_order else [first, second]
+
+    assert await strategies[0](messages) is False
+    assert await strategies[1](messages) is False
+    assert first_inner.call_count == 1
+    assert second_inner.call_count == 1
+    assert await first(messages) is False
+    assert await second(messages) is False
+    assert first_inner.call_count == 1
+    assert second_inner.call_count == 1
 
 
 async def test_agent_triggered_compaction_ignores_trigger_outside_latest_group() -> None:
@@ -1203,7 +1256,7 @@ async def test_unload_skills_compaction_removes_named_skill_only() -> None:
         _assistant_named_function_call("load-excel", "load_skill", {"skill_name": "excel"}),
         _tool_result("load-excel", "excel instructions"),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
-        _tool_result("unload-pdf", "Unload requested for skill 'pdf'."),
+        _skill_unload_result("unload-pdf", ["pdf"]),
     ]
 
     changed = await strategy(messages)
@@ -1231,7 +1284,7 @@ async def test_unload_skills_compaction_removes_multiple_named_skills() -> None:
             strategy.tool.name,
             {"skill_name": ["pdf", "excel"]},
         ),
-        _tool_result("unload-selected", "Unload requested for pdf and excel."),
+        _skill_unload_result("unload-selected", ["pdf", "excel"]),
     ]
 
     changed = await strategy(messages)
@@ -1278,7 +1331,7 @@ async def test_unload_skills_compaction_empty_name_removes_all_skill_context() -
         ),
         _tool_result("resource-excel", "excel reference"),
         _assistant_named_function_call("unload-all", strategy.tool.name, {"skill_name": "   "}),
-        _tool_result("unload-all", "Unload requested for all skills."),
+        _skill_unload_result("unload-all", []),
     ]
 
     changed = await strategy(messages)
@@ -1322,7 +1375,7 @@ async def test_unload_skills_compaction_preserves_script_results_and_mixed_group
         ),
         _tool_result("run-pdf", "converted.pdf"),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
-        _tool_result("unload-pdf", "Unload requested for skill 'pdf'."),
+        _skill_unload_result("unload-pdf", ["pdf"]),
     ]
 
     changed = await strategy(messages)
@@ -1347,7 +1400,7 @@ async def test_unload_skills_compaction_preserves_group_with_hosted_tool_call() 
         ),
         _tool_result("load-pdf", "pdf instructions"),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
-        _tool_result("unload-pdf", "Skill 'pdf' will be unloaded."),
+        _skill_unload_result("unload-pdf", ["pdf"]),
     ]
 
     changed = await strategy(messages)
@@ -1386,7 +1439,47 @@ async def test_unload_skills_compaction_preserves_group_with_search_tool_call() 
             ],
         ),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
-        _tool_result("unload-pdf", "Skill 'pdf' will be unloaded."),
+        _skill_unload_result("unload-pdf", ["pdf"]),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_unload_skills_compaction_preserves_reused_id_group_with_unresolved_call() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    id="load-pdf",
+                    call_id="shared",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                ),
+                Content.from_function_call(
+                    id="load-excel",
+                    call_id="shared",
+                    name="load_skill",
+                    arguments={"skill_name": "excel"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    id="load-pdf",
+                    call_id="shared",
+                    result="pdf instructions",
+                )
+            ],
+        ),
+        _assistant_named_function_call("unload-all", strategy.tool.name),
+        _skill_unload_result("unload-all", []),
     ]
 
     changed = await strategy(messages)
@@ -2218,6 +2311,42 @@ async def test_apply_compaction_logs_changed_context_without_content(caplog: Any
 
 
 # --- ToolResultCompactionStrategy tests ---
+
+
+async def test_tool_result_compaction_preserves_hosted_search_result() -> None:
+    messages = [
+        Message(role="user", contents=["find docs"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_search_tool_call(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    arguments={"query": "agent framework"},
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_search_tool_result(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    result="Found the Agent Framework documentation.",
+                )
+            ],
+        ),
+        Message(role="assistant", contents=["done"]),
+    ]
+    annotate_message_groups(messages)
+
+    changed = await ToolResultCompactionStrategy(keep_last_tool_call_groups=0)(messages)
+
+    assert changed is True
+    summaries = [message.text or "" for message in messages if (message.text or "").startswith("[Tool results:")]
+    assert len(summaries) == 1
+    assert "web_search: Found the Agent Framework documentation." in summaries[0]
+    assert "no results" not in summaries[0]
 
 
 async def test_tool_result_compaction_collapses_old_groups_into_summary() -> None:

@@ -174,8 +174,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 ### Compaction (`_compaction.py`)
 
 - **`AgentTriggeredCompactionStrategy`** - Wraps one existing compaction strategy and invokes it only after its
-  explicitly registered trigger tool completes in the latest message group. Trigger consumption is stored on that
-  group rather than on the strategy instance so shared agents remain safe across concurrent runs. The trigger group
+  explicitly registered trigger tool completes in the latest message group. Trigger consumption is stored on the
+  completed trigger call occurrence rather than on the strategy instance so shared agents remain safe across
+  concurrent runs and composed trigger tools do not suppress each other. The trigger group
   is temporarily excluded while the inner strategy runs, so it does not consume retention counts, then restored by
   default; set `exclude_trigger=True` to remove a trigger-only group from the next model call. Mixed groups that
   contain unrelated tool calls are always restored atomically. The agent-triggered compaction APIs are experimental

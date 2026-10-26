@@ -31,6 +31,7 @@ from agent_framework import (
     Content,
     ContextProvider,
     Embedding,
+    FunctionMiddleware,
     FunctionTool,
     GeneratedEmbeddings,
     HistoryProvider,
@@ -48,6 +49,7 @@ from agent_framework import (
     ToolApprovalMiddleware,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    UnloadSkillsCompactionStrategy,
     VectorStoreHistoryProvider,
     chat_middleware,
     enqueue_messages,
@@ -3553,6 +3555,94 @@ async def test_agent_triggered_compaction_applies_before_next_model_call(
     ]
     assert "obsolete planning detail" in captured_texts[0]
     assert "obsolete planning detail" not in captured_texts[1]
+
+
+async def test_unload_skills_uses_middleware_rewritten_selection(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+
+    class RewriteUnloadSelectionMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            if context.function.name == strategy.tool.name:
+                context.arguments = {"skill_name": "excel"}
+            await call_next()
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="unload-1",
+                        name=strategy.tool.name,
+                        arguments={"skill_name": "pdf"},
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    captured_calls: list[list[tuple[str | None, Any]]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        captured_calls.append([
+            (content.name, content.parse_arguments())
+            for message in messages
+            for content in message.contents
+            if content.type == "function_call"
+        ])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[strategy.tool],
+        compaction_strategy=strategy,
+        middleware=[RewriteUnloadSelectionMiddleware()],
+    )
+    run_messages = [
+        Message(role="user", contents=["work"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-pdf",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="load-pdf", result="pdf instructions")],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-excel",
+                    name="load_skill",
+                    arguments={"skill_name": "excel"},
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="load-excel", result="excel instructions")],
+        ),
+        Message(role="user", contents=["unload the selected skill"]),
+    ]
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        result = await agent.run(run_messages)
+
+    assert result.text == "done"
+    assert ("load_skill", {"skill_name": "pdf"}) in captured_calls[1]
+    assert ("load_skill", {"skill_name": "excel"}) not in captured_calls[1]
 
 
 async def test_chat_agent_uses_client_compaction_defaults_when_agent_unset(chat_client_base: Any) -> None:

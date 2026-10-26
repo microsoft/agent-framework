@@ -44,6 +44,7 @@ SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
 SUMMARY_OF_GROUP_IDS_KEY = "_summary_of_group_ids"
 SUMMARIZED_BY_SUMMARY_ID_KEY = "_summarized_by_summary_id"
 _AGENT_COMPACTION_TRIGGER_CONSUMED_KEY = "_agent_compaction_trigger_consumed"
+_SKILL_UNLOAD_SELECTION_KEY = "_skill_unload_selection"
 _SKILL_CONTEXT_TOOL_NAMES: Final[frozenset[str]] = frozenset({"load_skill", "read_skill_resource"})
 
 
@@ -1200,13 +1201,11 @@ def _latest_included_group(messages: list[Message]) -> list[Message]:
     return _latest_group(messages, include_excluded=False)
 
 
-def _completed_function_calls(
+def _function_call_result_pairs(
     messages: Sequence[Message],
     *,
-    tool_name: str,
-    include_consumed: bool = False,
     include_excluded: bool = False,
-) -> list[Content]:
+) -> list[tuple[Content, Content]]:
     candidate_messages = (
         list(messages)
         if include_excluded
@@ -1215,7 +1214,7 @@ def _completed_function_calls(
     open_calls_by_call_id: dict[str, list[Content]] = {}
     open_calls_by_occurrence_id: dict[str, list[Content]] = {}
     closed_call_identities: set[int] = set()
-    successful_call_identities: set[int] = set()
+    pairs: list[tuple[Content, Content]] = []
 
     for message in candidate_messages:
         for content in message.contents:
@@ -1249,26 +1248,45 @@ def _completed_function_calls(
             if matched_call is None:
                 continue
 
-            matched_identity = id(matched_call)
-            closed_call_identities.add(matched_identity)
-            if (
-                content.exception is None
-                and content.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is not True
-            ):
-                successful_call_identities.add(matched_identity)
+            closed_call_identities.add(id(matched_call))
+            pairs.append((matched_call, content))
 
+    return pairs
+
+
+def _completed_function_call_pairs(
+    messages: Sequence[Message],
+    *,
+    tool_name: str,
+    include_consumed: bool = False,
+    include_excluded: bool = False,
+) -> list[tuple[Content, Content]]:
     return [
-        content
-        for message in candidate_messages
-        for content in message.contents
+        (call, result)
+        for call, result in _function_call_result_pairs(messages, include_excluded=include_excluded)
         if (
-            content.type == "function_call"
-            and content.name == tool_name
-            and id(content) in successful_call_identities
-            and (
-                include_consumed
-                or message.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is not True
-            )
+            call.name == tool_name
+            and result.exception is None
+            and result.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is not True
+            and (include_consumed or call.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is not True)
+        )
+    ]
+
+
+def _completed_function_calls(
+    messages: Sequence[Message],
+    *,
+    tool_name: str,
+    include_consumed: bool = False,
+    include_excluded: bool = False,
+) -> list[Content]:
+    return [
+        call
+        for call, _ in _completed_function_call_pairs(
+            messages,
+            tool_name=tool_name,
+            include_consumed=include_consumed,
+            include_excluded=include_excluded,
         )
     ]
 
@@ -1316,9 +1334,9 @@ class AgentTriggeredCompactionStrategy:
     Wrapped strategies may provide ``create_trigger_tool()`` to replace the
     default ``compact_context`` tool with one specialized for their inputs.
 
-    The consumed marker is stored on each trigger-group message rather than on
-    this strategy instance, so one strategy can be shared safely by concurrent
-    runs.
+    The consumed marker is stored on the completed trigger call occurrence
+    rather than on this strategy instance, so one strategy can be shared safely
+    by concurrent runs and composed trigger tools do not suppress each other.
 
     This strategy requires client-managed history (for example ``store=False``).
     Chat clients reject it when service-side storage or a service-managed
@@ -1427,9 +1445,12 @@ class AgentTriggeredCompactionStrategy:
             if any(id(message) in trigger_group_ids for message in group):
                 continue
             if not any(
-                message.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is True
-                and not message.additional_properties.get(EXCLUDED_KEY, False)
+                content.type == "function_call"
+                and content.name == self.tool.name
+                and content.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is True
                 for message in group
+                if not message.additional_properties.get(EXCLUDED_KEY, False)
+                for content in message.contents
             ):
                 continue
             if self._is_trigger_only_group(group):
@@ -1455,8 +1476,8 @@ class AgentTriggeredCompactionStrategy:
             self._restore_trigger_group(trigger_state)
             raise
 
-        for message in trigger_group:
-            message.additional_properties[_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY] = True
+        for trigger_call in trigger_calls:
+            trigger_call.additional_properties[_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY] = True
 
         has_unrelated_tool_calls = not self._is_trigger_only_group(trigger_group, include_excluded=True)
         trigger_message_ids = {id(message) for message in trigger_group}
@@ -1541,7 +1562,7 @@ class UnloadSkillsCompactionStrategy:
         """Create the ``unload_skill`` trigger tool used by the wrapper."""
         from ._tools import FunctionTool
 
-        def request_skill_unload(skill_name: str | Sequence[str] | None = None) -> str:
+        def request_skill_unload(skill_name: str | Sequence[str] | None = None) -> list[Content]:
             """Unload the full instructions and resources for selected skills."""
             if skill_name is None:
                 requested_names: Sequence[str] = []
@@ -1556,8 +1577,15 @@ class UnloadSkillsCompactionStrategy:
             normalized_names = [name.strip() for name in requested_names if name.strip()]
             if normalized_names:
                 formatted_names = ", ".join(f"'{name}'" for name in normalized_names)
-                return f"Skill(s) {formatted_names} will be unloaded before the next model call."
-            return "All loaded skills will be unloaded before the next model call."
+                message = f"Skill(s) {formatted_names} will be unloaded before the next model call."
+            else:
+                message = "All loaded skills will be unloaded before the next model call."
+            return [
+                Content.from_text(
+                    message,
+                    additional_properties={_SKILL_UNLOAD_SELECTION_KEY: normalized_names},
+                )
+            ]
 
         return FunctionTool(
             name=self.tool_name,
@@ -1587,7 +1615,7 @@ class UnloadSkillsCompactionStrategy:
         )
 
     def _requested_skill_names(self, messages: list[Message]) -> set[str] | None:
-        requests = _completed_function_calls(
+        requests = _completed_function_call_pairs(
             _latest_group(messages, include_excluded=True),
             tool_name=self.tool_name,
             include_consumed=True,
@@ -1597,17 +1625,15 @@ class UnloadSkillsCompactionStrategy:
             return set()
 
         requested_names: set[str] = set()
-        for request in requests:
-            arguments = request.parse_arguments() or {}
-            raw_skill_names = arguments.get("skill_name")
-            if raw_skill_names is None:
-                skill_names: Sequence[Any] = []
-            elif isinstance(raw_skill_names, str):
-                skill_names = [raw_skill_names]
-            elif isinstance(raw_skill_names, Sequence) and not isinstance(raw_skill_names, (bytes, bytearray)):
-                skill_names = cast("Sequence[Any]", raw_skill_names)
-            else:
+        for _, result in requests:
+            selections = [
+                item.additional_properties.get(_SKILL_UNLOAD_SELECTION_KEY)
+                for item in (result.items or [])
+                if item.type == "text"
+            ]
+            if len(selections) != 1 or not isinstance(selections[0], list):
                 return set()
+            skill_names = cast("list[Any]", selections[0])
             if any(not isinstance(skill_name, str) for skill_name in skill_names):
                 return set()
             normalized_names = {skill_name.strip().casefold() for skill_name in skill_names if skill_name.strip()}
@@ -1631,13 +1657,8 @@ class UnloadSkillsCompactionStrategy:
             return None
         calls = tool_calls
 
-        completed_call_ids = {
-            content.call_id
-            for message in included_messages
-            for content in message.contents
-            if content.type == "function_result" and content.call_id
-        }
-        if any(not call.call_id or call.call_id not in completed_call_ids for call in calls):
+        completed_call_identities = {id(call) for call, _ in _function_call_result_pairs(included_messages)}
+        if any(id(call) not in completed_call_identities for call in calls):
             return None
 
         skill_names: set[str] = set()
@@ -1919,7 +1940,11 @@ class ToolResultCompactionStrategy:
                 for content in msg.contents:
                     if content.type == "function_call" and content.call_id and content.name:
                         call_id_to_name[content.call_id] = content.name
-                    elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
+                    elif (
+                        content.type in ("mcp_server_tool_call", "search_tool_call")
+                        and content.call_id
+                        and content.tool_name
+                    ):
                         call_id_to_name[content.call_id] = content.tool_name
 
             # Collect tool results with the tool name for context.
@@ -1935,6 +1960,11 @@ class ToolResultCompactionStrategy:
                         tool_results.append(label.strip())
                     elif content.type == "mcp_server_tool_result":
                         result_text = _tool_result_text(content.output)
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
+                        tool_results.append(label.strip())
+                    elif content.type == "search_tool_result":
+                        result_text = _tool_result_text(content.result if content.result is not None else content.items)
                         tool_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
