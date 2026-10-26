@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import (
     Agent,
+    AgentTriggeredCompactionStrategy,
     Annotation,
     ChatOptions,
     ChatResponse,
@@ -36,6 +37,7 @@ from agent_framework import (
     SupportsMCPTool,
     SupportsWebSearchTool,
     TextSpanRegion,
+    TruncationStrategy,
     WorkflowBuilder,
     tool,
 )
@@ -102,6 +104,43 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
     reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("option_name", "option_value"),
+    [
+        ("previous_response_id", "resp_existing"),
+        ("conversation", "conv_existing"),
+    ],
+)
+async def test_agent_triggered_compaction_rejects_native_service_continuation_aliases(
+    stream: bool,
+    option_name: str,
+    option_value: str,
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
+    options = cast(OpenAIChatOptions, {"store": False, option_name: option_value})
+
+    with pytest.raises(ChatClientInvalidRequestException, match="service-managed continuation"):
+        if stream:
+            response_stream = client.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=True,
+                options=options,
+                compaction_strategy=strategy,
+            )
+            async for _ in response_stream:
+                pass
+        else:
+            response = client.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=False,
+                options=options,
+                compaction_strategy=strategy,
+            )
+            _ = await response
 
 
 class OutputStruct(BaseModel):

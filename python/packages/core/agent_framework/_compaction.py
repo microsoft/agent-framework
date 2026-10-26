@@ -1211,17 +1211,51 @@ def _completed_function_calls(
         if include_excluded
         else [message for message in messages if not message.additional_properties.get(EXCLUDED_KEY, False)]
     )
-    successful_result_call_ids = {
-        content.call_id
-        for message in candidate_messages
-        for content in message.contents
-        if (
-            content.type == "function_result"
-            and content.call_id
-            and content.exception is None
-            and content.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is not True
-        )
-    }
+    open_calls_by_call_id: dict[str, list[Content]] = {}
+    open_calls_by_occurrence_id: dict[str, list[Content]] = {}
+    closed_call_identities: set[int] = set()
+    successful_call_identities: set[int] = set()
+
+    for message in candidate_messages:
+        for content in message.contents:
+            if content.type == "function_call" and content.call_id:
+                open_calls_by_call_id.setdefault(content.call_id, []).append(content)
+                if content.id:
+                    open_calls_by_occurrence_id.setdefault(content.id, []).append(content)
+                continue
+            if content.type != "function_result" or not content.call_id:
+                continue
+
+            matched_call: Content | None = None
+            if content.id is not None:
+                matched_call = next(
+                    (
+                        call
+                        for call in open_calls_by_occurrence_id.get(content.id, ())
+                        if id(call) not in closed_call_identities and call.call_id == content.call_id
+                    ),
+                    None,
+                )
+            else:
+                matched_call = next(
+                    (
+                        call
+                        for call in open_calls_by_call_id.get(content.call_id, ())
+                        if id(call) not in closed_call_identities
+                    ),
+                    None,
+                )
+            if matched_call is None:
+                continue
+
+            matched_identity = id(matched_call)
+            closed_call_identities.add(matched_identity)
+            if (
+                content.exception is None
+                and content.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is not True
+            ):
+                successful_call_identities.add(matched_identity)
+
     return [
         content
         for message in candidate_messages
@@ -1229,7 +1263,7 @@ def _completed_function_calls(
         if (
             content.type == "function_call"
             and content.name == tool_name
-            and content.call_id in successful_result_call_ids
+            and id(content) in successful_call_identities
             and (
                 include_consumed
                 or message.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is not True

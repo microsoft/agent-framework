@@ -623,6 +623,11 @@ class RawOpenAIChatClient(
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
     STORES_BY_DEFAULT: ClassVar[bool] = True
+    SERVICE_CONTINUATION_OPTION_NAMES: ClassVar[tuple[str, ...]] = (
+        "conversation_id",
+        "previous_response_id",
+        "conversation",
+    )
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 

@@ -401,7 +401,7 @@ async def test_agent_triggered_compaction_rejects_service_conversation_id(
     chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
 
-    with pytest.raises(ChatClientInvalidRequestException, match="service-managed conversation_id"):
+    with pytest.raises(ChatClientInvalidRequestException, match="service-managed continuation"):
         await chat_client_base.get_response(
             [Message(role="user", contents=["Hello"])],
             options=ChatOptions(store=False, conversation_id="service-conversation"),

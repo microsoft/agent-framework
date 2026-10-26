@@ -296,6 +296,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     When ``True``, the agent skips auto-injecting ``InMemoryHistoryProvider`` unless the
     user explicitly sets ``store=False``.
     """
+    SERVICE_CONTINUATION_OPTION_NAMES: ClassVar[tuple[str, ...]] = ("conversation_id",)
+    """Option names that activate provider-managed conversation continuation."""
     # OTEL_PROVIDER_NAME is used for OTel setup, should be overridden in subclasses
 
     def __init__(
@@ -419,14 +421,24 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 service_stores_history = (
                     getattr(self, "STORES_BY_DEFAULT", False) if store is None else store is not False
                 )
-                conversation_id = options.get("conversation_id") if options is not None else None
-                has_service_conversation = conversation_id is not None and (
-                    not isinstance(conversation_id, str) or not is_local_history_conversation_id(conversation_id)
-                )
+                has_service_conversation = False
+                if options is not None:
+                    for option_name in self.SERVICE_CONTINUATION_OPTION_NAMES:
+                        value = options.get(option_name)
+                        if value is None or value == "":
+                            continue
+                        if (
+                            option_name == "conversation_id"
+                            and isinstance(value, str)
+                            and is_local_history_conversation_id(value)
+                        ):
+                            continue
+                        has_service_conversation = True
+                        break
                 if service_stores_history or has_service_conversation:
                     raise ChatClientInvalidRequestException(
                         "Agent-triggered compaction requires client-managed history. "
-                        "Set store=False and do not use a service-managed conversation_id."
+                        "Set store=False and do not use a service-managed continuation option."
                     )
         if compaction_strategy is None:
             if tokenizer is None:

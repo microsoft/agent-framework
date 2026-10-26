@@ -39,6 +39,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _completed_function_calls,
     _format_summary_message,
     _select_summary_input_groups,
     _serialize_message,
@@ -1046,6 +1047,66 @@ async def test_agent_triggered_compaction_ignores_rejected_approval_result() -> 
 
     assert await strategy(messages) is False
     assert inner.call_count == 0
+
+
+def test_completed_function_calls_correlates_reused_call_id_by_occurrence() -> None:
+    rejected_call = Content.from_function_call(
+        id="occ-rejected",
+        call_id="shared",
+        name="compact_context",
+        arguments={"reason": "rejected"},
+    )
+    approved_call = Content.from_function_call(
+        id="occ-approved",
+        call_id="shared",
+        name="compact_context",
+        arguments={"reason": "approved"},
+    )
+    unresolved_call = Content.from_function_call(
+        id="occ-unresolved",
+        call_id="shared",
+        name="compact_context",
+        arguments={"reason": "unresolved"},
+    )
+    messages = [
+        Message(role="assistant", contents=[rejected_call, approved_call, unresolved_call]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    id="occ-rejected",
+                    call_id="shared",
+                    result="Error: Tool call invocation was rejected by user.",
+                    additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+                ),
+                Content.from_function_result(
+                    id="occ-approved",
+                    call_id="shared",
+                    result="Compaction requested.",
+                ),
+            ],
+        ),
+    ]
+
+    completed = _completed_function_calls(messages, tool_name="compact_context")
+
+    assert completed == [approved_call]
+
+
+def test_completed_function_calls_uses_fifo_for_idless_reused_call_id() -> None:
+    first_call = Content.from_function_call(call_id="shared", name="compact_context", arguments={})
+    second_call = Content.from_function_call(call_id="shared", name="compact_context", arguments={})
+    messages = [
+        Message(role="assistant", contents=[first_call, second_call]),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="shared", result="Compaction requested.")],
+        ),
+    ]
+
+    completed = _completed_function_calls(messages, tool_name="compact_context")
+
+    assert completed == [first_call]
 
 
 def test_agent_triggered_compaction_tool_describes_reason_parameter() -> None:
