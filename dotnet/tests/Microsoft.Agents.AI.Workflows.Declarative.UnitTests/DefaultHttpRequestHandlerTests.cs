@@ -1076,10 +1076,10 @@ public sealed class DefaultHttpRequestHandlerTests
         };
 #pragma warning disable CA2025
         TestHttpMessageHandler ownedMessageHandler = new((_, _) => Task.FromResult(redirectResponse));
-#pragma warning restore CA2025
         using HttpResponseMessage okResponse = new(HttpStatusCode.OK);
         TestHttpMessageHandler providedMessageHandler = new((_, _) =>
             Task.FromResult(okResponse));
+#pragma warning restore CA2025
         using HttpClient providedClient = new(providedMessageHandler);
 #pragma warning disable CA2025
         await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(ownedMessageHandler, (info, _) =>
