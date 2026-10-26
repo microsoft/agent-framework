@@ -5766,6 +5766,161 @@ async def test_endpoint_fides_confirm_changes_folds_fresh_client_result(
     assert _is_policy_violation([event["content"] for event in protected_events if event["type"] == "TOOL_CALL_RESULT"])
 
 
+@pytest.mark.parametrize("confirmation_transport", ["message", "resume"])
+async def test_endpoint_fides_confirm_changes_reconstructs_missing_context_label(
+    streaming_chat_client_stub: Any,
+    confirmation_transport: str,
+) -> None:
+    """A confirm-only return reconstructs stored history when FIDES state lacks its label."""
+    thread_id = f"thread-fides-confirm-missing-state-{confirmation_transport}"
+    executed: list[str] = []
+    model_calls = 0
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal model_calls
+        del messages, options, kwargs
+        model_calls += 1
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    confirm_payload = {"accepted": True, "steps": []}
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Look up the external record"},
+                {
+                    "id": "assistant-external-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "external-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "id": "external-result",
+                    "role": "tool",
+                    "toolCallId": "external-call",
+                    "content": "stored external result",
+                },
+                {
+                    "id": "assistant-confirm-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "confirm-call",
+                            "type": "function",
+                            "function": {
+                                "name": "confirm_changes",
+                                "arguments": json.dumps({"function_call_id": "unknown-confirm-target"}),
+                            },
+                        }
+                    ],
+                },
+            ],
+            session_state={
+                config.source_id: {
+                    "scope_id": _session_id_for_thread(scope="test", thread_id=thread_id),
+                }
+            },
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-confirm-missing-state",
+        state_schema={"steps": {"type": "array", "items": {"type": "object"}}},
+        predict_state_config={"steps": {"tool": "draft_steps", "tool_argument": "steps"}},
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+    confirmation_request: dict[str, Any] = {
+        "runId": f"run-fides-confirm-missing-{confirmation_transport}",
+        "threadId": thread_id,
+        "messages": [],
+    }
+    if confirmation_transport == "message":
+        confirmation_request["messages"] = [
+            {
+                "id": "confirm-result",
+                "role": "tool",
+                "toolCallId": "confirm-call",
+                "content": json.dumps(confirm_payload),
+            }
+        ]
+    else:
+        confirmation_request["resume"] = [
+            {
+                "interruptId": "confirm-call",
+                "status": "resolved",
+                "payload": json.dumps(confirm_payload),
+            }
+        ]
+
+    with TestClient(app) as client:
+        confirm_response = client.post("/fides-confirm-missing-state", json=confirmation_request)
+
+        assert confirm_response.status_code == 200
+        assert not [event for event in _decode_sse_events(confirm_response) if event["type"] == "RUN_ERROR"]
+        assert model_calls == 0
+        snapshot = await store.get(scope="test", thread_id=thread_id)
+        assert snapshot is not None
+        assert snapshot.session_state is not None
+        context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+        assert context_label["integrity"] == "untrusted"
+        assert context_label["confidentiality"] == "private"
+
+        protected_response = client.post(
+            "/fides-confirm-missing-state",
+            json={
+                "runId": f"run-fides-confirm-missing-protected-{confirmation_transport}",
+                "threadId": thread_id,
+                "messages": [{"id": "user-2", "role": "user", "content": "Run the protected action"}],
+            },
+        )
+
+    assert protected_response.status_code == 200
+    protected_events = _decode_sse_events(protected_response)
+    assert not [event for event in protected_events if event["type"] == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in protected_events if event["type"] == "TOOL_CALL_RESULT"])
+
+
 @pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper", "client"])
 @pytest.mark.parametrize("session_state_key", [None, "custom_security_state"], ids=["default-key", "custom-key"])
 @pytest.mark.parametrize("state_origin", ["request", "snapshot"])

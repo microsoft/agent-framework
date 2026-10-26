@@ -2822,12 +2822,14 @@ def _fold_fides_uncovered_replay_messages(
     agent: SupportsAgentRun,
     session: AgentSession,
     messages: Sequence[Message],
+    *,
+    complete_replay_messages: Sequence[Message] | None = None,
 ) -> None:
     """Fold uncovered replay into FIDES state before a snapshot-only return."""
     for provider in getattr(agent, "context_providers", ()):
         fold = getattr(provider, "_fold_uncovered_replay_messages", None)
         if callable(fold):
-            fold(session, messages)
+            fold(session, messages, complete_replay_messages=complete_replay_messages)
 
 
 def _legacy_tool_message_approval_resume(
@@ -3688,7 +3690,20 @@ async def _run_agent_stream(
 
     # Handle confirm_changes response (state confirmation flow - emit confirmation and stop)
     if is_confirm_changes_response:
-        _fold_fides_uncovered_replay_messages(agent, session, messages)
+        complete_replay_snapshot = snapshot_messages
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            complete_replay_snapshot = snapshot_session.resume_seeded_messages(complete_replay_snapshot)
+        complete_replay_messages, _ = normalize_agui_input_messages(
+            complete_replay_snapshot,
+            sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
+            protected_tool_call_ids=protected_tool_call_ids,
+        )
+        _fold_fides_uncovered_replay_messages(
+            agent,
+            session,
+            messages,
+            complete_replay_messages=complete_replay_messages,
+        )
         confirm_additional_properties = cast(dict[str, Any], messages[-1].additional_properties or {})
         confirm_interrupt_id = confirm_additional_properties.get("tool_call_id")
         confirm_remaining_interrupts = remaining_stored_interrupts(
