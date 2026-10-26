@@ -1370,3 +1370,52 @@ async def test_in_memory_restores_a_duration_under_a_reduced_decimal_precision()
         assert getcontext().prec == 6
 
     assert getcontext().prec == default_prec
+
+
+@vectorstoremodel(collection_name="uuid_key_records")
+@dataclass
+class UUIDKeyRecord:
+    id: Annotated[UUID, VectorStoreField("key")]
+    name: Annotated[str, VectorStoreField("data")]
+    vector: Annotated[list[float] | None, VectorStoreField("vector", dimensions=2)] = None
+
+
+async def _uuid_key_collection() -> InMemoryCollection[str, UUIDKeyRecord]:
+    collection = InMemoryCollection(UUIDKeyRecord)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [UUIDKeyRecord(UUID("00000000-0000-0000-0000-000000000001"), "one")],
+        generate_vectors=False,
+    )
+    return collection
+
+
+async def test_in_memory_uuid_key_field_accepts_a_canonical_string_operand() -> None:
+    """A canonical string operand matches a UUID key field.
+
+    Scoped tools address UUID keys through their canonical string form
+    (``key_from_json``), so the operand normalizes to the field's own type
+    for the compatibility check and the comparison.
+    """
+    collection = await _uuid_key_collection()
+
+    matched = await collection.get(filter=Filter("id", "in", ("00000000-0000-0000-0000-000000000001",)))
+
+    assert [record.id for record in matched] == [UUID("00000000-0000-0000-0000-000000000001")]
+
+
+async def test_in_memory_uuid_key_field_matches_a_native_uuid_operand() -> None:
+    """A native UUID operand keeps matching the restored key."""
+    collection = await _uuid_key_collection()
+
+    matched = await collection.get(filter=Filter("id", "eq", UUID("00000000-0000-0000-0000-000000000001")))
+
+    assert [record.id for record in matched] == [UUID("00000000-0000-0000-0000-000000000001")]
+
+
+async def test_in_memory_uuid_key_field_rejects_a_non_canonical_string_operand() -> None:
+    """A string that is not a canonical UUID is still rejected loudly."""
+    collection = await _uuid_key_collection()
+
+    with pytest.raises(TypeError, match="cannot compare field"):
+        await collection.get(filter=Filter("id", "in", ("not-a-uuid",)))

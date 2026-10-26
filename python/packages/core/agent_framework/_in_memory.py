@@ -268,12 +268,43 @@ def _evaluate_in_memory_filter(
         or field.type_ not in _SERIALIZED_SCALAR_TYPE_NAMES
         or expression.operator in _TEXT_VALUE_OPERATORS
     ):
-        return _evaluate_filter(expression, record, definition)
+        return _evaluate_filter(_normalized_key_leaf(expression, field), record, definition)
     restored = dict(record)
     storage_name = field.storage_name or field.name
     if storage_name in restored:
         restored[storage_name] = _restore_in_memory_value(restored[storage_name], field.type_)
-    return _evaluate_filter(expression, restored, definition)
+    return _evaluate_filter(_normalized_key_leaf(expression, field), restored, definition)
+
+
+def _normalized_key_operand(field: Any, operand: Any) -> Any:
+    """Return a UUID key operand in the field's native comparison form.
+
+    Scoped tools address UUID keys through their canonical string form
+    (``key_from_json``), so a canonical string operand normalizes to UUID for
+    the compatibility check and the comparison instead of being rejected by
+    the exact-type match. Anything else passes through unchanged.
+    """
+    if field.field_type == "key" and field.type_ == "UUID" and isinstance(operand, str):
+        try:
+            return UUID(operand)
+        except ValueError:
+            return operand
+    return operand
+
+
+def _normalized_key_leaf(expression: Filter, field: Any) -> Filter:
+    """Return the leaf with its UUID key operands normalized when present."""
+    if field is None or field.field_type != "key" or field.type_ != "UUID":
+        return expression
+    value = expression.value
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        items = cast("Sequence[Any]", value)
+        normalized: Any = [_normalized_key_operand(field, item) for item in items]
+    else:
+        normalized = _normalized_key_operand(field, value)
+    if normalized == value:
+        return expression
+    return Filter(expression.field_name, expression.operator, normalized)
 
 
 def _validate_in_memory_filter_value(value: Any) -> None:
@@ -615,7 +646,7 @@ def _reject_incompatible_filter_operands(
         if item.operator in _TEXT_VALUE_OPERATORS:
             continue
         for operand in _filter_operand_values(item):
-            if _operand_matches_field_type(field.type_, operand):
+            if _operand_matches_field_type(field.type_, _normalized_key_operand(field, operand)):
                 continue
             raise TypeError(
                 f"InMemoryCollection cannot compare field '{item.field_name}' of type '{field.type_}' "
