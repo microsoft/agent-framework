@@ -1729,9 +1729,8 @@ class RawAnthropicClient(
 
         Note:
             Document and search-result citations retain their source coordinates in ``annotated_regions``.
-            Their ``additional_properties["annotated_regions_coordinate_space"]`` is ``"source"`` to distinguish
-            these locations from generated-response character offsets. The Responses host does not emit these
-            regions as output-text spans.
+            Their ``annotated_regions_coordinate_space`` is ``"source"`` to distinguish these locations from
+            generated-content character offsets. Protocol adapters do not emit these regions as output-text spans.
         """
         content_blocks = getattr(content_block, "citations", None)
         if not content_blocks:
@@ -1798,7 +1797,7 @@ class RawAnthropicClient(
                 case _:
                     logger.debug(f"Unknown citation type encountered: {citation.type}")
             if cit.get("annotated_regions"):
-                cit["additional_properties"] = {"annotated_regions_coordinate_space": "source"}
+                cit["annotated_regions_coordinate_space"] = "source"
             annotations.append(cit)
         return annotations or None
 

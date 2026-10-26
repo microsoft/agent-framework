@@ -397,16 +397,16 @@ def test_framework_annotations_convert_all_responses_citation_variants() -> None
     ("coordinate_space", "expected"),
     [
         pytest.param(None, [_expected_url_citation()], id="unmarked"),
-        pytest.param("response", [_expected_url_citation()], id="response"),
+        pytest.param("content", [_expected_url_citation()], id="content"),
         pytest.param("source", [], id="source"),
     ],
 )
 def test_framework_annotations_respect_coordinate_space_without_raw_representation(
-    coordinate_space: str | None, expected: list[dict[str, Any]]
+    coordinate_space: Literal["content", "source"] | None, expected: list[dict[str, Any]]
 ) -> None:
     annotation = _url_citation()
     if coordinate_space is not None:
-        annotation["additional_properties"] = {"annotated_regions_coordinate_space": coordinate_space}
+        annotation["annotated_regions_coordinate_space"] = coordinate_space
     annotations = json.loads(json.dumps([annotation]))
     original_annotations = copy.deepcopy(annotations)
 
@@ -417,7 +417,7 @@ def test_framework_annotations_respect_coordinate_space_without_raw_representati
 def test_framework_annotations_preserve_file_citations_with_source_regions() -> None:
     annotation = _file_citation()
     annotation["annotated_regions"] = [{"type": "text_span", "start_index": 1, "end_index": 3}]
-    annotation["additional_properties"]["annotated_regions_coordinate_space"] = "source"
+    annotation["annotated_regions_coordinate_space"] = "source"
     original_annotation = copy.deepcopy(annotation)
 
     assert _annotations_to_output_text([annotation]) == [_expected_file_citation()]
@@ -439,8 +439,17 @@ def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
                     None,
                     "not-a-region",
                     {"type": "source_block", "start_index": 0, "end_index": 5},
+                    {"type": "text_span", "start_index": True, "end_index": 5},
+                    {"type": "text_span", "start_index": -1, "end_index": 5},
+                    {"type": "text_span", "start_index": 8, "end_index": 7},
                     {"type": "text_span", "start_index": 2, "end_index": 7},
                 ],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/non-string-title",
+                "title": 42,
+                "annotated_regions": [{"type": "text_span", "start_index": 8, "end_index": 9}],
             },
             {
                 "type": "citation",
@@ -456,7 +465,13 @@ def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
             title="Mixed",
             start_index=2,
             end_index=7,
-        )
+        ),
+        _expected_url_citation(
+            url="https://example.com/non-string-title",
+            title="",
+            start_index=8,
+            end_index=9,
+        ),
     ]
     assert _annotations_to_output_text(cast(Any, "not-an-annotation-sequence")) == []
 
@@ -483,6 +498,8 @@ def test_framework_annotations_ignore_unsupported_or_incomplete_values() -> None
         ),
         Annotation(type="citation", file_id="file-without-index"),
         Annotation(type="citation", file_id="file-without-index", url="document.txt"),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": True}}),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": -1}}),
         cast(Annotation, {"type": "other", "url": "https://example.com/unsupported"}),
     ]
 
@@ -4115,7 +4132,7 @@ class TestNonStreaming:
 
     async def test_framework_url_and_file_citations_are_added_to_output_text(self) -> None:
         source_citation = _url_citation(start_index=0, end_index=1)
-        source_citation["additional_properties"] = {"annotated_regions_coordinate_space": "source"}
+        source_citation["annotated_regions_coordinate_space"] = "source"
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(
@@ -4965,7 +4982,7 @@ class TestStreaming:
 
     async def test_framework_url_citation_is_consistent_across_stream_events(self) -> None:
         source_citation = _url_citation(start_index=0, end_index=1)
-        source_citation["additional_properties"] = {"annotated_regions_coordinate_space": "source"}
+        source_citation["annotated_regions_coordinate_space"] = "source"
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(

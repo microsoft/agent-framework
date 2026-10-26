@@ -4340,12 +4340,12 @@ def test_parse_citations_marks_source_coordinate_space(
     annotation = result[0]
     if expected_span is None:
         assert "annotated_regions" not in annotation
-        assert "annotated_regions_coordinate_space" not in annotation.get("additional_properties", {})
+        assert "annotated_regions_coordinate_space" not in annotation
     else:
         assert annotation["annotated_regions"] == [
             {"type": "text_span", "start_index": expected_span[0], "end_index": expected_span[1]}
         ]
-        assert annotation["additional_properties"]["annotated_regions_coordinate_space"] == "source"
+        assert annotation["annotated_regions_coordinate_space"] == "source"
 
 
 @pytest.mark.flaky

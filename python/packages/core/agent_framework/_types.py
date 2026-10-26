@@ -481,8 +481,54 @@ class Annotation(TypedDict, total=False):
     tool_name: str
     snippet: str
     annotated_regions: Sequence[TextSpanRegion]
+    annotated_regions_coordinate_space: Literal["content", "source"]
     additional_properties: dict[str, Any]
     raw_representation: Any
+
+
+class _ValidatedTextSpanRegion(TypedDict):
+    type: Literal["text_span"]
+    start_index: int
+    end_index: int
+
+
+def _get_annotation_text_span_regions(  # pyright: ignore[reportUnusedFunction]
+    annotation: Mapping[str, Any],
+    *,
+    coordinate_space: Literal["content", "source"] = "content",
+) -> list[_ValidatedTextSpanRegion]:
+    """Return validated text spans in the requested coordinate space.
+
+    An absent coordinate space retains the legacy meaning that regions refer to the
+    annotated ``Content.text``. Source-coordinate regions refer to the cited source
+    and must not be interpreted as generated-content offsets.
+    """
+    if annotation.get("annotated_regions_coordinate_space", "content") != coordinate_space:
+        return []
+
+    raw_regions = annotation.get("annotated_regions")
+    if not isinstance(raw_regions, Sequence) or isinstance(raw_regions, (str, bytes, bytearray)):
+        return []
+
+    regions: list[_ValidatedTextSpanRegion] = []
+    for raw_region in cast(Sequence[Any], raw_regions):
+        if not isinstance(raw_region, Mapping):
+            continue
+        region = cast(Mapping[str, Any], raw_region)
+        if region.get("type") != "text_span":
+            continue
+        start_index = region.get("start_index")
+        end_index = region.get("end_index")
+        if type(start_index) is not int or type(end_index) is not int or start_index < 0 or end_index < start_index:
+            continue
+        regions.append(
+            _ValidatedTextSpanRegion(
+                type="text_span",
+                start_index=start_index,
+                end_index=end_index,
+            )
+        )
+    return regions
 
 
 @experimental(feature_id=ExperimentalFeature.COMPUTER_USE)

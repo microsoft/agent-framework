@@ -82,6 +82,9 @@ agent_framework/
   `additional_properties` namespaces and streamed mergeable content uses `merge_mode`; response updates can use the
   same field to replace all contents of one logical message; see
   [spec 005](../../../docs/specs/005-python-content-identity-and-protocol-metadata.md).
+- **Citation coordinates** - `Annotation.annotated_regions_coordinate_space` distinguishes spans in generated
+  `Content.text` (`"content"`, also the default when omitted) from locations in cited source material (`"source"`).
+  Protocol adapters must not interpret source-coordinate regions as generated-text offsets.
 - **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
   constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
   results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.

@@ -55,6 +55,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._types import _get_annotation_text_span_regions  # pyright: ignore[reportPrivateUsage]
 from agent_framework._workflows._agent import _StreamingRoleGate  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentFrameworkException
 from agent_framework.observability import OBSERVABILITY_SETTINGS
@@ -287,8 +288,8 @@ def _annotations_to_output_text(
 ) -> list[ResponsesAnnotation]:
     """Convert framework citations into Responses output-text annotations.
 
-    Regions with ``additional_properties["annotated_regions_coordinate_space"] == "source"``
-    describe the source document, not output text, and are not emitted as output spans.
+    Source-coordinate regions describe the cited source, not generated content, and
+    are not emitted as output-text spans.
     """
     if not annotations or not isinstance(annotations, Sequence) or isinstance(annotations, (str, bytes)):
         return []
@@ -305,17 +306,7 @@ def _annotations_to_output_text(
         properties: Mapping[str, Any] = (
             cast("Mapping[str, Any]", raw_properties) if isinstance(raw_properties, Mapping) else {}
         )
-        raw_regions = annotation_mapping.get("annotated_regions")
-        if properties.get("annotated_regions_coordinate_space") == "source":
-            raw_regions = None
-        regions: list[Mapping[str, Any]] = []
-        if isinstance(raw_regions, Sequence) and not isinstance(raw_regions, (str, bytes)):
-            for raw_region in cast("Sequence[Any]", raw_regions):
-                if not isinstance(raw_region, Mapping):
-                    continue
-                region = cast("Mapping[str, Any]", raw_region)
-                if region.get("type") == "text_span":
-                    regions.append(region)
+        regions = _get_annotation_text_span_regions(annotation_mapping)
         file_id = annotation_mapping.get("file_id")
         url = annotation_mapping.get("url")
         title = annotation_mapping.get("title")
@@ -324,36 +315,30 @@ def _annotations_to_output_text(
 
         if isinstance(container_id, str) and container_id and isinstance(file_id, str) and file_id:
             for region in regions:
-                start_index = region.get("start_index")
-                end_index = region.get("end_index")
-                if not isinstance(start_index, int) or not isinstance(end_index, int):
-                    continue
                 output_annotations.append(
                     ContainerFileCitationBody(
                         type="container_file_citation",
                         container_id=container_id,
                         file_id=file_id,
-                        filename=url or "",
-                        start_index=start_index,
-                        end_index=end_index,
+                        filename=url if isinstance(url, str) else "",
+                        start_index=region["start_index"],
+                        end_index=region["end_index"],
                     )
                 )
         elif isinstance(url, str) and url and not file_id:
             for region in regions:
-                start_index = region.get("start_index")
-                end_index = region.get("end_index")
-                if not isinstance(start_index, int) or not isinstance(end_index, int):
-                    continue
                 output_annotations.append(
                     UrlCitationBody(
                         type="url_citation",
                         url=url,
-                        title=title or "",
-                        start_index=start_index,
-                        end_index=end_index,
+                        title=title if isinstance(title, str) else "",
+                        start_index=region["start_index"],
+                        end_index=region["end_index"],
                     )
                 )
-        elif isinstance(file_id, str) and file_id and isinstance(url, str) and url and isinstance(index, int):
+        elif (
+            isinstance(file_id, str) and file_id and isinstance(url, str) and url and type(index) is int and index >= 0
+        ):
             output_annotations.append(
                 FileCitationBody(
                     type="file_citation",
@@ -362,7 +347,7 @@ def _annotations_to_output_text(
                     index=index,
                 )
             )
-        elif isinstance(file_id, str) and file_id and isinstance(index, int):
+        elif isinstance(file_id, str) and file_id and type(index) is int and index >= 0:
             output_annotations.append(
                 FilePath(
                     type="file_path",
