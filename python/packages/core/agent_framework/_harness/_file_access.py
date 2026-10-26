@@ -31,7 +31,7 @@ import time
 import unicodedata
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Mapping, MutableMapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Final, Protocol, cast
 
@@ -2056,6 +2056,24 @@ class FileAccessProvider(ContextProvider):
 
     def _prefixed_tool_name(self, name: str) -> str:
         return f"{self.tool_name_prefix}_{name}" if self.tool_name_prefix else name
+
+    def get_read_only_tools_auto_approval_rule(self) -> Callable[[Content], bool]:
+        """Create an auto-approval rule for this provider's read-only tool names."""
+        tool_names = frozenset(self._prefixed_tool_name(name) for name in self._READ_ONLY_TOOL_NAMES)
+
+        def rule(function_call: Content) -> bool:
+            return self._is_local_tool_call(function_call) and function_call.name in tool_names
+
+        return rule
+
+    def get_all_tools_auto_approval_rule(self) -> Callable[[Content], bool]:
+        """Create an auto-approval rule for all of this provider's tool names."""
+        tool_names = frozenset(self._prefixed_tool_name(name) for name in self._ALL_TOOL_NAMES)
+
+        def rule(function_call: Content) -> bool:
+            return self._is_local_tool_call(function_call) and function_call.name in tool_names
+
+        return rule
 
     async def before_run(
         self,

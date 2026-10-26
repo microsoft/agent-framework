@@ -1058,6 +1058,28 @@ def test_read_only_tools_auto_approval_rule() -> None:
         assert FileAccessProvider.read_only_tools_auto_approval_rule(hosted) is False
 
 
+def test_prefixed_provider_read_only_auto_approval_rule() -> None:
+    """A provider-bound rule should approve only that provider's prefixed read-only tools."""
+    provider = FileAccessProvider(InMemoryAgentFileStore(), tool_name_prefix="spec")
+    rule = provider.get_read_only_tools_auto_approval_rule()
+
+    prefixed_read = Content("function_call", call_id="c1", name="spec_file_access_read", arguments="{}")
+    unprefixed_read = Content("function_call", call_id="c2", name="file_access_read", arguments="{}")
+    prefixed_write = Content("function_call", call_id="c3", name="spec_file_access_write", arguments="{}")
+    hosted_read = Content(
+        "function_call",
+        call_id="c4",
+        name="spec_file_access_read",
+        arguments="{}",
+        hosted=True,
+    )
+
+    assert rule(prefixed_read) is True
+    assert rule(unprefixed_read) is False
+    assert rule(prefixed_write) is False
+    assert rule(hosted_read) is False
+
+
 def test_all_tools_auto_approval_rule() -> None:
     """The all-tools rule approves every file-access tool but nothing else."""
     for name in (
