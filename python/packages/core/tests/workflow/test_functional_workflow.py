@@ -1187,10 +1187,42 @@ class TestCheckpointing:
             release_save.set()
             await asyncio.gather(cancellation_task, run_task, return_exceptions=True)
 
-    async def test_double_caller_cancellation_finishes_checkpoint_save(self):
+    async def test_caller_cancellation_before_save_starts_closes_storage_coroutine(
+        self, recwarn: pytest.WarningsRecorder
+    ):
+        storage = InMemoryCheckpointStorage()
+        run_task: asyncio.Future[Any] | None = None
+
+        @step(replay_key=lambda: "complete")
+        async def complete() -> int:
+            assert run_task is not None
+            run_task.cancel()
+            return 1
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(_: int) -> int:
+            return await complete()
+
+        run_task = asyncio.ensure_future(wf.run(0))
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+        run_task = None
+        # Let task completion callbacks run before checking coroutine ownership.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        gc.collect()
+        assert not [warning for warning in recwarn if "was never awaited" in str(warning.message)]
+        assert await storage.list_checkpoints(workflow_name="wf") == []
+
+    async def test_double_caller_cancellation_drains_checkpoint_save_and_background_tasks(self):
         save_started = asyncio.Event()
         release_save = asyncio.Event()
         save_finished = asyncio.Event()
+        save_cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        background_started = asyncio.Event()
+        background_finished = asyncio.Event()
+        background_tasks: list[asyncio.Task[None]] = []
 
         class BlockingSaveStorage(InMemoryCheckpointStorage):
             async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
@@ -1199,7 +1231,11 @@ class TestCheckpointing:
                     await release_save.wait()
                     return await super().save(checkpoint)
                 finally:
-                    save_finished.set()
+                    save_cleanup_started.set()
+                    try:
+                        await release_cleanup.wait()
+                    finally:
+                        save_finished.set()
 
         storage = BlockingSaveStorage()
 
@@ -1207,24 +1243,39 @@ class TestCheckpointing:
         async def complete(value: int) -> int:
             return value + 1
 
+        async def background() -> None:
+            background_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                background_finished.set()
+
         @built_workflow(checkpoint_storage=storage)
         async def wf(value: int) -> int:
+            background_tasks.append(asyncio.create_task(background()))
+            await background_started.wait()
             return await complete(value)
 
         run_task = asyncio.ensure_future(wf.run(0))
         try:
             await asyncio.wait_for(save_started.wait(), timeout=5)
             run_task.cancel()
-            await asyncio.sleep(0)
+            await asyncio.wait_for(save_cleanup_started.wait(), timeout=5)
             run_task.cancel()
+            release_cleanup.set()
 
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(run_task, timeout=5)
             await asyncio.wait_for(save_finished.wait(), timeout=5)
+            assert background_finished.is_set()
+            assert all(task.done() for task in background_tasks)
             assert await storage.list_checkpoints(workflow_name="wf") == []
         finally:
             release_save.set()
-            await asyncio.gather(run_task, return_exceptions=True)
+            release_cleanup.set()
+            for task in background_tasks:
+                task.cancel()
+            await asyncio.gather(run_task, *background_tasks, return_exceptions=True)
 
     async def test_pause_sibling_cancellation_preserves_in_flight_checkpoint(self):
         save_started = asyncio.Event()

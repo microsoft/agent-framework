@@ -128,6 +128,18 @@ class _WorkflowTaskFactoryState:
             task = asyncio.Task(_tracked_coro(), loop=loop, **kwargs)
         else:
             task = self.original_factory(loop, _tracked_coro(), **kwargs)
+
+        def _close_unstarted_coro(completed: asyncio.Future[Any]) -> None:
+            # Cancellation can prevent the tracking wrapper from ever entering
+            # the coroutine it owns, so the wrapper cannot close it itself.
+            if (
+                completed.cancelled()
+                and inspect.iscoroutine(coro)
+                and inspect.getcoroutinestate(coro) == inspect.CORO_CREATED
+            ):
+                coro.close()
+
+        task.add_done_callback(_close_unstarted_coro)
         _register(task)
         return task
 
@@ -2406,7 +2418,6 @@ class FunctionalWorkflow:
             except BaseException:
                 ctx._cancel_checkpoint_saves()
                 ctx._cancel_workflow_task(workflow_task)
-                await asyncio.gather(workflow_task, return_exceptions=True)
                 await ctx._cancel_workflow_tasks()
                 raise
 
