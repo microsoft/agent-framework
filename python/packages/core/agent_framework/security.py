@@ -974,6 +974,14 @@ def _uninspectable_replay_label() -> ContentLabel:
     )
 
 
+def _visible_variable_reference_label(label: ContentLabel) -> ContentLabel:
+    """Return the model-visible label without free-form stored metadata."""
+    return ContentLabel(
+        integrity=label.integrity,
+        confidentiality=label.confidentiality,
+    )
+
+
 def _authenticated_hidden_reference_label(content: Content, *, scope: _SecurityScope) -> ContentLabel | None:
     """Return the authoritative label for a canonical session-owned hidden placeholder."""
     if (
@@ -1020,15 +1028,16 @@ def _authenticated_hidden_reference_label(content: Content, *, scope: _SecurityS
     except ValueError:
         return None
 
-    stored_label_data = stored_label.to_dict()
+    visible_label = _visible_variable_reference_label(stored_label)
+    visible_label_data = visible_label.to_dict()
     expected_payload = VariableReferenceContent(
         variable_id=variable_id,
-        label=stored_label,
+        label=visible_label,
         description=f"Result from {function_name}",
     ).to_dict()
     expected_properties = {
         "_variable_reference": True,
-        "security_label": stored_label_data,
+        "security_label": visible_label_data,
     }
     expected_text = json.dumps(expected_payload)
     if (
@@ -1365,14 +1374,17 @@ def _security_invocation_authority_token(
 
 
 def _bindable_runtime_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
-    """Return runtime kwargs whose values can safely participate in an authority token."""
+    """Normalize runtime kwargs using the same canonical identities as approval binding."""
     bindable: dict[str, Any] = {}
     for key, value in kwargs.items():
         try:
-            _argument_authority_token(value, boundary="security policy runtime kwarg")
-        except MiddlewareFailure:
+            bindable[key] = _strict_json_value(
+                value,
+                path=f"security policy runtime kwarg {key!r}",
+                canonical=True,
+            )
+        except (TypeError, ValueError):
             continue
-        bindable[key] = value
     return bindable
 
 
@@ -2159,7 +2171,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 rewritten_args[arg_name].add(-1)
 
         source_security_kwargs = _bindable_runtime_kwargs(source_kwargs)
-        security_kwargs = {key: kwargs[key] for key in source_security_kwargs}
+        security_kwargs = _bindable_runtime_kwargs(kwargs)
         authority_token = _security_invocation_authority_token(
             context.function.name,
             source_arguments=source_arguments,
@@ -2878,9 +2890,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
         # Create variable reference
         description = f"Result from {function_name}"
+        visible_label = _visible_variable_reference_label(label)
         var_ref = VariableReferenceContent(
             variable_id=var_id,
-            label=label,
+            label=visible_label,
             description=description,
         )
 
@@ -2890,7 +2903,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         # Return as a Content item so it fits in list[Content]
         return Content.from_text(
             _json.dumps(var_ref.to_dict()),
-            additional_properties={"_variable_reference": True, "security_label": label.to_dict()},
+            additional_properties={"_variable_reference": True, "security_label": visible_label.to_dict()},
         )
 
     def get_variable_store(self, session: AgentSession | None = None) -> ContentVariableStore:
