@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -127,6 +128,22 @@ def _unescape_markdown_line(line: str) -> str:
 def _slugify_topic(topic: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", _normalize_topic(topic).lower()).strip("-")
     return slug or "memory-topic"
+
+
+def _topic_stem(topic: str, *, slug_override: str | None = None) -> str:
+    """Return the injective filename stem for a topic.
+
+    Distinct topics can share a readable slug: ``C ++`` and ``C #`` both slugify
+    to ``c``, so a slug-only stem let the second topic silently overwrite the
+    first topic's memories. The stem keeps the readable slug for humans and
+    appends a short digest of the normalized topic, so distinct normalized
+    topics never share a file (mirroring how ``_storage_key_segment`` keeps
+    byte-distinct identifiers in separate storage locations).
+    """
+    normalized = _normalize_topic(topic)
+    slug = _slugify_topic(slug_override if slug_override is not None else normalized)
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
+    return f"{slug}-{digest}"
 
 
 def _timestamp(value: datetime | None = None) -> str:
@@ -302,7 +319,9 @@ class MemoryIndexEntry:
         """
         return cls(
             topic=record.topic,
-            slug=record.slug,
+            # The persisted stem, not the readable slug: distinct topics can
+            # share a slug, and an index link must point at the real file.
+            slug=record.storage_stem,
             summary=_coerce_summary(record.summary, record.memories),
             updated_at=record.updated_at,
         )
@@ -372,6 +391,11 @@ class MemoryTopicRecord:
         self.summary = _coerce_summary(summary, self.memories)
         self.updated_at = updated_at
         self.session_ids = _dedupe_strings(session_ids or [])
+
+    @property
+    def storage_stem(self) -> str:
+        """Filename stem this record persists under (slug or explicit override plus digest)."""
+        return _topic_stem(self.topic, slug_override=self.slug)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the topic record for tool output.
@@ -449,9 +473,13 @@ class MemoryTopicRecord:
         memory_lines = [f"- {_escape_markdown_line(memory)}" for memory in self.memories] or [
             f"- {DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]}"
         ]
+        header_lines = [f"# {self.topic}", ""]
+        if self.slug != _slugify_topic(self.topic):
+            # Persist an explicit slug override so later lookups by that slug,
+            # and the index stem, still resolve after a reload.
+            header_lines += [f"Slug: {self.slug}", ""]
         return "\n".join([
-            f"# {self.topic}",
-            "",
+            *header_lines,
             f"Updated: {self.updated_at}",
             f"Sessions: {session_line}",
             "",
@@ -479,6 +507,7 @@ class MemoryTopicRecord:
             ValueError: If the markdown cannot be parsed into the expected format.
         """
         topic = fallback_topic
+        slug: str | None = None
         updated_at = _timestamp()
         session_ids: list[str] = []
         summary_lines: list[str] = []
@@ -491,6 +520,9 @@ class MemoryTopicRecord:
             if stripped.startswith("# "):
                 topic = stripped[2:].strip()
                 current_section = None
+                continue
+            if current_section is None and stripped.startswith("Slug: "):
+                slug = stripped.removeprefix("Slug: ").strip()
                 continue
             if current_section is None and stripped.startswith("Updated: "):
                 updated_at = stripped.removeprefix("Updated: ").strip()
@@ -522,6 +554,7 @@ class MemoryTopicRecord:
             raise ValueError("Memory topic markdown is missing a '# <topic>' heading.")
         return cls(
             topic=topic,
+            slug=slug,
             summary="\n".join(summary_lines).strip(),
             memories=memories,
             updated_at=updated_at,
@@ -763,8 +796,66 @@ class MemoryFileStore(MemoryStore):
     def _get_state_path(self, session: AgentSession, *, source_id: str) -> Path:
         return self._get_memory_root(session, source_id=source_id) / self.state_file_name
 
-    def _topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path:
+    def _topic_path(
+        self, session: AgentSession, *, source_id: str, topic: str, slug_override: str | None = None
+    ) -> Path:
+        return (
+            self._get_topics_directory(session, source_id=source_id)
+            / f"{_topic_stem(topic, slug_override=slug_override)}.md"
+        )
+
+    def _legacy_topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path:
+        """Filename stem used before the digest suffix (kept for reading old stores)."""
         return self._get_topics_directory(session, source_id=source_id) / f"{_slugify_topic(topic)}.md"
+
+    def _existing_topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path | None:
+        """Return the topic file to read, or ``None`` when no file matches.
+
+        Lookups resolve in order: the digest stem of the given name (the exact
+        file ``write_topic`` uses for that topic), a legacy slug-only file from
+        stores written before the digest suffix, then any file whose stem starts
+        with the readable slug followed by a dash, which serves lookups made by
+        slug or by a topic that normalizes differently than its stored spelling.
+        When several topics share a slug, a slug-only lookup is ambiguous by
+        nature; the file whose recorded topic matches the lookup wins, else the
+        first stem in sorted order keeps the choice deterministic.
+        """
+        topics_dir = self._get_topics_directory(session, source_id=source_id)
+        if not topics_dir.is_dir():
+            return None
+        try:
+            wanted = _normalize_topic(topic)
+        except ValueError:
+            return None
+        # 1. The digest stem of the given name: the exact file write_topic uses.
+        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
+        if topic_path.exists():
+            return topic_path
+        # 2. An exact filename match: a legacy slug-only file from stores written
+        #    before the digest suffix, or a caller passing a persisted stem.
+        exact_path = topics_dir / f"{_slugify_topic(topic)}.md"
+        if exact_path.exists():
+            return exact_path
+        # 3. Digest-suffixed stems sharing the slug. A prefix glob alone proves
+        #    nothing (a missing topic must never read, merge into, or delete a
+        #    longer unrelated slug), so every candidate is validated against the
+        #    record it actually holds.
+        prefix = f"{_slugify_topic(topic)}-"
+        matches = sorted(topics_dir.glob(f"{prefix}*.md"))
+        if not matches:
+            return None
+        for path in matches:
+            record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"), fallback_topic=topic)
+            if record.topic == wanted:
+                return path
+        # A record carrying an explicit slug override stays findable by that
+        # slug; a default record never matches here, so colliding topics such
+        # as C++ and C# cannot merge through a shared slug.
+        for path in matches:
+            record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"), fallback_topic=topic)
+            if record.slug == _slugify_topic(topic) and record.slug != _slugify_topic(record.topic):
+                return path
+        return None
 
     @staticmethod
     def _serialize_json(value: object, *, dumps: JsonDumps) -> str:
@@ -818,20 +909,29 @@ class MemoryFileStore(MemoryStore):
 
     def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
         """Return one topic memory file by topic name or slug."""
-        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
-        if not topic_path.exists():
+        topic_path = self._existing_topic_path(session, source_id=source_id, topic=topic)
+        if topic_path is None:
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
 
     def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
-        """Persist one topic memory file."""
-        topic_path = self._topic_path(session, source_id=source_id, topic=record.slug)
+        """Persist one topic memory file.
+
+        The digest-stemmed file is the single authoritative record: when this
+        topic previously lived at another path (a legacy slug-only file, or a
+        stem written under a different slug override), that file is retired so
+        lookups can never surface stale content or resurrect the old record.
+        """
+        previous_path = self._existing_topic_path(session, source_id=source_id, topic=record.topic)
+        topic_path = self._topic_path(session, source_id=source_id, topic=record.topic, slug_override=record.slug)
         _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
+        if previous_path is not None and previous_path != topic_path:
+            previous_path.unlink(missing_ok=True)
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
-        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
-        if not topic_path.exists():
+        topic_path = self._existing_topic_path(session, source_id=source_id, topic=topic)
+        if topic_path is None:
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         topic_path.unlink()
 
