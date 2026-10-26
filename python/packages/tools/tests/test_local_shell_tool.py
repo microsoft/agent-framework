@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -382,7 +383,10 @@ async def test_persistent_powershell_reports_repeated_native_exit_code(tmp_path:
 
         readback = await tool.run("Write-Output $LASTEXITCODE")
         assert readback.exit_code == 0
-        assert readback.stdout.strip() == "3"
+        # Outside Windows, pwsh writes DECCKM sequences around every command it
+        # reads from stdin (ESC[?1h before reading, ESC[?1l before running)
+        # unless TERM=dumb, so the output starts with ESC[?1l there.
+        assert re.sub(r"\x1b\[\?1[hl]", "", readback.stdout).strip() == "3"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell-specific encoding")
