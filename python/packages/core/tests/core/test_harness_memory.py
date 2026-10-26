@@ -1046,6 +1046,81 @@ def test_memory_file_store_encodes_non_ascii_owner_ids(tmp_path) -> None:
     assert roots[0] != roots[1]
 
 
+def test_memory_topic_record_keeps_a_memory_that_matches_the_placeholder(tmp_path) -> None:
+    """A real memory whose text equals the empty-list placeholder must survive a
+    round trip; only the placeholder written for an empty memory list is dropped."""
+    record = MemoryTopicRecord(
+        topic="status",
+        summary="s",
+        memories=["none yet", "real fact"],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+
+    parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="status")
+
+    assert parsed.memories == ["none yet", "real fact"]
+
+
+def test_memory_topic_record_round_trips_a_genuine_singleton_placeholder_memory() -> None:
+    """A real memories=[none yet] singleton must not collapse to an empty list.
+
+    The write side marks a genuine memory whose exact text equals the
+    placeholder with a distinguishing suffix, and the reader decodes the mark
+    before applying the sole-placeholder drop, so only a bare placeholder line
+    written for an empty list reads back empty.
+    """
+    record = MemoryTopicRecord(
+        topic="notes",
+        summary="s",
+        memories=["none yet"],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+    parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="notes")
+    assert parsed.memories == ["none yet"]
+
+
+def test_memory_topic_record_marks_genuine_placeholder_on_write() -> None:
+    """The written form of a genuine placeholder-valued memory carries the
+    distinguishing suffix, so it cannot be confused with a written placeholder."""
+    record = MemoryTopicRecord(
+        topic="notes",
+        summary="s",
+        memories=["none yet", "real fact"],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+    markdown = record.to_markdown()
+    assert "- none yet <!-- genuine -->" in markdown
+    assert "- real fact" in markdown
+
+
+def test_memory_topic_record_keeps_unmarked_placeholder_behavior_for_legacy_files() -> None:
+    """Files written before the marker keep their previous meaning: a sole bare
+    placeholder line still reads back as an empty memory list."""
+    legacy = "\n".join([
+        "# notes",
+        "",
+        "Updated: 2026-10-26T00:00:00+00:00",
+        "Sessions: -",
+        "",
+        "## Summary",
+        "s",
+        "",
+        "## Memories",
+        "- none yet",
+    ])
+    parsed = MemoryTopicRecord.from_markdown(legacy, fallback_topic="notes")
+    assert parsed.memories == []
+
+
+def test_memory_topic_record_still_drops_the_placeholder_for_an_empty_list() -> None:
+    """An empty memory list writes the placeholder line and reads back empty."""
+    record = MemoryTopicRecord(topic="empty", summary="s", memories=[], updated_at="2026-10-26T00:00:00+00:00")
+
+    parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="empty")
+
+    assert parsed.memories == []
+
+
 def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -> None:
     """Safe identifiers are readable on disk rather than opaque encoded segments."""
     store = MemoryFileStore(tmp_path, owner_prefix="user_", owner_state_key="owner_id")

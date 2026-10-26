@@ -45,6 +45,11 @@ DEFAULT_MEMORY_MAX_EXTRACTIONS = 5
 DEFAULT_MEMORY_CONSOLIDATION_INTERVAL: Final[timedelta] = timedelta(hours=24)
 DEFAULT_MEMORY_INDEX_HEADER = "# MEMORY"
 DEFAULT_MEMORY_NO_TOPICS_TEXT = "- none yet"
+
+# Suffix marking a genuine memory whose exact text equals the empty-list
+# placeholder, so a singleton real memory is distinguishable from a written
+# placeholder line on read. Unmarked files keep their previous meaning.
+_MEMORY_GENUINE_PLACEHOLDER_SUFFIX = " <!-- genuine -->"
 DEFAULT_MEMORY_EXTRACTION_PROMPT = """You extract durable memory candidates from an agent transcript delta.
 
 Return only JSON with this exact shape:
@@ -446,7 +451,7 @@ class MemoryTopicRecord:
         # content (or LLM-supplied consolidation output) for a section delimiter.
         escaped_summary_lines = [_escape_markdown_line(line) for line in self.summary.splitlines()]
         escaped_summary = "\n".join(escaped_summary_lines)
-        memory_lines = [f"- {_escape_markdown_line(memory)}" for memory in self.memories] or [
+        memory_lines = [f"- {_escape_markdown_line(self._encode_memory_text(memory))}" for memory in self.memories] or [
             f"- {DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]}"
         ]
         return "\n".join([
@@ -461,6 +466,18 @@ class MemoryTopicRecord:
             "## Memories",
             *memory_lines,
         ]).rstrip()
+
+    @staticmethod
+    def _encode_memory_text(memory: str) -> str:
+        """Mark a genuine memory equal to the placeholder so a reader keeps it.
+
+        The write side emits the bare placeholder line only for an empty memory
+        list; a real memory whose exact text equals it gets a distinguishing
+        suffix so a singleton round trip cannot collapse to empty.
+        """
+        if memory == DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
+            return memory + _MEMORY_GENUINE_PLACEHOLDER_SUFFIX
+        return memory
 
     @classmethod
     def from_markdown(cls, markdown: str, *, fallback_topic: str | None = None) -> MemoryTopicRecord:
@@ -515,8 +532,19 @@ class MemoryTopicRecord:
                 continue
             if current_section == "memories" and stripped.startswith("- "):
                 memory_text = _unescape_markdown_line(stripped[2:].strip())
-                if memory_text and memory_text != DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
+                if memory_text:
                     memories.append(memory_text)
+
+        # Decode the genuine-marker suffix first so a marked memory can never be
+        # mistaken for the placeholder, then drop a bare placeholder only when it
+        # is the sole entry: that is the only shape the write side emits it in,
+        # and unmarked files keep their previous meaning.
+        placeholder = DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]
+        marked = placeholder + _MEMORY_GENUINE_PLACEHOLDER_SUFFIX
+        was_marked = [memory == marked for memory in memories]
+        memories = [placeholder if is_marked else memory for memory, is_marked in zip(memories, was_marked)]
+        if memories == [placeholder] and not was_marked[0]:
+            memories = []
 
         if topic is None:
             raise ValueError("Memory topic markdown is missing a '# <topic>' heading.")
