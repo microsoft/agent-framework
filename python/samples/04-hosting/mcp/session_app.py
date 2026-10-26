@@ -52,12 +52,16 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 
-async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+async def list_tools(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None
+) -> types.ListToolsResult:
     """Return the agent-derived MCP tool definition."""
     return await agent_tool.list_tools()
 
 
-async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+async def call_tool(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+) -> types.CallToolResult:
     """Serialize calls per app-owned session before using ``AgentState``."""
     name = params.name
     arguments = params.arguments or {}

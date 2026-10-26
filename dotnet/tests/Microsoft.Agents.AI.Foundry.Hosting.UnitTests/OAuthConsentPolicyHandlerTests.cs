@@ -148,6 +148,32 @@ public class OAuthConsentPolicyHandlerTests
         Assert.Equal(1, sessionStore.SaveAttempts);
     }
 
+    [Fact]
+    public async Task CreateAsync_ConsumerStopsReading_DisposesAgentWithRequestConsentContextAsync()
+    {
+        // Arrange
+        await using var service = await CreateStartedServiceAsync(allowedOrigins: null, toolboxNames: [], opener: null);
+        var agent = new ConsentContextTrackingAgent();
+        var callerState = new RequestConsentState();
+        var previousState = McpConsentContext.Current.Value;
+        McpConsentContext.Current.Value = callerState;
+        try
+        {
+            // Act
+            await RunAsync(agent, service, stopAfterFirstOutput: true);
+
+            // Assert
+            Assert.NotNull(agent.RunState);
+            Assert.NotSame(callerState, agent.RunState);
+            Assert.Same(agent.RunState, agent.DisposeState);
+            Assert.Same(callerState, McpConsentContext.Current.Value);
+        }
+        finally
+        {
+            McpConsentContext.Current.Value = previousState;
+        }
+    }
+
     private static void AssertFailedWithoutLink(List<ResponseStreamEvent> events, string rejectedLink)
     {
         Assert.DoesNotContain(events, e => e is ResponseOutputItemAddedEvent { Item: OAuthConsentRequestOutputItem });
@@ -211,7 +237,8 @@ public class OAuthConsentPolicyHandlerTests
         AIAgent agent,
         FoundryToolboxService toolboxService,
         CreateResponse? request = null,
-        AgentSessionStore? sessionStore = null)
+        AgentSessionStore? sessionStore = null,
+        bool stopAfterFirstOutput = false)
     {
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore ?? new InMemoryAgentSessionStore());
@@ -230,6 +257,10 @@ public class OAuthConsentPolicyHandlerTests
         await foreach (var evt in handler.CreateAsync(request ?? CreateRequest(), context.Object, CancellationToken.None))
         {
             events.Add(evt);
+            if (stopAfterFirstOutput && evt is ResponseOutputItemAddedEvent)
+            {
+                break;
+            }
         }
 
         return events;
@@ -261,6 +292,12 @@ public class OAuthConsentPolicyHandlerTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             new((AgentSession?)null);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private abstract class AgentBase : AIAgent
@@ -298,6 +335,31 @@ public class OAuthConsentPolicyHandlerTests
         {
             await Task.Yield();
             yield return new AgentResponseUpdate { MessageId = "resp_msg_1", Contents = [new MeaiTextContent("hi")] };
+        }
+    }
+
+    private sealed class ConsentContextTrackingAgent : AgentBase
+    {
+        public RequestConsentState? RunState { get; private set; }
+
+        public RequestConsentState? DisposeState { get; private set; }
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session,
+            AgentRunOptions? options,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            this.RunState = McpConsentContext.Current.Value;
+            try
+            {
+                await Task.Yield();
+                yield return new AgentResponseUpdate { MessageId = "resp_msg_1", Contents = [new MeaiTextContent("hi")] };
+            }
+            finally
+            {
+                this.DisposeState = McpConsentContext.Current.Value;
+            }
         }
     }
 

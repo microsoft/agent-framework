@@ -263,6 +263,12 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
 
                     if (cappedRequests is not null)
                     {
+                        this.EnsureRequestIdsUnique(
+                            cappedRequests,
+                            state,
+                            session,
+                            includeSurfacedRequests: recordedAnyCappedRequest);
+
                         // The first update carrying requests supersedes any earlier batch; later updates in this
                         // same turn add to it, since every one of them reaches the caller.
                         if (recordedAnyCappedRequest)
@@ -348,6 +354,8 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                 yield break;
             }
 
+            this.EnsureRequestIdsUnique(streamedApprovalRequests, state, session, includeSurfacedRequests: false);
+
             // 4. Classify the collected approval requests against standing rules and auto-approval rules.
             List<ToolApprovalRequestContent> unapproved = [];
             foreach (var tarc in streamedApprovalRequests)
@@ -418,6 +426,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
 
         if (requests is not null)
         {
+            this.EnsureRequestIdsUnique(requests, state, session, includeSurfacedRequests: false);
             ResetSurfacedApprovalRequests(state, requests);
             this._sessionState.SaveState(session, state);
         }
@@ -431,12 +440,6 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// <remarks>
     /// A new batch from the inner agent supersedes any previous one, so stale entries from an abandoned
     /// approval cycle cannot later authorize a standing rule.
-    /// <para>
-    /// Request ids are unique by construction, so keying by id loses nothing: they derive from tool call ids, and
-    /// inference services correlate a tool call to its result by that id alone. A duplicate id would already have
-    /// broken that correlation upstream. Nothing a caller sends reaches this dictionary — every entry originates
-    /// from the inner agent's own response — so a caller cannot manufacture a collision here.
-    /// </para>
     /// </remarks>
     private static void ResetSurfacedApprovalRequests(ToolApprovalState state, IReadOnlyList<ToolApprovalRequestContent> requests)
     {
@@ -475,6 +478,61 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         }
 
         return request;
+    }
+
+    /// <summary>
+    /// Rejects duplicate active approval request IDs.
+    /// </summary>
+    private void EnsureRequestIdsUnique(
+        List<ToolApprovalRequestContent> requests,
+        ToolApprovalState state,
+        AgentSession? session,
+        bool includeSurfacedRequests)
+    {
+        if (requests.Count == 0)
+        {
+            return;
+        }
+
+        var knownRequestIds = new HashSet<string>(StringComparer.Ordinal);
+        if (includeSurfacedRequests)
+        {
+            foreach (string requestId in state.SurfacedApprovalRequests.Keys)
+            {
+                knownRequestIds.Add(requestId);
+            }
+        }
+
+        HashSet<string>? duplicateRequestIds = null;
+
+        foreach (var request in requests)
+        {
+            if (knownRequestIds.Add(request.RequestId))
+            {
+                continue;
+            }
+
+            (duplicateRequestIds ??= new(StringComparer.Ordinal)).Add(request.RequestId);
+        }
+
+        if (duplicateRequestIds is null || duplicateRequestIds.Count == 0)
+        {
+            return;
+        }
+
+        foreach (string requestId in duplicateRequestIds)
+        {
+            state.SurfacedApprovalRequests.Remove(requestId);
+            state.QueuedApprovalRequests.RemoveAll(
+                queued => string.Equals(queued.RequestId, requestId, StringComparison.Ordinal));
+            state.CollectedApprovalResponses.RemoveAll(
+                response => string.Equals(response.RequestId, requestId, StringComparison.Ordinal));
+        }
+
+        this._sessionState.SaveState(session, state);
+
+        throw new InvalidOperationException(
+            $"Tool approval request IDs '{string.Join("', '", duplicateRequestIds.OrderBy(id => id, StringComparer.Ordinal))}' were used more than once.");
     }
 
     /// <summary>
@@ -606,6 +664,12 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         AgentRunOptions? options,
         IReadOnlyCollection<ChatMessage> requestMessages)
     {
+        var requests = responseMessages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .ToList();
+        this.EnsureRequestIdsUnique(requests, state, session, includeSurfacedRequests: false);
+
         // Pass 1: Scan all response messages and classify each approval request.
         //         Auto-approved requests (matching a standing rule or auto-approval rule) have their
         //         responses collected immediately, preserving the original request order, and are

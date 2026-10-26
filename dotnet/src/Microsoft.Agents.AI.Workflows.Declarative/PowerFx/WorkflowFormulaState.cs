@@ -31,6 +31,7 @@ internal sealed class WorkflowFormulaState
     private const string SensitivityScopePrefix = "__Microsoft_Agents_AI_Workflows_Declarative_Sensitivity:";
 
     private readonly Dictionary<string, WorkflowScope> _scopes;
+    private readonly FrozenSet<string> _restorableEnvironmentVariables;
 
     private Dictionary<string, WorkflowScope> _initialScopes;
 
@@ -42,9 +43,10 @@ internal sealed class WorkflowFormulaState
 
     public bool AllowsSideEffects { get; }
 
-    public WorkflowFormulaState(RecalcEngine engine, bool allowsSideEffects = false)
+    public WorkflowFormulaState(RecalcEngine engine, bool allowsSideEffects = false, IEnumerable<string>? restorableEnvironmentVariables = null)
     {
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
+        this._restorableEnvironmentVariables = (restorableEnvironmentVariables ?? []).ToFrozenSet(StringComparer.Ordinal);
         this._initialScopes = this.CreateScopeSnapshot();
 
         this.Engine = engine;
@@ -112,25 +114,38 @@ internal sealed class WorkflowFormulaState
         this.Bind();
     }
 
-    public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (!this.SetInitialized())
         {
-            return;
+            return default;
         }
 
+        return this.RestoreCheckpointAsync(context, cancellationToken);
+    }
+
+    public async ValueTask RestoreCheckpointAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
         this.RestoreInitialState();
 
         Stopwatch timer = Stopwatch.StartNew();
         Debug.WriteLine("RESTORE CHECKPOINT - BEGIN");
         await Task.WhenAll(RestorableScopes.Select(scopeName => ReadScopeAsync(scopeName))).ConfigureAwait(false);
+        if (this._restorableEnvironmentVariables.Count > 0)
+        {
+            await ReadScopeAsync(VariableScopeNames.Environment, this._restorableEnvironmentVariables).ConfigureAwait(false);
+        }
         Debug.WriteLine($"RESTORE CHECKPOINT - COMPLETE [{timer.Elapsed}]");
 
-        async Task ReadScopeAsync(string scopeName)
+        async Task ReadScopeAsync(string scopeName, FrozenSet<string>? allowedKeys = null)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName, cancellationToken).ConfigureAwait(false);
             foreach (string key in keys)
             {
+                if (allowedKeys?.Contains(key) == false)
+                {
+                    continue;
+                }
                 PortableValue? value = await context.ReadStateAsync<PortableValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
                 SensitivityLevel sensitivity = await context.ReadStateAsync<SensitivityLevel>(key, GetSensitivityScopeName(scopeName), cancellationToken).ConfigureAwait(false);
                 if (value is null)

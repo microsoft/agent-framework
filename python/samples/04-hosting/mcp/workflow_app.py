@@ -65,12 +65,16 @@ def create_workflow():
     ).build()
 
 
-async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+async def list_tools(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None
+) -> types.ListToolsResult:
     """Return the workflow-derived MCP tool definition."""
     return await workflow_tool.list_tools()
 
 
-async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+async def call_tool(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+) -> types.CallToolResult:
     """Run a fresh workflow instance with validated MCP arguments."""
     name = params.name
     arguments = params.arguments or {}

@@ -632,10 +632,10 @@ The method naming (`SupportsReadByUri`, `CanReadByUri`, `ReadByUriAsync`) should
 ## References
 
 - [SEP-2640: Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) - Draft proposal
-- [SEP-2640 Implementation Guidelines: Model-Driven Resource Loading](https://github.com/modelcontextprotocol/experimental-ext-skills/blob/main/docs/sep-draft-skills-extension.md#hosts-model-driven-resource-loading)
+- [SEP-2640 Implementation Guidelines: Model-Driven Resource Loading](https://github.com/modelcontextprotocol/ext-skills/blob/main/docs/archive/sep-draft-skills-extension.md#hosts-end-to-end-integration)
 - [MCP Completion API](https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/completion) - Used for template variable resolution
 - [MCP Resource Templates](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#resource-templates)
-- [Skills Over MCP Working Group](https://github.com/modelcontextprotocol/experimental-ext-skills)
-- [Open Question #4: Multi-server skill dependencies](https://github.com/modelcontextprotocol/experimental-ext-skills/issues/39)
+- [Skills Over MCP Working Group](https://github.com/modelcontextprotocol/ext-skills)
+- [Open Question #4: Multi-server skill dependencies](https://github.com/modelcontextprotocol/ext-skills/issues/39)
 - [Anthropic Agent Skills - Overview](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) - Prior art: single skill entrypoint + generic file reads
 - [Anthropic Agent Skills in the SDK](https://code.claude.com/docs/en/agent-sdk/skills) - The `Skill` tool exposed to the model

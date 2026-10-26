@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Core.Storage;
 using Azure.Core;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -63,6 +65,7 @@ public sealed class FoundryAgentSessionStore : AgentSessionStore
     private const string KeyField = "key";
 
     private readonly FoundryStateStoreBinding _binding;
+    private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryAgentSessionStore"/> class.
@@ -83,15 +86,18 @@ public sealed class FoundryAgentSessionStore : AgentSessionStore
     /// not. The value only takes effect when this store is created for the first time, because the
     /// platform fixes it at creation.
     /// </param>
+    /// <param name="loggerFactory">Creates the logger this store reports through.</param>
     public FoundryAgentSessionStore(
         Uri? endpoint = null,
         TokenCredential? credential = null,
         string storeName = DefaultStoreName,
-        int itemTtlSeconds = FoundryStateStore.DefaultItemTtlSeconds)
+        int itemTtlSeconds = FoundryStateStore.DefaultItemTtlSeconds,
+        ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNullOrWhitespace(storeName);
 
         this.StoreName = storeName;
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<FoundryAgentSessionStore>();
         this._binding = new(cancellationToken => FoundryStateStore.GetOrCreateAsync(
             storeName,
             credential,
@@ -107,12 +113,17 @@ public sealed class FoundryAgentSessionStore : AgentSessionStore
     /// </summary>
     /// <param name="storeFactory">Resolves the bound state store on first use.</param>
     /// <param name="storeName">The state-store name, for diagnostics.</param>
-    internal FoundryAgentSessionStore(Func<CancellationToken, Task<FoundryStateStore>> storeFactory, string storeName = DefaultStoreName)
+    /// <param name="loggerFactory">Creates the logger this store reports through.</param>
+    internal FoundryAgentSessionStore(
+        Func<CancellationToken, Task<FoundryStateStore>> storeFactory,
+        string storeName = DefaultStoreName,
+        ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(storeFactory);
 
         this._binding = new(storeFactory);
         this.StoreName = storeName;
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<FoundryAgentSessionStore>();
     }
 
     /// <summary>Gets the state-store name that holds the sessions.</summary>
@@ -175,6 +186,40 @@ public sealed class FoundryAgentSessionStore : AgentSessionStore
         using JsonDocument document = JsonDocument.Parse(bytes);
         JsonElement element = document.RootElement.Clone();
         return await agent.DeserializeSessionAsync(element, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public override async ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
+
+        string logicalKey = FoundryAgentSessionKeyEncoder.BuildLogicalKey(
+            FoundryHostingAgent.GetSessionStorageIdentity(agent),
+            key);
+        FoundryStateStore store = await this.GetStoreAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await store.DeleteItemAsync(
+                FoundryAgentSessionKeyEncoder.BuildStorageKey(logicalKey),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (FoundryStorageNotFoundException ex)
+        {
+            // Nothing stored for this key, so deletion remains idempotent.
+            if (this._logger.IsEnabled(LogLevel.Debug))
+            {
+                this._logger.LogDebug(
+                    ex,
+                    "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.",
+                    key.SessionId,
+                    this.StoreName);
+            }
+        }
     }
 
     /// <summary>

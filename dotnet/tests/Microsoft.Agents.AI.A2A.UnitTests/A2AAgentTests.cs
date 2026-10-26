@@ -811,6 +811,400 @@ public sealed class A2AAgentTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(TaskState.InputRequired, false)]
+    [InlineData(TaskState.InputRequired, true)]
+    [InlineData(TaskState.AuthRequired, false)]
+    [InlineData(TaskState.AuthRequired, true)]
+    [InlineData(TaskState.Unspecified, false)]
+    [InlineData(TaskState.Unspecified, true)]
+    [InlineData(TaskState.Failed, false)]
+    [InlineData(TaskState.Failed, true)]
+    [InlineData(TaskState.Canceled, false)]
+    [InlineData(TaskState.Canceled, true)]
+    [InlineData(TaskState.Rejected, false)]
+    [InlineData(TaskState.Rejected, true)]
+    public async Task RunAsync_WithTaskStatusMessage_PreservesMessageAsync(TaskState state, bool continuation)
+    {
+        // Arrange
+        var task = new AgentTask
+        {
+            Id = "task-123",
+            ContextId = "context-123",
+            Metadata = new() { ["shared"] = JsonSerializer.SerializeToElement("task") },
+            Artifacts = [new Artifact { Parts = [Part.FromText("Partial result")] }],
+            Status = new()
+            {
+                State = state,
+                Message = new Message
+                {
+                    Role = Role.User,
+                    MessageId = "status-message",
+                    Metadata = new()
+                    {
+                        ["shared"] = JsonSerializer.SerializeToElement(new { code = "needs-attention" }),
+                        ["message-only"] = JsonSerializer.SerializeToElement("message-value")
+                    },
+                    Parts = [Part.FromText("Task status details.")]
+                }
+            }
+        };
+        this._handler.ResponseToReturn = new SendMessageResponse { Task = task };
+        this._handler.AgentTaskToReturn = task;
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+
+        // Act
+        var response = continuation
+            ? await this._agent.RunAsync([], session, options: new() { ContinuationToken = new A2AContinuationToken(task.Id) })
+            : await this._agent.RunAsync("Start a task", session);
+
+        // Assert
+        Assert.Equal(2, response.Messages.Count);
+        Assert.Equal("Partial result", response.Messages[0].Text);
+        var statusMessage = response.Messages[1];
+        Assert.Equal("Task status details.", statusMessage.Text);
+        Assert.Equal(ChatRole.User, statusMessage.Role);
+        Assert.Equal("status-message", statusMessage.MessageId);
+        Assert.NotNull(statusMessage.AdditionalProperties);
+        Assert.Equal(2, statusMessage.AdditionalProperties.Count);
+        Assert.Equal("message-value", Assert.IsType<JsonElement>(statusMessage.AdditionalProperties["message-only"]).GetString());
+        Assert.Equal("needs-attention", Assert.IsType<JsonElement>(statusMessage.AdditionalProperties["shared"]).GetProperty("code").GetString());
+        var rawTask = Assert.IsType<AgentTask>(response.RawRepresentation);
+        Assert.Equal(state, rawTask.Status.State);
+        Assert.Same(rawTask.Status.Message, statusMessage.RawRepresentation);
+        Assert.Same(rawTask.Status.Message!.Parts[0], statusMessage.Contents[0].RawRepresentation);
+        Assert.Same(rawTask.Artifacts![0], response.Messages[0].RawRepresentation);
+        Assert.NotNull(response.AdditionalProperties);
+        Assert.Single(response.AdditionalProperties);
+        Assert.Equal("task", Assert.IsType<JsonElement>(response.AdditionalProperties["shared"]).GetString());
+        Assert.Null(response.ContinuationToken);
+        Assert.Null(response.FinishReason);
+        Assert.Equal(state, session.TaskState);
+        Assert.Equal(continuation ? "GetTask" : "SendMessage", this._handler.CapturedJsonRpcRequest?.Method);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Submitted, false)]
+    [InlineData(TaskState.Submitted, true)]
+    [InlineData(TaskState.Working, false)]
+    [InlineData(TaskState.Working, true)]
+    [InlineData(TaskState.Completed, false)]
+    [InlineData(TaskState.Completed, true)]
+    public async Task RunAsync_WithRoutineStatusMessage_ReturnsOnlyArtifactsAsync(TaskState state, bool continuation)
+    {
+        // Arrange
+        var task = new AgentTask
+        {
+            Id = "task-123",
+            ContextId = "context-123",
+            Metadata = new() { ["source"] = JsonSerializer.SerializeToElement("task") },
+            Artifacts = [new Artifact { Parts = [Part.FromText("Task result")] }],
+            Status = new()
+            {
+                State = state,
+                Message = new Message
+                {
+                    Role = Role.User,
+                    MessageId = "status-message",
+                    Metadata = new()
+                    {
+                        ["source"] = JsonSerializer.SerializeToElement("message"),
+                        ["message-only"] = JsonSerializer.SerializeToElement("message-value")
+                    },
+                    Parts = [Part.FromText("Routine status details.")]
+                }
+            }
+        };
+        this._handler.ResponseToReturn = new SendMessageResponse { Task = task };
+        this._handler.AgentTaskToReturn = task;
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+
+        // Act
+        var response = continuation
+            ? await this._agent.RunAsync([], session, options: new() { ContinuationToken = new A2AContinuationToken(task.Id) })
+            : await this._agent.RunAsync("Start a task", session);
+
+        // Assert
+        var message = Assert.Single(response.Messages);
+        Assert.Equal("Task result", message.Text);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Equal(task.Id, response.ResponseId);
+        Assert.NotNull(response.AdditionalProperties);
+        Assert.Single(response.AdditionalProperties);
+        Assert.Equal("task", Assert.IsType<JsonElement>(response.AdditionalProperties["source"]).GetString());
+        var rawTask = Assert.IsType<AgentTask>(response.RawRepresentation);
+        Assert.Same(rawTask.Artifacts![0], message.RawRepresentation);
+        Assert.Equal("Routine status details.", rawTask.Status.Message!.Parts[0].Text);
+        Assert.Equal(state, session.TaskState);
+        Assert.Equal(continuation ? "GetTask" : "SendMessage", this._handler.CapturedJsonRpcRequest?.Method);
+        if (state == TaskState.Completed)
+        {
+            Assert.Equal(ChatFinishReason.Stop, response.FinishReason);
+            Assert.Null(response.ContinuationToken);
+        }
+        else
+        {
+            Assert.Null(response.FinishReason);
+            Assert.Equal(task.Id, Assert.IsType<A2AContinuationToken>(response.ContinuationToken).TaskId);
+        }
+    }
+
+    [Theory]
+    [InlineData(TaskState.InputRequired, false)]
+    [InlineData(TaskState.InputRequired, true)]
+    [InlineData(TaskState.AuthRequired, false)]
+    [InlineData(TaskState.AuthRequired, true)]
+    [InlineData(TaskState.Unspecified, false)]
+    [InlineData(TaskState.Unspecified, true)]
+    [InlineData(TaskState.Failed, false)]
+    [InlineData(TaskState.Failed, true)]
+    [InlineData(TaskState.Canceled, false)]
+    [InlineData(TaskState.Canceled, true)]
+    [InlineData(TaskState.Rejected, false)]
+    [InlineData(TaskState.Rejected, true)]
+    public async Task RunStreamingAsync_WithTaskStatusMessage_PreservesContentsAsync(TaskState state, bool statusUpdate)
+    {
+        // Arrange
+        var status = new global::A2A.TaskStatus
+        {
+            State = state,
+            Message = new Message
+            {
+                Role = Role.User,
+                MessageId = "status-message",
+                Metadata = new()
+                {
+                    ["reason"] = JsonSerializer.SerializeToElement(new { code = "needs-attention" }),
+                    ["shared"] = JsonSerializer.SerializeToElement("message")
+                },
+                Parts =
+                [
+                    Part.FromText("Task status details."),
+                    new Part
+                    {
+                        Data = JsonSerializer.SerializeToElement(new { retryable = false }),
+                        Metadata = new() { ["part-key"] = JsonSerializer.SerializeToElement("part-value") }
+                    }
+                ]
+            }
+        };
+        Dictionary<string, JsonElement> metadata = new()
+        {
+            ["event-key"] = JsonSerializer.SerializeToElement("event-value"),
+            ["shared"] = JsonSerializer.SerializeToElement("event")
+        };
+        this._handler.StreamingResponseToReturn = statusUpdate
+            ? new StreamResponse
+            {
+                StatusUpdate = new TaskStatusUpdateEvent { TaskId = "task-123", ContextId = "context-123", Status = status, Metadata = metadata }
+            }
+            : new StreamResponse
+            {
+                Task = new AgentTask
+                {
+                    Id = "task-123",
+                    ContextId = "context-123",
+                    Status = status,
+                    Metadata = metadata,
+                    Artifacts = [new Artifact { Parts = [Part.FromText("Partial result")] }]
+                }
+            };
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Start a task", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        var result = Assert.Single(updates);
+        Assert.Equal("task-123", result.ResponseId);
+        Assert.Equal(statusUpdate ? "status-message" : null, result.MessageId);
+        Assert.Equal(ChatRole.Assistant, result.Role);
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.Equal(2, result.AdditionalProperties.Count);
+        Assert.False(result.AdditionalProperties.ContainsKey("reason"));
+        Assert.Equal("event-value", Assert.IsType<JsonElement>(result.AdditionalProperties["event-key"]).GetString());
+        Assert.Equal("event", Assert.IsType<JsonElement>(result.AdditionalProperties["shared"]).GetString());
+        Assert.Null(result.ContinuationToken);
+        Assert.Null(result.FinishReason);
+        Assert.Equal(state, session.TaskState);
+        global::A2A.TaskStatus rawStatus;
+        if (statusUpdate)
+        {
+            Assert.Equal(2, result.Contents.Count);
+            var rawEvent = Assert.IsType<TaskStatusUpdateEvent>(result.RawRepresentation);
+            rawStatus = rawEvent.Status;
+            Assert.Equal("event", rawEvent.Metadata!["shared"].GetString());
+        }
+        else
+        {
+            Assert.Equal(3, result.Contents.Count);
+            Assert.Equal("Partial result", Assert.IsType<TextContent>(result.Contents[0]).Text);
+            var rawTask = Assert.IsType<AgentTask>(result.RawRepresentation);
+            rawStatus = rawTask.Status;
+            Assert.Equal("event", rawTask.Metadata!["shared"].GetString());
+            Assert.Same(rawTask.Artifacts![0].Parts[0], result.Contents[0].RawRepresentation);
+        }
+
+        Assert.Equal(state, rawStatus.State);
+        Assert.NotNull(rawStatus.Message);
+        Assert.NotNull(rawStatus.Message.Metadata);
+        Assert.Equal("message", rawStatus.Message.Metadata["shared"].GetString());
+        Assert.Equal("needs-attention", rawStatus.Message.Metadata["reason"].GetProperty("code").GetString());
+        Assert.Equal("Task status details.", Assert.IsType<TextContent>(result.Contents[^2]).Text);
+        var structuredContent = Assert.IsType<DataContent>(result.Contents[^1]);
+        using var data = JsonDocument.Parse(structuredContent.Data);
+        Assert.False(data.RootElement.GetProperty("retryable").GetBoolean());
+        Assert.NotNull(structuredContent.AdditionalProperties);
+        Assert.Equal("part-value", Assert.IsType<JsonElement>(structuredContent.AdditionalProperties["part-key"]).GetString());
+        Assert.Same(rawStatus.Message.Parts[1], structuredContent.RawRepresentation);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Submitted, false)]
+    [InlineData(TaskState.Submitted, true)]
+    [InlineData(TaskState.Working, false)]
+    [InlineData(TaskState.Working, true)]
+    [InlineData(TaskState.Completed, false)]
+    [InlineData(TaskState.Completed, true)]
+    public async Task RunStreamingAsync_WithRoutineStatusMessage_OmitsStatusContentsAsync(TaskState state, bool statusUpdate)
+    {
+        // Arrange
+        var status = new global::A2A.TaskStatus
+        {
+            State = state,
+            Message = new Message
+            {
+                Role = Role.User,
+                MessageId = "status-message",
+                Metadata = new()
+                {
+                    ["source"] = JsonSerializer.SerializeToElement("message"),
+                    ["message-only"] = JsonSerializer.SerializeToElement("message-value")
+                },
+                Parts = [Part.FromText("Routine status details.")]
+            }
+        };
+        Dictionary<string, JsonElement> metadata = new() { ["source"] = JsonSerializer.SerializeToElement("task-or-event") };
+        this._handler.StreamingResponseToReturn = statusUpdate
+            ? new StreamResponse
+            {
+                StatusUpdate = new TaskStatusUpdateEvent { TaskId = "task-123", ContextId = "context-123", Status = status, Metadata = metadata }
+            }
+            : new StreamResponse
+            {
+                Task = new AgentTask
+                {
+                    Id = "task-123",
+                    ContextId = "context-123",
+                    Status = status,
+                    Metadata = metadata,
+                    Artifacts = [new Artifact { Parts = [Part.FromText("Task result")] }]
+                }
+            };
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Start a task", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        var result = Assert.Single(updates);
+        Assert.Equal("task-123", result.ResponseId);
+        Assert.Equal(ChatRole.Assistant, result.Role);
+        Assert.Equal(statusUpdate ? "status-message" : null, result.MessageId);
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.Single(result.AdditionalProperties);
+        Assert.Equal("task-or-event", Assert.IsType<JsonElement>(result.AdditionalProperties["source"]).GetString());
+        Assert.Equal(state == TaskState.Completed ? ChatFinishReason.Stop : null, result.FinishReason);
+        Assert.Equal(state, session.TaskState);
+        if (statusUpdate)
+        {
+            Assert.Empty(result.Contents);
+            Assert.Equal(state, Assert.IsType<TaskStatusUpdateEvent>(result.RawRepresentation).Status.State);
+        }
+        else
+        {
+            var content = Assert.IsType<TextContent>(Assert.Single(result.Contents));
+            Assert.Equal("Task result", content.Text);
+            var rawTask = Assert.IsType<AgentTask>(result.RawRepresentation);
+            Assert.Same(rawTask.Artifacts![0].Parts[0], content.RawRepresentation);
+            Assert.Equal(state, rawTask.Status.State);
+        }
+
+        if (!statusUpdate && state != TaskState.Completed)
+        {
+            Assert.Equal("task-123", Assert.IsType<A2AContinuationToken>(result.ContinuationToken).TaskId);
+        }
+        else
+        {
+            Assert.Null(result.ContinuationToken);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunStreamingAsync_WithOnlyStatusMessageMetadata_KeepsMetadataInRawRepresentationAsync(bool statusUpdate)
+    {
+        // Arrange
+        var status = new global::A2A.TaskStatus
+        {
+            State = TaskState.Failed,
+            Message = new Message
+            {
+                Role = Role.Agent,
+                MessageId = "status-message",
+                Metadata = new() { ["reason"] = JsonSerializer.SerializeToElement(new { code = "needs-attention" }) },
+                Parts = [Part.FromText("The task could not finish.")]
+            }
+        };
+        this._handler.StreamingResponseToReturn = statusUpdate
+            ? new StreamResponse { StatusUpdate = new TaskStatusUpdateEvent { TaskId = "task-123", ContextId = "context-123", Status = status } }
+            : new StreamResponse { Task = new AgentTask { Id = "task-123", ContextId = "context-123", Status = status } };
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Start a task"))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        var result = Assert.Single(updates);
+        Assert.Equal("task-123", result.ResponseId);
+        Assert.Equal(statusUpdate ? "status-message" : null, result.MessageId);
+        Assert.Equal(ChatRole.Assistant, result.Role);
+        Assert.Equal("The task could not finish.", Assert.IsType<TextContent>(Assert.Single(result.Contents)).Text);
+        Message? rawMessage;
+        if (statusUpdate)
+        {
+            Assert.NotNull(result.AdditionalProperties);
+            Assert.Empty(result.AdditionalProperties);
+            var rawEvent = Assert.IsType<TaskStatusUpdateEvent>(result.RawRepresentation);
+            Assert.Null(rawEvent.Metadata);
+            rawMessage = rawEvent.Status.Message;
+        }
+        else
+        {
+            Assert.Null(result.AdditionalProperties);
+            var rawTask = Assert.IsType<AgentTask>(result.RawRepresentation);
+            Assert.Null(rawTask.Metadata);
+            rawMessage = rawTask.Status.Message;
+        }
+
+        Assert.NotNull(rawMessage);
+        Assert.NotNull(rawMessage.Metadata);
+        Assert.Single(rawMessage.Metadata);
+        Assert.Equal("needs-attention", rawMessage.Metadata["reason"].GetProperty("code").GetString());
+    }
+
     [Fact]
     public async Task RunStreamingAsync_WithContinuationTokenAndMessages_ThrowsInvalidOperationExceptionAsync()
     {
@@ -1159,7 +1553,17 @@ public sealed class A2AAgentTests : IDisposable
             {
                 Id = TaskId,
                 ContextId = ContextId,
-                Status = new() { State = TaskState.Submitted },
+                Status = new()
+                {
+                    State = TaskState.Submitted,
+                    Message = new Message
+                    {
+                        Role = Role.User,
+                        MessageId = "task-status-message",
+                        Metadata = new() { ["message-key"] = JsonSerializer.SerializeToElement("message-value") },
+                        Parts = [Part.FromText("Task submitted.")]
+                    }
+                },
                 Artifacts = [
                 new()
                 {
@@ -1184,6 +1588,9 @@ public sealed class A2AAgentTests : IDisposable
 
         var update0 = updates[0];
         Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Null(update0.MessageId);
+        Assert.Single(update0.Contents);
+        Assert.True(update0.AdditionalProperties is null or { Count: 0 });
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
         Assert.Null(update0.FinishReason);
@@ -1253,12 +1660,15 @@ public sealed class A2AAgentTests : IDisposable
             {
                 TaskId = TaskId,
                 ContextId = ContextId,
+                Metadata = new() { ["event-key"] = JsonSerializer.SerializeToElement("event-value") },
                 Status = new()
                 {
                     State = TaskState.Working,
                     Message = new Message
                     {
+                        Role = Role.User,
                         MessageId = ExpectedMessageId,
+                        Metadata = new() { ["message-key"] = JsonSerializer.SerializeToElement("message-value") },
                         Parts = [Part.FromText("Processing your request...")]
                     }
                 }
@@ -1280,6 +1690,11 @@ public sealed class A2AAgentTests : IDisposable
         var update0 = updates[0];
         Assert.Equal(ExpectedMessageId, update0.MessageId);
         Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Empty(update0.Contents);
+        Assert.NotNull(update0.AdditionalProperties);
+        Assert.Single(update0.AdditionalProperties);
+        Assert.Equal("event-value", Assert.IsType<JsonElement>(update0.AdditionalProperties["event-key"]).GetString());
         Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
     }
 

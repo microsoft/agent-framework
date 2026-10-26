@@ -39,11 +39,18 @@ in that combination must now close it explicitly.
 
 The `A2AExecutor` class bridges local AI agents built with the `agent_framework` library to the A2A protocol, allowing them to be hosted and accessed by other A2A-compliant clients.
 
+For this hosting example, install the A2A SDK HTTP server extra:
+
+```bash
+pip install "a2a-sdk[http-server]>=1.0.0,<2"
+```
+
 ```python
 from agent_framework.a2a import A2AExecutor
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
+from starlette.applications import Starlette
 
 # Create an A2A executor for your agent
 executor = A2AExecutor(agent=my_agent)
@@ -52,12 +59,15 @@ executor = A2AExecutor(agent=my_agent)
 request_handler = DefaultRequestHandler(
     agent_executor=executor,
     task_store=InMemoryTaskStore(),
+    agent_card=my_agent_card,
 )
 
-app = A2AStarletteApplication(
-    agent_card=my_agent_card,
-    http_handler=request_handler,
-).build()
+app = Starlette(
+    routes=[
+        *create_agent_card_routes(my_agent_card),
+        *create_jsonrpc_routes(request_handler, "/"),
+    ]
+)
 ```
 
 ### Basic Usage Example

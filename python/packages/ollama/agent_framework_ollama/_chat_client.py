@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import sys
@@ -45,6 +47,7 @@ from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
+from ollama._types import Image as OllamaImage
 from ollama._types import Message as OllamaMessage
 from pydantic import BaseModel
 
@@ -533,9 +536,31 @@ class OllamaChatClient(
                 raise ChatClientInvalidRequestException(
                     "Only image data content is supported for user messages in Ollama."
                 )
-            # Ollama expects base64 strings without prefix
-            user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
+            user_message["images"] = [OllamaImage(value=self._decode_image_data_uri(c)) for c in data_contents]
         return [user_message]
+
+    @staticmethod
+    def _decode_image_data_uri(content: Content) -> bytes:
+        uri = content.uri
+        if not uri or not uri.startswith("data:") or "," not in uri:
+            raise ChatClientInvalidRequestException("Ollama image content must be a base64-encoded data:image URI.")
+
+        metadata, payload = uri.split(",", 1)
+        metadata_parts = metadata[5:].split(";")
+        parameters = metadata_parts[1:]
+        if (
+            not metadata_parts[0].lower().startswith("image/")
+            or not parameters
+            or parameters[-1] != "base64"
+            or any(not parameter or "=" not in parameter for parameter in parameters[:-1])
+            or not payload
+        ):
+            raise ChatClientInvalidRequestException("Ollama image content must be a base64-encoded data:image URI.")
+
+        try:
+            return base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ChatClientInvalidRequestException("Ollama image content contains invalid base64 data.") from exc
 
     def _format_assistant_message(self, message: Message) -> list[OllamaMessage]:
         text_content = message.text

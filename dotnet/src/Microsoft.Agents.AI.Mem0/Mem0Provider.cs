@@ -174,7 +174,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {
@@ -206,7 +206,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
                     .Concat(context.ResponseMessages ?? []),
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {

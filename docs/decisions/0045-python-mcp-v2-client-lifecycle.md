@@ -82,6 +82,12 @@ For **caller-supplied** connections, the caller owns:
 - constructing and closing a **supplied** low-level `ClientSession`;
 - the transport, authentication, callbacks, and other configuration already captured by either supplied object.
 
+Transport-specific tool constructors enforce the same ownership boundary. A URL or command selects
+framework-owned Client construction; a supplied high-level `mcp.Client` selects caller-owned construction and
+lifecycle. Constructor combinations that mix those ownership modes or configure a transport the caller already
+owns raise `ValueError` instead of silently ignoring parameters. Temporarily retained legacy constructor and
+`ClientSession` combinations remain compatible and will be removed in vNext.
+
 The SDK `Client` owns:
 
 - modern negotiation and legacy initialization fallback;
@@ -245,4 +251,4 @@ Committed contract tests cover:
 - [MCP caching specification](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching)
 - [ADR 0043: MCP runtime context](0043-python-mcp-runtime-context.md)
 
-This ADR remains `proposed` until accepted through the repository ADR review process.
+This ADR was accepted through the repository ADR review process.

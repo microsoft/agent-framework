@@ -33,6 +33,7 @@ def _make_connected_mcp_tool(
     """Create an MCPTool with a mocked session, ready for testing."""
     tool = MCPTool(name=name)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = AsyncMock()
+    tool._require_connection().is_framework_owned = True
     tool.is_connected = True
     tool._supports_tools = supports_tools
     tool._supports_prompts = supports_prompts
@@ -438,6 +439,20 @@ def test_mcp_stdio_tool_transport_attributes():
     assert OtelAttr.ADDRESS not in attrs
 
 
+def test_mcp_stdio_tool_with_supplied_client_omits_transport_attributes():
+    """A caller-owned Client does not imply that its transport is a local pipe."""
+    tool = MCPStdioTool(name="test", mcp_client=Mock())
+    attrs = tool._mcp_base_span_attributes()
+    assert OtelAttr.NETWORK_TRANSPORT not in attrs
+
+
+def test_mcp_stdio_tool_with_command_and_supplied_session_preserves_pipe_transport():
+    """The released command plus caller-owned session path retains stdio telemetry."""
+    tool = MCPStdioTool(name="test", command="python", session=Mock())
+    attrs = tool._mcp_base_span_attributes()
+    assert attrs[OtelAttr.NETWORK_TRANSPORT] == "pipe"
+
+
 def test_mcp_http_tool_transport_attributes():
     """MCPStreamableHTTPTool should have tcp transport and URL-based server address/port."""
     tool = MCPStreamableHTTPTool(name="test", url="https://api.example.com:8443/mcp")
@@ -460,6 +475,16 @@ def test_mcp_http_tool_http_default_port():
     tool = MCPStreamableHTTPTool(name="test", url="http://localhost/mcp")
     attrs = tool._mcp_base_span_attributes()
     assert attrs[OtelAttr.PORT] == 80
+
+
+def test_mcp_http_tool_without_url_omits_transport_and_server_attributes():
+    """A caller-owned Client has no wrapper-observed transport or server attributes."""
+    tool = MCPStreamableHTTPTool(name="test", mcp_client=Mock())
+    attrs = tool._mcp_base_span_attributes()
+    assert OtelAttr.NETWORK_TRANSPORT not in attrs
+    assert OtelAttr.NETWORK_PROTOCOL_NAME not in attrs
+    assert OtelAttr.ADDRESS not in attrs
+    assert OtelAttr.PORT not in attrs
 
 
 # endregion

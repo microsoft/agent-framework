@@ -1,5 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <InjectSharedUnitTestCode>true</InjectSharedUnitTestCode>
+  </PropertyGroup>
+
   <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <PackageReference Include="AGUI.Abstractions" />
     <PackageReference Include="AGUI.Client" />
