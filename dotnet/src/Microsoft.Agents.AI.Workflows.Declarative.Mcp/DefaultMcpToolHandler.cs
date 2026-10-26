@@ -26,7 +26,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// The callback allows different MCP servers to use different authentication configurations by returning
 /// a pre-configured <see cref="HttpClient"/> for each server.
 /// Every invocation creates and disposes a separate MCP client, including <c>tools/list</c>.
-/// Handler-created HTTP clients reuse an underlying HTTP handler without sharing MCP session state.
+/// Factory-created HTTP clients reuse factory-managed handlers without sharing MCP session state.
+/// Without a factory or supplied client, each invocation owns a dedicated HTTP handler.
 /// Non-cancellation session and transport cleanup failures are reported through <see cref="Trace"/> warnings without replacing
 /// the invocation result or error.
 /// </remarks>
@@ -43,7 +44,9 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
-    private readonly Lazy<HttpMessageInvoker> _httpMessageInvoker;
+    private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
+    private readonly IHttpClientFactory? _httpClientFactory;
+    private readonly string _httpClientName = string.Empty;
     private readonly object _invocationLock = new();
     private readonly AsyncLocal<InvocationScope?> _currentInvocation = new();
     private TaskCompletionSource<bool>? _invocationsDrained;
@@ -72,9 +75,36 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     /// a different origin cannot capture the Authorization token.
     /// </para>
     /// </param>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ApiDesign", "RS0027:Public API with optional parameter(s) should have the most parameters amongst its public overloads",
+        Justification = "Preserve the released callback constructor. The factory overload requires two arguments and cannot make existing calls ambiguous.")]
     public DefaultMcpToolHandler(Func<string, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
         : this(httpClientProvider, CreateHttpMessageHandler)
     {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class using an application-provided HTTP client factory.
+    /// </summary>
+    /// <param name="httpClientFactory">
+    /// The factory that creates a separate <see cref="HttpClient"/> for every invocation.
+    /// Factory-created clients are disposed after MCP cleanup; the factory and its pooled handlers remain application-owned.
+    /// </param>
+    /// <param name="httpClientName">
+    /// The stable named-client configuration to use, or an empty string for the default configuration.
+    /// Do not derive names from workflow identifiers, credentials, or arbitrary server URLs.
+    /// </param>
+    /// <remarks>
+    /// As with callback-supplied clients, the application is responsible for the HTTP pipeline's transport policy.
+    /// Disable cookies and automatic redirects, enable certificate revocation checking, and restrict credential injection
+    /// to the configured server origin. Pooled handlers must not retain per-invocation credentials or mutable origin state.
+    /// Configure a finite handler lifetime so new invocations can pick up endpoint changes without disrupting active calls.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
+    public DefaultMcpToolHandler(IHttpClientFactory httpClientFactory, string httpClientName)
+        : this(null, CreateHttpMessageHandler)
+    {
+        this._httpClientFactory = Throw.IfNull(httpClientFactory);
+        this._httpClientName = Throw.IfNull(httpClientName);
     }
 
     internal DefaultMcpToolHandler(
@@ -82,8 +112,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         Func<HttpMessageHandler> httpMessageHandlerFactory)
     {
         this._httpClientProvider = httpClientProvider;
-        Throw.IfNull(httpMessageHandlerFactory);
-        this._httpMessageInvoker = new(() => new HttpMessageInvoker(httpMessageHandlerFactory(), disposeHandler: true));
+        this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
     }
 
     /// <inheritdoc/>
@@ -178,6 +207,10 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     /// Disposal is requested from an active MCP invocation, including a child execution context.
     /// Dispose the handler from its owning scope instead.
     /// </exception>
+    /// <remarks>
+    /// Stops admitting new invocations and waits for admitted invocations to finish cleanup without cancelling them.
+    /// The host owns concurrency limits and invocation deadlines and should cancel and await its calls before disposal.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         for (InvocationScope? context = this._currentInvocation.Value; context is not null; context = context.Parent)
@@ -199,11 +232,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         if (invocations is not null)
         {
             await invocations.ConfigureAwait(false);
-        }
-
-        if (this._httpMessageInvoker.IsValueCreated)
-        {
-            this._httpMessageInvoker.Value.Dispose();
         }
     }
 
@@ -247,7 +275,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
 
         bool ownsHttpClient = httpClient is null;
-        if (httpClient is null)
+        if (httpClient is null && this._httpClientFactory is not null)
+        {
+            httpClient = this._httpClientFactory.CreateClient(this._httpClientName);
+        }
+        else if (httpClient is null)
         {
             // Pin credential headers to the configured server origin as defense-in-depth. Forcing
             // StreamableHttp (below) already removes the primary vector (a server-advertised cross-origin
@@ -263,7 +295,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             // those auth-server origins would need to be allow-listed to avoid breaking the token exchange.
             OriginPinningHandler pinningHandler = new(endpoint)
             {
-                InnerHandler = new SharedHttpMessageHandler(this._httpMessageInvoker.Value)
+                InnerHandler = this._httpMessageHandlerFactory()
             };
             httpClient = new HttpClient(pinningHandler);
         }
@@ -295,7 +327,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             }
             else if (ownsHttpClient)
             {
-                httpClient?.Dispose();
+                httpClient.Dispose();
             }
 
             throw;
@@ -305,7 +337,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     private static HttpMessageHandler CreateHttpMessageHandler() =>
         new HttpClientHandler
         {
-            // Keep cookies out of pooled transport state and prevent credential-bearing redirects.
+            // Keep cookies out of transport state and prevent credential-bearing redirects.
             UseCookies = false,
             AllowAutoRedirect = false,
             CheckCertificateRevocationList = true
@@ -332,13 +364,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
             owner._currentInvocation.Value = this.Parent;
         }
-    }
-
-    // Each invocation disposes its own pipeline without disposing the handler-owned connection pool.
-    private sealed class SharedHttpMessageHandler(HttpMessageInvoker invoker) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            invoker.SendAsync(request, cancellationToken);
     }
 
     internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable

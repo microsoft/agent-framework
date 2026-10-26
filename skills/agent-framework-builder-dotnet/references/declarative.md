@@ -25,8 +25,15 @@ commitments.
 - `DefaultMcpToolHandler` creates and disposes an MCP client per invocation, including discovery; it does not retain
   implicit server-side session state across calls, approval waits, or checkpoint resumes. Use explicit state handles
   or a custom handler with a documented session-lifetime contract when continuity is required.
-- Dispose the default MCP handler when its host scope ends; its HTTP handler is reusable across invocations, but
-  supplied `HttpClient` instances remain caller-owned.
+- Prefer `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
+  configuration for HTTP handler reuse and rotation. Factory-created clients are disposed per invocation; the
+  factory remains application-owned. The non-DI fallback owns a dedicated HTTP handler per invocation, while
+  callback-supplied `HttpClient` instances remain caller-owned.
+- Configure factory clients with cookies and redirects disabled, certificate revocation checking enabled, and
+  origin-bound credential injection. Do not retain per-workflow credentials or mutable origin state in pooled
+  handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
+- Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. Handler disposal stops
+  admission and drains existing calls without cancelling them; cancel and await calls before disposing the handler.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.

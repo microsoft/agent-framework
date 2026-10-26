@@ -181,6 +181,13 @@ client from before the approval. Restoring a checkpoint likewise creates the
 resources required for subsequent calls; checkpoints do not serialize clients,
 transports, HTTP objects, or promises of protocol-session reattachment.
 
+The host owns admission limits, invocation deadlines, and shutdown cancellation.
+It should bound submitted work, pass cancellation covering the entire invocation,
+and cancel and await calls before disposing the handler. Handler disposal stops
+admitting new calls and drains admitted invocations without cancelling them. It
+does not impose a new global concurrency limit or a fixed shutdown deadline that
+could interrupt supported long-running tools.
+
 Do not automatically retry a tool invocation merely because the connection was
 lost. The server may already have performed side effects even if the result was
 not received. Newer protocol stream cancellation is not an application rollback.
@@ -205,6 +212,10 @@ disposed by the MCP integration.
 
 `IHttpClientFactory` belongs to `Microsoft.Extensions.Http` and does not require
 ASP.NET. The application may use the Generic Host or a `ServiceCollection`.
+The additive `DefaultMcpToolHandler(IHttpClientFactory, string)` constructor uses
+the application's stable named-client configuration on every invocation. The
+required name parameter avoids ambiguity with the existing single-argument
+callback constructor, including `new DefaultMcpToolHandler(null)`.
 Do not create a service provider or factory per invocation. Use a bounded set of
 stable factory configuration names, not names derived from workflow IDs,
 credentials, or arbitrary server URLs.
@@ -217,17 +228,22 @@ provide pooling.
 
 ### Transport policy
 
-Internally created clients retain explicit defaults: cookies disabled, automatic
+Non-DI fallback clients retain explicit defaults: cookies disabled, automatic
 redirects disabled, certificate revocation checking, Streamable HTTP, and
 origin-bound credential handling. Factory defaults alone are not a substitute.
 
-The current `OriginPinningHandler` stores one origin. It cannot be placed in a
-single pooled pipeline for unrelated origins. A connection-specific outer
-policy handler over a factory-managed pipeline, following the documented
-`IHttpMessageHandlerFactory` pattern, or an equivalently validated request-specific
-policy must preserve this protection. Origin policy must run after credential
-injection in outbound processing. Caller-supplied clients remain under the
-caller's transport-policy contract; do not replace their pipelines silently.
+Application factory clients enter under the same transport-policy contract as
+callback-supplied clients; the integration does not silently replace their
+pipelines. Configure their primary handlers with cookies and automatic redirects
+disabled and certificate revocation checking enabled. Any credential-injecting
+handler must restrict credentials to the configured server origin. Streamable
+HTTP remains enforced regardless of the HTTP client's source.
+
+The fallback's `OriginPinningHandler` stores one origin and is owned by one
+invocation. Do not move this mutable policy into one pooled pipeline for
+unrelated origins. Factory handlers must instead use an appropriately bounded,
+stable configuration or validated request-specific policy. Origin checks must
+account for every credential-injection step in outbound processing.
 
 Wrapper disposal must not disrupt other invocations sharing a factory-managed
 handler. Conversely, factory handler expiry must not terminate an active call.
@@ -378,23 +394,30 @@ handler/connection reuse before claiming a performance improvement.
 - [Named clients](https://learn.microsoft.com/en-us/dotnet/core/extensions/httpclient-factory#named-clients):
   avoid unbounded configuration names.
 
-### Implementation scope and remaining design work
+### Implementation scope
 
 This proposal targets the .NET declarative MCP integration. It does not implement
 the new protocol, add interactive elicitation or subscriptions, redesign Python,
 change result conversion, or introduce durable MCP reconnection.
 
-The implementation keeps one lazily created, handler-owned `HttpMessageInvoker`
-for the default HTTP pipeline. Each invocation owns a separate MCP client,
-transport, HTTP wrapper, and origin-policy handler. Its forwarding handler borrows
-the shared invoker rather than disposing it. Handler shutdown drains admitted
-invocations before disposing the shared HTTP pipeline. No workflow-runtime
+The implementation uses an application-provided `IHttpClientFactory` for
+reusable HTTP infrastructure. Each invocation requests a fresh named HTTP
+wrapper, owns its separate MCP client and transport, and disposes the wrapper
+after MCP cleanup. The factory owns handler pooling and rotation; the MCP handler
+does not dispose the application factory or its shared handlers.
+
+The non-DI path creates and owns a dedicated HTTP handler and origin-policy
+handler for each invocation. The existing provider callback continues to borrow
+application-supplied clients under its existing contract; returning `null` selects
+the dedicated fallback. Handler shutdown drains admitted invocations. No
+handler-owned shared invoker, internal service provider, workflow-runtime
 ownership hooks, connection registry, HTTP-client cache, or lease-counting pool
 are introduced.
 
-This does not add an `IHttpClientFactory` API or dependency. Factory integration
-above remains guidance for a future additive API. The existing provider callback
-continues to borrow application-supplied clients under its existing contract.
+The package references `Microsoft.Extensions.Http` for all supported target
+frameworks. The additive constructor is recorded in each target's public API
+baseline. Factory integration is the reusable-transport path, not deferred work
+or a bespoke connection-rotation implementation.
 
 Deciders must review the invocation boundary, legacy-cache migration, transport
 configuration, and explicitly stateful escape hatch before accepting the ADR.

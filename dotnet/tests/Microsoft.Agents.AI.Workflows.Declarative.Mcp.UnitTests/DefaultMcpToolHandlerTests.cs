@@ -34,7 +34,7 @@ public sealed class DefaultMcpToolHandlerTests
     public async Task Constructor_WithNullHttpClientProvider_ShouldCreateInstanceAsync()
     {
         // Act
-        DefaultMcpToolHandler handler = new(httpClientProvider: null);
+        DefaultMcpToolHandler handler = new(null);
 
         // Assert
         Assert.NotNull(handler);

@@ -1,1 +1,2 @@
 ﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler(System.Net.Http.IHttpClientFactory! httpClientFactory, string! httpClientName) -> void
