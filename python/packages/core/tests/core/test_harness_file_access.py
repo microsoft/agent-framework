@@ -876,12 +876,16 @@ async def test_file_access_provider_registers_tools_and_instructions(
         expected_names = {f"{tool_name_prefix}_{name}" for name in expected_names}
     assert {getattr(tool, "name", None) for tool in tools} == expected_names
 
-    if not tool_name_prefix:
-        instructions = options.get("instructions")
-        if isinstance(instructions, str):
-            assert DEFAULT_FILE_ACCESS_INSTRUCTIONS in instructions
-        else:
-            assert any(DEFAULT_FILE_ACCESS_INSTRUCTIONS in chunk for chunk in (instructions or []))
+    expected_instructions = (
+        DEFAULT_FILE_ACCESS_INSTRUCTIONS.replace("file_access_", f"{tool_name_prefix}_file_access_")
+        if tool_name_prefix
+        else DEFAULT_FILE_ACCESS_INSTRUCTIONS
+    )
+    instructions = options.get("instructions")
+    if isinstance(instructions, str):
+        assert expected_instructions in instructions
+    else:
+        assert any(expected_instructions in chunk for chunk in (instructions or []))
 
 
 @pytest.mark.parametrize(
@@ -1106,6 +1110,31 @@ def test_all_tools_auto_approval_rule() -> None:
 
     unrelated = Content("function_call", call_id="c1", name="some_other_tool", arguments="{}")
     assert FileAccessProvider.all_tools_auto_approval_rule(unrelated) is False
+
+
+def test_prefixed_provider_all_tools_auto_approval_rule() -> None:
+    """A provider-bound rule should approve only that provider's prefixed file-access tools."""
+    provider = FileAccessProvider(InMemoryAgentFileStore(), tool_name_prefix="spec")
+    rule = provider.get_all_tools_auto_approval_rule()
+    tool_names = (
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.READ_LINES_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+    )
+
+    for name in tool_names:
+        prefixed = Content("function_call", call_id="c1", name=f"spec_{name}", arguments="{}")
+        unprefixed = Content("function_call", call_id="c2", name=name, arguments="{}")
+        hosted = Content("function_call", call_id="c3", name=f"spec_{name}", arguments="{}", hosted=True)
+
+        assert rule(prefixed) is True
+        assert rule(unprefixed) is False
+        assert rule(hosted) is False
 
 
 async def test_file_access_provider_tools_round_trip_files(
