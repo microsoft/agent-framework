@@ -79,6 +79,8 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Test integration report formatting
+        run: uv run --locked python -m unittest discover -s scripts/integration_test_report/tests
       - name: Run syntax and pyright across packages
         run: uv run poe check-packages
 
