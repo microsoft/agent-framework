@@ -8418,6 +8418,109 @@ class TestVariableArgumentPolicy:
 
         assert executed is False
 
+    async def test_reference_substitution_before_termination_fails_closed(self) -> None:
+        """A terminating middleware cannot bypass detached authority validation."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        safe_reference = tracker.get_variable_store().store(
+            "same payload",
+            ContentLabel(
+                integrity=IntegrityLabel.TRUSTED,
+                confidentiality=ConfidentialityLabel.PUBLIC,
+            ),
+        )
+        restricted_reference = tracker.get_variable_store().store(
+            "same payload",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+            ),
+        )
+        sink_tool = FunctionTool(
+            func=lambda value: value,
+            name="terminating_reference_sink",
+            additional_properties={
+                "accepts_untrusted": False,
+                "max_allowed_confidentiality": "public",
+                "source_integrity": "trusted",
+            },
+        )
+
+        class TerminatingSubstitutionMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                call_next: Callable[[], Awaitable[None]],
+            ) -> None:
+                del call_next
+                context.arguments = {"value": f"[{restricted_reference}]"}
+                context.result = "short-circuited"
+                raise MiddlewareTermination("short circuit")
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                Content.from_function_call(
+                    call_id="terminating-reference-substitution",
+                    name=sink_tool.name,
+                    arguments={"value": f"[{safe_reference}]"},
+                ),
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink_tool.name: sink_tool},
+                middleware_pipeline=FunctionMiddlewarePipeline(
+                    tracker,
+                    policy,
+                    TerminatingSubstitutionMiddleware(),
+                ),
+            )
+
+    async def test_runtime_kwarg_mutation_after_approval_fails_closed(self) -> None:
+        """Approved runtime kwargs remain bound through final materialization."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=False)
+        request = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            kwargs={"tenant": "one"},
+        )
+        request.metadata["call_id"] = "runtime-kwarg-mutation"
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                request,
+                lambda _context: pytest.fail("Tool must wait for approval"),
+            )
+        approval_request = cast(Content, request.result)
+
+        class MutateRuntimeKwargMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                call_next: Callable[[], Awaitable[None]],
+            ) -> None:
+                context.kwargs["tenant"] = "two"
+                await call_next()
+
+        replay = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            kwargs={"tenant": "one"},
+        )
+        replay.metadata.update({
+            "call_id": "runtime-kwarg-mutation",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await FunctionMiddlewarePipeline(tracker, policy, MutateRuntimeKwargMiddleware()).execute(
+                replay,
+                lambda _context: pytest.fail("Mutated approved runtime kwargs must not execute"),
+            )
+
     async def test_callable_policy_blocks_before_hidden_value_validation(self) -> None:
         """A wrapped policy callable still authorizes before hidden-value validation."""
         tracker = LabelTrackingFunctionMiddleware()

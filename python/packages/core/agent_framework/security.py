@@ -1364,6 +1364,18 @@ def _security_invocation_authority_token(
     )
 
 
+def _bindable_runtime_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Return runtime kwargs whose values can safely participate in an authority token."""
+    bindable: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        try:
+            _argument_authority_token(value, boundary="security policy runtime kwarg")
+        except MiddlewareFailure:
+            continue
+        bindable[key] = value
+    return bindable
+
+
 def _durable_state_snapshot(
     value: Any,
     *,
@@ -2146,11 +2158,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             else:
                 rewritten_args[arg_name].add(-1)
 
-        security_kwarg_names = {
-            path[0] for path in kwargs_rewritten_paths if path and isinstance(path[0], str) and path[0] in kwargs
-        }
-        source_security_kwargs = {key: source_kwargs[key] for key in security_kwarg_names}
-        security_kwargs = {key: kwargs[key] for key in security_kwarg_names}
+        source_security_kwargs = _bindable_runtime_kwargs(source_kwargs)
+        security_kwargs = {key: kwargs[key] for key in source_security_kwargs}
         authority_token = _security_invocation_authority_token(
             context.function.name,
             source_arguments=source_arguments,
@@ -2167,6 +2176,22 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             authority_token=authority_token,
         )
 
+    def _ensure_preflight_authority_unchanged(
+        self,
+        context: FunctionInvocationContext,
+    ) -> _ResolvedInvocationArguments:
+        """Reject argument or runtime-kwarg changes after detached security preflight."""
+        resolved = self._resolve_invocation_arguments(context)
+        expected_authority = context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
+        if expected_authority is None:
+            return resolved
+        if resolved.authority_token != expected_authority:
+            raise MiddlewareFailure(
+                "Function arguments changed after security middleware processed them. "
+                "Install argument-repair middleware before security middleware."
+            )
+        return resolved
+
     def _materialize_arguments(self, context: FunctionInvocationContext) -> None:
         """Apply preflighted hidden values and validate only after policy allows the call."""
         if context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is True:
@@ -2178,13 +2203,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 f"Invalid FIDES policy for tool '{context.function.name}': {'; '.join(policy_errors)}"
             )
 
-        resolved = self._resolve_invocation_arguments(context)
-        expected_authority = context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
-        if expected_authority is not None and resolved.authority_token != expected_authority:
-            raise MiddlewareFailure(
-                "Function arguments changed after security middleware processed them. "
-                "Install argument-repair middleware before security middleware."
-            )
+        resolved = self._ensure_preflight_authority_unchanged(context)
 
         context.arguments = resolved.arguments
         context.kwargs = resolved.kwargs
@@ -2440,18 +2459,20 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 context,
                 self._materialize_arguments,
             ))
-            await call_next()
+            try:
+                await call_next()
+            except MiddlewareTermination:
+                if (
+                    _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get()
+                    and context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True
+                ):
+                    self._ensure_preflight_authority_unchanged(context)
+                raise
             if (
                 _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get()
                 and context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True
             ):
-                resolved_after_call = self._resolve_invocation_arguments(context)
-                expected_authority = context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
-                if expected_authority is not None and resolved_after_call.authority_token != expected_authority:
-                    raise MiddlewareFailure(
-                        "Function arguments changed after security middleware processed them. "
-                        "Install argument-repair middleware before security middleware."
-                    )
+                self._ensure_preflight_authority_unchanged(context)
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 return
             self._label_result(context, function_name, fallback_label, standing_guidance_snapshot)
