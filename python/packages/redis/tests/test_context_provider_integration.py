@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Live Redis isolation and migration coverage for ``RedisContextProvider``."""
+"""Live Redis isolation coverage for ``RedisContextProvider``."""
 
 from __future__ import annotations
 
-import asyncio
 import os
 from collections.abc import AsyncIterator, Awaitable
 from typing import Any, cast
@@ -17,12 +16,7 @@ from redisvl.index import AsyncSearchIndex
 from redisvl.utils.vectorize import BaseVectorizer
 
 from agent_framework_redis import RedisContextProvider
-from agent_framework_redis._context_provider import (
-    _SCOPE_MIGRATION_BACKFILL,
-    _SCOPE_MIGRATION_COMPLETE,
-    _scope_migration_key,
-    _scope_token_field,
-)
+from agent_framework_redis._context_provider import _scope_token_field
 
 
 @pytest.fixture
@@ -49,8 +43,6 @@ async def live_redis() -> AsyncIterator[tuple[str, Redis, str, str]]:
         ]
         if keys:
             await client.delete(*keys)
-        marker_key = _scope_migration_key(index_name, prefix)
-        await client.delete(marker_key, f"{marker_key}:lock")
         await client.aclose()
 
 
@@ -195,7 +187,7 @@ async def test_live_hybrid_search_preserves_scope_isolation(
 
 
 @pytest.mark.integration
-async def test_live_legacy_index_requires_explicit_rebuild_and_preserves_exact_scopes(
+async def test_live_legacy_index_fails_closed_until_recreated(
     live_redis: tuple[str, Redis, str, str],
 ) -> None:
     url, client, index_name, prefix = live_redis
@@ -228,65 +220,22 @@ async def test_live_legacy_index_requires_explicit_rebuild_and_preserves_exact_s
         client.hset(adjacent_key, mapping={"content": "foreign", "user_id": "Alice"}),
     )
 
-    incompatible = _provider(url, index_name, prefix, user_id="Alice")
-    with pytest.raises(ValueError, match="coordinated migration"):
-        await incompatible._redis_search("migration marker")
+    for overwrite_index in (False, True):
+        incompatible = _provider(
+            url,
+            index_name,
+            prefix,
+            user_id="Alice",
+            overwrite_index=overwrite_index,
+        )
+        with pytest.raises(ValueError, match="Delete the existing index and its context hashes"):
+            await incompatible._redis_search("migration marker")
 
-    migrated = _provider(url, index_name, prefix, user_id="Alice", overwrite_index=True)
-    assert len(await migrated._redis_search("migration marker")) == 1
-    assert await _provider(url, index_name, prefix, user_id="alice")._redis_search("migration marker") == []
-    assert await _provider(url, index_name, prefix, user_id="Alice,other")._redis_search("migration marker") == []
+    await legacy_index.delete(drop=True)
+    recreated = _provider(url, index_name, prefix, user_id="Alice")
+    await recreated._add(data={"content": "re-ingested marker"}, session_id="session")
+
+    assert len(await recreated._redis_search("re-ingested marker")) == 1
+    assert await _provider(url, index_name, prefix, user_id="alice")._redis_search("re-ingested marker") == []
     adjacent_record = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(adjacent_key))
-    assert _scope_token_field("user_id").encode() not in adjacent_record
-
-    marker_key = _scope_migration_key(index_name, prefix)
-    marker = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(marker_key))
-    assert marker[b"state"] == _SCOPE_MIGRATION_COMPLETE.encode()
-    await cast(Awaitable[int], client.hset(marker_key, mapping={"state": _SCOPE_MIGRATION_BACKFILL}))
-    with pytest.raises(ValueError, match="migration is incomplete"):
-        await _provider(url, index_name, prefix, user_id="Alice")._redis_search("migration marker")
-
-
-@pytest.mark.integration
-async def test_live_migration_renews_lock_during_slow_scan(
-    live_redis: tuple[str, Redis, str, str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    url, client, index_name, prefix = live_redis
-    legacy_schema = {
-        "index": {"name": index_name, "prefix": prefix, "key_separator": ":", "storage_type": "hash"},
-        "fields": [
-            {"name": "content", "type": "text"},
-            {"name": "application_id", "type": "tag"},
-            {"name": "agent_id", "type": "tag"},
-            {"name": "user_id", "type": "tag"},
-        ],
-    }
-    legacy_index = AsyncSearchIndex.from_dict(legacy_schema, redis_client=client)
-    await legacy_index.create()
-    await legacy_index.load([
-        {"content": "lease marker", "application_id": "app", "agent_id": "agent", "user_id": "Alice"}
-    ])
-    monkeypatch.setattr("agent_framework_redis._context_provider._SCOPE_MIGRATION_LOCK_SECONDS", 1)
-    first = _provider(url, index_name, prefix, user_id="Alice", overwrite_index=True)
-    await first.redis_index.exists()
-    first_client = first.redis_index.client
-    assert first_client is not None
-    original_scan = first_client.scan
-    scan_started = asyncio.Event()
-
-    async def slow_scan(*args: Any, **kwargs: Any) -> Any:
-        scan_started.set()
-        await asyncio.sleep(1.5)
-        return await original_scan(*args, **kwargs)
-
-    monkeypatch.setattr(first_client, "scan", slow_scan)
-    migration = asyncio.create_task(first._redis_search("lease marker"))
-    await scan_started.wait()
-    await asyncio.sleep(1.1)
-
-    second = _provider(url, index_name, prefix, user_id="Alice", overwrite_index=True)
-    with pytest.raises(RuntimeError, match="already running"):
-        await second._redis_search("lease marker")
-
-    assert len(await migration) == 1
+    assert adjacent_record[b"content"] == b"foreign"

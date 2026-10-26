@@ -37,8 +37,6 @@ async def test_empty_history_save_marks_redis_used(mock_redis_client: MagicMock)
 def mock_index() -> AsyncMock:
     idx = AsyncMock()
     client = MagicMock()
-    client.hset = AsyncMock()
-    client.hmget = AsyncMock(return_value=[b"1", b"complete", b"0", b"", b"", b"0", b"[]"])
     client.aclose = AsyncMock()
     idx.client = client
     idx.create = AsyncMock()
