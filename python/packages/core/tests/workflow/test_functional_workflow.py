@@ -994,6 +994,43 @@ class TestCheckpointing:
         assert result.get_outputs() == [[1, 2]]
         assert runs == Counter({"prepare": 1, "done": 1, "flaky": 2})
 
+    async def test_step_checkpoint_snapshots_state_before_scheduling_save(self) -> None:
+        saved_states: list[dict[str, Any]] = []
+        done_ready = asyncio.Event()
+
+        class SiblingFailure(Exception):
+            pass
+
+        class CapturingStorage(InMemoryCheckpointStorage):
+            async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:  # type: ignore[override]
+                saved_states.append(dict(checkpoint.state))
+                return await super().save(checkpoint)
+
+        storage = CapturingStorage()
+
+        @step(replay_key=lambda x: "done")
+        async def done(x: int, ctx: RunContext) -> int:
+            ctx.set_state("done", True)
+            done_ready.set()
+            return x + 1
+
+        @step(replay_key=lambda x: "mutator")
+        async def mutator(x: int, ctx: RunContext) -> int:
+            await done_ready.wait()
+            ctx.set_state("unfinished", True)
+            raise SiblingFailure("sibling failure")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def parallel_wf(x: int) -> list[int]:
+            return list(await asyncio.gather(done(x), mutator(x)))
+
+        with pytest.raises(SiblingFailure):
+            await parallel_wf.run(0)
+
+        done_checkpoints = [state for state in saved_states if state.get("done")]
+        assert done_checkpoints
+        assert all("unfinished" not in state for state in done_checkpoints)
+
     @pytest.mark.parametrize("save_mode", ["inline", "task", "gather"])
     @pytest.mark.parametrize("cancel_mode", ["cancel", "timeout"])
     @pytest.mark.parametrize("phase", ["step", "failure", "pause"])

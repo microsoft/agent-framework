@@ -2176,15 +2176,19 @@ class FunctionalWorkflow:
         if storage is not None:
 
             async def _on_step_completed() -> None:
-                # A checkpoint save that has started must finish if the step
-                # is cancelled because a sibling branch fails the run: a storage
-                # whose save awaits I/O before writing would otherwise lose the
-                # completed step's result, and a resumed run would re-run the
-                # step and its side effects. The save runs as its own task that
-                # cleanup waits for instead of cancelling; both awaits use
-                # asyncio.shield so a cancellation of this step task cannot reach
-                # the save through the await.
-                save_task = asyncio.ensure_future(self._save_checkpoint(ctx, storage, ckpt_chain[0]))
+                # Build the checkpoint before yielding to the event loop: a
+                # ready sibling could mutate ctx state before a task scheduled
+                # here gets to run, snapshotting state from work that did not
+                # complete. A save that has started must still finish if the
+                # step is cancelled because a sibling branch fails the run: a
+                # storage whose save awaits I/O before writing would otherwise
+                # lose the completed step's result, and a resumed run would
+                # re-run the step and its side effects. The save runs as its own
+                # task that cleanup waits for instead of cancelling; both awaits
+                # use asyncio.shield so a cancellation of this step task cannot
+                # reach the save through the await.
+                checkpoint = self._build_checkpoint(ctx, ckpt_chain[0])
+                save_task = asyncio.ensure_future(storage.save(checkpoint))
                 ctx._checkpoint_save_tasks.add(save_task)
                 save_task.add_done_callback(ctx._checkpoint_save_tasks.discard)
                 try:
@@ -2427,24 +2431,31 @@ class FunctionalWorkflow:
     # Checkpoint helpers
     # ------------------------------------------------------------------
 
-    async def _save_checkpoint(
+    def _build_checkpoint(
         self,
         ctx: RunContext,
-        storage: CheckpointStorage,
         previous_checkpoint_id: str | None = None,
-    ) -> str:
+    ) -> WorkflowCheckpoint:
         state = dict(ctx._state)
         state["_step_cache"] = ctx._export_step_cache()
         state["_step_cache_auto_request_info_counts"] = ctx._export_step_cache_auto_request_info_counts()
         state["_original_message"] = self._last_message
 
-        checkpoint = WorkflowCheckpoint(
+        return WorkflowCheckpoint(
             workflow_name=self.name,
             graph_signature_hash=self.graph_signature_hash,
             previous_checkpoint_id=previous_checkpoint_id,
             state=state,
             pending_request_info_events=dict(ctx._pending_requests),
         )
+
+    async def _save_checkpoint(
+        self,
+        ctx: RunContext,
+        storage: CheckpointStorage,
+        previous_checkpoint_id: str | None = None,
+    ) -> str:
+        checkpoint = self._build_checkpoint(ctx, previous_checkpoint_id)
         return await storage.save(checkpoint)
 
     def _compute_signature_hash(
