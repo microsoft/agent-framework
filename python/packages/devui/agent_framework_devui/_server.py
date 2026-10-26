@@ -137,6 +137,28 @@ class DevServer:
             return None
         return self._LOOPBACK_HOSTS
 
+    @staticmethod
+    def _token_matches(presented: str, expected: str) -> bool:
+        """Compare two bearer tokens in constant time without raising on non-ASCII input.
+
+        `secrets.compare_digest` accepts only ASCII `str` values and raises `TypeError` when
+        either side holds a non-ASCII character. Uncaught, that surfaces as HTTP 500 rather
+        than HTTP 401, and it makes a non-ASCII `DEVUI_AUTH_TOKEN` unusable even when the
+        client presents it correctly. Comparing bytes has no such restriction.
+
+        Headers travel as bytes and Starlette hands them back decoded as latin-1, so
+        re-encoding with latin-1 recovers what the client actually put on the wire. The
+        expected token is text (an argument, or `DEVUI_AUTH_TOKEN` from the environment), so
+        UTF-8 is its wire form. ASCII tokens behave exactly as before, since both encodings
+        agree on ASCII.
+        """
+        try:
+            presented_bytes = presented.encode("latin-1")
+        except UnicodeEncodeError:
+            # Not something a header could have carried; treat it as a wrong token.
+            return False
+        return secrets.compare_digest(presented_bytes, expected.encode("utf-8"))
+
     @classmethod
     def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
         """Resolve the active Bearer token. Returns None when auth is disabled."""
@@ -445,7 +467,7 @@ class DevServer:
                     )
 
                 token = auth_header.replace("Bearer ", "", 1).strip()
-                if not secrets.compare_digest(token, expected_token):
+                if not self._token_matches(token, expected_token):
                     return JSONResponse(
                         status_code=401,
                         content={

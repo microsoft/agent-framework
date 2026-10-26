@@ -841,6 +841,42 @@ def test_devserver_accepts_request_with_valid_bearer_token(monkeypatch):
     assert response.status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("configured_token", "presented_token", "expected_status"),
+    [
+        pytest.param("s3cret", "s3cret", 200, id="ascii-matches"),
+        pytest.param("s3cret", "s\u00e9cret", 401, id="non-ascii-presented-is-rejected"),
+        pytest.param("s\u00e9cret", "s\u00e9cret", 200, id="non-ascii-configured-matches"),
+        pytest.param("s\u00e9cret", "s3cret", 401, id="non-ascii-configured-wrong-token"),
+    ],
+)
+def test_bearer_token_comparison_survives_non_ascii_tokens(
+    monkeypatch,
+    configured_token: str,
+    presented_token: str,
+    expected_status: int,
+) -> None:
+    """A non-ASCII bearer token must be compared, not answered with HTTP 500.
+
+    `secrets.compare_digest` raises `TypeError` for any `str` holding a non-ASCII
+    character, so a merely wrong token produced 500 instead of 401, and a non-ASCII
+    `DEVUI_AUTH_TOKEN` never matched even when the client presented it correctly.
+    """
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(auth_token=configured_token)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1", raise_server_exceptions=False) as client:
+        # Sent as raw bytes: httpx refuses to encode a non-ASCII header value itself.
+        response = client.get(
+            "/v1/entities",
+            headers={"Authorization": b"Bearer " + presented_token.encode("utf-8")},
+        )
+
+    assert response.status_code == expected_status
+
+
 def test_meta_endpoint_requires_auth(monkeypatch):
     """/meta exposes capability flags (deployment, instrumentation, version) — gate it behind auth.
 
