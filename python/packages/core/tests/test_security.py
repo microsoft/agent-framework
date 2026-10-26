@@ -8294,6 +8294,60 @@ class TestVariableArgumentPolicy:
         assert secret not in observed
         assert executed is False
 
+    async def test_later_policy_blocks_before_hidden_value_validation(self) -> None:
+        """A permissive policy cannot materialize before a later policy rejects."""
+        tracker = LabelTrackingFunctionMiddleware()
+        permissive_policy = PolicyEnforcementFunctionMiddleware(allow_untrusted_tools={"validator_sink"})
+        strict_policy = PolicyEnforcementFunctionMiddleware()
+        secret = "later-policy-validator-secret"
+        variable_id = tracker.get_variable_store().store(
+            secret,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        observed: list[str] = []
+        executed = False
+
+        class SinkArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def observe_value(cls, value: str) -> str:
+                observed.append(value)
+                return value
+
+        async def sink(value: str) -> str:
+            nonlocal executed
+            executed = True
+            return value
+
+        sink_tool = FunctionTool(
+            func=sink,
+            name="validator_sink",
+            input_model=SinkArgs,
+            additional_properties={
+                "accepts_untrusted": False,
+                "max_allowed_confidentiality": "private",
+                "source_integrity": "trusted",
+            },
+        )
+        function_call = Content.from_function_call(
+            call_id="later-policy-validator-side-effect",
+            name=sink_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        with pytest.raises(MiddlewareTermination):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink_tool.name: sink_tool},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, permissive_policy, strict_policy),
+            )
+
+        assert secret not in observed
+        assert executed is False
+
     async def test_callable_policy_blocks_before_hidden_value_validation(self) -> None:
         """A wrapped policy callable still authorizes before hidden-value validation."""
         tracker = LabelTrackingFunctionMiddleware()

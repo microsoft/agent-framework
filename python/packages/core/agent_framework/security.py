@@ -2170,7 +2170,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         resolved = self._resolve_invocation_arguments(context)
         expected_authority = context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
         if expected_authority is not None and resolved.authority_token != expected_authority:
-            raise MiddlewareFailure("Function arguments changed after FIDES policy preflight.")
+            raise MiddlewareFailure(
+                "Function arguments changed after security middleware processed them. "
+                "Install argument-repair middleware before security middleware."
+            )
 
         context.arguments = resolved.arguments
         context.kwargs = resolved.kwargs
@@ -2427,6 +2430,17 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 self._materialize_arguments,
             ))
             await call_next()
+            if (
+                _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get()
+                and context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True
+            ):
+                resolved_after_call = self._resolve_invocation_arguments(context)
+                expected_authority = context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
+                if expected_authority is not None and resolved_after_call.authority_token != expected_authority:
+                    raise MiddlewareFailure(
+                        "Function arguments changed after security middleware processed them. "
+                        "Install argument-repair middleware before security middleware."
+                    )
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 return
             self._label_result(context, function_name, fallback_label, standing_guidance_snapshot)
@@ -3536,6 +3550,8 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
 
     @staticmethod
     def _materialize_security_arguments(context: FunctionInvocationContext) -> None:
+        if _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get():
+            return
         active_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
         if active_materialization is None:
             return
