@@ -1106,6 +1106,45 @@ class TestCheckpointing:
             release_save.set()
             await asyncio.gather(cancellation_task, run_task, return_exceptions=True)
 
+    async def test_double_caller_cancellation_finishes_checkpoint_save(self):
+        save_started = asyncio.Event()
+        release_save = asyncio.Event()
+        save_finished = asyncio.Event()
+
+        class BlockingSaveStorage(InMemoryCheckpointStorage):
+            async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+                save_started.set()
+                try:
+                    await release_save.wait()
+                    return await super().save(checkpoint)
+                finally:
+                    save_finished.set()
+
+        storage = BlockingSaveStorage()
+
+        @step(replay_key=lambda value: "complete")
+        async def complete(value: int) -> int:
+            return value + 1
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: int) -> int:
+            return await complete(value)
+
+        run_task = asyncio.ensure_future(wf.run(0))
+        try:
+            await asyncio.wait_for(save_started.wait(), timeout=5)
+            run_task.cancel()
+            await asyncio.sleep(0)
+            run_task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(run_task, timeout=5)
+            await asyncio.wait_for(save_finished.wait(), timeout=5)
+            assert await storage.list_checkpoints(workflow_name="wf") == []
+        finally:
+            release_save.set()
+            await asyncio.gather(run_task, return_exceptions=True)
+
     async def test_pause_sibling_cancellation_preserves_in_flight_checkpoint(self):
         save_started = asyncio.Event()
         release_save = asyncio.Event()
@@ -1162,6 +1201,65 @@ class TestCheckpointing:
 
         assert not save_cancelled
         assert len(await storage.list_checkpoints(workflow_name="wf")) == 1
+
+    async def test_second_cancellation_during_pause_settlement_finishes_save(self):
+        save_started = asyncio.Event()
+        release_save = asyncio.Event()
+        pause_requested = asyncio.Event()
+        cancellation_raised = asyncio.Event()
+        save_finished = asyncio.Event()
+        save_cancelled = False
+
+        class BlockingSaveStorage(InMemoryCheckpointStorage):
+            async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+                nonlocal save_cancelled
+                save_started.set()
+                try:
+                    await release_save.wait()
+                except asyncio.CancelledError:
+                    save_cancelled = True
+                    raise
+                finally:
+                    save_finished.set()
+                return await super().save(checkpoint)
+
+        storage = BlockingSaveStorage()
+
+        @step(replay_key=lambda: "complete")
+        async def complete() -> int:
+            return 1
+
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            await save_started.wait()
+            pause_requested.set()
+            return await ctx.request_info("continue?", int, request_id="continue")
+
+        @step(replay_key=lambda: "cancel")
+        async def cancel() -> None:
+            await pause_requested.wait()
+            await asyncio.sleep(0)
+            cancellation_raised.set()
+            raise asyncio.CancelledError("sibling cancellation")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(complete(), ask(), cancel()))
+
+        run_task = asyncio.ensure_future(wf.run(0))
+        try:
+            await asyncio.wait_for(cancellation_raised.wait(), timeout=5)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            run_task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(run_task, timeout=5)
+            await asyncio.wait_for(save_finished.wait(), timeout=2)
+            assert save_cancelled
+        finally:
+            release_save.set()
+            await asyncio.gather(run_task, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
