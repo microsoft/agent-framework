@@ -4,12 +4,14 @@
 // server tools directly from a declarative workflow. MCP servers expose tools that can be
 // invoked to perform specific tasks, like searching documentation or executing operations.
 
+using System.Net.Http.Headers;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Shared.Foundry;
 using Shared.Workflows;
 
@@ -41,6 +43,8 @@ namespace Demo.Workflows.Declarative.InvokeMcpTool;
 /// </remarks>
 internal sealed class Program
 {
+    private const string McpHttpClientName = "workflow-mcp";
+
     public static async Task Main(string[] args)
     {
         // Initialize configuration
@@ -53,65 +57,33 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
-        // Create the MCP tool handler for invoking MCP server tools.
-        // The HttpClient callback allows configuring authentication per MCP server.
-        // Different MCP servers may require different authentication configurations.
-        // For Production scenarios, consider implementing a more robust HttpClient management strategy to reuse HttpClient instances and manage their lifetimes appropriately.
-        List<HttpClient> createdHttpClients = [];
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         DefaultAzureCredential credential = new();
-        DefaultMcpToolHandler mcpToolHandler = new(
-            httpClientProvider: async (serverUrl, cancellationToken) =>
+
+        // Reuse HTTP handlers while each MCP invocation owns its client.
+        ServiceCollection services = new();
+        services.AddHttpClient(McpHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
-                if (serverUrl.StartsWith("https://mcp.ai.azure.com", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Acquire token for the Azure MCP server
-                    AccessToken token = await credential.GetTokenAsync(
-                        new TokenRequestContext(["https://mcp.ai.azure.com/.default"]),
-                        cancellationToken);
+                UseCookies = false,
+                AllowAutoRedirect = false,
+                CheckCertificateRevocationList = true
+            })
+            .AddHttpMessageHandler(() => new AzureMcpBearerTokenHandler(credential))
+            .SetHandlerLifetime(TimeSpan.FromMinutes(2));
+        await using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        await using DefaultMcpToolHandler mcpToolHandler = new(
+            serviceProvider.GetRequiredService<IHttpClientFactory>(), McpHttpClientName);
 
-                    // Create HttpClient with Authorization header
-                    HttpClient httpClient = new();
-                    httpClient.DefaultRequestHeaders.Authorization =
-                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.Token);
-                    createdHttpClients.Add(httpClient);
-                    return httpClient;
-                }
-
-                if (serverUrl.StartsWith("https://learn.microsoft.com", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Microsoft Learn MCP server does not require authentication
-                    HttpClient httpClient = new();
-                    createdHttpClients.Add(httpClient);
-                    return httpClient;
-                }
-
-                // Return null for unknown servers to use the default HttpClient without auth.
-                return null;
-            });
-
-        try
+        // Create the workflow factory with MCP tool provider
+        WorkflowFactory workflowFactory = new("InvokeMcpTool.yaml", foundryEndpoint)
         {
-            // Create the workflow factory with MCP tool provider
-            WorkflowFactory workflowFactory = new("InvokeMcpTool.yaml", foundryEndpoint)
-            {
-                McpToolHandler = mcpToolHandler
-            };
+            McpToolHandler = mcpToolHandler
+        };
 
-            // Execute the workflow
-            WorkflowRunner runner = new() { UseJsonCheckpoints = true };
-            await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
-        }
-        finally
-        {
-            // Clean up connections and dispose created HttpClients
-            await mcpToolHandler.DisposeAsync();
-
-            foreach (HttpClient httpClient in createdHttpClients)
-            {
-                httpClient.Dispose();
-            }
-        }
+        // Execute the workflow
+        WorkflowRunner runner = new() { UseJsonCheckpoints = true };
+        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
     }
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration)
@@ -137,5 +109,26 @@ internal sealed class Program
                 Be concise and helpful in your responses.
                 """
         };
+    }
+
+    private sealed class AzureMcpBearerTokenHandler(TokenCredential credential) : DelegatingHandler
+    {
+        private static readonly TokenRequestContext s_tokenContext =
+            new(["https://mcp.ai.azure.com/.default"]);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Uri? requestUri = request.RequestUri;
+            if (requestUri is not null
+                && string.Equals(requestUri.GetLeftPart(UriPartial.Authority), "https://mcp.ai.azure.com", StringComparison.OrdinalIgnoreCase))
+            {
+                AccessToken token = await credential.GetTokenAsync(s_tokenContext, cancellationToken);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            }
+
+            return await base.SendAsync(request, cancellationToken);
+        }
     }
 }

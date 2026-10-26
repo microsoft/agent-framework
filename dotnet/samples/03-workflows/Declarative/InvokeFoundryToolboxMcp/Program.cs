@@ -5,7 +5,6 @@
 // through the reserved tools/list operation, then calls microsoft_docs_search from the workflow.
 
 using System.ClientModel;
-using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
@@ -13,6 +12,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using OpenAI.Responses;
 using Shared.Foundry;
 using Shared.Workflows;
@@ -30,6 +30,7 @@ namespace Demo.Workflows.Declarative.InvokeFoundryToolboxMcp;
 /// </remarks>
 internal sealed class Program
 {
+    private const string McpHttpClientName = "foundry-toolbox-mcp";
     private const string ToolboxNameSetting = "FOUNDRY_TOOLBOX_NAME";
     private const string ToolboxApiVersionSetting = "FOUNDRY_AGENT_TOOLSET_API_VERSION";
     private const string ToolboxMcpServerUrlSetting = "FOUNDRY_TOOLBOX_MCP_SERVER_URL";
@@ -73,51 +74,32 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
-        // Create the MCP tool handler for invoking the Foundry toolbox MCP proxy.
-        ConcurrentBag<HttpClient> createdHttpClients = [];
-        DefaultMcpToolHandler mcpToolHandler = new(
-            httpClientProvider: async (serverUrl, _) =>
+        // Reuse HTTP handlers while each MCP invocation owns its client.
+        ServiceCollection services = new();
+        services.AddHttpClient(McpHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
-                await Task.CompletedTask.ConfigureAwait(false);
+                UseCookies = false,
+                AllowAutoRedirect = false,
+                CheckCertificateRevocationList = true
+            })
+            .AddHttpMessageHandler(() => new FoundryToolboxBearerTokenHandler(credential, new Uri(toolboxMcpServerUrl)))
+            .SetHandlerLifetime(TimeSpan.FromMinutes(2));
+        await using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        await using DefaultMcpToolHandler mcpToolHandler = new(
+            serviceProvider.GetRequiredService<IHttpClientFactory>(), McpHttpClientName);
 
-                if (!string.Equals(serverUrl, toolboxMcpServerUrl, StringComparison.OrdinalIgnoreCase))
-                {
-                    return null;
-                }
-
-                FoundryToolboxBearerTokenHandler handler = new(credential)
-                {
-                    InnerHandler = new HttpClientHandler()
-                };
-                HttpClient httpClient = new(handler);
-                createdHttpClients.Add(httpClient);
-                return httpClient;
-            });
-
-        try
+        // Create the workflow factory with MCP tool provider
+        WorkflowFactory workflowFactory = new("InvokeFoundryToolboxMcp.yaml", foundryEndpoint)
         {
-            // Create the workflow factory with MCP tool provider
-            WorkflowFactory workflowFactory = new("InvokeFoundryToolboxMcp.yaml", foundryEndpoint)
-            {
-                Configuration = workflowConfiguration,
-                AllowedEnvironmentVariables = [ToolboxMcpServerUrlSetting, DocsServerLabelSetting, WebSearchToolNameSetting],
-                McpToolHandler = mcpToolHandler
-            };
+            Configuration = workflowConfiguration,
+            AllowedEnvironmentVariables = [ToolboxMcpServerUrlSetting, DocsServerLabelSetting, WebSearchToolNameSetting],
+            McpToolHandler = mcpToolHandler
+        };
 
-            // Execute the workflow
-            WorkflowRunner runner = new() { UseJsonCheckpoints = true };
-            await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
-        }
-        finally
-        {
-            // Clean up connections and dispose created HttpClients
-            await mcpToolHandler.DisposeAsync();
-
-            foreach (HttpClient httpClient in createdHttpClients)
-            {
-                httpClient.Dispose();
-            }
-        }
+        // Execute the workflow
+        WorkflowRunner runner = new() { UseJsonCheckpoints = true };
+        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
     }
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration, TokenCredential credential)
@@ -180,17 +162,25 @@ internal sealed class Program
     private static string BuildToolboxMcpServerUrl(string toolboxEndpoint, string toolboxName, string apiVersion) =>
         $"{toolboxEndpoint.TrimEnd('/')}/{toolboxName}/mcp?api-version={Uri.EscapeDataString(apiVersion)}";
 
-    private sealed class FoundryToolboxBearerTokenHandler(TokenCredential credential) : DelegatingHandler
+    private sealed class FoundryToolboxBearerTokenHandler(TokenCredential credential, Uri serverEndpoint) : DelegatingHandler
     {
         private static readonly TokenRequestContext s_tokenContext =
             new(["https://ai.azure.com/.default"]);
+
+        private readonly string _serverOrigin = serverEndpoint.GetLeftPart(UriPartial.Authority);
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            AccessToken token = await credential.GetTokenAsync(s_tokenContext, cancellationToken);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            Uri? requestUri = request.RequestUri;
+            if (requestUri is not null
+                && string.Equals(requestUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(requestUri.GetLeftPart(UriPartial.Authority), this._serverOrigin, StringComparison.OrdinalIgnoreCase))
+            {
+                AccessToken token = await credential.GetTokenAsync(s_tokenContext, cancellationToken);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            }
 
             return await base.SendAsync(request, cancellationToken);
         }
