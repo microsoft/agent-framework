@@ -118,6 +118,42 @@ class ValidateAgentSkillLinksTests(unittest.TestCase):
 
         self.assertTrue(any("missing local resource" in error for error in errors))
 
+    def test_accepts_percent_encoded_space_like_angle_bracket_path(self) -> None:
+        references = self.skill / "references"
+        references.mkdir()
+        (references / "guide file.md").write_text("# Details\n", encoding="utf-8")
+        self.write_skill(
+            "[Angle](<references/guide file.md>)\n"
+            "[Encoded](references/guide%20file.md)\n"
+        )
+
+        self.assertEqual([], validate_agent_skill_links(self.skills))
+
+    def test_accepts_percent_encoded_space_in_reference_definition(self) -> None:
+        references = self.skill / "references"
+        references.mkdir()
+        (references / "guide file.md").write_text("# Details\n", encoding="utf-8")
+        self.write_skill("[Details][resource]\n\n[resource]: references/guide%20file.md\n")
+
+        self.assertEqual([], validate_agent_skill_links(self.skills))
+
+    def test_accepts_percent_encoded_hash_in_filename(self) -> None:
+        references = self.skill / "references"
+        references.mkdir()
+        (references / "guide#file.md").write_text("# Details\n", encoding="utf-8")
+        self.write_skill("[Details](references/guide%23file.md)\n")
+
+        self.assertEqual([], validate_agent_skill_links(self.skills))
+
+    def test_rejects_missing_percent_encoded_resource(self) -> None:
+        self.write_skill("[Missing](references/guide%20missing.md)\n")
+
+        errors = validate_agent_skill_links(self.skills)
+
+        self.assertTrue(
+            any("missing local resource: references/guide%20missing.md" in error for error in errors)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
