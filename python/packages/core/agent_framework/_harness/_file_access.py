@@ -1922,7 +1922,11 @@ class FileAccessProvider(ContextProvider):
         """
         super().__init__(source_id)
         self.store = store
-        self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        self.instructions = instructions or (
+            DEFAULT_FILE_ACCESS_INSTRUCTIONS.replace("file_access_", f"{tool_name_prefix}_file_access_")
+            if tool_name_prefix
+            else DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        )
         self.disable_write_tools = disable_write_tools
         self.disable_readonly_tool_approval = disable_readonly_tool_approval
         self.disable_write_tool_approval = disable_write_tool_approval
