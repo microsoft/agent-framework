@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from typing import Any, ClassVar, Generic, cast
 from uuid import UUID, uuid4
 
@@ -175,19 +175,24 @@ def _restore_timedelta(value: str) -> timedelta:
     The components are summed as exact decimals of microseconds: the string
     the serializer writes carries every microsecond, while a ``float`` of the
     total seconds loses them on the largest durations (``timedelta.max`` even
-    rounds past the range the type supports).
+    rounds past the range the type supports). The arithmetic runs in an
+    isolated context with ample precision, so an application that lowers the
+    ambient Decimal precision cannot change what a duration filter matches.
     """
     match = _DURATION_PATTERN.match(value)
     if match is None:
         raise ValueError(f"Unsupported duration '{value}'.")
     parts = match.groupdict()
-    microseconds = (
-        Decimal(parts["days"] or "0") * 86_400_000_000
-        + Decimal(parts["hours"] or "0") * 3_600_000_000
-        + Decimal(parts["minutes"] or "0") * 60_000_000
-        + Decimal(parts["seconds"] or "0") * 1_000_000
-    )
-    delta = timedelta(microseconds=int(microseconds.quantize(Decimal(1), rounding=ROUND_HALF_EVEN)))
+    with localcontext() as ctx:
+        ctx.prec = 40
+        microseconds = (
+            Decimal(parts["days"] or "0") * 86_400_000_000
+            + Decimal(parts["hours"] or "0") * 3_600_000_000
+            + Decimal(parts["minutes"] or "0") * 60_000_000
+            + Decimal(parts["seconds"] or "0") * 1_000_000
+        )
+        micros = int(microseconds.quantize(Decimal(1), rounding=ROUND_HALF_EVEN))
+    delta = timedelta(microseconds=micros)
     return -delta if parts["sign"] else delta
 
 

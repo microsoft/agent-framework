@@ -9,7 +9,7 @@ import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, getcontext, localcontext
 from typing import Annotated, Any, cast
 from uuid import UUID
 
@@ -1350,3 +1350,23 @@ async def test_in_memory_collection_field_still_matches_a_string_element_operand
     matched = await collection.get(filter=Filter("tags", "contains", "00000000-0000-0000-0000-000000000001"))
 
     assert [record.id for record in matched] == ["one"]
+
+
+async def test_in_memory_restores_a_duration_under_a_reduced_decimal_precision() -> None:
+    """The caller's Decimal context must not change what a duration filter matches.
+
+    The restore runs its arithmetic in an isolated context: a caller running
+    inside ``localcontext(prec=6)`` gets the same records as at the default
+    precision, and the caller's own context survives the call.
+    """
+    collection = await _scalar_filter_collection()
+    default_prec = getcontext().prec
+
+    with localcontext() as ctx:
+        ctx.prec = 6
+        matched = await collection.get(filter=Filter("span", "eq", timedelta(hours=2)))
+
+        assert [record.id for record in matched] == ["one"]
+        assert getcontext().prec == 6
+
+    assert getcontext().prec == default_prec
