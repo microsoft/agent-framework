@@ -672,6 +672,20 @@ def test_unsupported_conversation_item_content_returns_client_error():
         items_after = client.get(f"/v1/conversations/{conversation_id}/items")
         assert items_after.status_code == 200
 
+        # Every role in the module's MessageRole vocabulary is accepted,
+        # including developer instructions, and reads back intact.
+        for accepted_role in ("developer", "system", "user", "assistant"):
+            posted = client.post(
+                f"/v1/conversations/{conversation_id}/items",
+                json={"items": [{"type": "message", "role": accepted_role, "content": "msg"}]},
+            )
+            assert posted.status_code == 200, accepted_role
+        listed = client.get(f"/v1/conversations/{conversation_id}/items")
+        assert listed.status_code == 200
+        roles_read_back = [item.get("role") for item in listed.json()["data"]]
+        for accepted_role in ("developer", "system", "user", "assistant"):
+            assert accepted_role in roles_read_back, accepted_role
+
         missing = client.post(
             "/v1/conversations/does-not-exist/items",
             json={"items": [{"type": "message", "role": "user", "content": "hello"}]},

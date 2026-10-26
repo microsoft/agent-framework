@@ -12,7 +12,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import MutableSequence
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 
 from agent_framework import AgentSession, Content, Message, get_namespaced_value
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
@@ -52,6 +52,9 @@ def _refusal_additional_properties() -> dict[str, Any]:
 
 # Type alias for OpenAI Message role literals
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
+
+# Roles accepted for a conversation message, derived from MessageRole itself.
+_MESSAGE_ROLES = frozenset(get_args(MessageRole))
 
 # Checkpoint item type constants
 CONVERSATION_ITEM_TYPE_CHECKPOINT = "checkpoint"
@@ -330,8 +333,10 @@ class InMemoryConversationStore(ConversationStore):
             # Reject an unknown role before anything is stored: the AF Message
             # accepts any string, so the bad item would otherwise be persisted
             # and only fail later at OpenAI conversion, leaving reads of the
-            # conversation broken from then on.
-            if role not in ("system", "user", "assistant", "tool"):
+            # conversation broken from then on. The accepted vocabulary is the
+            # module's own MessageRole (which includes developer), so this
+            # check can never drift from the OpenAI conversion it guards.
+            if role not in _MESSAGE_ROLES:
                 raise ConversationItemValidationError(f"Conversation message has unsupported role {role!r}")
             content = item.get("content", [])
             contents: list[Content] = []
