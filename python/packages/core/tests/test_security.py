@@ -3548,6 +3548,64 @@ class TestSecureAgentSessionIsolation:
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
+    async def test_authenticated_hidden_placeholder_input_keeps_restored_integrity(self) -> None:
+        """An unchanged session-owned placeholder is safe caller input on a later run."""
+        executed = False
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="authenticated-hidden-input")
+        tracker, _ = await _get_session_security_middleware(config, session)
+        tracker._update_context_label(ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE))
+        hidden = tracker._hide_item(  # pyright: ignore[reportPrivateUsage]
+            Content.from_text("external payload"),
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+            ),
+            "fetch_external",
+        )
+        replayed = Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="external-call", result=[hidden])],
+        )
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_tracker, scoped_policy, _ = provider_context.get_middleware()
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        assert isinstance(scoped_policy, PolicyEnforcementFunctionMiddleware)
+        label = scoped_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.TRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+        def protected_action() -> str:
+            nonlocal executed
+            executed = True
+            return "done"
+
+        protected_tool = FunctionTool(
+            func=protected_action,
+            name="protected_action",
+            input_model={"type": "object", "properties": {}},
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+            },
+        )
+        invocation = FunctionInvocationContext(function=protected_tool, arguments={}, session=session)
+
+        async def execute(_: FunctionInvocationContext) -> list[Content]:
+            return [Content.from_text(protected_action())]
+
+        await FunctionMiddlewarePipeline(scoped_tracker, scoped_policy).execute(invocation, execute)
+
+        assert executed is True
+
     async def test_replayed_function_result_preserves_nested_user_identity_label(self) -> None:
         """Function-result wrappers propagate labels stored on their nested items."""
         principals = _principal_metadata("user-a")

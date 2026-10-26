@@ -1119,6 +1119,7 @@ def _replayed_message_label(
     role = str(message.role)
     content_labels: list[ContentLabel] = []
     has_data_bearing_content = False
+    has_authenticated_hidden_content = False
     control_content_types = {
         "function_approval_request",
         "function_approval_response",
@@ -1133,12 +1134,17 @@ def _replayed_message_label(
             scope=scope,
         )
         content_labels.extend(replayed_labels)
+        has_authenticated_hidden_content = has_authenticated_hidden_content or is_authenticated_hidden
         if content.type not in control_content_types and not is_authenticated_hidden:
             has_data_bearing_content = True
 
     fallback = (
         ContentLabel()
-        if role in {"user", "system"} or not reconstruct_unstamped
+        if (
+            role in {"user", "system"}
+            or not reconstruct_unstamped
+            or (has_authenticated_hidden_content and not has_data_bearing_content)
+        )
         else ContentLabel(
             integrity=IntegrityLabel.UNTRUSTED,
             confidentiality=(ConfidentialityLabel.PRIVATE if has_data_bearing_content else ConfidentialityLabel.PUBLIC),
@@ -5159,6 +5165,7 @@ def _stamp_mcp_content_labels(
                     metadata={"source": "invalid_mcp_ifc"},
                 ),
             )
+            props[_AUTHORITATIVE_SECURITY_LABEL] = _INTERNAL_RESULT_MARKER
         elif dynamic is None:
             label = local_label
         elif trust_server_ifc:

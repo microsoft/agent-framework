@@ -59,7 +59,7 @@ from agent_framework._mcp import (
     _should_propagate_cancelled_error,
     logger,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import (
     _auto_invoke_function,
     _FunctionResultPayloadBudget,
@@ -1752,6 +1752,92 @@ async def test_oversized_identity_ifc_fails_closed_without_confidentiality_downg
         "metadata": {"source": "invalid_mcp_ifc"},
     }
     assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+
+
+async def test_invalid_identity_ifc_cannot_inherit_local_principals() -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        ConfidentialityLabel,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": [{"tenant_id": "tenant-a", "user_id": "x" * 5000}],
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    function = FunctionTool(
+        name="identity_widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "identity_widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "identity_widget",
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+    _wrap_mcp_function_for_ifc(function, IntegrityLabel.TRUSTED)
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)
+    policy = PolicyEnforcementFunctionMiddleware()
+
+    result = await _auto_invoke_function(
+        Content.from_function_call(call_id="identity-call", name=function.name, arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={function.name: function},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+    )
+
+    assert result.items is not None
+    assert result.items[0].additional_properties["_variable_reference"] is True
+    context_label = tracker.get_context_label()
+    assert context_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+    assert PRINCIPAL_METADATA_KEY not in context_label.metadata
+
+    executed = False
+
+    def identity_destination() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    destination = FunctionTool(
+        name="identity_destination",
+        description="Identity-scoped destination",
+        func=identity_destination,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "accepts_untrusted": True,
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+
+    with pytest.raises(MiddlewareTermination):
+        await _auto_invoke_function(
+            Content.from_function_call(call_id="destination-call", name=destination.name, arguments={}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={destination.name: destination},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+    assert executed is False
 
 
 async def test_oversized_mcp_meta_is_omitted_from_host_and_model_items() -> None:
