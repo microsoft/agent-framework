@@ -1721,6 +1721,39 @@ async def test_exhausted_aggregate_budget_preserves_ifc_security_label() -> None
     assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
 
 
+async def test_oversized_identity_ifc_fails_closed_without_confidentiality_downgrade() -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": [{"tenant_id": "tenant-a", "user_id": "x" * 5000}],
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "metadata": {"source": "invalid_mcp_ifc"},
+    }
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+
+
 async def test_oversized_mcp_meta_is_omitted_from_host_and_model_items() -> None:
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="ok")],

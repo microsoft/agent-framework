@@ -54,10 +54,15 @@ _BACKEND_SNAPSHOT_ORIGIN_KEY = "_agent_framework_ag_ui_backend_snapshot_origin"
 _BACKEND_SNAPSHOT_ORIGIN_MARKER = object()
 
 
+def _mark_backend_snapshot_origin(message: Message) -> None:
+    """Mark a provider message as derived from backend-owned snapshot history."""
+    message.additional_properties[_BACKEND_SNAPSHOT_ORIGIN_KEY] = _BACKEND_SNAPSHOT_ORIGIN_MARKER
+
+
 def _copy_backend_snapshot_origin(source: Message, target: Message) -> None:
     """Preserve private backend-snapshot provenance on a derived provider message."""
     if source.additional_properties.get(_BACKEND_SNAPSHOT_ORIGIN_KEY) is _BACKEND_SNAPSHOT_ORIGIN_MARKER:
-        target.additional_properties[_BACKEND_SNAPSHOT_ORIGIN_KEY] = _BACKEND_SNAPSHOT_ORIGIN_MARKER
+        _mark_backend_snapshot_origin(target)
 
 
 def _take_backend_snapshot_messages(messages: Sequence[Message]) -> list[Message]:
@@ -77,6 +82,7 @@ def _append_synthetic_tool_results(
     result: str,
     *,
     excluded_tool_call_ids: set[str] | None = None,
+    backend_snapshot_origin: bool = False,
 ) -> None:
     excluded_tool_call_ids = excluded_tool_call_ids or set()
     # A call ID awaiting several occurrences still gets a single synthetic result.
@@ -85,17 +91,18 @@ def _append_synthetic_tool_results(
             logger.info("Not injecting synthetic tool result for non-abandoned call_id=%s", pending_call_id)
             continue
         logger.info("Injecting synthetic tool result for pending call_id=%s", pending_call_id)
-        sanitized.append(
-            Message(
-                role="tool",
-                contents=[
-                    Content.from_function_result(
-                        call_id=pending_call_id,
-                        result=result,
-                    )
-                ],
-            )
+        synthetic_result = Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id=pending_call_id,
+                    result=result,
+                )
+            ],
         )
+        if backend_snapshot_origin:
+            _mark_backend_snapshot_origin(synthetic_result)
+        sanitized.append(synthetic_result)
 
 
 def _tool_call_ids_per_occurrence(contents: list[Content]) -> list[str]:
@@ -133,6 +140,7 @@ def _sanitize_tool_history(
     sanitized: list[Message] = []
     pending_tool_call_ids: list[str] | None = None
     pending_confirm_changes_id: str | None = None
+    pending_tool_calls_from_backend_snapshot = False
     protected_ids = set(protected_tool_call_ids or set())
 
     def non_abandoned_tool_call_ids(start: int) -> set[str]:
@@ -153,9 +161,11 @@ def _sanitize_tool_history(
                     pending_tool_call_ids,
                     "Tool execution skipped - assistant continued before the tool result was available.",
                     excluded_tool_call_ids=non_abandoned_tool_call_ids(idx),
+                    backend_snapshot_origin=pending_tool_calls_from_backend_snapshot,
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
+                pending_tool_calls_from_backend_snapshot = False
 
             tool_ids = _tool_call_ids_per_occurrence(msg.contents or [])
             confirm_changes_call = None
@@ -193,6 +203,9 @@ def _sanitize_tool_history(
                 sanitized.append(msg)
 
             pending_tool_call_ids = tool_ids if tool_ids else None
+            pending_tool_calls_from_backend_snapshot = bool(tool_ids) and (
+                msg.additional_properties.get(_BACKEND_SNAPSHOT_ORIGIN_KEY) is _BACKEND_SNAPSHOT_ORIGIN_MARKER
+            )
             pending_confirm_changes_id = (
                 str(confirm_changes_call.call_id) if confirm_changes_call and confirm_changes_call.call_id else None
             )
@@ -230,6 +243,8 @@ def _sanitize_tool_history(
                         )
                     ],
                 )
+                if pending_tool_calls_from_backend_snapshot:
+                    _mark_backend_snapshot_origin(synthetic_result)
                 sanitized.append(synthetic_result)
                 if pending_tool_call_ids:
                     pending_tool_call_ids = [
@@ -261,6 +276,8 @@ def _sanitize_tool_history(
                                 )
                             ],
                         )
+                        if pending_tool_calls_from_backend_snapshot:
+                            _mark_backend_snapshot_origin(synthetic_result)
                         sanitized.append(synthetic_result)
                         if pending_tool_call_ids:
                             pending_tool_call_ids = [
@@ -281,12 +298,16 @@ def _sanitize_tool_history(
                     pending_tool_call_ids,
                     "Tool execution skipped - user provided follow-up message",
                     excluded_tool_call_ids=non_abandoned_tool_call_ids(idx + 1),
+                    backend_snapshot_origin=pending_tool_calls_from_backend_snapshot,
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
+                pending_tool_calls_from_backend_snapshot = False
 
             sanitized.append(msg)
             pending_confirm_changes_id = None
+            if not pending_tool_call_ids:
+                pending_tool_calls_from_backend_snapshot = False
             continue
 
         if role_value == "tool":
@@ -321,11 +342,13 @@ def _sanitize_tool_history(
                 pending_tool_call_ids,
                 "Tool execution skipped - conversation continued before the tool result was available.",
                 excluded_tool_call_ids=non_abandoned_tool_call_ids(idx),
+                backend_snapshot_origin=pending_tool_calls_from_backend_snapshot,
             )
 
         sanitized.append(msg)
         pending_tool_call_ids = None
         pending_confirm_changes_id = None
+        pending_tool_calls_from_backend_snapshot = False
 
     if pending_tool_call_ids:
         logger.info(
@@ -337,6 +360,7 @@ def _sanitize_tool_history(
             pending_tool_call_ids,
             "Tool execution skipped - conversation ended before the tool result was available.",
             excluded_tool_call_ids=non_abandoned_tool_call_ids(len(messages)),
+            backend_snapshot_origin=pending_tool_calls_from_backend_snapshot,
         )
 
     return sanitized

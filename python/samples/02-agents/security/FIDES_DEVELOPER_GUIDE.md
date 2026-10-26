@@ -523,7 +523,8 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 Set `trust_server_ifc=True` only when the MCP server is an authenticated authority for result labels. In that mode,
 a complete valid `_meta.ifc` label is authoritative for that result, including permitted relaxation of the local
 fallback. Missing labels use current local policy; supplied-but-partial, malformed, or unretainable IFC metadata fails
-closed as **UNTRUSTED + PRIVATE**. This opt-in does not make
+closed as **UNTRUSTED + USER_IDENTITY** without principals, so it cannot flow to any ordinary destination. This opt-in
+does not make
 ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restriction-only hints.
 
 ```python

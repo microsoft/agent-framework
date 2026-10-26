@@ -3294,6 +3294,60 @@ class TestSecureAgentSessionIsolation:
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
+    async def test_replayed_function_call_arguments_preserve_private_confidentiality(self) -> None:
+        """Function-call arguments are replayed data, not confidentiality-free control content."""
+        replayed = Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="private-call",
+                    name="public_sink",
+                    arguments={"value": "private replayed data"},
+                )
+            ],
+        )
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="replayed-function-call")
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker = provider_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+        def public_sink(value: str) -> str:
+            return value
+
+        sink = FunctionTool(
+            func=public_sink,
+            name="public_sink",
+            input_model={"type": "object", "properties": {"value": {"type": "string"}}},
+            additional_properties={
+                "accepts_untrusted": True,
+                "max_allowed_confidentiality": "public",
+                "source_integrity": "trusted",
+            },
+        )
+        invocation = FunctionInvocationContext(function=sink, arguments={"value": "private replayed data"})
+        invocation.metadata["context_label"] = label
+        policy = PolicyEnforcementFunctionMiddleware()
+
+        async def execute() -> None:
+            pytest.fail("Private replayed call arguments must not reach a public sink")
+
+        with pytest.raises(MiddlewareTermination):
+            await policy.process(invocation, execute)
+
+        assert invocation.result["violation_type"] == "max_allowed_confidentiality"
+
     async def test_restored_session_still_labels_new_assistant_input(self) -> None:
         """Persisted state suppresses history fallback, not newly supplied assistant data."""
         history = InMemoryHistoryProvider()
@@ -7113,7 +7167,7 @@ class TestMCPIFCMetaLabels:
         _stamp_mcp_content_labels(contents, static, trust_server_ifc=trust_server_ifc)
         assert contents[0].additional_properties["security_label"] == {
             "integrity": "untrusted",
-            "confidentiality": "private",
+            "confidentiality": "user_identity",
             "metadata": {"source": "invalid_mcp_ifc"},
         }
         assert "_meta" not in contents[0].additional_properties
@@ -7134,7 +7188,7 @@ class TestMCPIFCMetaLabels:
 
         assert contents[0].additional_properties["security_label"] == {
             "integrity": "untrusted",
-            "confidentiality": "private",
+            "confidentiality": "user_identity",
             "metadata": {"source": "invalid_mcp_ifc"},
         }
         assert "_mcp_tool_result_security_meta" not in contents[0].additional_properties

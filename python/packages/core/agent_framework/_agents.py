@@ -1876,7 +1876,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     state=provider_session.state.setdefault(provider.source_id, {}),
                 )
                 if isawaitable(prepared):
-                    await prepared
+                    _ = await prepared
 
         # Merge provider-contributed tools into chat_options
         if session_context.tools:

@@ -5497,6 +5497,123 @@ async def test_endpoint_fides_snapshot_provenance_survives_reasoning_normalizati
     assert context_label["confidentiality"] == "private"
 
 
+async def test_endpoint_fides_synthetic_skipped_result_keeps_snapshot_provenance(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A framework-synthesized skipped result does not taint restored FIDES state."""
+    thread_id = "thread-fides-synthetic-result"
+    session_id = _session_id_for_thread(scope="test", thread_id=thread_id)
+    executed: list[str] = []
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        assert all(
+            "_agent_framework_ag_ui_backend_snapshot_origin" not in message.additional_properties
+            for message in messages
+        )
+        assert any(
+            content.type == "function_result"
+            and content.call_id == "client-call"
+            and "Tool execution skipped" in (content.result or "")
+            for message in messages
+            for content in message.contents
+        )
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Use the client lookup tool."},
+                {
+                    "id": "assistant-1",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "client-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+            ],
+            session_state={
+                config.source_id: {
+                    "scope_id": session_id,
+                    "context_label": _TRUSTED_PUBLIC_LABEL,
+                }
+            },
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-synthetic-result",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/fides-synthetic-result",
+            json={
+                "runId": "run-fides-synthetic-result",
+                "threadId": thread_id,
+                "messages": [{"id": "user-2", "role": "user", "content": "Continue without the client tool."}],
+            },
+        )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert executed == ["protected"]
+    snapshot = await store.get(scope="test", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+    assert context_label["integrity"] == "trusted"
+    assert context_label["confidentiality"] == "public"
+
+
 @pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper", "client"])
 @pytest.mark.parametrize("session_state_key", [None, "custom_security_state"], ids=["default-key", "custom-key"])
 @pytest.mark.parametrize("state_origin", ["request", "snapshot"])

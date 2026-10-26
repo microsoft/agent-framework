@@ -1120,7 +1120,6 @@ def _replayed_message_label(
     content_labels: list[ContentLabel] = []
     has_data_bearing_content = False
     control_content_types = {
-        "function_call",
         "function_approval_request",
         "function_approval_response",
     }
@@ -5156,7 +5155,7 @@ def _stamp_mcp_content_labels(
                 local_label,
                 ContentLabel(
                     integrity=IntegrityLabel.UNTRUSTED,
-                    confidentiality=ConfidentialityLabel.PRIVATE,
+                    confidentiality=ConfidentialityLabel.USER_IDENTITY,
                     metadata={"source": "invalid_mcp_ifc"},
                 ),
             )
