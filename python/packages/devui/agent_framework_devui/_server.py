@@ -137,6 +137,24 @@ class DevServer:
             return None
         return self._LOOPBACK_HOSTS
 
+    @staticmethod
+    def _hostname_from_host_header(host_header: str) -> str:
+        """Return the host name part of a Host header, lowercased and without any port.
+
+        IPv6 literals keep their brackets, so "[::1]:8080" and "[::1]" both yield "[::1]".
+        Splitting on the first colon instead would turn both into "[", which no allowlist
+        member matches.
+        """
+        host = host_header.strip().lower()
+        if host.startswith("["):
+            # IPv6 literal, optionally followed by ":port".
+            end = host.find("]")
+            return host[: end + 1] if end != -1 else host
+        if host.count(":") == 1:
+            # "example.com:8080". A bare IPv6 literal holds more than one colon and has no port.
+            return host.rsplit(":", 1)[0]
+        return host
+
     @classmethod
     def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
         """Resolve the active Bearer token. Returns None when auth is disabled."""
@@ -472,7 +490,7 @@ class DevServer:
             @app.middleware("http")
             async def host_header_middleware(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
                 host_header = request.headers.get("host", "")
-                hostname = host_header.split(":", 1)[0].lower()
+                hostname = self._hostname_from_host_header(host_header)
                 if hostname and hostname not in expected_hosts:
                     return JSONResponse(
                         status_code=400,
