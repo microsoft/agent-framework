@@ -2001,14 +2001,13 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     assert result[0].arguments == '"San Francisco"}'
 
 
-def test_parse_contents_server_tool_use_input_json_delta_ignored(
+def test_parse_contents_server_tool_use_input_json_delta_is_hosted_and_informational(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Regression test: input_json_delta events are ignored after a server_tool_use block.
+    """input_json_delta events after a server_tool_use block stay hosted, informational-only fragments.
 
-    Server-managed tools have their execution handled server-side, so streaming
-    input_json_delta events must not produce Content.from_function_call(name='')
-    entries that would cause Anthropic API 400 errors on subsequent turns.
+    The fragments carry the server tool call's ``call_id`` and an empty name, so they merge into the
+    call and give it the streamed input without making it a local function call.
     """
     client = create_test_anthropic_client(mock_anthropic_client)
     request_state = _AnthropicRequestState()
@@ -2020,31 +2019,58 @@ def test_parse_contents_server_tool_use_input_json_delta_ignored(
     server_tool_content.name = "web_search"
     server_tool_content.input = {}
 
-    result = client._parse_contents_from_anthropic([server_tool_content], request_state)
+    result = client._parse_contents_from_anthropic([server_tool_content], request_state, streaming=True)
     # server_tool_use falls through to informational-only function_call (not mcp_tool_use / code_execution)
     assert len(result) == 1
     assert result[0].type == "function_call"
     assert result[0].informational_only is True
     assert result[0].hosted is True
     assert request_state.active_call_content_type == "server_tool_use"
+    call = result[0]
 
-    # input_json_delta events after server_tool_use must be silently ignored
-    delta_content = MagicMock()
-    delta_content.type = "input_json_delta"
-    delta_content.partial_json = '{"query": "latest news"}'
+    for partial_json in ('{"query": "latest', ' news"}'):
+        delta_content = MagicMock()
+        delta_content.type = "input_json_delta"
+        delta_content.partial_json = partial_json
 
-    result = client._parse_contents_from_anthropic([delta_content], request_state)
-    assert result == [], "input_json_delta after server_tool_use should produce no content, but got: %r" % result
+        result = client._parse_contents_from_anthropic([delta_content], request_state, streaming=True)
+        assert len(result) == 1
+        assert result[0].type == "function_call"
+        assert result[0].call_id == "srvtool_abc"
+        assert result[0].name == ""
+        assert result[0].arguments == partial_json
+        assert result[0].informational_only is True
+        assert result[0].hosted is True
+        call += result[0]
 
-    # A second delta must also be ignored
-    delta_content_2 = MagicMock()
-    delta_content_2.type = "input_json_delta"
-    delta_content_2.partial_json = '{"extra": true}'
+    assert call.name == "web_search"
+    assert call.informational_only is True
+    assert call.hosted is True
+    assert call.parse_arguments() == {"query": "latest news"}
 
-    result = client._parse_contents_from_anthropic([delta_content_2], request_state)
-    assert result == [], (
-        "subsequent input_json_delta after server_tool_use should also be ignored, but got: %r" % result
-    )
+
+def test_parse_contents_mcp_and_code_execution_input_json_delta_ignored(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """input_json_delta events after MCP and code execution tool blocks produce no content."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    for block_type, name in (("mcp_tool_use", "search_docs"), ("server_tool_use", "code_execution")):
+        request_state = _AnthropicRequestState()
+        tool_content = MagicMock()
+        tool_content.type = block_type
+        tool_content.id = "call_abc"
+        tool_content.name = name
+        tool_content.server_name = "docs"
+        tool_content.input = {}
+        assert client._parse_contents_from_anthropic([tool_content], request_state, streaming=True)
+
+        delta_content = MagicMock()
+        delta_content.type = "input_json_delta"
+        delta_content.partial_json = '{"query": "latest news"}'
+
+        result = client._parse_contents_from_anthropic([delta_content], request_state, streaming=True)
+        assert result == [], f"input_json_delta after {block_type} {name} should produce no content: {result!r}"
 
 
 # Stream Processing Tests
@@ -2435,6 +2461,67 @@ async def test_valid_streaming_local_tool_call_executes_and_continues(
     assert response.text == "done"
 
 
+async def test_streaming_parallel_server_tool_use_replays_streamed_input(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A streamed pending server tool call is replayed with the input that arrived through argument deltas."""
+    executions = 0
+
+    @tool(name="local_value", approval_mode="never_require")
+    def local_value() -> str:
+        nonlocal executions
+        executions += 1
+        return "local-ok"
+
+    async def parallel_tool_events() -> Any:
+        yield _message_start_event("tool-response")
+        yield _tool_start_event(block_type="tool_use", call_id="toolu_local", name="local_value", index=0)
+        yield _content_block_stop_event(index=0)
+        yield _tool_start_event(block_type="server_tool_use", call_id="srvtoolu_search", name="web_search", index=1)
+        yield _argument_delta_event('{"query": "agent framework')
+        yield _argument_delta_event(' release"}')
+        yield _content_block_stop_event(index=1)
+        yield _message_delta_event("tool_use")
+        yield _message_stop_event()
+
+    async def final_events() -> Any:
+        yield _message_start_event("final-response")
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> Any:
+        requests.append(kwargs)
+        return parallel_tool_events() if len(requests) == 1 else final_events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response(
+        [Message(role="user", contents=["Call local_value and search the web."])],
+        options={"tools": [client.get_web_search_tool(), local_value], "max_tokens": 64},
+        stream=True,
+    )
+    _ = [update async for update in stream]
+    await stream.get_final_response()
+
+    assert executions == 1
+    assert len(requests) == 2
+    replayed_blocks = [
+        block
+        for message in requests[1]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] in ("tool_use", "server_tool_use", "tool_result")
+    ]
+    assert [(block["type"], block.get("id") or block.get("tool_use_id")) for block in replayed_blocks] == [
+        ("tool_use", "toolu_local"),
+        ("server_tool_use", "srvtoolu_search"),
+        ("tool_result", "toolu_local"),
+    ]
+    assert replayed_blocks[1]["input"] == {"query": "agent framework release"}
+
+
 @pytest.mark.parametrize(
     ("close_block", "stop_reason", "include_message_stop"),
     [
@@ -2656,12 +2743,16 @@ async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
     assert primary_calls[0].call_id == "shared-call"
     assert primary_calls[0].parse_arguments() == {"command": "pwd"}
 
-    hosted_calls = [content for content in hosted_contents if content.type == "function_call"]
-    assert len(hosted_calls) == 1
-    assert hosted_calls[0].name == "web_search"
-    assert hosted_calls[0].call_id == "shared-call"
-    assert hosted_calls[0].arguments == {}
-    assert hosted_calls[0].informational_only is True
+    assert not any(content.hosted or content.informational_only for content in primary_fragments)
+
+    hosted_fragments = [content for content in hosted_contents if content.type == "function_call"]
+    assert [
+        (content.name, content.call_id, content.arguments, content.hosted, content.informational_only)
+        for content in hosted_fragments
+    ] == [
+        ("web_search", "shared-call", {}, True, True),
+        ("", "shared-call", '{"query":"framework"}', True, True),
+    ]
 
 
 async def test_concurrent_streams_keep_approval_requests_request_local(

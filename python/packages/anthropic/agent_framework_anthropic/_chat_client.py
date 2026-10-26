@@ -284,6 +284,7 @@ class _AnthropicRequestState:
 
     active_call_id: str | None = None
     active_call_content_type: str | None = None
+    active_call_is_hosted_function: bool = False
     tool_name_aliases: dict[str, str] = field(default_factory=dict[str, str])
 
 
@@ -1454,6 +1455,7 @@ class RawAnthropicClient(
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     request_state.active_call_id = content_block.id
                     request_state.active_call_content_type = content_block.type
+                    request_state.active_call_is_hosted_function = False
                     if content_block.type == "mcp_tool_use":
                         contents.append(
                             Content.from_mcp_server_tool_call(
@@ -1480,6 +1482,7 @@ class RawAnthropicClient(
                         )
                     else:
                         resolved_tool_name = request_state.tool_name_aliases.get(content_block.name, content_block.name)
+                        request_state.active_call_is_hosted_function = content_block.type == "server_tool_use"
                         contents.append(
                             Content.from_function_call(
                                 call_id=content_block.id,
@@ -1725,16 +1728,20 @@ class RawAnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # Skip argument deltas for MCP and server tools — execution is handled server-side.
-                    if request_state.active_call_content_type in ("mcp_tool_use", "server_tool_use"):
-                        pass
-                    else:
+                    # MCP and code execution server tool calls are parsed into their own content types, so
+                    # their argument deltas are skipped. Argument deltas of other server tool calls (such as
+                    # web search) are kept as hosted, informational-only fragments that merge into the call,
+                    # so a pending call is replayed with its full input.
+                    hosted_call = request_state.active_call_is_hosted_function
+                    if hosted_call or request_state.active_call_content_type not in ("mcp_tool_use", "server_tool_use"):
                         call_id = request_state.active_call_id or ""
                         contents.append(
                             Content.from_function_call(
                                 call_id=call_id,
                                 name="",
                                 arguments=content_block.partial_json,
+                                informational_only=hosted_call,
+                                hosted=hosted_call,
                                 merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
