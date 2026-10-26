@@ -300,7 +300,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
     { name = "aiohttp", specifier = ">=3.9,<4" },
-    { name = "azure-ai-contentunderstanding", specifier = ">=1.2.0b2,<2" },
+    { name = "azure-ai-contentunderstanding", specifier = ">=1.2.0b3,<2" },
     { name = "filetype", specifier = ">=1.2,<2" },
 ]
 
