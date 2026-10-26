@@ -17,7 +17,7 @@ from agent_framework import (
 )
 from agent_framework.security import ContentLabel, IntegrityLabel, LabelTrackingFunctionMiddleware
 from google.protobuf.json_format import MessageToDict, ParseDict
-from pytest import raises
+from pytest import mark, raises
 
 from agent_framework_hosting_a2a import (
     a2a_from_run,
@@ -378,3 +378,28 @@ def test_a2a_from_workflow_run_rejects_pending_input() -> None:
 
     with raises(ValueError, match="requires external input"):
         a2a_from_workflow_run(result)
+
+
+@mark.parametrize("streaming", [False, True])
+@mark.parametrize("payload", ["+/8=", "%2B%2F8%3D", "+%2F8="])
+def test_a2a_from_run_percent_encoded_data_uri(streaming: bool, payload: str) -> None:
+    uri = f"data:application/octet-stream;name=keep%2Fraw;base64,{payload}"
+    content = Content.from_uri(uri, additional_properties={"source": "binary"})
+    result = (
+        AgentResponseUpdate(role="assistant", contents=[content])
+        if streaming
+        else AgentResponse(messages=[Message("assistant", [content])])
+    )
+    parts = a2a_from_run(result)
+    assert len(parts) == 1
+    assert parts[0].raw == b"\xfb\xff"
+    assert parts[0].media_type == "application/octet-stream"
+    assert MessageToDict(parts[0].metadata) == {"source": "binary"}
+    assert content.uri == uri
+
+
+@mark.parametrize("payload", ["%252B%252F8%253D", "+/8=\n"])
+def test_a2a_from_run_rejects_invalid_encoded_payload(payload: str) -> None:
+    content = Content.from_uri(f"data:application/octet-stream;base64,{payload}")
+    with raises(ValueError, match="invalid base64"):
+        a2a_from_run(Message("assistant", [content]))

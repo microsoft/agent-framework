@@ -5,7 +5,7 @@ import json
 from agent_framework import AgentResponse, Content, Message
 from mcp import types
 from mcp.shared.exceptions import MCPError
-from pytest import raises
+from pytest import mark, raises
 
 from agent_framework_hosting_mcp import mcp_from_run, mcp_to_run
 
@@ -151,5 +151,33 @@ def test_mcp_from_run_rejects_invalid_base64_data() -> None:
         media_type="application/octet-stream",
     )
 
+    with raises(ValueError, match="invalid base64"):
+        mcp_from_run(Message("assistant", [content]))
+
+
+@mark.parametrize("media_type", ["image/png", "audio/wav", "application/octet-stream"])
+@mark.parametrize("payload", ["+/8=", "%2B%2F8%3D", "+%2F8="])
+def test_mcp_from_run_percent_encoded_data_uri(media_type: str, payload: str) -> None:
+    uri = f"data:{media_type};name=keep%2Fraw;base64,{payload}"
+    content = Content.from_uri(uri, additional_properties={"source": "binary", "uri": "af://documents/data"})
+    blocks = mcp_from_run(Message("assistant", [content]))
+    assert len(blocks) == 1
+    block = blocks[0]
+    if isinstance(block, types.EmbeddedResource):
+        assert isinstance(block.resource, types.BlobResourceContents)
+        assert block.resource.blob == "+/8="
+        assert str(block.resource.uri) == "af://documents/data"
+        assert block.resource.mime_type == media_type
+    else:
+        assert isinstance(block, (types.ImageContent, types.AudioContent))
+        assert block.data == "+/8="
+        assert block.mime_type == media_type
+    assert block.meta == {"source": "binary", "uri": "af://documents/data"}
+    assert content.uri == uri
+
+
+@mark.parametrize("payload", ["%252B%252F8%253D", "+/8=\n"])
+def test_mcp_from_run_rejects_invalid_encoded_payload(payload: str) -> None:
+    content = Content.from_uri(f"data:image/png;base64,{payload}")
     with raises(ValueError, match="invalid base64"):
         mcp_from_run(Message("assistant", [content]))

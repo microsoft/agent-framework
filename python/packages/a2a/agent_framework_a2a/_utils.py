@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import re
+from urllib.parse import unquote
 
 # Key in ``SendMessageRequest.metadata`` that carries forwarded ``function_invocation_kwargs`` and
 # ``client_kwargs``.
@@ -21,7 +24,11 @@ def get_uri_data(uri: str) -> str:
     Raises:
         ValueError: If the URI format is invalid.
     """
-    match = URI_PATTERN.match(uri)
+    metadata, separator, payload = uri.partition(",")
+    if not separator or not URI_PATTERN.match(f"{metadata},"):
+        raise ValueError(f"Invalid data URI format: {uri}")
+
+    match = URI_PATTERN.match(f"{metadata},{unquote(payload)}")
     if not match:
         raise ValueError(f"Invalid data URI format: {uri}")
 
