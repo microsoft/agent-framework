@@ -28,6 +28,7 @@ from agent_framework import (
     TextSpanRegion,
     UsageDetails,
     add_usage_details,
+    get_namespaced_value,
     tool,
 )
 from agent_framework._settings import SecretString, load_settings
@@ -39,6 +40,7 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ContentError,
     ResponseInvalidatedException,
 )
 from agent_framework.observability import ChatTelemetryLayer
@@ -97,6 +99,13 @@ logger = logging.getLogger("agent_framework.anthropic")
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04"]
 UNSUPPORTED_SAMPLING_OPTIONS: Final[tuple[str, ...]] = ("temperature", "top_p", "top_k")
+_ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: Final[str] = "anthropic"
+_SERVER_TOOL_BLOCK_KEY: Final[str] = "server_tool_block"
+_SERVER_TOOL_USE_ID_PREFIX: Final[str] = "srvtoolu_"
+_SERVER_TOOL_RESULT_TYPES: Final[frozenset[str]] = frozenset({
+    "web_fetch_tool_result",
+    "web_search_tool_result",
+})
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -117,6 +126,30 @@ def _wrap_anthropic_error(ex: Exception) -> ChatClientException:
         if isinstance(ex, AnthropicBadRequestError) or (isinstance(status, int) and 400 <= status < 500):
             return ChatClientInvalidRequestException(f"Invalid Anthropic request: {ex}", inner_exception=ex)
     return ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex)
+
+
+def _serialize_anthropic_payload(value: Any) -> Any:
+    """Convert Anthropic SDK payloads into plain persisted data."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", exclude_none=True)
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], value)
+        return {str(key): _serialize_anthropic_payload(item) for key, item in mapping.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        sequence = cast(Sequence[Any], value)
+        return [_serialize_anthropic_payload(item) for item in sequence]
+    return value
+
+
+def _server_tool_block_metadata(content_block: Any, *, include_content: bool = False) -> dict[str, Any]:
+    """Build persisted metadata needed to reconstruct an Anthropic server-tool block."""
+    block: dict[str, Any] = {"type": content_block.type}
+    if include_content:
+        block["content"] = _serialize_anthropic_payload(content_block.content)
+    caller = getattr(content_block, "caller", None)
+    if isinstance(caller, (BaseModel, Mapping)):
+        block["caller"] = _serialize_anthropic_payload(caller)
+    return {_ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: {_SERVER_TOOL_BLOCK_KEY: block}}
 
 
 # region Anthropic Chat Options TypedDict
@@ -945,6 +978,8 @@ class RawAnthropicClient(
                 return "assistant"
             case {"type": "tool_result" | "mcp_tool_result"}:
                 return "user"
+            case {"type": "web_fetch_tool_result" | "web_search_tool_result"}:
+                return "assistant"
             case _:
                 return default_role
 
@@ -963,6 +998,74 @@ class RawAnthropicClient(
                     pass
 
         return False
+
+    @staticmethod
+    def _server_tool_block(content: Content) -> Mapping[str, Any] | None:
+        """Return validated persisted Anthropic server-tool metadata."""
+        block = get_namespaced_value(
+            content.additional_properties,
+            _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+            _SERVER_TOOL_BLOCK_KEY,
+        )
+        if block is None:
+            return None
+        if not isinstance(block, Mapping):
+            raise ContentError("Anthropic server-tool replay metadata must be a mapping.")
+        return cast(Mapping[str, Any], block)
+
+    def _prepare_server_tool_call_for_anthropic(self, content: Content) -> dict[str, Any] | None:
+        """Reconstruct an Anthropic server_tool_use block when this is a hosted call."""
+        block = self._server_tool_block(content)
+        is_server_tool = bool(content.hosted) or bool(
+            content.call_id and content.call_id.startswith(_SERVER_TOOL_USE_ID_PREFIX)
+        )
+        if block is not None:
+            block_type = block.get("type")
+            if block_type != "server_tool_use":
+                raise ContentError(f"Unsupported Anthropic server-tool call metadata type: {block_type!r}.")
+            is_server_tool = True
+        if not is_server_tool:
+            return None
+
+        result: dict[str, Any] = {
+            "type": "server_tool_use",
+            "id": content.call_id,
+            "name": content.name,
+            "input": content.parse_arguments(),
+        }
+        if block is not None and (caller := block.get("caller")) is not None:
+            if not isinstance(caller, Mapping):
+                raise ContentError("Anthropic server-tool caller metadata must be a mapping.")
+            result["caller"] = dict(cast(Mapping[str, Any], caller))
+        return result
+
+    def _prepare_server_tool_result_for_anthropic(self, content: Content) -> dict[str, Any] | None:
+        """Reconstruct an Anthropic server-tool result block from persisted metadata."""
+        block = self._server_tool_block(content)
+        if block is None:
+            if content.call_id and content.call_id.startswith(_SERVER_TOOL_USE_ID_PREFIX):
+                raise ContentError(
+                    f"Anthropic server-tool result {content.call_id!r} cannot be replayed because its provider "
+                    "metadata is missing."
+                )
+            return None
+
+        block_type = block.get("type")
+        if block_type not in _SERVER_TOOL_RESULT_TYPES:
+            raise ContentError(f"Unsupported Anthropic server-tool result metadata type: {block_type!r}.")
+        if "content" not in block:
+            raise ContentError("Anthropic server-tool result metadata is missing content.")
+
+        result: dict[str, Any] = {
+            "type": block_type,
+            "tool_use_id": content.call_id,
+            "content": block["content"],
+        }
+        if (caller := block.get("caller")) is not None:
+            if not isinstance(caller, Mapping):
+                raise ContentError("Anthropic server-tool caller metadata must be a mapping.")
+            result["caller"] = dict(cast(Mapping[str, Any], caller))
+        return result
 
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
@@ -1001,14 +1104,19 @@ class RawAnthropicClient(
                     else:
                         logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "function_call":
-                    a_content.append({
-                        "type": "tool_use",
-                        "id": content.call_id,
-                        "name": content.name,
-                        "input": content.parse_arguments(),
-                    })
+                    if server_tool_call := self._prepare_server_tool_call_for_anthropic(content):
+                        a_content.append(server_tool_call)
+                    else:
+                        a_content.append({
+                            "type": "tool_use",
+                            "id": content.call_id,
+                            "name": content.name,
+                            "input": content.parse_arguments(),
+                        })
                 case "function_result":
-                    if content.items:
+                    if server_tool_result := self._prepare_server_tool_result_for_anthropic(content):
+                        a_content.append(server_tool_result)
+                    elif content.items:
                         tool_content: list[dict[str, Any]] = []
                         for item in content.items:
                             if item.type == "text":
@@ -1449,6 +1557,11 @@ class RawAnthropicClient(
                                 informational_only=content_block.type == "server_tool_use",
                                 hosted=content_block.type == "server_tool_use",
                                 merge_mode="append" if streaming else None,
+                                additional_properties=(
+                                    _server_tool_block_metadata(content_block)
+                                    if content_block.type == "server_tool_use"
+                                    else None
+                                ),
                                 raw_representation=content_block,
                             )
                         )
@@ -1486,6 +1599,7 @@ class RawAnthropicClient(
                         Content.from_function_result(
                             call_id=content_block.tool_use_id,
                             result=content_block.content,
+                            additional_properties=_server_tool_block_metadata(content_block, include_content=True),
                             raw_representation=content_block,
                         )
                     )

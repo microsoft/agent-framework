@@ -44,3 +44,11 @@ response = await client.get_response("Hello", options={"instructions": system_bl
 Instructions contributed later in a run — by a context provider such as `SkillsProvider`, or by per-run
 `options` — are appended as an additional text block after the configured blocks. The blocks you supply keep
 their structure and their position, so a `cache_control` breakpoint stays valid.
+
+### Persisted server-tool history
+
+Anthropic server-tool calls and results use `Content.additional_properties["anthropic"]["server_tool_block"]`
+internally to preserve the native block type, structured result content, and optional caller metadata across
+message serialization. Result metadata can contain provider-encrypted fields such as `encrypted_content`; the
+adapter stores those plain serialized values unchanged because Anthropic requires them for replay. Applications
+should treat this namespace as adapter-owned replay data and must not modify it.
