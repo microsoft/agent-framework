@@ -34,6 +34,8 @@ commitments.
   handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
 - Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. Handler disposal stops
   admission and drains existing calls without cancelling them; cancel and await calls before disposing the handler.
+- When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
+  to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.
