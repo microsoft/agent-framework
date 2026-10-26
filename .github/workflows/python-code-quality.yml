@@ -108,6 +108,8 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Test Markdown file selection
+        run: uv run --locked --group tool-markdown python -m unittest discover -s scripts/tests -p test_check_md_code_blocks.py
       - name: Run samples checks
         run: uv run poe check -S
       - name: Run markdown code lint
