@@ -135,7 +135,7 @@ celerybeat.pid
 .env
 .venv
 env/
-venv/
+**/.venv*/
 
 # Foundry agent CLI (contains secrets, auto-generated)
 .foundry-agent.json

@@ -195,8 +195,6 @@ def main() -> None:
     for maintainer in sorted(team_members):
         print(f"  @{maintainer}")
 
-    return
-
     now = datetime.now(timezone.utc)
     pinged = []
     failed = []

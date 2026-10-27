@@ -61,6 +61,5 @@ jobs:
         run: python .github/scripts/stale_issue_pr_ping.py
         env:
           GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
-          TEAM_SLUG: ${{ secrets.DEVELOPER_TEAM }}
           DAYS_THRESHOLD: ${{ github.event.inputs.days_threshold || '4' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
