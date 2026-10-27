@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, cast
+from typing import cast
 
 from agent_framework import ChatResponse, ChatResponseUpdate, Message, ResponseStream, tool
 from agent_framework.ag_ui import AGUIChatClient
@@ -141,12 +141,9 @@ async def tool_example(client: AGUIChatClient, thread_id: str | None = None):
     print("Sending tool definitions to server...")
     print("(Server must be configured with matching tools to execute them)\n")
 
-    options: dict[str, Any] = {"tools": [get_weather, calculate]}
-    if metadata:
-        options["metadata"] = metadata
     response = await client.get_response(
         [Message(role="user", contents=["What's the weather in Seattle?"])],
-        options=options,
+        options={"tools": [get_weather, calculate], "metadata": metadata or {}},
     )
 
     print(f"Assistant: {response.text}")
