@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-typesafe",
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 # ]
 # ///
 
