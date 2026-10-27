@@ -14,7 +14,7 @@ action definitions and creates a proper workflow graph with:
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any, cast
 
@@ -122,7 +122,7 @@ ACTION_ALTERNATE_FIELDS: dict[str, list[str]] = {
 
 def _validate_response_batch(
     requests: Sequence[WorkflowEvent[Any]], *, migrate_legacy_request_scopes: bool = False
-) -> None:
+) -> Callable[[], None]:
     scoped_requests: list[
         tuple[ExternalInputRequest | MCPToolApprovalRequest | ToolApprovalRequest | AgentExternalInputRequest, str]
     ] = []
@@ -141,8 +141,13 @@ def _validate_response_batch(
     scopes = {scope for _, scope in scoped_requests}
     if len(scopes) > 1:
         raise DeclarativeWorkflowError("Responses from different workflow sessions must be submitted in separate runs.")
-    for data, scope in scoped_requests:
-        data.workflow_session_id = scope
+
+    def apply_migration() -> None:
+        for data, scope in scoped_requests:
+            if data.workflow_session_id is None:
+                data.workflow_session_id = scope
+
+    return apply_migration
 
 
 def _initialize_mcp_run_state(state: State) -> None:

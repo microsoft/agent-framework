@@ -20,6 +20,7 @@ from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner, gather_cancelling_siblings_on_error
 from ._events import WorkflowEvent
 from ._executor import Executor
+from ._request_context import validate_request_contexts
 from ._runner_context import (
     RunnerContext,
     WorkflowMessage,
@@ -405,10 +406,7 @@ class RunnerImpl:
         self, checkpoint: WorkflowCheckpoint, delegated_requests: Sequence[WorkflowEvent] = ()
     ) -> None:
         from ._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY
-        from ._workflow_executor import (
-            SubWorkflowResponseMessage,
-            _validate_request_parent_contexts,  # pyright: ignore[reportPrivateUsage]
-        )
+        from ._workflow_executor import SubWorkflowResponseMessage
 
         if self._graph_signature_hash != checkpoint.graph_signature_hash:
             raise WorkflowCheckpointException(
@@ -423,7 +421,9 @@ class RunnerImpl:
                 if request.request_id in checkpoint.pending_request_info_events
             ),
         ]
-        _validate_request_parent_contexts(
+        if requests and self._response_batch_validator is not None:
+            self._response_batch_validator(requests)
+        validate_request_contexts(
             checkpoint.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}),
             [
                 *requests,
@@ -435,8 +435,6 @@ class RunnerImpl:
                 ),
             ],
         )
-        if requests and self._response_batch_validator is not None:
-            self._response_batch_validator(requests)
         if EXECUTOR_STATE_KEY in checkpoint.state:
             delegated_by_executor: defaultdict[str, list[WorkflowEvent]] = defaultdict(list)
             for request in requests:

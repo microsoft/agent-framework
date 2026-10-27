@@ -20,6 +20,7 @@ from ._events import (
     WorkflowEventSource,
     _framework_event_origin,  # type: ignore
 )
+from ._request_context import capture_request_context
 from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import contains_typevar
@@ -433,6 +434,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             response_type=response_type,
         )
         await self._runner_context.add_request_info_event(request_info_event)
+        capture_request_context(self._state, request_info_event.request_id)
 
     def get_state(self, key: str, default: Any = None) -> Any:
         """Get a value from the workflow state."""

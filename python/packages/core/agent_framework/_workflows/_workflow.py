@@ -13,7 +13,6 @@ import warnings
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import aclosing
-from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -58,8 +57,10 @@ from ._events import (
 from ._executor import (
     Executor,
     _ResponseBatchValidation,  # pyright: ignore[reportPrivateUsage]
+    _ResponseBatchValidator,  # pyright: ignore[reportPrivateUsage]
 )
 from ._model_utils import DictConvertible
+from ._request_context import restore_request_context, validate_request_contexts
 from ._runner import RunnerImpl
 from ._runner_context import (
     RunnerContext,
@@ -426,7 +427,7 @@ class Workflow(DictConvertible):
         # ever iterating, the weakref dereferences to ``None`` once Python collects it,
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
-        self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
+        self._response_batch_validator: _ResponseBatchValidator | None = None
         self._runner._response_batch_validator = self._validate_response_batch  # pyright: ignore[reportPrivateUsage]
         self._initial_state_initializer: Callable[[State], None] | None = None
 
@@ -1197,22 +1198,20 @@ class Workflow(DictConvertible):
 
     def _validate_response_batch(self, requests: Sequence[WorkflowEvent]) -> None:
         if self._response_batch_validator is not None:
-            self._response_batch_validator(requests)
+            migration = self._response_batch_validator(requests)
+            if migration is not None:
+                migration()
 
     async def _validate_response_requests(self, requests: Sequence[WorkflowEvent]) -> None:
         validations = await self._get_response_validation_batches(requests)
-        # Preserve shared request data while preflighting the whole tree before live migrations.
-        detached_batches = deepcopy([batch for _, batch in validations])
-        for (validator, _), batch in zip(validations, detached_batches, strict=True):
-            validator(batch)
-        for validator, batch in validations:
-            validator(batch)
+        migrations = [validator(batch) for validator, batch in validations]
+        for migration in migrations:
+            if migration is not None:
+                migration()
 
     async def _get_response_validation_batches(
         self, requests: Sequence[WorkflowEvent]
     ) -> list[_ResponseBatchValidation]:
-        from ._workflow_executor import _validate_request_parent_contexts  # pyright: ignore[reportPrivateUsage]
-
         context = self._runner.context
         if isinstance(context, _SupportsQueuedResponseInfoEvents):
             queued_requests = await context.get_queued_response_info_events()
@@ -1226,11 +1225,12 @@ class Workflow(DictConvertible):
         parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
 
         def validate_parent_contexts(requests: Sequence[WorkflowEvent]) -> None:
-            _validate_request_parent_contexts(parent_contexts, requests)
+            validate_request_contexts(parent_contexts, requests)
 
-        validations: list[_ResponseBatchValidation] = [(validate_parent_contexts, batch)]
+        validations: list[_ResponseBatchValidation] = []
         if self._response_batch_validator is not None:
-            validations.append((self._validate_response_batch, batch))
+            validations.append((self._response_batch_validator, batch))
+        validations.append((validate_parent_contexts, batch))
         for executor in self.executors.values():
             delegated = [request for request in batch if request.source_executor_id == executor.id]
             if delegated:
@@ -1626,10 +1626,8 @@ class Workflow(DictConvertible):
             raise ValueError("Pending workflow request IDs must be non-empty strings.")
 
         async def apply_cancellations() -> None:
-            from ._workflow_executor import _validate_request_parent_contexts  # pyright: ignore[reportPrivateUsage]
-
             pending = await self._runner.context.get_pending_request_info_events()
-            _validate_request_parent_contexts(
+            validate_request_contexts(
                 self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}),
                 [request for request_id, request in pending.items() if request_id in selected_ids],
             )
@@ -1658,6 +1656,7 @@ class Workflow(DictConvertible):
                     state=self._runner.state,
                     runner_context=self._runner.context,
                 )
+                restore_request_context(self._runner.state, request_id)
                 await executor._cancel_pending_request(request_id, context)  # pyright: ignore[reportPrivateUsage]
 
         if checkpoint_storage is not None:

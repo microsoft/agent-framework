@@ -31,6 +31,7 @@ maturity. Check current package status and public docstrings before making compa
   Replaying a parent entry checkpoint also retains child scopes when rebuilding the same workflow graph.
   Child responses restore the originating parent scope before invoking downstream bindings, including after
   checkpoint restoration. Submit responses from different parent scopes in separate runs.
+  The same origin recovery applies to ordinary Core `ctx.request_info()` pauses before invoking a child.
 
 ## Validation
 

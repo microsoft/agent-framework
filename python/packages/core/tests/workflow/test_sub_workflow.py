@@ -279,6 +279,39 @@ async def test_interleaved_sibling_responses_reject_mixed_parent_scopes(restore:
     assert not await workflow._runner_context.get_pending_request_info_events()
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_response_validation_preserves_noncopyable_request_payload(streaming: bool) -> None:
+    from threading import Lock
+
+    payload: dict[str, Any] = {"lock": Lock()}
+
+    class Requester(Executor):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext) -> None:
+            await ctx.request_info(payload, bool)
+
+        @response_handler
+        async def respond(
+            self,
+            original: dict[str, Any],
+            approved: bool,
+            ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+        ) -> None:
+            assert original is payload
+            assert original["lock"] is payload["lock"]
+            await ctx.yield_output("approved" if approved else "denied")
+
+    workflow = WorkflowBuilder(start_executor=Requester(id="requester")).build()
+    await workflow.run("start")
+    [request_id] = (await workflow._runner_context.get_pending_request_info_events()).keys()
+    if streaming:
+        result = await workflow.run(responses={request_id: True}, stream=True).get_final_response()
+    else:
+        result = await workflow.run(responses={request_id: True})
+    assert result.get_outputs() == ["approved"]
+    assert not await workflow._runner_context.get_pending_request_info_events()
+
+
 async def test_propagated_sub_workflow_response_receives_runtime_tools() -> None:
     """Runtime tools supplied on parent resume reach the child response handler."""
     captured_runtime_tools: list[Any] = []

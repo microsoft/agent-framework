@@ -114,5 +114,23 @@ parent scope with a warning rather than reusing the latest parent's session.
 This does not bypass the child's declarative request-origin checks or explicit
 legacy-request migration policy.
 
+## Ordinary Core requests and live response preflight
+
+Ordinary `WorkflowContext.request_info()` requests can also pause before a child
+binding. Capturing only forwarded child requests leaves these continuations on the
+latest fresh run's scope. Capture their framework-owned run metadata in the same
+checkpointed state, and restore it before Core invokes the response handler,
+including for queued checkpoint replies. Core cancellation handlers restore the
+same metadata. Propagated child responses use this path once; wrapped child
+messages retain their boundary-specific capture and restoration.
+
+Deep-copying all live request payloads to preflight migrations imposes an unrelated
+serialization requirement on non-checkpointed, in-process workflows. Instead,
+response policies validate without mutation and return deferred updates to the
+scope metadata they own. Apply these updates only after every policy in the tree
+has validated. This preserves cross-child rejection atomicity without copying user
+payloads or changing their identity. Stored checkpoint restoration still preflights
+its detached candidate tree before replacing live state.
+
 The proposed deciders are Python code owners; maintainer and
 engineering-management approval is still required.

@@ -43,6 +43,8 @@ Forwarded child requests also checkpoint the originating context at each parent
 boundary. Interleaved continuations restore those ancestor scopes before forwarding
 outputs to subsequent bindings; responses from different parent scopes must be
 submitted separately.
+Ordinary Core `ctx.request_info()` requests before a child binding retain and
+restore their origins too, including when a queued response is replayed.
 Approval continuations keep their originating active scope until the next run with new input.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
@@ -75,6 +77,8 @@ fresh runs and checkpoint restores. Resuming an MCP approval restores that scope
 for downstream actions instead of inheriting a later run's MCP session.
 Factory-built workflows reject response batches containing MCP approvals from
 different originating scopes before dispatch; resume each scope in a separate run.
+Response policies stage only the legacy scope-field updates until all nested
+policies pass; live request payloads are not deep-copied for preflight.
 Fresh executors verify unchanged approvals using the checkpointed key; legacy
 requests or missing verification state require reapproval for non-empty headers.
 Custom handlers remain responsible for identity changes

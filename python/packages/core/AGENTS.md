@@ -342,13 +342,19 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   `WorkflowExecutor` derives a child scope from the parent scope and binding ID after the child run is accepted.
   Agent turns retain their session scope; direct fresh runs select a new scope. Entry replay therefore preserves
   child scopes even when child execution had not started at the snapshot. Response-only continuations restore
-  their originating scope before further nested invocation. Each forwarded child request retains its parent
-  run context in checkpointed parent shared state. Responses and cancellations restore that context at every
-  boundary before forwarding outputs, then release the completed request's origin. Mixed-parent-scope response
-  batches are rejected before consuming requests, including across sibling bindings.
+  their originating scope before further nested invocation. Every `WorkflowContext.request_info()` request
+  retains its run context in checkpointed shared state, including ordinary Core requests before a child binding.
+  Core restores and releases that context before invoking response or cancellation handlers, including queued
+  checkpoint replies. Wrapped child replies use the same helpers at their message boundary; propagated replies
+  are restored only once. Mixed-parent-scope response batches are rejected before consuming requests, including
+  across sibling bindings.
 - **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
   replacing live state or queues. `WorkflowExecutor` delegates its private validation hook to its child's runner,
   so each child uses its own response-origin policy and migration metadata stays in the candidate snapshot.
+- **Response policy staging** - Live response validation does not copy request payloads. Policies validate
+  without mutation and may return deferred metadata updates; all policies in the workflow tree must succeed
+  before those updates are applied. This preserves in-process non-copyable payloads and atomic legacy-scope
+  migration without imposing checkpoint serialization requirements on ordinary requests.
 - **Runner context compatibility** - Queued-response inspection is an optional capability, not a required
   `RunnerContext` member. Contexts without it use their non-persisting `build_checkpoint` snapshot so response
   validation still includes queued replies without draining messages or consuming pending requests.

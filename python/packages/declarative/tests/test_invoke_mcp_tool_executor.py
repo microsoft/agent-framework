@@ -183,6 +183,78 @@ class TestFieldForwarding:
         assert handler.invocations[1].workflow_session_id
         assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
 
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore_kind", ["memory", "file", "queued"])
+    async def test_core_parent_request_restores_origin_before_child(
+        self, tmp_path: Path, streaming: bool, restore_kind: str
+    ) -> None:
+        from agent_framework import (
+            Executor,
+            Workflow,
+            WorkflowBuilder,
+            WorkflowContext,
+            WorkflowExecutor,
+            response_handler,
+        )
+        from agent_framework import handler as workflow_handler
+        from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+        mcp_handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=mcp_handler)
+        storage = _scope_checkpoint_storage(tmp_path)
+
+        class Requester(Executor):
+            @workflow_handler
+            async def start(self, message: str, ctx: WorkflowContext) -> None:
+                await ctx.request_info(message, str)
+
+            @response_handler
+            async def respond(self, original: str, response: str, ctx: WorkflowContext[dict[str, Any]]) -> None:
+                await ctx.send_message({"original": original, "response": response})
+
+        def build() -> Workflow:
+            start = Requester(id="requester")
+            child = WorkflowExecutor(factory.create_workflow_from_definition(_yaml(_action())), id="child")
+            return WorkflowBuilder(start_executor=start, checkpoint_storage=storage).add_edge(start, child).build()
+
+        parent = build()
+        await parent.run("A")
+        [request_a] = (await parent._runner_context.get_pending_request_info_events()).values()
+        scope_a = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+        await parent.run("B")
+        requests = await parent._runner_context.get_pending_request_info_events()
+        [request_b] = [request for request in requests.values() if request.request_id != request_a.request_id]
+        if restore_kind == "file":
+            checkpoint_id = parent.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            parent = build()
+            await parent.run(checkpoint_id=checkpoint_id)
+
+        with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+            await parent.run(responses={request_a.request_id: "continue", request_b.request_id: "continue"})
+        assert set(await parent._runner_context.get_pending_request_info_events()) == set(requests)
+        assert mcp_handler.call_count == 0
+        await parent.run(responses={request_b.request_id: "continue"})
+        if restore_kind == "queued":
+            await parent._runner_context.send_request_info_response(request_a.request_id, "continue")
+            await parent._runner.create_checkpoint_if_enabled()
+            checkpoint_id = parent.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            parent = build()
+            if streaming:
+                await parent.run(checkpoint_id=checkpoint_id, stream=True).get_final_response()
+            else:
+                await parent.run(checkpoint_id=checkpoint_id)
+        elif streaming:
+            await parent.run(responses={request_a.request_id: "continue"}, stream=True).get_final_response()
+        else:
+            await parent.run(responses={request_a.request_id: "continue"})
+
+        assert parent._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope_a
+        assert len(mcp_handler.invocations) == 2
+        assert mcp_handler.invocations[0].workflow_session_id != mcp_handler.invocations[1].workflow_session_id
+        assert not await parent._runner_context.get_pending_request_info_events()
+
     @pytest.mark.parametrize("message_list", [False, True])
     @pytest.mark.parametrize("streaming", [False, True])
     async def test_fresh_runs_on_same_workflow_receive_separate_session_ids(

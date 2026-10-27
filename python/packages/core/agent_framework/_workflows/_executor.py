@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import copy
@@ -17,6 +19,7 @@ from ._events import (
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
 from ._model_utils import DictConvertible
+from ._request_context import restore_request_context
 from ._request_info_mixin import RequestInfoMixin
 from ._runner_context import MessageType, RunnerContext, WorkflowMessage
 from ._state import State
@@ -31,7 +34,9 @@ from ._workflow_context import WorkflowContext, validate_workflow_context_annota
 
 logger = logging.getLogger(__name__)
 
-_ResponseBatchValidation = tuple[Callable[[Sequence[WorkflowEvent]], None], Sequence[WorkflowEvent]]
+# Metadata migrations are applied only after every validator in the tree succeeds.
+_ResponseBatchValidator = Callable[[Sequence[WorkflowEvent]], Callable[[], None] | None]
+_ResponseBatchValidation = tuple[_ResponseBatchValidator, Sequence[WorkflowEvent]]
 
 
 # region Executor
@@ -311,6 +316,8 @@ class Executor(RequestInfoMixin, DictConvertible):
                     invoke_event = WorkflowEvent.executor_invoked(self.id, copy.deepcopy(message))
                 await context.add_event(invoke_event)
                 try:
+                    if context.request_id is not None:
+                        restore_request_context(state, context.request_id)
                     await handler(message, context)
                 except Exception as exc:
                     # Surface structured executor failure before propagating
