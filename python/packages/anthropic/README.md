@@ -52,3 +52,9 @@ internally to preserve the native block type, structured result content, and opt
 message serialization. Result metadata can contain provider-encrypted fields such as `encrypted_content`; the
 adapter stores those plain serialized values unchanged because Anthropic requires them for replay. Applications
 should treat this namespace as adapter-owned replay data and must not modify it.
+
+### Paused server-tool turns
+
+When Anthropic returns `pause_turn`, the client automatically replays the paused assistant content with the same
+tools. It performs at most 10 continuation requests; if Anthropic is still paused, the response retains
+`finish_reason="pause_turn"` so the caller can decide whether to continue later.

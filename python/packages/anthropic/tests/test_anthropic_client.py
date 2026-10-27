@@ -1907,7 +1907,7 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     [
         ("end_turn", "stop"),
         ("stop_sequence", "stop"),
-        ("pause_turn", "stop"),
+        ("pause_turn", "pause_turn"),
         ("max_tokens", "length"),
         ("tool_use", "tool_calls"),
         ("refusal", "content_filter"),
@@ -2465,7 +2465,7 @@ def test_non_streaming_hosted_tool_pause_turn_is_not_invalidated(
 
     response = client._process_message(message, {})
 
-    assert response.finish_reason == "stop"
+    assert response.finish_reason == "pause_turn"
     assert response.messages[0].contents[0].type == "function_call"
     assert response.messages[0].contents[0].informational_only is True
     restored = Message.from_dict(response.messages[0].to_dict())
@@ -2627,16 +2627,16 @@ async def test_streaming_cancellation_after_local_call_is_not_wrapped(
             pass
 
 
-async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
+async def test_streaming_hosted_tool_pause_turn_continues(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Hosted-only calls keep pause_turn behavior even when their name matches a local tool."""
+    """Streaming replays a paused hosted call with its finalized input."""
 
     @tool(name="local_tool", approval_mode="never_require")
     def local_tool(value: str) -> str:
         return value
 
-    async def events() -> Any:
+    async def paused_events() -> Any:
         yield _message_start_event("hosted-response")
         yield _tool_start_event(block_type="server_tool_use", call_id="hosted-call", name="local_tool")
         yield _argument_delta_event('{"value":')
@@ -2645,8 +2645,28 @@ async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
         yield _message_delta_event("pause_turn")
         yield _message_stop_event()
 
+    async def final_events() -> Any:
+        yield _message_start_event("final-response")
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 0
+        text_start.content_block.type = "text"
+        text_start.content_block.text = "done"
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event()
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    requests: list[dict[str, Any]] = []
+    streams = [paused_events(), final_events()]
+
+    async def create(**kwargs: Any) -> Any:
+        requests.append(kwargs)
+        return streams[len(requests) - 1]
+
     client = create_test_anthropic_client(mock_anthropic_client)
-    mock_anthropic_client.beta.messages.create.return_value = events()
+    mock_anthropic_client.beta.messages.create.side_effect = create
     stream = client._inner_get_response(  # type: ignore[attr-defined]
         messages=[Message(role="user", contents=["run"])],
         options={"tools": [local_tool], "max_tokens": 64},
@@ -2657,6 +2677,14 @@ async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
     updates = [update async for update in stream]
     response = await stream.get_final_response()
 
+    assert len(requests) == 2
+    assert [message["role"] for message in requests[1]["messages"]] == ["user", "assistant"]
+    assert requests[1]["messages"][1]["content"][0] == {
+        "type": "server_tool_use",
+        "id": "hosted-call",
+        "name": "local_tool",
+        "input": {"value": "a"},
+    }
     assert all(
         content.informational_only and content.hosted
         for update in updates
@@ -2670,6 +2698,7 @@ async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
     assert hosted_calls[0].informational_only is True
     assert hosted_calls[0].parse_arguments() == {"value": "a"}
     assert response.finish_reason == "stop"
+    assert response.messages[-1].text == "done"
     restored = Message.from_dict(response.messages[0].to_dict())
     prepared = client._prepare_messages_for_anthropic([restored])
     assert prepared[0]["content"][0]["type"] == "server_tool_use"
@@ -3135,6 +3164,92 @@ def test_process_stream_event_message_start_without_role_reproduces_bug() -> Non
     assert response.messages[0].role == "tool"
     has_function_call = any(c.type == "function_call" for c in response.messages[0].contents)
     assert has_function_call, "Expected bug: function_call leaked into tool message"
+
+
+async def test_agent_continues_anthropic_pause_turn() -> None:
+    """A paused server turn is replayed with the same tools until Anthropic completes it."""
+    requests: list[dict[str, Any]] = []
+    responses = [
+        BetaMessage(
+            id="msg_paused",
+            content=[BetaTextBlock(type="text", text="Still researching.")],
+            model="claude-test",
+            role="assistant",
+            stop_reason="pause_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=10, output_tokens=2),
+        ),
+        BetaMessage(
+            id="msg_finished",
+            content=[BetaTextBlock(type="text", text="Finished.")],
+            model="claude-test",
+            role="assistant",
+            stop_reason="end_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=12, output_tokens=3),
+        ),
+    ]
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return responses[len(requests) - 1]
+
+    transport = MagicMock()
+    transport.base_url = "https://example.invalid"
+    transport.beta.messages.create = create
+    client = AnthropicClient(anthropic_client=transport, model="claude-test")
+    agent = client.as_agent(
+        tools=[client.get_web_search_tool()],
+        default_options={"max_tokens": 64},
+    )
+
+    async with agent:
+        response = await agent.run("Research this topic.")
+
+    assert len(requests) == 2
+    assert requests[1]["tools"] == requests[0]["tools"]
+    assert [message["role"] for message in requests[1]["messages"]] == ["user", "assistant"]
+    assert requests[1]["messages"][1]["content"] == [{"type": "text", "text": "Still researching."}]
+    assert response.finish_reason == "stop"
+    assert [message.text for message in response.messages] == ["Still researching.", "Finished."]
+    assert response.usage_details == {
+        "input_token_count": 22,
+        "output_token_count": 5,
+    }
+
+
+async def test_anthropic_pause_turn_limit_preserves_finish_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bounded continuation returns pause_turn instead of reporting successful completion."""
+    monkeypatch.setattr("agent_framework_anthropic._chat_client._MAX_PAUSE_TURN_CONTINUATIONS", 1)
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return BetaMessage(
+            id=f"msg_paused_{len(requests)}",
+            content=[BetaTextBlock(type="text", text=f"Paused {len(requests)}.")],
+            model="claude-test",
+            role="assistant",
+            stop_reason="pause_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        )
+
+    transport = MagicMock()
+    transport.base_url = "https://example.invalid"
+    transport.beta.messages.create = create
+    client = AnthropicClient(anthropic_client=transport, model="claude-test")
+    agent = client.as_agent(
+        tools=[client.get_web_search_tool()],
+        default_options={"max_tokens": 64},
+    )
+
+    async with agent:
+        response = await agent.run("Research this topic.")
+
+    assert len(requests) == 2
+    assert response.finish_reason == "pause_turn"
+    assert [message.text for message in response.messages] == ["Paused 1.", "Paused 2."]
 
 
 @pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")

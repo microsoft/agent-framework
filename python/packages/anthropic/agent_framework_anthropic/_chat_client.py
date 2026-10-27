@@ -106,6 +106,7 @@ _SERVER_TOOL_RESULT_TYPES: Final[frozenset[str]] = frozenset({
     "web_fetch_tool_result",
     "web_search_tool_result",
 })
+_MAX_PAUSE_TURN_CONTINUATIONS: Final[int] = 10
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -295,7 +296,6 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "tool_use": "tool_calls",
     "end_turn": "stop",
     "refusal": "content_filter",
-    "pause_turn": "stop",
 }
 
 
@@ -649,20 +649,25 @@ class RawAnthropicClient(
         run_options = self._prepare_options(messages, options, request_state, **kwargs)
 
         if stream:
-            # Streaming mode
-            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+
+            async def _stream_turn(
+                turn_request_state: _AnthropicRequestState,
+                stop_reason: list[str | None],
+            ) -> AsyncIterable[ChatResponseUpdate]:
                 # Anthropic streams cumulative usage snapshots (message_start seeds it,
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
                 emitted_usage: dict[str, int] = {}
                 local_function_call_started = False
                 open_local_function_call_blocks: set[int] = set()
-                latest_stop_reason: str | None = None
                 message_stop_received = False
-                mark_feature_used(FeatureIndex.ANTHROPIC)
                 try:
                     async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-                        parsed_chunk = self._process_stream_event(chunk, emitted_usage, request_state=request_state)
+                        parsed_chunk = self._process_stream_event(
+                            chunk,
+                            emitted_usage,
+                            request_state=turn_request_state,
+                        )
                         if chunk.type == "content_block_start" and parsed_chunk is not None:
                             if any(
                                 content.type == "function_call" and not content.informational_only
@@ -673,11 +678,11 @@ class RawAnthropicClient(
                         elif chunk.type == "content_block_stop":
                             open_local_function_call_blocks.discard(chunk.index)
                         elif chunk.type == "message_delta" and chunk.delta.stop_reason is not None:
-                            latest_stop_reason = chunk.delta.stop_reason
+                            stop_reason[0] = chunk.delta.stop_reason
                         elif chunk.type == "message_stop":
                             message_stop_received = True
                             if local_function_call_started and (
-                                open_local_function_call_blocks or latest_stop_reason != "tool_use"
+                                open_local_function_call_blocks or stop_reason[0] != "tool_use"
                             ):
                                 raise ResponseInvalidatedException(
                                     "Anthropic invalidated partial response output; "
@@ -705,22 +710,75 @@ class RawAnthropicClient(
                         raise
                     raise _wrap_anthropic_error(ex) from ex
 
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                mark_feature_used(FeatureIndex.ANTHROPIC)
+                for continuation_index in range(_MAX_PAUSE_TURN_CONTINUATIONS + 1):
+                    turn_request_state = (
+                        request_state
+                        if continuation_index == 0
+                        else _AnthropicRequestState(tool_name_aliases=dict(request_state.tool_name_aliases))
+                    )
+                    stop_reason: list[str | None] = [None]
+                    turn_updates: list[ChatResponseUpdate] = []
+                    async for update in _stream_turn(turn_request_state, stop_reason):
+                        turn_updates.append(update)
+                        yield update
+                    turn_response = self._finalize_response_updates(
+                        turn_updates,
+                        response_format=options.get("response_format"),
+                    )
+                    if (
+                        turn_response.finish_reason != "pause_turn"
+                        or continuation_index == _MAX_PAUSE_TURN_CONTINUATIONS
+                    ):
+                        return
+                    self._append_pause_turn_messages_for_anthropic(run_options, turn_response.messages)
+
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             mark_feature_used(FeatureIndex.ANTHROPIC)
-            try:
-                message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-            except AgentFrameworkException:
-                raise
-            except Exception as ex:
-                raise _wrap_anthropic_error(ex) from ex
-            return self._process_message(message, options, request_state=request_state)
+            accumulated_messages: list[Message] = []
+            aggregated_usage: UsageDetails | None = None
+            raw_messages: list[BetaMessage] = []
+            for continuation_index in range(_MAX_PAUSE_TURN_CONTINUATIONS + 1):
+                turn_request_state = (
+                    request_state
+                    if continuation_index == 0
+                    else _AnthropicRequestState(tool_name_aliases=dict(request_state.tool_name_aliases))
+                )
+                try:
+                    message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+                except AgentFrameworkException:
+                    raise
+                except Exception as ex:
+                    raise _wrap_anthropic_error(ex) from ex
+                response = self._process_message(message, options, request_state=turn_request_state)
+                accumulated_messages.extend(response.messages)
+                aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                raw_messages.append(message)
+                if message.stop_reason != "pause_turn" or continuation_index == _MAX_PAUSE_TURN_CONTINUATIONS:
+                    response.messages = accumulated_messages
+                    response.usage_details = aggregated_usage
+                    response.raw_representation = raw_messages if len(raw_messages) > 1 else message
+                    return response
+                self._append_pause_turn_messages_for_anthropic(run_options, response.messages)
+            raise RuntimeError("Anthropic pause-turn continuation loop exited unexpectedly.")
 
         return _get_response()
 
     # region Prep methods
+
+    def _append_pause_turn_messages_for_anthropic(
+        self,
+        run_options: dict[str, Any],
+        messages: Sequence[Message],
+    ) -> None:
+        """Append paused assistant content without adding a synthetic user turn."""
+        prepared_messages = cast(list[dict[str, Any]], run_options["messages"])
+        for message in messages:
+            prepared_messages.extend(self._prepare_message_groups_for_anthropic(message))
 
     def _prepare_options(
         self,
