@@ -1472,8 +1472,12 @@ def _reconstruct_messages_from_thread_snapshot(
         latest_user_index = _latest_user_message_index(incoming_messages)
         incoming_suffix = incoming_messages if latest_user_index is None else incoming_messages[latest_user_index:]
 
+    # Client projections can omit or regroup assistant output. A contiguous
+    # overlap then ends before later messages that are already stored. Their
+    # IDs still identify backend-owned records, even if the client edited them.
+    stored_ids = {str(message["id"]) for message in stored_messages if message.get("id")}
     incoming_suffix = _filter_untrusted_suffix(
-        incoming_suffix,
+        [message for message in incoming_suffix if not message.get("id") or str(message["id"]) not in stored_ids],
         stored_messages=stored_messages,
         stored_interrupt=stored_interrupt,
     )

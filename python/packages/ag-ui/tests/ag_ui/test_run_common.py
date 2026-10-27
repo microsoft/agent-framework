@@ -1108,3 +1108,30 @@ class TestReasoningCoalescing:
         assert id1 is not None
         assert id2 is not None
         assert id1 != id2, "New turn should get a new reasoning message_id"
+
+
+@pytest.mark.parametrize("outcome", ["approved", "declined", None])
+def test_snapshot_replay_after_projection_gap_keeps_original_occurrences(outcome: str | None) -> None:
+    """A changed assistant projection must not append later stored user/results again."""
+    stored: list[dict[str, Any]] = [
+        {"id": "u1", "role": "user", "content": "Start"},
+        {"id": "a1", "role": "assistant", "content": "Canonical answer"},
+        {"id": "u2", "role": "user", "content": "Approve the meeting"},
+        {
+            "id": "call-message",
+            "role": "assistant",
+            "toolCalls": [{"id": "meeting", "type": "function", "function": {"name": "schedule", "arguments": "{}"}}],
+        },
+    ]
+    if outcome is not None:
+        stored.append({"id": "result", "role": "tool", "toolCallId": "meeting", "content": outcome})
+    incoming = [dict(message) for message in stored]
+    incoming[1] = {"id": "client-a1", "role": "assistant", "content": "Different live projection"}
+    incoming[2] = {**incoming[2], "content": "Client edit must not replace canonical history"}
+    new_messages = [{"id": "u3", "role": "user", "content": "Continue"}]
+    incoming.extend(new_messages)
+
+    actual = _reconstruct_messages_from_thread_snapshot(stored_messages=stored, incoming_messages=incoming)
+
+    assert actual == stored + new_messages
+    assert len({message["id"] for message in actual}) == len(actual)
