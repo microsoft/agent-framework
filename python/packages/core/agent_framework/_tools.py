@@ -136,6 +136,7 @@ _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payloa
 _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
+_MALFORMED_WRAPPER_CONTEXT_KEY: Final[str] = "_malformed_wrapper_provenance"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
@@ -1020,7 +1021,18 @@ class FunctionTool(SerializationMixin):
             context.arguments = prepared_state.arguments
             return prepared_state.arguments
 
+        # A malformed payload provenance marker keeps the synthetic raw entry
+        # alive across schema validation: validation drops the undeclared key,
+        # which would otherwise erase the signal that the call is still the
+        # wrapped malformed payload rather than a middleware repair.
+        preserved_raw = None
+        malformed_wrapper = context.metadata.get(_MALFORMED_WRAPPER_CONTEXT_KEY)
+        if malformed_wrapper is not None and isinstance(current_arguments, Mapping) and "raw" in current_arguments:
+            preserved_raw = current_arguments["raw"]
+
         validated_arguments = self._prepare_arguments(arguments)
+        if preserved_raw is not None:
+            validated_arguments = {**validated_arguments, "raw": preserved_raw}
         context.arguments = validated_arguments
         context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
             arguments=validated_arguments,
@@ -2385,7 +2397,7 @@ async def _auto_invoke_function(
             return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
     arguments_prepared = False
-    if not payload_is_not_an_object:
+    if not payload_is_not_an_object or _tool_declares_parameter(tool, "raw"):
         try:
             args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
             arguments_prepared = True
@@ -2393,8 +2405,9 @@ async def _auto_invoke_function(
             # Invalid provider arguments are intentionally exposed to middleware so
             # it has a supported opportunity to repair them before final validation.
             pass
-    # A wrapped malformed payload skips preparation: the model would silently
-    # drop the wrapper as an extra field, and middleware would never see what
+    # Only a wrapped malformed payload that the tool does not accept as a
+    # declared ``raw`` argument skips preparation: preparation would silently
+    # drop that wrapper as an extra field, and middleware would never see what
     # the model actually sent.
 
     middleware_context = FunctionInvocationContext(
@@ -2409,6 +2422,8 @@ async def _auto_invoke_function(
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
     middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+    if wrapped_raw_present:
+        middleware_context.metadata[_MALFORMED_WRAPPER_CONTEXT_KEY] = dict(parsed_args)
     if arguments_prepared:
         middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
             arguments=args,

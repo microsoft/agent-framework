@@ -2576,3 +2576,78 @@ async def test_middleware_that_replaces_null_wrapper_with_valid_arguments_repair
     assert not should_terminate
     assert calls == [{"limit": 5}]
     assert result_groups[0][0].result == "ok"
+
+
+async def test_builtin_label_tracking_middleware_preserves_malformed_wrapper_provenance() -> None:
+    """The built-in label-tracking middleware must not erase the wrapper.
+
+    Its argument normalization validates against the declared model and drops
+    the undeclared ``raw`` entry for a typed tool; the provenance marker keeps
+    the malformed payload rejected instead of executing with defaults.
+    """
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="typed_label_target")
+    def typed_label_target(user: str = "", limit: int = 0) -> str:
+        calls.append({"user": user, "limit": limit})
+        return "ok"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="call-1", name="typed_label_target", arguments="not {json"),
+        ],
+        tools=[typed_label_target],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(LabelTrackingFunctionMiddleware()),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert result.type == "function_result"
+    assert "Invalid arguments for 'typed_label_target'" in str(result.exception)
+
+
+@tool(name="raw_reader", description="Read a raw value")
+def raw_reader_tool(raw: datetime) -> str:
+    return f"raw:{raw.isoformat()}"
+
+
+async def test_declared_raw_tool_keeps_normal_preparation_types() -> None:
+    """A declared ``raw: datetime`` reaches middleware as a datetime, not a string.
+
+    Preparation runs normally for tools that declare ``raw``, so middleware
+    sees the declared types instead of the raw JSON string.
+    """
+    seen_types: list[str] = []
+
+    class TrackTypes(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            raw_value = cast("dict[str, Any]", context.arguments).get("raw")
+            seen_types.append(type(raw_value).__name__)
+            await call_next()
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(
+                call_id="call-1",
+                name="raw_reader",
+                arguments='"2024-01-01T00:00:00+00:00"',
+            ),
+        ],
+        tools=[raw_reader_tool],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(TrackTypes()),
+    )
+
+    assert not should_terminate
+    assert seen_types == ["datetime"]
+    assert result_groups[0][0].result == "raw:2024-01-01T00:00:00+00:00"
