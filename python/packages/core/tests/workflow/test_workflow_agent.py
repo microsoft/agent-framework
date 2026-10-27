@@ -29,6 +29,7 @@ from agent_framework import (
     UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
+    WorkflowCheckpointException,
     WorkflowContext,
     WorkflowEvent,
     WorkflowException,
@@ -244,6 +245,68 @@ class TestWorkflowAgent:
             assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
             await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
         assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("prior_agent_run", [False, True])
+    async def test_rejected_checkpoint_preserves_agent_context(self, streaming: bool, prior_agent_run: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        storage = InMemoryCheckpointStorage()
+        await agent.run("Checkpoint turn", session=AgentSession(), checkpoint_storage=storage)
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        checkpoint = await storage.load(checkpoint_id)
+        assert checkpoint is not None
+        checkpoint.graph_signature_hash = "different-graph"
+        await storage.save(checkpoint)
+
+        if prior_agent_run:
+            await agent.run("Live turn", session=AgentSession())
+        else:
+            await workflow.run([Message(role="user", contents=[Content.from_text("Live turn")])])
+        live_state = workflow._runner.state.export_state()
+
+        with pytest.raises(WorkflowCheckpointException, match="graph has changed"):
+            if streaming:
+                await agent.run(
+                    session=AgentSession(),
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_storage=storage,
+                    stream=True,
+                ).get_final_response()
+            else:
+                await agent.run(session=AgentSession(), checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        assert workflow._runner.state.export_state() == live_state
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("fresh_input", [False, True])
+    async def test_checkpoint_restore_uses_checkpoint_agent_context(self, streaming: bool, fresh_input: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        storage = InMemoryCheckpointStorage()
+        checkpoint_session = AgentSession()
+        await agent.run("Checkpoint turn", session=checkpoint_session, checkpoint_storage=storage)
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        await agent.run("Live turn", session=AgentSession())
+        caller_session = AgentSession()
+        message = "Fresh turn" if fresh_input else None
+
+        if streaming:
+            await agent.run(
+                message,
+                session=caller_session,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=storage,
+                stream=True,
+            ).get_final_response()
+        else:
+            await agent.run(message, session=caller_session, checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        expected_session = caller_session if fresh_input else checkpoint_session
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session.session_id
         assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
 
     @pytest.mark.parametrize("streaming", [False, True])
