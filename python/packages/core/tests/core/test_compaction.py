@@ -1050,6 +1050,52 @@ async def test_agent_trigger_in_mixed_search_batch_is_retained() -> None:
     assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
 
 
+async def test_list_mutating_strategy_restores_mixed_trigger_batch_only() -> None:
+    class ProjectIncludedMessagesStrategy:
+        async def __call__(self, messages: list[Message]) -> bool:
+            messages[:] = included_messages(messages)
+            return True
+
+    strategy = AgentTriggeredCompactionStrategy(
+        ProjectIncludedMessagesStrategy(),
+        exclude_trigger=True,
+    )
+    removed_by_inner = Message(
+        role="assistant",
+        contents=["already excluded"],
+        additional_properties={EXCLUDED_KEY: True},
+    )
+    mixed_call_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="work-1", name="work_tool", arguments={}),
+            Content.from_function_call(call_id="compact-1", name=strategy.tool.name, arguments={}),
+        ],
+    )
+    mixed_result_message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="work-1", result="work result"),
+            Content.from_function_result(call_id="compact-1", result="Compaction requested."),
+        ],
+    )
+    user_message = Message(role="user", contents=["work"])
+    messages = [
+        removed_by_inner,
+        user_message,
+        mixed_call_message,
+        mixed_result_message,
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert messages == [user_message, mixed_call_message, mixed_result_message]
+    assert removed_by_inner not in messages
+    assert mixed_call_message.additional_properties.get(EXCLUDED_KEY) is not True
+    assert mixed_result_message.additional_properties.get(EXCLUDED_KEY) is not True
+
+
 async def test_successive_triggers_do_not_consume_tool_group_retention() -> None:
     strategy = AgentTriggeredCompactionStrategy(SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=2))
     messages = [

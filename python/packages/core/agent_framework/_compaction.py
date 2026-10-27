@@ -1429,6 +1429,7 @@ class AgentTriggeredCompactionStrategy:
 
     async def __call__(self, messages: list[Message]) -> bool:
         """Run the wrapped strategy once for the latest completed trigger call."""
+        original_messages = list(messages)
         annotate_message_groups(messages)
         grouped = _group_messages_by_id(messages)
         trigger_group = _latest_included_group(messages)
@@ -1473,7 +1474,7 @@ class AgentTriggeredCompactionStrategy:
         try:
             changed = await self.strategy(messages)
         except BaseException:
-            self._restore_trigger_group(trigger_state)
+            self._restore_hidden_messages(messages, original_messages, trigger_state)
             raise
 
         for trigger_call in trigger_calls:
@@ -1487,10 +1488,10 @@ class AgentTriggeredCompactionStrategy:
         )
         trigger_changed = self.exclude_trigger and not has_unrelated_tool_calls and has_other_included_context
         prior_trigger_state = [state for state in trigger_state if id(state[0]) not in trigger_message_ids]
-        self._restore_trigger_group(prior_trigger_state)
+        self._restore_hidden_messages(messages, original_messages, prior_trigger_state)
         if not trigger_changed:
             current_trigger_state = [state for state in trigger_state if id(state[0]) in trigger_message_ids]
-            self._restore_trigger_group(current_trigger_state)
+            self._restore_hidden_messages(messages, original_messages, current_trigger_state)
         return changed or trigger_changed
 
     def _is_trigger_only_group(
@@ -1523,6 +1524,55 @@ class AgentTriggeredCompactionStrategy:
                 message.additional_properties[EXCLUDE_REASON_KEY] = reason
             else:
                 message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+    @classmethod
+    def _restore_hidden_messages(
+        cls,
+        messages: list[Message],
+        original_messages: Sequence[Message],
+        trigger_state: Sequence[tuple[Message, bool, Any, bool, Any]],
+    ) -> None:
+        restore_ids = {id(state[0]) for state in trigger_state}
+        present_ids = {id(message) for message in messages}
+        original_index_by_id = {id(message): index for index, message in enumerate(original_messages)}
+
+        for original_message in original_messages:
+            message_id = id(original_message)
+            if message_id not in restore_ids or message_id in present_ids:
+                continue
+            original_index = original_index_by_id[message_id]
+            next_anchor_id = next(
+                (
+                    id(candidate)
+                    for candidate in original_messages[original_index + 1 :]
+                    if id(candidate) in present_ids
+                ),
+                None,
+            )
+            if next_anchor_id is not None:
+                insert_index = next(
+                    index for index, candidate in enumerate(messages) if id(candidate) == next_anchor_id
+                )
+            else:
+                previous_anchor_id = next(
+                    (
+                        id(candidate)
+                        for candidate in reversed(original_messages[:original_index])
+                        if id(candidate) in present_ids
+                    ),
+                    None,
+                )
+                if previous_anchor_id is None:
+                    insert_index = len(messages)
+                else:
+                    insert_index = (
+                        next(index for index, candidate in enumerate(messages) if id(candidate) == previous_anchor_id)
+                        + 1
+                    )
+            messages.insert(insert_index, original_message)
+            present_ids.add(message_id)
+
+        cls._restore_trigger_group(trigger_state)
 
 
 @experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
