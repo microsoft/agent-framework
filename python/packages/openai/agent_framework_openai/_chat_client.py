@@ -4577,8 +4577,17 @@ class RawOpenAIChatClient(
                 if not isinstance(event.type, str) or not event.type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX):
                     logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
+        message_id: str | None = None
+        if any(content.type == "text" for content in contents):
+            item_id = getattr(event, "item_id", None)
+            if event.type == "response.output_item.done":
+                item_id = event.item.id
+            if isinstance(item_id, str):
+                message_id = item_id
+
         update = ChatResponseUpdate(
             contents=contents,
+            message_id=message_id,
             conversation_id=conversation_id,
             response_id=response_id,
             role="assistant",

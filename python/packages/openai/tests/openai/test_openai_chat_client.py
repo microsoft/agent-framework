@@ -60,6 +60,7 @@ from openai.types.responses import (
     ResponseFunctionShellToolCallOutput,
     ResponseOutputItemDoneEvent,
     ResponseOutputTextAnnotationAddedEvent,
+    ResponseStreamEvent,
 )
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
@@ -1746,6 +1747,38 @@ def test_streaming_text_done_events_replace_deltas(
     response = ChatResponse.from_updates(updates)
     expected_text = done_event.text if hasattr(done_event, "text") else done_event.refusal
     assert response.messages[0].contents[0].text == expected_text
+
+
+@pytest.mark.parametrize("refusal", [False, True])
+def test_streaming_text_snapshots_preserve_separate_output_messages(refusal: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    updates: list[ChatResponseUpdate] = []
+    for output_index, text in enumerate(("Checking the refund policy.", "The refund requires approval.")):
+        event_args: dict[str, Any] = {
+            "content_index": 0,
+            "item_id": f"message_{output_index}",
+            "output_index": output_index,
+            "sequence_number": output_index * 2,
+        }
+        events: tuple[ResponseStreamEvent, ...]
+        if refusal:
+            events = (
+                ResponseRefusalDeltaEvent(type="response.refusal.delta", delta=text, **event_args),
+                ResponseRefusalDoneEvent(type="response.refusal.done", refusal=text, **event_args),
+            )
+        else:
+            events = (
+                ResponseTextDeltaEvent(type="response.output_text.delta", delta=text, logprobs=[], **event_args),
+                ResponseTextDoneEvent(type="response.output_text.done", text=text, logprobs=[], **event_args),
+            )
+        updates.extend(client._parse_chunk_from_openai(event, {}, {}) for event in events)
+
+    response = ChatResponse.from_updates(updates)
+
+    assert [message.text for message in response.messages] == [
+        "Checking the refund policy.",
+        "The refund requires approval.",
+    ]
 
 
 def test_prepare_marked_refusal_text_uses_native_assistant_shape_and_input_text_fallback() -> None:
@@ -7373,11 +7406,9 @@ async def test_streaming_completed_annotations_do_not_share_state_between_reques
         responses = await asyncio.gather(get_response(), get_response())
 
     for response in responses:
-        assert len(response.messages) == 1
-        assert len(response.messages[0].contents) == 1
-        annotations = response.messages[0].contents[0].annotations
-        assert annotations is not None
-        assert len(annotations) == 4
+        assert len(response.messages) == 2
+        assert [len(message.contents) for message in response.messages] == [1, 1]
+        assert [len(message.contents[0].annotations or []) for message in response.messages] == [3, 1]
 
 
 def test_streaming_completed_text_without_annotations_emits_no_content() -> None:
