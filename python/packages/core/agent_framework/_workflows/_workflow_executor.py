@@ -301,7 +301,7 @@ class WorkflowExecutor(Executor):
 
     def __init__(
         self,
-        workflow: "Workflow",
+        workflow: Workflow,
         id: str,
         allow_direct_output: bool = False,
         propagate_request: bool = False,
