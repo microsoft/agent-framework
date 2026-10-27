@@ -593,6 +593,12 @@ def _normalize_snapshot_content(content: Any) -> Any:
             """Convert draft/legacy multimodal parts to AG-UI snapshot binary shape."""
             normalized: dict[str, Any] = {"type": "binary"}
             url, data, binary_id, mime_type = _extract_multimodal_source_fields(part)
+            metadata = part.get("metadata")
+            filename = part.get("filename")
+            if not filename and isinstance(metadata, dict):
+                filename = metadata.get("filename")
+            if isinstance(filename, str) and filename:
+                normalized["filename"] = filename
 
             if isinstance(mime_type, str) and mime_type:
                 normalized["mimeType"] = mime_type
