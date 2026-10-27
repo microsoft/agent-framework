@@ -3455,6 +3455,50 @@ async def test_streaming_pause_turn_preserves_message_boundaries_for_structured_
     assert response.value == StructuredPauseResult(answer="done")
 
 
+async def test_streaming_pause_turn_separates_reused_server_tool_call_ids(
+    mock_anthropic_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reused call IDs in separate paused turns do not merge their arguments."""
+    monkeypatch.setattr("agent_framework_anthropic._chat_client._MAX_PAUSE_TURN_CONTINUATIONS", 1)
+
+    async def turn_events(response_id: str, query: str) -> Any:
+        yield _message_start_event(response_id)
+        yield _tool_start_event(
+            block_type="server_tool_use",
+            call_id="srvtoolu_reused",
+            name="web_search",
+        )
+        yield _argument_delta_event(f'{{"query": "{query}"}}')
+        yield _content_block_stop_event()
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    streams = [
+        turn_events("msg_first", "first query"),
+        turn_events("msg_second", "second query"),
+    ]
+    mock_anthropic_client.beta.messages.create.side_effect = lambda **_: streams.pop(0)
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Search twice."])],
+        options={"tools": [client.get_web_search_tool()], "max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert [message.message_id for message in response.messages] == ["msg_first", "msg_second"]
+    calls = [message.contents[0] for message in response.messages]
+    assert [call.call_id for call in calls] == ["srvtoolu_reused", "srvtoolu_reused"]
+    assert [call.parse_arguments() for call in calls] == [
+        {"query": "first query"},
+        {"query": "second query"},
+    ]
+
+
 async def test_non_streaming_code_execution_pause_turn_is_not_auto_continued(
     mock_anthropic_client: MagicMock,
 ) -> None:
