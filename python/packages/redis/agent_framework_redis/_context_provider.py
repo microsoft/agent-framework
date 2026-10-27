@@ -317,7 +317,8 @@ class RedisContextProvider(ContextProvider):
         index_exists = await self.redis_index.exists()
         if index_exists:
             await self._validate_schema_compatibility()
-        await self.redis_index.create(overwrite=self.overwrite_index, drop=False)
+        await self.redis_index.create(overwrite=self.overwrite_index if index_exists else False, drop=False)
+        await self._validate_schema_compatibility()
         self._index_initialized = True
 
     async def _validate_schema_compatibility(self) -> None:

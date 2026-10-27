@@ -39,7 +39,15 @@ def mock_index() -> AsyncMock:
 def patch_index(mock_index: AsyncMock) -> Generator[MagicMock]:
     with patch("agent_framework_redis._context_provider.AsyncSearchIndex") as mock_cls:
         mock_cls.from_dict = MagicMock(return_value=mock_index)
-        mock_cls.from_existing = AsyncMock()
+
+        async def mock_from_existing(*args: Any, **kwargs: Any) -> AsyncMock:  # noqa: ARG001
+            existing = AsyncMock()
+            existing.schema.to_dict = MagicMock(
+                side_effect=lambda: mock_cls.from_dict.call_args.args[0] if mock_cls.from_dict.call_args else {}
+            )
+            return existing
+
+        mock_cls.from_existing = AsyncMock(side_effect=mock_from_existing)
         yield mock_cls
 
 
@@ -138,7 +146,7 @@ async def test_ensure_index_validates_existing_schema_before_create(
     with patch.object(provider, "_validate_schema_compatibility", AsyncMock()) as validate_schema:
         await provider._ensure_index()
 
-    validate_schema.assert_awaited_once()
+    assert validate_schema.await_count == 2
     mock_index.create.assert_awaited_once_with(overwrite=False, drop=False)
     assert provider._index_initialized is True
 
@@ -153,9 +161,31 @@ async def test_ensure_index_validates_before_overwriting_compatible_index(
     with patch.object(provider, "_validate_schema_compatibility", AsyncMock()) as validate_schema:
         await provider._ensure_index()
 
-    validate_schema.assert_awaited_once()
+    assert validate_schema.await_count == 2
     mock_index.create.assert_awaited_once_with(overwrite=True, drop=False)
     assert provider._index_initialized is True
+
+
+async def test_ensure_index_validates_schema_created_by_concurrent_initializer(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    mock_index.exists.return_value = False
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1", overwrite_index=True)
+
+    with (
+        patch.object(
+            provider,
+            "_validate_schema_compatibility",
+            AsyncMock(side_effect=ValueError("incompatible concurrent schema")),
+        ) as validate_schema,
+        pytest.raises(ValueError, match="incompatible concurrent schema"),
+    ):
+        await provider._ensure_index()
+
+    mock_index.create.assert_awaited_once_with(overwrite=False, drop=False)
+    validate_schema.assert_awaited_once()
+    assert provider._index_initialized is False
 
 
 async def test_validate_schema_compatibility_raises_for_significant_mismatch(
@@ -259,6 +289,7 @@ async def test_after_run_stores_vectors_in_configured_dtype(
         vector_field_name="embedding",
         redis_index=mock_index,
     )
+    provider._validate_schema_compatibility = AsyncMock()
     session = AgentSession(session_id="session-1")
     context = SessionContext(
         session_id=session.session_id,
