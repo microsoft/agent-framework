@@ -344,6 +344,7 @@ async def test_mcp_tools_call_second_connection_loss_log_respects_sensitive_data
     ):
         await tool.call_tool("get-weather")
 
+    assert tool.session is not None
     assert tool.session.call_tool.await_count == 2
     assert (private_error_detail in caplog.text) is enable_sensitive_data
     if not enable_sensitive_data:
