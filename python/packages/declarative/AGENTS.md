@@ -23,7 +23,9 @@ series because response caching and default-header integration use its internals
 
 ## MCP Handler Lifetimes
 
-`DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`.
+`DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`
+and with a non-empty `workflow_session_id`. Missing or empty IDs use the same
+per-invocation lifecycle as provider-backed calls, without cache reuse or coalescing.
 Cache identity includes a framework-owned workflow session ID in addition to
 endpoint, label, connection, and headers, so separate fresh runs do not share a
 stateful MCP protocol session while continuations and checkpoint restores do.
@@ -43,11 +45,12 @@ from an active invocation's context (including inherited child tasks and cleanup
 raises `RuntimeError` before changing handler state; shutdown must run outside that
 context or after invocation completion.
 
-Without a provider, `cache_max_size` bounds live sessions including connecting and
+For cache-managed scopes, `cache_max_size` bounds live sessions including connecting and
 closing clients, not only idle cache entries. At capacity, the least-recently-used
 idle client is fully closed before its replacement connects. If every slot is
 busy, new scopes receive an explicit capacity error; same-scope cache reuse
 remains available.
+Provider-backed and unscoped per-invocation sessions do not use this cache bound.
 
 Per-invocation sessions intentionally add connection overhead and lose server
 session continuity between invocations;

@@ -149,7 +149,8 @@ class MCPToolInvocation:
       handler does not consume this field.
     - ``workflow_session_id``: Framework-owned identifier for the current
       workflow session. The default handler uses it to prevent separate
-      workflows from sharing one stateful MCP protocol session.
+      workflows from sharing one stateful MCP protocol session. Missing or
+      empty identifiers use a fresh session that is closed after each invocation.
     """
 
     server_url: str
@@ -253,7 +254,7 @@ class _EntryCreationCleanupFailure(BaseException):
 class DefaultMCPToolHandler:
     """Default :class:`MCPToolHandler` backed by :class:`agent_framework.MCPStreamableHTTPTool`.
 
-    Without a ``client_provider``, caches one
+    Without a ``client_provider`` and with a non-empty workflow session ID, caches one
     :class:`agent_framework.MCPStreamableHTTPTool` instance per
     ``(workflow_session_id, server_url, server_label, connection_name,
     headers_hash)`` in a bounded LRU. The cache prevents re-establishing an MCP
@@ -269,6 +270,8 @@ class DefaultMCPToolHandler:
     headers passed on the wire keep the caller's original casing — so two
     YAML actions that spell ``Authorization`` differently still share a
     cache entry.
+    Invocations without a workflow session ID bypass the cache and close their
+    tool/session after each invocation, using the same lifecycle as provider-backed calls.
 
     Construction modes:
 
@@ -296,12 +299,12 @@ class DefaultMCPToolHandler:
 
     Args:
         client_provider: Optional per-invocation ``httpx.AsyncClient`` provider.
-        cache_max_size: Maximum number of live MCP clients in no-provider mode,
+        cache_max_size: Maximum number of live cache-managed MCP clients,
             including connecting and closing clients. At capacity, the
             least-recently-used idle entry is closed before connecting a new
             client. If every slot is busy, new scopes receive a capacity error;
             existing scopes can still reuse their cached client. Defaults to
-            ``32``. Does not limit provider-backed invocations.
+            ``32``. Does not limit provider-backed or unscoped invocations.
     """
 
     LIST_TOOLS_TOOL_NAME: ClassVar[str] = "tools/list"
@@ -340,7 +343,7 @@ class DefaultMCPToolHandler:
         # the resulting cache entry.
         self._inflight: dict[tuple[str, str, str, str, str], asyncio.Future[_CacheEntry]] = {}
         self._inflight_cleanup: dict[tuple[str, str, str, str, str], asyncio.Future[None]] = {}
-        # Completion signals only: provider-backed calls never share entries.
+        # Completion signals only: non-cacheable calls never share entries.
         self._active_invocations: set[asyncio.Future[None]] = set()
         # Keep ancestry so a completed nested call cannot hide an active parent
         # in the context inherited by child tasks, including cleanup tasks.
@@ -376,9 +379,10 @@ class DefaultMCPToolHandler:
         entry: _CacheEntry | None = None
         completion: asyncio.Future[None] | None = None
         context_token: Token[tuple[asyncio.Future[None], ...]] | None = None
+        use_cache = self._client_provider is None and bool(invocation.workflow_session_id)
         try:
             try:
-                if self._client_provider is None:
+                if use_cache:
                     entry = await self._get_or_create_entry(invocation)
                 else:
                     async with self._cache_lock:
@@ -408,7 +412,7 @@ class DefaultMCPToolHandler:
 
             return await self._invoke_entry(entry, invocation)
         finally:
-            if self._client_provider is None and entry is not None:
+            if use_cache and entry is not None:
                 await self._release_entry(entry)
             elif completion is not None:
                 try:
@@ -539,12 +543,12 @@ class DefaultMCPToolHandler:
         return MCPToolResult(outputs=[Content.from_text(json.dumps(payload, indent=2, allow_nan=False))])
 
     async def aclose(self) -> None:
-        """Close cached clients and wait for provider-backed invocations to clean up.
+        """Close cached clients and wait for non-cacheable invocations to clean up.
 
         Caller-supplied :class:`httpx.AsyncClient` instances (returned by the
         ``client_provider`` callback) are NOT closed.
 
-        Provider-backed calls already executing may finish; pending connections
+        Provider-backed and unscoped calls already executing may finish; pending connections
         are rejected after connecting and cleaned up by their invocation.
         Concurrent shutdown calls wait for those invocations as well.
 
@@ -555,13 +559,14 @@ class DefaultMCPToolHandler:
         their future with ``RuntimeError("DefaultMCPToolHandler is closed")``.
 
         Raises:
-            RuntimeError: If called from an active provider-backed invocation's
+            RuntimeError: If called from an active provider-backed or unscoped invocation's
                 context, including inherited child tasks and cleanup. Rejected
                 before changing handler state to avoid waiting on itself.
         """
         if any(not completion.done() for completion in self._invocation_context.get()):
             raise RuntimeError(
                 "DefaultMCPToolHandler.aclose() cannot be called from an active provider-backed invocation"
+                " or unscoped invocation"
             )
         async with self._cache_lock:
             if self._shutdown_task is None:
@@ -910,8 +915,10 @@ class DefaultMCPToolHandler:
             try:
                 await self._close_invocation_entry(failed_entry, cleanup_outcome)
             except BaseException as cleanup_exception:
-                if self._client_provider is not None or (
-                    cleanup_outcome.done() and cleanup_outcome.exception() is None
+                if (
+                    self._client_provider is not None
+                    or not invocation.workflow_session_id
+                    or (cleanup_outcome.done() and cleanup_outcome.exception() is None)
                 ):
                     raise
                 raise _EntryCreationCleanupFailure(creation_exception, cleanup_exception) from cleanup_exception
@@ -988,6 +995,8 @@ class DefaultMCPToolHandler:
         that ``Authorization`` and ``authorization`` map to the same
         cache entry. Header values remain case-sensitive (per RFC 7235).
         """
+        if not workflow_session_id:
+            raise ValueError("MCP session caching requires a non-empty workflow session ID")
         if not headers:
             headers_hash = "0"
         else:
@@ -995,7 +1004,7 @@ class DefaultMCPToolHandler:
             payload = json.dumps(normalized, ensure_ascii=False)
             headers_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         return (
-            workflow_session_id or "",
+            workflow_session_id,
             server_url,
             server_label or "",
             connection_name or "",

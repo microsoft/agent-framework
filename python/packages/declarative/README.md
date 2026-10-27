@@ -72,7 +72,10 @@ on HTTPX internals. Compatibility tests cover HTTPX 0.27.0 and 0.28.1.
 
 ## MCP handler session lifetime
 
-`DefaultMCPToolHandler()` reuses MCP sessions through a bounded LRU cache.
+`DefaultMCPToolHandler()` reuses MCP sessions through a bounded LRU cache only
+when the invocation has a non-empty `workflow_session_id`. Direct calls with a
+missing or empty ID instead create and close a fresh session per invocation,
+including `tools/list`; concurrent unscoped calls never share a connection.
 When configured with `client_provider`, it instead invokes the provider and
 creates a fresh MCP tool/session for every invocation, including `tools/list`.
 Sessions are never reused in this mode, even if the provider returns `None`
@@ -81,14 +84,15 @@ or the same `httpx.AsyncClient` instance.
 Each invocation closes its tool/session on success, failure, or cancellation.
 Internally created fallback HTTP clients are also closed; caller-supplied HTTP
 clients remain caller-owned and are never closed by the handler. Calling
-`aclose()` rejects new invocations and waits for active provider-backed
+`aclose()` rejects new invocations and waits for active provider-backed or unscoped
 invocations to finish cleaning up. Calling it from an active invocation's
 context (including provider callbacks, inherited child tasks, and cleanup)
 raises `RuntimeError` before changing handler state, rather than waiting on
 itself. Close the handler outside that context or after the invocation completes.
 
 This intentionally incurs connection and initialization overhead and does not
-retain server session state between provider-backed invocations. Applications
+retain server session state between provider-backed or unscoped invocations.
+`cache_max_size` bounds cache-managed clients, not these per-invocation sessions. Applications
 that require shared session ownership must implement an explicitly scoped
 custom `MCPToolHandler`; there is no provider-backed session-cache opt-in.
 

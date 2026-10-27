@@ -24,6 +24,8 @@ maturity. Check current package status and public docstrings before making compa
 - Allowlist external destinations and register only resources the definition may invoke.
 - Review the documented HTTP body limits and handler ownership rules; use a custom handler when host policy requires
   different authentication, retries, SSRF controls, or transport behavior.
+- Direct `DefaultMCPToolHandler` calls without a non-empty `workflow_session_id` use a fresh session per invocation;
+  only explicitly scoped calls without a client provider reuse cached MCP sessions.
 
 ## Validation
 
