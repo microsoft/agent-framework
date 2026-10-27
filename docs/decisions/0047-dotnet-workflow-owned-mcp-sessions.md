@@ -275,6 +275,27 @@ Explicit newer revisions still perform discovery and reject legacy-only servers
 rather than silently downgrading. Incompatible selections surface SDK errors.
 Use separately configured handlers where server protocol policies differ.
 
+### Future discovery-metadata optimization (not implemented)
+
+If measurements justify further setup optimization, consider a scoped metadata
+profile or proxy containing detached protocol versions, capabilities, server
+identity, and instructions. Its identity must include the complete endpoint,
+configuration, authorization scope, and client capabilities; an origin alone is
+not sufficient. Define bounded capacity, expiry, invalidation, and immutable or
+defensively copied values. Server metadata must not become an authorization
+decision or permit stale capabilities to override current policy.
+
+For discovery-based revisions, the SDK currently discovers on each fresh
+`CreateAsync`. An `IMcpToolHandler` decorator alone cannot bypass that step.
+Any metadata bootstrap would require supported SDK semantics beneath that
+boundary; do not fake initialization or misuse session-resumption APIs.
+Legacy sessions must still perform their real initialization handshake.
+
+This is a future consideration, not an implemented cache or a plan to reuse MCP
+clients. Never retain clients, transports, session IDs, invocation credentials,
+or mutable protocol machinery in such a profile. Every invocation must continue
+to own and dispose its client and transport independently.
+
 ### Compatibility and explicitly stateful integrations
 
 Remove the `httpClientProvider` callback constructor and the internal
