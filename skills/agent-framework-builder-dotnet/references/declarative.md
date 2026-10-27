@@ -35,6 +35,10 @@ commitments.
 Validate definitions at startup and fail clearly on unknown providers, actions, tools, variables, or resources. Apply
 the same approval, evaluation, and telemetry policy used for code-first agents and workflows.
 
+`Local` and `Topic` address the same workflow state. On restore, legacy `Topic`-only entries migrate to `Local`.
+Checkpoints containing the same key in both physical scopes are rejected because assignment order is unavailable.
+Reconcile those entries explicitly or start a fresh session before resuming.
+
 ## Learn more
 
 - [Declarative agents](https://learn.microsoft.com/agent-framework/agents/declarative)

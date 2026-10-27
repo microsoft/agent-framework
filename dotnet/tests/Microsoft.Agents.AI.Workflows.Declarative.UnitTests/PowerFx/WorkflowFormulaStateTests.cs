@@ -198,22 +198,7 @@ public class WorkflowFormulaStateTests
         // Arrange
         Dictionary<(string? Scope, string Key), PortableValue> values = [];
         Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = [];
-        Mock<IWorkflowContext> source = new(MockBehavior.Strict);
-        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback((string key, object value, string? scope, CancellationToken _) => values[(scope, key)] = new PortableValue(value))
-            .Returns(default(ValueTask));
-        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<UnassignedValue>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback((string key, UnassignedValue _, string? scope, CancellationToken _) => values.Remove((scope, key)))
-            .Returns(default(ValueTask));
-        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<SensitivityLevel>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback((string key, SensitivityLevel value, string? scope, CancellationToken _) => sensitivities[(scope, key)] = value)
-            .Returns(default(ValueTask));
-        source.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? scope, CancellationToken _) => values.Keys.Where(k => string.Equals(k.Scope, scope, StringComparison.Ordinal)).Select(k => k.Key).ToHashSet());
-        source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string key, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value) ? value : null);
-        source.Setup(c => c.ReadStateAsync<SensitivityLevel>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string key, string? scope, CancellationToken _) => sensitivities.TryGetValue((scope, key), out SensitivityLevel sensitivity) ? sensitivity : SensitivityLevel.None);
+        Mock<IWorkflowContext> source = CreateStateContext(values, sensitivities);
         DeclarativeWorkflowContext context = new(source.Object, this.State);
         await context.QueueStateUpdateAsync("TestValue", FormulaValue.New("first"), firstScope, SensitivityLevel.Sensitive);
         if (clear)
@@ -238,5 +223,135 @@ public class WorkflowFormulaStateTests
         Assert.Equal(expectedValue, restored.Get("TestValue", VariableScopeNames.Topic).ToObject());
         Assert.Equal(expectedSensitivity, restored.GetSensitivity("TestValue", VariableScopeNames.Local));
         Assert.Equal(expectedSensitivity, restored.GetSensitivity("TestValue", VariableScopeNames.Topic));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task RestoreAsync_MigratesLegacyTopicStateAsync(bool sensitive, bool clear)
+    {
+        // Arrange
+        string sensitivityScope = WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local);
+        SensitivityLevel sensitivity = sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Local, "OtherValue")] = new("other"),
+            [(VariableScopeNames.Topic, "TestValue")] = new(clear ? UnassignedValue.Instance : "legacy"),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = new()
+        {
+            [(sensitivityScope, "TestValue")] = sensitivity,
+        };
+        Mock<IWorkflowContext> source = CreateStateContext(values, sensitivities);
+        DeclarativeWorkflowContext context = new(source.Object, this.State);
+
+        // Act
+        await this.State.RestoreAsync(source.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(clear ? null : "legacy", this.State.Get("TestValue").ToObject());
+        Assert.Equal(sensitivity, this.State.GetSensitivity("TestValue"));
+        Assert.Equal("other", this.State.Get("OtherValue").ToObject());
+        Assert.DoesNotContain(values.Keys, key => string.Equals(key.Scope, VariableScopeNames.Topic, StringComparison.Ordinal));
+        Assert.Contains((VariableScopeNames.Local, "TestValue"), values.Keys);
+        Assert.Equal(sensitivity, sensitivities[(sensitivityScope, "TestValue")]);
+        if (!clear)
+        {
+            Assert.Equal("legacy", await context.ReadStateAsync<string>("TestValue", VariableScopeNames.Topic));
+            Assert.Equal("legacy", await context.ReadOrInitStateAsync("TestValue", () => "replacement", VariableScopeNames.Topic));
+        }
+
+        await context.QueueClearScopeAsync(VariableScopeNames.Topic);
+        await this.State.RestoreCheckpointAsync(source.Object, CancellationToken.None);
+        Assert.IsType<BlankValue>(this.State.Get("TestValue"));
+        Assert.Equal(SensitivityLevel.None, this.State.GetSensitivity("TestValue"));
+    }
+
+    [Fact]
+    public async Task RestoreAsync_RejectsConflictingAliasEntriesOnEveryAttemptAsync()
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Topic, "OtherValue")] = new("other"),
+            [(VariableScopeNames.Local, "TestValue")] = new("first"),
+            [(VariableScopeNames.Topic, "TestValue")] = new("second"),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = [];
+        Mock<IWorkflowContext> source = CreateStateContext(values, sensitivities);
+
+        // Act
+        DeclarativeActionException first = await Assert.ThrowsAsync<DeclarativeActionException>(
+            async () => await this.State.RestoreAsync(source.Object, CancellationToken.None));
+        DeclarativeActionException retry = await Assert.ThrowsAsync<DeclarativeActionException>(
+            async () => await this.State.RestoreAsync(source.Object, CancellationToken.None));
+
+        // Assert
+        Assert.Contains("conflicting", first.Message);
+        Assert.Equal(first.Message, retry.Message);
+        Assert.Equal(3, values.Count);
+        Assert.Empty(sensitivities);
+        source.Verify(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        source.Verify(c => c.QueueClearScopeAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(42)]
+    [InlineData(42L)]
+    [InlineData(1.5f)]
+    [InlineData(1.5d)]
+    public async Task RestoreAsync_LegacyMigrationPreservesNativeTypesAsync(object value)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Topic, "TestValue")] = new(value),
+        };
+        Mock<IWorkflowContext> source = CreateStateContext(values, []);
+
+        // Act
+        await this.State.RestoreAsync(source.Object, CancellationToken.None);
+
+        // Assert
+        PortableValue migrated = values[(VariableScopeNames.Local, "TestValue")];
+        Assert.True(migrated.TypeId.IsMatch(value.GetType()));
+        Assert.Equal(value, migrated.AsType(value.GetType()));
+    }
+
+    private static Mock<IWorkflowContext> CreateStateContext(
+        Dictionary<(string? Scope, string Key), PortableValue> values,
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities)
+    {
+        Mock<IWorkflowContext> source = new(MockBehavior.Strict);
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, object value, string? scope, CancellationToken _) => values[(scope, key)] = new PortableValue(value))
+            .Returns(default(ValueTask));
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<UnassignedValue>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, UnassignedValue _, string? scope, CancellationToken _) => values.Remove((scope, key)))
+            .Returns(default(ValueTask));
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<SensitivityLevel>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, SensitivityLevel value, string? scope, CancellationToken _) => sensitivities[(scope, key)] = value)
+            .Returns(default(ValueTask));
+        source.Setup(c => c.QueueClearScopeAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string? scope, CancellationToken _) =>
+            {
+                foreach (var key in values.Keys.Where(key => string.Equals(key.Scope, scope, StringComparison.Ordinal)).ToArray())
+                {
+                    values.Remove(key);
+                }
+            })
+            .Returns(default(ValueTask));
+        source.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string? scope, CancellationToken _) => values.Keys.Where(k => string.Equals(k.Scope, scope, StringComparison.Ordinal)).Select(k => k.Key).ToHashSet());
+        source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value) ? value : null);
+        source.Setup(c => c.ReadStateAsync<SensitivityLevel>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, string? scope, CancellationToken _) => sensitivities.TryGetValue((scope, key), out SensitivityLevel sensitivity) ? sensitivity : SensitivityLevel.None);
+        source.Setup(c => c.ReadStateAsync<string>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value) ? value.As<string>() : null);
+        source.Setup(c => c.ReadOrInitStateAsync(It.IsAny<string>(), It.IsAny<Func<string>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, Func<string> factory, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value) ? Assert.IsType<string>(value.As<string>()) : factory());
+        return source;
     }
 }
