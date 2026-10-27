@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, overload
 
@@ -82,6 +82,44 @@ def test_builder_accepts_agents_directly():
     # Confirm auto-wrapped executors use agent names as IDs
     assert wf.start_executor_id == "writer"
     assert any(isinstance(e, AgentExecutor) and e.id in {"writer", "reviewer"} for e in wf.executors.values())
+
+
+async def test_workflow_builds_and_runs_with_sequence_handler() -> None:
+    """A list output can be delivered to a parameterized sequence handler."""
+
+    class Splitter(Executor):
+        @handler
+        async def split(self, text: str, ctx: WorkflowContext[list[str]]) -> None:
+            await ctx.send_message(text.split())
+
+    class Counter(Executor):
+        @handler
+        async def count(self, words: Sequence[str], ctx: WorkflowContext[None, int]) -> None:
+            await ctx.yield_output(len(words))
+
+    splitter = Splitter(id="splitter")
+    counter = Counter(id="counter")
+    workflow = WorkflowBuilder(start_executor=splitter, output_from=[counter]).add_edge(splitter, counter).build()
+
+    result = await workflow.run("one two three")
+
+    assert result.get_outputs() == [3]
+
+
+async def test_workflow_as_agent_accepts_sequence_messages() -> None:
+    """Workflow agents can deliver their message list to a sequence handler."""
+
+    class Chat(Executor):
+        @handler
+        async def chat(self, messages: Sequence[Message], ctx: WorkflowContext[None, str]) -> None:
+            await ctx.yield_output(messages[-1].text)
+
+    chat = Chat(id="chat")
+    agent = WorkflowBuilder(start_executor=chat, output_from=[chat]).build().as_agent()
+
+    response = await agent.run("hello")
+
+    assert response.text == "hello"
 
 
 @dataclass

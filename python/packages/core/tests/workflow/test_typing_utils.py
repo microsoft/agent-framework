@@ -2,6 +2,8 @@
 
 import importlib
 import sys
+from collections.abc import Collection, Iterable, Mapping, MutableSequence, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import InitVar, dataclass, make_dataclass
 from dataclasses import field as dataclass_field
 from types import ModuleType
@@ -467,6 +469,40 @@ def test_type_compatibility_bare_container() -> None:
     assert not is_type_compatible(list[str], dict)
     assert not is_type_compatible(dict, list[str])
     assert not is_type_compatible(list[str], str)
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "expected"),
+    [
+        (list[str], Sequence[str], True),
+        (list[int], Sequence[str], False),
+        (list[str], Iterable[str], True),
+        (list[str], Collection[str], True),
+        (list[str], MutableSequence[str], True),
+        (list[str], Sequence[str | int], True),
+        (list[str | int], Sequence[str], False),
+        (list[Any], Sequence[str], True),
+        (list[list[str]], Sequence[Sequence[str]], True),
+        (list[list[int]], Sequence[Sequence[str]], False),
+        (dict[str, int], Mapping[str, int], True),
+        (dict[str, int], Mapping[str, str], False),
+        (dict[str, int], Mapping[int, int], False),
+        (dict[str, int], Iterable[str], True),
+        (dict[str, int], Iterable[int], False),
+        (set[int], AbstractSet[int], True),
+        (set[int], AbstractSet[str], False),
+        (frozenset[int], AbstractSet[int], True),
+        (set[int], Iterable[int], True),
+        (set[int], Sequence[int], False),
+        (list[str], Mapping[str, int], False),
+        (Sequence[str], list[str], False),
+        (Mapping[str, int], dict[str, int], False),
+        (list[str], set[str], False),
+    ],
+)
+def test_type_compatibility_parameterized_container_interfaces(source: Any, target: Any, expected: bool) -> None:
+    """Container interfaces preserve direction and validate their corresponding element types."""
+    assert is_type_compatible(source, target) is expected
 
 
 def test_type_compatibility_bare_container_and_protocol() -> None:
