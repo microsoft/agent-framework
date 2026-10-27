@@ -241,7 +241,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   `cacheScope` hints. Legacy peers default to zero TTL, caller-supplied `ClientSession` connections stay uncached,
   and reconnect or effective header-identity changes replace a framework-owned Client's per-Client cache. Agent
   Framework does not expose shared-store or cache-mode configuration.
-- **MCP Tasks extension** - MCP Python SDK 2.2 does not implement the 2026 `io.modelcontextprotocol/tasks` runtime. Tools that advertise `execution.taskSupport == "required"` are skipped with a warning; optional and task-free tools continue through ordinary `tools/call`. Restoration of the experimental Tasks API and removed sample is tracked in microsoft/agent-framework#8245.
+- **MCP Tasks extension** - The current Agent Framework MCP client does not implement the `io.modelcontextprotocol/tasks` runtime. Tools that advertise `execution.taskSupport == "required"` are skipped with a warning; optional and task-free tools continue through ordinary `tools/call`. Tasks client support is tracked in microsoft/agent-framework#9215.
 
 ### File Access Harness (`_harness/_file_access.py`)
 

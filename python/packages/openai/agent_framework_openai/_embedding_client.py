@@ -251,6 +251,21 @@ class RawOpenAIEmbeddingClient(
         """Get the URL of the service."""
         return str(self.client.base_url) if self.client else "Unknown"
 
+    def _prepare_extra_request_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
+        """Return extra keyword arguments for the ``embeddings.create`` request.
+
+        Only the OpenAI embedding schema is forwarded by default. Subclasses for
+        OpenAI-compatible services override this to send provider-specific fields,
+        typically as ``extra_body``, and to reject invalid values before the request.
+
+        Args:
+            options: The embedding options for the current call.
+
+        Returns:
+            Keyword arguments merged into the request. The default adds none.
+        """
+        return {}
+
     async def get_embeddings(
         self,
         values: Sequence[str],
@@ -276,6 +291,7 @@ class RawOpenAIEmbeddingClient(
         model = opts.get("model") or self.model
         if not model:
             raise ValueError("model is required")
+        extra_request_options = self._prepare_extra_request_options(opts)
 
         kwargs: dict[str, Any] = {"input": list(values), "model": model}
         if self._FEATURE_USAGE_INDEX is not None:
@@ -286,6 +302,7 @@ class RawOpenAIEmbeddingClient(
             kwargs["encoding_format"] = encoding_format
         if user := opts.get("user"):
             kwargs["user"] = user
+        kwargs.update(extra_request_options)
 
         response = await self.client.embeddings.create(**kwargs)
 
