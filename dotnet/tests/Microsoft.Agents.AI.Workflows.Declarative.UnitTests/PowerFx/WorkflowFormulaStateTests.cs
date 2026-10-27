@@ -667,7 +667,14 @@ public class WorkflowFormulaStateTests
         EvaluationResult<string?> restored = await resumedContext.ReadStateWithSensitivityAsync<string>("TestValue", VariableScopeNames.Topic);
         Assert.Equal(expected, restored.Value);
         Assert.Equal(expectedSensitivity, restored.Sensitivity);
-        Assert.DoesNotContain("TestValue", await resumedContext.ReadStateKeysAsync(VariableScopeNames.Topic));
+        if (overwrite)
+        {
+            Assert.DoesNotContain("TestValue", await resumedContext.ReadStateKeysAsync(VariableScopeNames.Topic));
+        }
+        else
+        {
+            Assert.Contains("TestValue", await resumedContext.ReadStateKeysAsync(VariableScopeNames.Topic));
+        }
         Assert.Equal(42, await resumedContext.ReadStateAsync<int>("NativeValue", VariableScopeNames.Topic));
     }
 
@@ -707,6 +714,149 @@ public class WorkflowFormulaStateTests
         Assert.Equal("local", values[(VariableScopeNames.Local, "TestValue")].As<string>());
         Assert.Equal("legacy", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
         Assert.Equal(SensitivityLevel.None, Assert.Single(sensitivities).Value);
+    }
+
+    [Theory]
+    [InlineData(false, SensitivityLevel.None)]
+    [InlineData(false, SensitivityLevel.Sensitive)]
+    [InlineData(true, SensitivityLevel.None)]
+    [InlineData(true, SensitivityLevel.Sensitive)]
+    public async Task LegacyBoundary_ParallelExpressionReadersDoNotWriteStateAsync(bool offThread, SensitivityLevel sensitivity)
+    {
+        // Arrange
+        bool resuming = false;
+        int reads = 0;
+        IWorkflowContext? resumedContext = null;
+        StateExecutor source = new("source", async (context, cancellationToken) =>
+        {
+            await context.QueueStateUpdateAsync("TestValue", "legacy", VariableScopeNames.Topic, cancellationToken);
+            await context.QueueStateUpdateAsync("TestValue", sensitivity,
+                WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), cancellationToken);
+        });
+        StateExecutor first = new("first", ReadExpressionAsync);
+        StateExecutor second = new("second", ReadExpressionAsync);
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, first).AddEdge(source, second).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? checkpoint = null;
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint ??= saved;
+                }
+            }
+        }
+        Assert.NotNull(checkpoint);
+
+        // Act
+        resuming = true;
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, checkpoint);
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+        }
+
+        // Assert
+        Assert.Equal(2, reads);
+        Assert.NotNull(resumedContext);
+        Assert.Equal("legacy", await resumedContext.ReadStateAsync<string>("TestValue", VariableScopeNames.Topic));
+        Assert.DoesNotContain("TestValue", await resumedContext.ReadStateKeysAsync(VariableScopeNames.Local));
+        Assert.Equal(sensitivity, await resumedContext.ReadStateAsync<SensitivityLevel>("TestValue",
+            WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local)));
+
+        async ValueTask ReadExpressionAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            if (!resuming)
+            {
+                return;
+            }
+            EvaluationResult<string?> result = await context.EvaluateValueWithSensitivityAsync<string>("Local.TestValue", cancellationToken);
+            Assert.Equal("legacy", result.Value);
+            Assert.Equal(sensitivity, result.Sensitivity);
+            resumedContext = context;
+            Interlocked.Increment(ref reads);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(false, VariableScopeNames.Local)]
+    [InlineData(false, VariableScopeNames.Topic)]
+    [InlineData(true, null)]
+    [InlineData(true, VariableScopeNames.Local)]
+    [InlineData(true, VariableScopeNames.Topic)]
+    public async Task LegacyBoundary_CanonicalWritesRejectUnmarkedTopicCollisionAsync(bool wrapped, string? scopeName)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Local, "TestValue")] = new("existing"),
+            [(VariableScopeNames.Topic, "TestValue")] = new("native"),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = [];
+        IWorkflowContext source = CreateStateContext(values, sensitivities).Object;
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set("TestValue", FormulaValue.New("existing"));
+        state.Bind();
+        IWorkflowContext context = wrapped ? new DeclarativeWorkflowContext(source, state) : source;
+
+        // Act
+        DeclarativeActionException error = await Assert.ThrowsAsync<DeclarativeActionException>(async () =>
+            await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                new EvaluationResult<object?>("updated", SensitivityLevel.Sensitive), scopeName));
+
+        // Assert
+        Assert.Contains("Topic", error.Message);
+        Assert.Equal("existing", values[(VariableScopeNames.Local, "TestValue")].As<string>());
+        Assert.Equal("native", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
+        Assert.Empty(sensitivities);
+        Assert.Equal("existing", state.Get("TestValue").ToObject());
+        Assert.Equal(SensitivityLevel.None, state.GetSensitivity("TestValue"));
+    }
+
+    [Theory]
+    [InlineData(false, SensitivityLevel.None)]
+    [InlineData(false, SensitivityLevel.Sensitive)]
+    [InlineData(true, SensitivityLevel.None)]
+    [InlineData(true, SensitivityLevel.Sensitive)]
+    public async Task LegacyBoundary_PlainClearDoesNotClaimReusedTopicKeyAsync(bool overwrite, SensitivityLevel sensitivity)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Local, "TestValue")] = new("before"),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = new()
+        {
+            [(WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), "TestValue")] = sensitivity,
+        };
+        IWorkflowContext context = CreateStateContext(values, sensitivities).Object;
+        await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+            new EvaluationResult<object?>(null, sensitivity), VariableScopeNames.Topic);
+        values[(VariableScopeNames.Topic, "TestValue")] = new("native");
+
+        // Act
+        if (overwrite)
+        {
+            await Assert.ThrowsAsync<DeclarativeActionException>(async () =>
+                await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<object?>("updated", SensitivityLevel.Sensitive), VariableScopeNames.Topic));
+        }
+        else
+        {
+            EvaluationResult<string?> result = await context.ReadStateWithSensitivityAsync<string>("TestValue");
+            Assert.Null(result.Value);
+            Assert.Equal(SensitivityLevel.None, result.Sensitivity);
+        }
+
+        // Assert
+        Assert.Equal("native", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
+        Assert.False(values.ContainsKey((VariableScopeNames.Local, "TestValue")));
+        Assert.Empty(sensitivities);
     }
 
     private static async ValueTask SeedLegacyStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -759,6 +909,7 @@ public class WorkflowFormulaStateTests
                 if (value is null)
                 {
                     values.Remove((scope, key));
+                    sensitivities.Remove((scope, key));
                 }
                 else
                 {

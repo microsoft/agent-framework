@@ -202,7 +202,7 @@ public static class IWorkflowContextExtensions
         }
 
         string plainScopeName = GetPlainScopeName(scopeName);
-        bool legacyEntry = await HasLegacyTopicEntryAsync(context, key, plainScopeName, cancellationToken).ConfigureAwait(false);
+        bool legacyEntry = await HasLegacyTopicEntryAsync(context, key, plainScopeName, forWrite: false, cancellationToken).ConfigureAwait(false);
         TValue? value = await context.ReadStateAsync<TValue>(key, legacyEntry ? VariableScopeNames.Topic : plainScopeName, cancellationToken).ConfigureAwait(false);
         SensitivityLevel sensitivity = ShouldPersistSensitivity(plainScopeName)
             ? await context.ReadStateAsync<SensitivityLevel>(key, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false)
@@ -235,11 +235,19 @@ public static class IWorkflowContextExtensions
         }
 
         string plainScopeName = GetPlainScopeName(scopeName);
-        bool legacyEntry = await HasLegacyTopicEntryAsync(context, key, plainScopeName, cancellationToken).ConfigureAwait(false);
+        bool legacyEntry = await HasLegacyTopicEntryAsync(context, key, plainScopeName, forWrite: true, cancellationToken).ConfigureAwait(false);
         await context.QueueStateUpdateAsync(key, value.Value, plainScopeName, cancellationToken).ConfigureAwait(false);
         if (ShouldPersistSensitivity(plainScopeName))
         {
-            await context.QueueStateUpdateAsync(key, value.Sensitivity, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false);
+            string sensitivityScope = WorkflowFormulaState.GetSensitivityScopeName(plainScopeName);
+            if (value.Value is null)
+            {
+                await context.QueueStateUpdateAsync<object>(key, null, sensitivityScope, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await context.QueueStateUpdateAsync(key, value.Sensitivity, sensitivityScope, cancellationToken).ConfigureAwait(false);
+            }
         }
         if (legacyEntry)
         {
@@ -321,7 +329,7 @@ public static class IWorkflowContextExtensions
 
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
 
-        await state.RestoreAsync(context, cancellationToken).ConfigureAwait(false);
+        await state.RestoreSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 
         return state;
     }
@@ -340,7 +348,7 @@ public static class IWorkflowContextExtensions
     private static string GetPlainScopeName(string? scopeName) =>
         scopeName is null || VariableScopeNames.IsValidName(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
 
-    private static async ValueTask<bool> HasLegacyTopicEntryAsync(IWorkflowContext context, string key, string scopeName, CancellationToken cancellationToken)
+    internal static async ValueTask<bool> HasLegacyTopicEntryAsync(IWorkflowContext context, string key, string scopeName, bool forWrite, CancellationToken cancellationToken)
     {
         if (!string.Equals(scopeName, VariableScopeNames.Local, StringComparison.Ordinal))
         {
@@ -356,6 +364,10 @@ public static class IWorkflowContextExtensions
         HashSet<string> declarativeKeys = await context.ReadStateKeysAsync(WorkflowFormulaState.GetSensitivityScopeName(scopeName), cancellationToken).ConfigureAwait(false);
         if (!declarativeKeys.Contains(key))
         {
+            if (forWrite)
+            {
+                throw new DeclarativeActionException("Cannot update declarative state with an existing code-first Topic entry.");
+            }
             return false;
         }
 

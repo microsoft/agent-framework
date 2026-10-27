@@ -45,6 +45,10 @@ declarative metadata require explicit reconciliation rather than automatic migra
 For code-first executors using the declarative sensitivity helpers without a formula-state restoration callback,
 reads fall back to the requested metadata-marked legacy entry without modifying it. Writes use `Local` and remove
 only that entry from `Topic`; unrelated legacy entries are not migrated by these point operations.
+Ad hoc expression evaluation also reads legacy entries without persisting migration, so parallel expression readers
+do not queue competing updates. Persisted migration still runs in registered formula-state restoration callbacks.
+Canonical writes reject a same-key unmarked code-first `Topic` entry before changing state. Reconcile such collisions
+explicitly. A plain sensitivity-helper null update deletes both the canonical value and its sensitivity metadata.
 
 ## Learn more
 

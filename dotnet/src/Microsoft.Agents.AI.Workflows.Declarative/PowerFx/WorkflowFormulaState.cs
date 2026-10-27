@@ -137,21 +137,35 @@ internal sealed class WorkflowFormulaState
         }
     }
 
-    public async ValueTask RestoreCheckpointAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public ValueTask RestoreCheckpointAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
+        this.RestoreCheckpointAsync(context, migrateLegacyEntries: true, cancellationToken);
+
+    public ValueTask RestoreSnapshotAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
+        this.RestoreCheckpointAsync(context, migrateLegacyEntries: false, cancellationToken);
+
+    private async ValueTask RestoreCheckpointAsync(IWorkflowContext context, bool migrateLegacyEntries, CancellationToken cancellationToken)
     {
         this.RestoreInitialState();
 
         Stopwatch timer = Stopwatch.StartNew();
         Debug.WriteLine("RESTORE CHECKPOINT - BEGIN");
-        await MigrateLegacyTopicScopeAsync(context, cancellationToken).ConfigureAwait(false);
+        HashSet<string> legacyKeys = await GetLegacyTopicKeysAsync(context, cancellationToken).ConfigureAwait(false);
+        if (migrateLegacyEntries)
+        {
+            await MigrateLegacyTopicScopeAsync(context, legacyKeys, cancellationToken).ConfigureAwait(false);
+        }
         await Task.WhenAll(RestorableScopes.Select(scopeName => ReadScopeAsync(scopeName))).ConfigureAwait(false);
+        if (!migrateLegacyEntries && legacyKeys.Count > 0)
+        {
+            await ReadScopeAsync(VariableScopeNames.Topic, legacyKeys).ConfigureAwait(false);
+        }
         if (this._restorableEnvironmentVariables.Count > 0)
         {
             await ReadScopeAsync(VariableScopeNames.Environment, this._restorableEnvironmentVariables).ConfigureAwait(false);
         }
         Debug.WriteLine($"RESTORE CHECKPOINT - COMPLETE [{timer.Elapsed}]");
 
-        async Task ReadScopeAsync(string scopeName, FrozenSet<string>? allowedKeys = null)
+        async Task ReadScopeAsync(string scopeName, IReadOnlyCollection<string>? allowedKeys = null)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName, cancellationToken).ConfigureAwait(false);
             foreach (string key in keys)
@@ -176,12 +190,12 @@ internal sealed class WorkflowFormulaState
         }
     }
 
-    private static async ValueTask MigrateLegacyTopicScopeAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    private static async ValueTask<HashSet<string>> GetLegacyTopicKeysAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         HashSet<string> legacyKeys = await context.ReadStateKeysAsync(VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
         if (legacyKeys.Count == 0)
         {
-            return;
+            return legacyKeys;
         }
 
         string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
@@ -189,7 +203,7 @@ internal sealed class WorkflowFormulaState
         legacyKeys.IntersectWith(declarativeKeys);
         if (legacyKeys.Count == 0)
         {
-            return;
+            return legacyKeys;
         }
 
         HashSet<string> localKeys = await context.ReadStateKeysAsync(VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
@@ -198,6 +212,12 @@ internal sealed class WorkflowFormulaState
             throw new DeclarativeActionException("Cannot restore checkpoint with conflicting Local and Topic scope entries.");
         }
 
+        return legacyKeys;
+    }
+
+    private static async ValueTask MigrateLegacyTopicScopeAsync(IWorkflowContext context, HashSet<string> legacyKeys, CancellationToken cancellationToken)
+    {
+        string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
         List<(string Key, object Value, SensitivityLevel Sensitivity)> entries = [];
         foreach (string key in legacyKeys)
         {

@@ -142,7 +142,9 @@ public sealed class IWorkflowContextExtensionsTests
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         state.Set("TestValue", FormulaValue.New("old-value"));
         state.Bind();
-        DeclarativeWorkflowContext context = new(new Mock<IWorkflowContext>().Object, state);
+        Mock<IWorkflowContext> source = new();
+        source.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        DeclarativeWorkflowContext context = new(source.Object, state);
 
         // Act
         await context.QueueStateUpdateAsync(PropertyPath.Create("Local.TestValue"), FormulaValue.New("new-value"), SensitivityLevel.Sensitive);
@@ -161,6 +163,7 @@ public sealed class IWorkflowContextExtensionsTests
         state.Bind();
 
         Mock<IWorkflowContext> source = new(MockBehavior.Loose);
+        source.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
         source
             .Setup(c => c.ReadStateAsync<object>(SystemScope.Names.LastMessageText, VariableScopeNames.System, default))
             .Returns(new ValueTask<object?>("secret-value"));
@@ -230,7 +233,9 @@ public sealed class IWorkflowContextExtensionsTests
             VariableScopeNames.Environment,
             SensitivityLevel.Sensitive);
         state.Bind();
-        DeclarativeWorkflowContext context = new(new Mock<IWorkflowContext>().Object, state);
+        Mock<IWorkflowContext> source = new();
+        source.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        DeclarativeWorkflowContext context = new(source.Object, state);
 
         // Act
         EvaluationResult<object?> evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("Env.SensitiveItems");

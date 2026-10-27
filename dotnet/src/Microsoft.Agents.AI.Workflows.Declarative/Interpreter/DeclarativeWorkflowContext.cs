@@ -155,7 +155,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         => this.Source.SendMessageAsync(message, targetId, cancellationToken);
 
-    public ValueTask UpdateStateAsync<T>(
+    public async ValueTask UpdateStateAsync<T>(
         string key,
         T? value,
         string? scopeName,
@@ -171,7 +171,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
-            return this.Source.QueueStateUpdateAsync(key, value, scopeName, cancellationToken);
+            await this.Source.QueueStateUpdateAsync(key, value, scopeName, cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         if (!ManagedScopes.Contains(scopeName!) && !allowSystem)
@@ -181,15 +182,28 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
         scopeName = WorkflowFormulaState.GetScopeName(scopeName);
 
-        return value switch
+        bool legacyEntry = await Kit.IWorkflowContextExtensions.HasLegacyTopicEntryAsync(this.Source, key, scopeName, forWrite: true, cancellationToken).ConfigureAwait(false);
+        switch (value)
         {
-            null => QueueEmptyStateAsync(),
-            UnassignedValue => QueueEmptyStateAsync(),
-            BlankValue => QueueEmptyStateAsync(),
-            FormulaValue formulaValue => QueueFormulaStateAsync(formulaValue),
-            DataValue dataValue => QueueDataValueStateAsync(dataValue),
-            _ => QueueNativeStateAsync(value),
-        };
+            case null:
+            case UnassignedValue:
+            case BlankValue:
+                await QueueEmptyStateAsync().ConfigureAwait(false);
+                break;
+            case FormulaValue formulaValue:
+                await QueueFormulaStateAsync(formulaValue).ConfigureAwait(false);
+                break;
+            case DataValue dataValue:
+                await QueueDataValueStateAsync(dataValue).ConfigureAwait(false);
+                break;
+            default:
+                await QueueNativeStateAsync(value).ConfigureAwait(false);
+                break;
+        }
+        if (legacyEntry)
+        {
+            await this.Source.QueueStateUpdateAsync<object>(key, null, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+        }
 
         async ValueTask QueueEmptyStateAsync()
         {
