@@ -293,8 +293,18 @@ def _normalized_key_operand(field: Any, operand: Any) -> Any:
 
 
 def _normalized_key_leaf(expression: Filter, field: Any) -> Filter:
-    """Return the leaf with its UUID key operands normalized when present."""
-    if field is None or field.field_type != "key" or field.type_ != "UUID":
+    """Return the leaf with its UUID key operands normalized when present.
+
+    Text operators keep string operands unchanged: they compare against the
+    stored key exactly as the canonical string was written, and a normalized
+    UUID would make ``starts_with`` and friends raise.
+    """
+    if (
+        field is None
+        or field.field_type != "key"
+        or field.type_ != "UUID"
+        or expression.operator in _TEXT_VALUE_OPERATORS
+    ):
         return expression
     value = expression.value
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):

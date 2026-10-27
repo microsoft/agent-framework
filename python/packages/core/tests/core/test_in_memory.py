@@ -1419,3 +1419,27 @@ async def test_in_memory_uuid_key_field_rejects_a_non_canonical_string_operand()
 
     with pytest.raises(TypeError, match="cannot compare field"):
         await collection.get(filter=Filter("id", "in", ("not-a-uuid",)))
+
+
+@pytest.mark.parametrize(
+    ("operator", "operand"),
+    [
+        ("starts_with", "00000000-0000-0000-0000-000000000001"),
+        ("ends_with", "00000000-0000-0000-0000-000000000001"),
+        ("contains_text", "00000000-0000-0000-0000-000000000001"),
+    ],
+)
+async def test_in_memory_uuid_key_text_operators_keep_the_canonical_string(
+    operator: str,
+    operand: str,
+) -> None:
+    """Text operators on a UUID key field compare the canonical string.
+
+    Normalizing the operand to UUID would make the string comparison raise
+    instead of matching.
+    """
+    collection = await _uuid_key_collection()
+
+    matched = await collection.get(filter=Filter("id", operator, operand))
+
+    assert [record.id for record in matched] == [UUID("00000000-0000-0000-0000-000000000001")]
