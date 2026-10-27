@@ -190,6 +190,66 @@ public class CheckpointResumeTests
         Assert.Equal("source", await restoringContext.ReadStateAsync<string>("value", "shared"));
     }
 
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread, false)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread, true)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, false)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, true)]
+    internal async Task Checkpoint_Restore_LaterFailurePreservesPublishedStateAsync(ExecutionEnvironment environment, bool failIndex)
+    {
+        // Arrange
+        InvalidOperationException failure = new("Checkpoint load failed.");
+        string? liveValue = null;
+        IWorkflowContext? restoringContext = null;
+        RestoreProbeExecutor source = new("source", async (context, cancellationToken) =>
+        {
+            restoringContext = context;
+            liveValue = "restored";
+            await context.QueueStateUpdateAsync("value", liveValue, "shared", cancellationToken);
+        }, () => failIndex ? true : throw failure);
+        Workflow workflow = new WorkflowBuilder(source).Build();
+        IndexFailureCheckpointManager manager = new();
+        CheckpointManager checkpoints = new(manager);
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment().WithCheckpointing(checkpoints);
+        CheckpointInfo? saved = null;
+        await using StreamingRun run = await env.RunStreamingAsync(workflow, 1);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+            {
+                saved = checkpoint;
+            }
+        }
+        Assert.NotNull(saved);
+
+        // Act
+        manager.IndexFailure = failIndex ? failure : null;
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await run.RestoreCheckpointAsync(saved));
+
+        // Assert
+        Assert.Same(failure, error);
+        Assert.Equal("restored", liveValue);
+        Assert.NotNull(restoringContext);
+        Assert.Equal(liveValue, await restoringContext.ReadStateAsync<string>("value", "shared"));
+    }
+
+    private sealed class IndexFailureCheckpointManager : ICheckpointManager
+    {
+        private readonly ICheckpointManager _inner = CheckpointManager.CreateInMemory();
+
+        public Exception? IndexFailure { get; set; }
+
+        public ValueTask<CheckpointInfo> CommitCheckpointAsync(string sessionId, Checkpoint checkpoint) =>
+            this._inner.CommitCheckpointAsync(sessionId, checkpoint);
+
+        public ValueTask<Checkpoint> LookupCheckpointAsync(string sessionId, CheckpointInfo checkpointInfo) =>
+            this._inner.LookupCheckpointAsync(sessionId, checkpointInfo);
+
+        public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null) =>
+            this.IndexFailure is { } failure ? throw failure : this._inner.RetrieveIndexAsync(sessionId, withParent);
+    }
+
     private sealed class RestoreProbeExecutor : Executor<int>, IResettableExecutor
     {
         private readonly Func<bool> _isRestored;

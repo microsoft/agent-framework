@@ -466,6 +466,113 @@ public class WorkflowFormulaStateTests
         Assert.True(hookInvoked);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ResumeAsync_PlainSensitivityAliasesRemainConsistentAsync(bool offThread, bool overwrite)
+    {
+        // Arrange
+        bool resuming = false;
+        StateExecutor source = new("source", (context, cancellationToken) =>
+            context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                new EvaluationResult<string>("initial", SensitivityLevel.Sensitive), VariableScopeNames.Topic, cancellationToken), this.State);
+        string expected = overwrite ? "updated" : "initial";
+        SensitivityLevel expectedSensitivity = overwrite ? SensitivityLevel.None : SensitivityLevel.Sensitive;
+        StateExecutor writer = new("writer", async (context, cancellationToken) =>
+        {
+            if (!resuming)
+            {
+                return;
+            }
+            if (overwrite)
+            {
+                await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<string>("updated", SensitivityLevel.None), VariableScopeNames.Topic, cancellationToken);
+            }
+            EvaluationResult<string?> result = await context.ReadStateWithSensitivityAsync<string>("TestValue", VariableScopeNames.Topic, cancellationToken);
+            Assert.Equal(expected, result.Value);
+            Assert.Equal(expectedSensitivity, result.Sensitivity);
+        });
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, writer).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? checkpoint = null;
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint ??= saved;
+                }
+            }
+        }
+        Assert.NotNull(checkpoint);
+
+        // Act
+        resuming = true;
+        CheckpointInfo? updatedCheckpoint = null;
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, checkpoint);
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+            if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+            {
+                updatedCheckpoint = saved;
+            }
+        }
+        Assert.NotNull(updatedCheckpoint);
+        await resumed.RestoreCheckpointAsync(updatedCheckpoint);
+
+        // Assert
+        Assert.Equal(expected, this.State.Get("TestValue").ToObject());
+        Assert.Equal(expectedSensitivity, this.State.GetSensitivity("TestValue"));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task EvaluateAsync_PlainSensitivityAliasesRemainConsistentAsync(bool offThread, bool overwrite)
+    {
+        // Arrange
+        StateExecutor source = new("source", async (context, cancellationToken) =>
+        {
+            await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                new EvaluationResult<string>("initial", SensitivityLevel.Sensitive), VariableScopeNames.Topic, cancellationToken);
+            EvaluationResult<string?> initial = await context.EvaluateValueWithSensitivityAsync<string>("Local.TestValue", cancellationToken);
+            Assert.Equal("initial", initial.Value);
+            Assert.Equal(SensitivityLevel.Sensitive, initial.Sensitivity);
+            if (overwrite)
+            {
+                await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<string>("updated", SensitivityLevel.None), VariableScopeNames.Topic, cancellationToken);
+            }
+
+            EvaluationResult<string?> read = await context.ReadStateWithSensitivityAsync<string>("TestValue", VariableScopeNames.Topic, cancellationToken);
+            EvaluationResult<string?> evaluated = await context.EvaluateValueWithSensitivityAsync<string>("Local.TestValue", cancellationToken);
+
+            // Assert
+            Assert.Equal(overwrite ? "updated" : "initial", read.Value);
+            Assert.Equal(overwrite ? SensitivityLevel.None : SensitivityLevel.Sensitive, read.Sensitivity);
+            Assert.Equal(read.Value, evaluated.Value);
+            Assert.Equal(read.Sensitivity, evaluated.Sensitivity);
+        });
+        Workflow workflow = new WorkflowBuilder(source).Build();
+        var environment = offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep;
+
+        // Act
+        await using StreamingRun run = await environment.RunStreamingAsync(workflow, 1);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+        }
+    }
+
     private static async ValueTask SeedLegacyStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         await context.QueueStateUpdateAsync("TestValue", "legacy", VariableScopeNames.Topic, cancellationToken);

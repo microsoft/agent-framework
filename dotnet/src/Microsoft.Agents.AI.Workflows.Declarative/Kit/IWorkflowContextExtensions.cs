@@ -200,7 +200,7 @@ public static class IWorkflowContextExtensions
             return new(declarativeValue, declarativeSensitivity);
         }
 
-        string plainScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
+        string plainScopeName = GetPlainScopeName(scopeName);
         TValue? value = await context.ReadStateAsync<TValue>(key, plainScopeName, cancellationToken).ConfigureAwait(false);
         SensitivityLevel sensitivity = ShouldPersistSensitivity(plainScopeName)
             ? await context.ReadStateAsync<SensitivityLevel>(key, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false)
@@ -232,7 +232,7 @@ public static class IWorkflowContextExtensions
             return;
         }
 
-        string plainScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
+        string plainScopeName = GetPlainScopeName(scopeName);
         await context.QueueStateUpdateAsync(key, value.Value, plainScopeName, cancellationToken).ConfigureAwait(false);
         if (ShouldPersistSensitivity(plainScopeName))
         {
@@ -329,6 +329,9 @@ public static class IWorkflowContextExtensions
 
     private static SensitivityLevel MaxSensitivity(SensitivityLevel left, SensitivityLevel right) =>
         left == SensitivityLevel.Sensitive || right == SensitivityLevel.Sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;
+
+    private static string GetPlainScopeName(string? scopeName) =>
+        scopeName is null || VariableScopeNames.IsValidName(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
 
     private static bool ShouldPersistSensitivity(string scopeName) =>
         DeclarativeWorkflowContext.ManagedScopes.Contains(scopeName) ||
