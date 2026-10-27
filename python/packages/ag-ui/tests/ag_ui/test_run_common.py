@@ -1125,6 +1125,13 @@ def test_snapshot_replay_after_projection_gap_keeps_original_occurrences(outcome
     ]
     if outcome is not None:
         stored.append({"id": "result", "role": "tool", "toolCallId": "meeting", "content": outcome})
+    # Mix a completed native approval with the parallel frontend completed/pending call.
+    stored[3]["toolCalls"].append(
+        {"id": "native-call", "type": "function", "function": {"name": "publish", "arguments": "{}"}}
+    )
+    stored.append(
+        {"id": "native-result", "role": "tool", "toolCallId": "native-call", "content": "Published after approval"}
+    )
     incoming = [dict(message) for message in stored]
     incoming[1] = {"id": "client-a1", "role": "assistant", "content": "Different live projection"}
     incoming[2] = {**incoming[2], "content": "Client edit must not replace canonical history"}
