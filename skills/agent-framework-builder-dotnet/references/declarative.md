@@ -22,6 +22,8 @@ commitments.
 
 - Supply the chat clients, project clients, connections, tools, and external handlers the definition references.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
+- When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
+  to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.

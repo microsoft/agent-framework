@@ -558,7 +558,7 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
 
 
-async def test_load_tools_skips_task_capable_tools(caplog: pytest.LogCaptureFixture) -> None:
+async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptureFixture) -> None:
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -593,19 +593,18 @@ async def test_load_tools_skips_task_capable_tools(caplog: pytest.LogCaptureFixt
     with caplog.at_level(logging.WARNING, logger=logger.name):
         await tool.load_tools()
 
-    assert [function.name for function in tool.functions] == ["forbidden", "ordinary"]
-    assert tool._tool_call_meta_by_name == {}
-    assert set(tool._tool_param_names_by_name) == {"forbidden", "ordinary"}
-    for tool_name in ("required", "optional"):
-        assert (
-            f"Skipping MCP tool '{tool_name}' because it (might) require the Tasks extension, "
-            "which MCP Python SDK 2.2 does not implement."
-        ) in caplog.messages
+    assert [function.name for function in tool.functions] == ["optional", "forbidden", "ordinary"]
+    assert tool._tool_call_meta_by_name == {"optional": {"mode": "optional"}}
+    assert set(tool._tool_param_names_by_name) == {"optional", "forbidden", "ordinary"}
+    skip_messages = [message for message in caplog.messages if message.startswith("Skipping MCP tool")]
+    assert skip_messages == [
+        "Skipping MCP tool 'required' because it requires the Tasks extension, which this client does not support."
+    ]
 
     for function in tool.functions:
         await function.invoke(arguments={})
 
-    assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["forbidden", "ordinary"]
+    assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["optional", "forbidden", "ordinary"]
 
 
 async def test_tool_refresh_preserves_prompt_when_server_advertises_same_raw_name() -> None:
@@ -1424,6 +1423,17 @@ def test_mcp_host_payload_size_limit_must_be_positive_or_none() -> None:
 
     unlimited = MCPTool(name="unlimited", max_host_payload_size_bytes=None)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     assert unlimited.max_host_payload_size_bytes is None
+
+
+def test_mcp_request_timeout_must_be_positive_or_none() -> None:
+    with pytest.raises(ValueError, match="positive or None"):
+        MCPTool(name="invalid", request_timeout=0)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    with pytest.raises(ValueError, match="positive or None"):
+        MCPStdioTool(name="invalid", command="test-command", request_timeout=-1)
+
+    unlimited = MCPTool(name="unlimited", request_timeout=None)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    assert unlimited.request_timeout is None
 
 
 def test_mcp_host_payload_size_boundary_uri_serialization_and_early_abort(
@@ -5583,6 +5593,25 @@ async def test_connect_preserves_request_timeout_over_24_hours() -> None:
 
         async with tool:
             assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
+
+
+async def test_connect_revalidates_request_timeout_cleared_after_construction() -> None:
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+        request_timeout=60,
+    )
+    tool.request_timeout = 0
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        with pytest.raises(ValueError, match="request_timeout must be positive or None."):
+            await tool.connect()
+
+        assert mock_client_class.call_count == 0
 
 
 async def test_connect_retains_and_close_clears_sdk_client() -> None:

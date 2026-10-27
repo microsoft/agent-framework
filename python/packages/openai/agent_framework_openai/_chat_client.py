@@ -72,6 +72,7 @@ from agent_framework._types import (
     Role,
     TextSpanRegion,
     UsageDetails,
+    _get_annotation_text_span_regions,  # pyright: ignore[reportPrivateUsage]
     _set_operation_state,  # pyright: ignore[reportPrivateUsage]
     detect_media_type_from_base64,
     get_namespaced_value,
@@ -87,6 +88,7 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.types.responses import (
     FunctionShellToolParam,
     ResponseCustomToolCall,
+    ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
     ResponseFunctionToolCallOutputItem,
@@ -161,6 +163,25 @@ logger = logging.getLogger("agent_framework.openai")
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 _TERMINAL_RESPONSE_STATUSES: Final[frozenset[str]] = frozenset({"completed", "failed", "incomplete", "cancelled"})
+
+
+class _OpenAIResponseStreamError(RuntimeError):
+    """Retain the provider metadata from a flat Responses API error event."""
+
+    def __init__(self, event: ResponseErrorEvent) -> None:
+        self.event = event
+        self.code = event.code
+        self.message = event.message
+        self.param = event.param
+        error_details = event.message
+        if event.code:
+            error_details = f"{event.code}: {error_details}"
+        if event.param:
+            error_details = f"{error_details} (parameter: {event.param})"
+        super().__init__(f"OpenAI streaming error: {error_details}")
+
+    def __reduce__(self) -> tuple[type[_OpenAIResponseStreamError], tuple[ResponseErrorEvent], dict[str, Any]]:
+        return type(self), (self.event,), self.__dict__
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -510,7 +531,8 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
 
     Each Responses API annotation dict carries at most one `start_index`/`end_index` pair, so an
     `Annotation` with multiple `annotated_regions` is fanned out into one entry per region.
-    Regions missing valid integer span bounds are skipped.
+    Regions missing valid integer span bounds are skipped. Source-coordinate regions
+    are retained on the framework annotation but are not emitted as generated-text spans.
     """
     if not annotations:
         return []
@@ -519,7 +541,7 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
         if annotation.get("type") != "citation":
             continue
         props = annotation.get("additional_properties") or {}
-        regions = annotation.get("annotated_regions") or []
+        regions = _get_annotation_text_span_regions(annotation)
         file_id = annotation.get("file_id")
         url = annotation.get("url")
         title = annotation.get("title")
@@ -3936,12 +3958,7 @@ class RawOpenAIChatClient(
             # ResponseCustomToolCallInputDeltaEvent,
             # ResponseCustomToolCallInputDoneEvent,
             case "error":
-                error_details = event.message
-                if event.code:
-                    error_details = f"{event.code}: {error_details}"
-                if event.param:
-                    error_details = f"{error_details} (parameter: {event.param})"
-                self._handle_request_error(RuntimeError(f"OpenAI streaming error: {error_details}"))
+                self._handle_request_error(_OpenAIResponseStreamError(event))
             case "response.content_part.added":
                 event_part = event.part
                 match event_part.type:
@@ -4505,6 +4522,55 @@ class RawOpenAIChatClient(
                         seen_function_call_output_ids, done_item
                     ):
                         contents.append(self._parse_function_call_output_content(output_item, done_call_id))
+                elif getattr(done_item, "type", None) == "code_interpreter_call":
+                    # The completed item is the only place `outputs` (logs/images) are ever
+                    # delivered during streaming - there is no incremental outputs event for them -
+                    # and its `code` is the authoritative final value, so both are tagged `replace`
+                    # even though `code_interpreter_call_code.done` (above) usually already set the code.
+                    call_id = getattr(done_item, "call_id", None) or getattr(done_item, "id", None)
+                    outputs: list[Content] = []
+                    if done_item_outputs := getattr(done_item, "outputs", None):
+                        for code_output in done_item_outputs:
+                            if getattr(code_output, "type", None) == "logs":
+                                outputs.append(
+                                    Content.from_text(
+                                        text=code_output.logs,
+                                        raw_representation=code_output,
+                                    )
+                                )
+                            elif getattr(code_output, "type", None) == "image":
+                                outputs.append(
+                                    Content.from_uri(
+                                        uri=code_output.url,
+                                        raw_representation=code_output,
+                                        media_type="image",
+                                    )
+                                )
+                    if done_item_code := getattr(done_item, "code", None):
+                        contents.append(
+                            Content.from_code_interpreter_tool_call(
+                                call_id=call_id,
+                                inputs=[
+                                    Content.from_text(
+                                        text=done_item_code,
+                                        merge_mode="replace",
+                                        raw_representation=done_item,
+                                    )
+                                ],
+                                status=_provider_status(getattr(done_item, "status", None)),
+                                merge_mode="replace",
+                                raw_representation=done_item,
+                            )
+                        )
+                    contents.append(
+                        Content.from_code_interpreter_tool_result(
+                            call_id=call_id,
+                            outputs=outputs,
+                            status=_provider_status(getattr(done_item, "status", None)),
+                            merge_mode="replace",
+                            raw_representation=done_item,
+                        )
+                    )
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:
