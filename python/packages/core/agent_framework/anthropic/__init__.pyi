@@ -11,7 +11,7 @@ from agent_framework_anthropic import (
     RawAnthropicFoundryClient,
     RawAnthropicVertexClient,
 )
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, RawClaudeAgent
 
 __all__ = [
     "AnthropicBedrockClient",
@@ -25,4 +25,5 @@ __all__ = [
     "RawAnthropicClient",
     "RawAnthropicFoundryClient",
     "RawAnthropicVertexClient",
+    "RawClaudeAgent",
 ]
