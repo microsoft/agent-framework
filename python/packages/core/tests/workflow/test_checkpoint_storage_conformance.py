@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -203,7 +204,6 @@ async def test_file_save_rejects_case_variant_checkpoint_id(tmp_path: Path) -> N
     assert (await storage.load("Round-A")).state["marker"] == "first-updated"
 
 
-
 async def test_file_load_rejects_case_variant_checkpoint_id(tmp_path: Path) -> None:
     """A variant ID must not read another checkpoint's data (#9466 review).
 
@@ -279,7 +279,8 @@ async def test_concurrent_variant_saves_do_not_overwrite(tmp_path: Path) -> None
     assert len(saved_ids) == 1
 
     # Whichever spelling won keeps its own data; nothing is silently replaced.
-    stored = await storage.list_checkpoint_ids(workflow_name=f"{'upper' if saved_ids[0] == 'Round-B' else 'lower'}-workflow")
+    workflow_name = f"{'upper' if saved_ids[0] == 'Round-B' else 'lower'}-workflow"
+    stored = await storage.list_checkpoint_ids(workflow_name=workflow_name)
     assert stored == [saved_ids[0]]
     assert (await storage.load(saved_ids[0])).state["marker"] == ("upper" if saved_ids[0] == "Round-B" else "lower")
 
@@ -340,3 +341,129 @@ async def test_file_save_rejects_normalization_variant_checkpoint_id(tmp_path: P
     # Re-saving the exact same spelling remains a normal update.
     first.state["marker"] = "first-updated"
     assert await storage.save(first) == first_spelling
+
+
+async def test_decomposed_listing_uses_persisted_checkpoint_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HFS+ spelling changes must not hide or conflate checkpoint identities."""
+    import unicodedata
+
+    nfc = unicodedata.normalize("NFC", "café-identity")
+    nfd = unicodedata.normalize("NFD", nfc)
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    first = WorkflowCheckpoint(
+        workflow_name="first-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id=nfc,
+        state={"marker": "first"},
+    )
+    await storage.save(first)
+
+    original_iterdir = Path.iterdir
+    original_validate = storage._validate_file_path
+
+    def decomposed_iterdir(path: Path):
+        if path == storage.storage_path:
+            return iter([Path(f"{nfd}.json")])
+        return original_iterdir(path)
+
+    def folded_validate(checkpoint_id: str) -> Path:
+        if checkpoint_id == nfd:
+            return storage.storage_path / f"{nfc}.json"
+        return original_validate(checkpoint_id)
+
+    monkeypatch.setattr(Path, "iterdir", decomposed_iterdir)
+    monkeypatch.setattr(storage, "_validate_file_path", folded_validate)
+
+    second = WorkflowCheckpoint(
+        workflow_name="second-workflow",
+        graph_signature_hash="topology-b",
+        checkpoint_id=nfd,
+        state={"marker": "second"},
+    )
+    with pytest.raises(WorkflowCheckpointException, match="collides"):
+        await storage.save(second)
+
+    first.state["marker"] = "first-updated"
+    assert await storage.save(first) == nfc
+    restored = await storage.load(nfc)
+    assert restored.checkpoint_id == nfc
+    assert restored.state["marker"] == "first-updated"
+    assert await storage.delete(nfc) is True
+
+
+async def test_file_delete_absent_variant_returns_false_on_case_sensitive_filesystem(tmp_path: Path) -> None:
+    """An absent independent ID returns False even when a folded sibling exists."""
+    if _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("missing-variant delete contract requires a case-sensitive filesystem")
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    checkpoint = WorkflowCheckpoint(
+        workflow_name="first-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id="Round-A",
+        state={"marker": "first"},
+    )
+    await storage.save(checkpoint)
+
+    assert await storage.delete("round-a") is False
+    assert (await storage.load("Round-A")).state["marker"] == "first"
+
+
+@pytest.mark.parametrize("operation", ["save", "load", "delete"])
+async def test_file_directory_verification_stays_off_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """A slow directory scan must not stall unrelated event-loop work."""
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    checkpoint = WorkflowCheckpoint(
+        workflow_name="workflow",
+        graph_signature_hash="topology",
+        checkpoint_id="Round-C",
+        state={"marker": "value"},
+    )
+    await storage.save(checkpoint)
+
+    original_iterdir = Path.iterdir
+    release_scan = threading.Event()
+
+    def slow_iterdir(path: Path):
+        if path != storage.storage_path:
+            return original_iterdir(path)
+
+        def entries():
+            release_scan.wait(timeout=5)
+            for index in range(2000):
+                yield Path(f"other-{index}.json")
+            yield from original_iterdir(path)
+
+        return entries()
+
+    monkeypatch.setattr(Path, "iterdir", slow_iterdir)
+    beats = 0
+    stop_heartbeat = False
+
+    async def heartbeat() -> None:
+        nonlocal beats
+        while not stop_heartbeat:
+            beats += 1
+            await asyncio.sleep(0.005)
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0)
+    timer = threading.Timer(0.1, release_scan.set)
+    timer.start()
+    try:
+        if operation == "save":
+            await storage.save(checkpoint)
+        elif operation == "load":
+            await storage.load(checkpoint.checkpoint_id)
+        else:
+            await storage.delete(checkpoint.checkpoint_id)
+    finally:
+        release_scan.set()
+        stop_heartbeat = True
+        timer.join()
+        await heartbeat_task
+
+    assert beats >= 3, f"{operation} blocked the event loop during directory verification"

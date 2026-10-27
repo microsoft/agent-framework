@@ -17,7 +17,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypeAlias, cast
 
 from ..exceptions import WorkflowCheckpointException
 
@@ -648,47 +648,41 @@ class FileCheckpointStorage:
         return file_path
 
     @staticmethod
-    def _assert_no_variant_collision(file_path: Path, checkpoint_id: CheckpointID) -> None:
-        """Reject an ID that the filesystem cannot store as an independent file.
+    def _read_stored_checkpoint_id(file_path: Path) -> CheckpointID:
+        """Read the persisted identity used to distinguish filesystem aliases."""
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                encoded_checkpoint = json.load(f)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.") from exc
+        if not isinstance(encoded_checkpoint, dict):
+            raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
+        checkpoint_data = cast("dict[str, Any]", encoded_checkpoint)
+        stored_id = checkpoint_data.get("checkpoint_id")
+        if not isinstance(stored_id, str):
+            raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
+        return stored_id
 
-        On case-insensitive filesystems (the default on Windows and macOS),
-        ``Round-A.json`` and ``round-a.json`` name the same file, so a save under
-        the variant spelling would silently replace the other checkpoint and its
-        reads would then return the wrong workflow's state (#9444). APFS and HFS+
-        additionally fold Unicode normalization forms, so ``café-1.json`` spelled
-        NFC and NFD is also one file there (#9466 review). On filesystems without
-        those folds the variant path simply does not exist, so the directory scan
-        below is skipped entirely there.
-        """
+    @staticmethod
+    def _assert_no_variant_collision(file_path: Path, checkpoint_id: CheckpointID) -> None:
+        """Reject an ID that the filesystem cannot store as an independent file."""
         if not file_path.exists():
             return
-        # Derive the expected spelling from the requested ID, not the resolved
-        # path: on Windows Path.resolve() canonicalizes an existing file to its
-        # on-disk casing, so file_path.name would already be the colliding
-        # name and the check below would accept the overwrite (#9444).
+        # Use the requested spelling because resolve() can return the on-disk casing on Windows.
         expected_name = f"{checkpoint_id}.json"
         try:
             siblings = [entry.name for entry in file_path.parent.iterdir()]
         except OSError as exc:
-            # Permissions can allow lookup/creation/replacement while denying
-            # enumeration, so skipping the scan here would let a variant
-            # save proceed unchecked. Fail closed instead.
             raise WorkflowCheckpointException(
                 f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
                 "the storage directory could not be listed."
             ) from exc
-        # The filesystem key is the NFC-normalized, case-folded spelling: both
-        # folds are lossy on the volumes that perform them, so two IDs sharing
-        # a key cannot coexist there. str.casefold() alone does not normalize.
         expected_key = _fs_key(expected_name)
-        variant = next(
-            (name for name in siblings if name != expected_name and _fs_key(name) == expected_key),
-            None,
-        )
-        if variant is None or expected_name in siblings:
-            # No filesystem-folded variant exists, or the exact spelling is
-            # already stored (a same-ID update on a volume where distinct
-            # spellings legitimately coexist).
+        variant = next((name for name in siblings if _fs_key(name) == expected_key), None)
+        if variant is None:
+            return
+        # Decomposing filesystems can return an exact spelling that still belongs to another ID.
+        if FileCheckpointStorage._read_stored_checkpoint_id(file_path) == checkpoint_id:
             return
         raise WorkflowCheckpointException(
             f"Checkpoint ID {checkpoint_id!r} collides with the existing checkpoint "
@@ -699,29 +693,34 @@ class FileCheckpointStorage:
         )
 
     @staticmethod
-    def _assert_stored_spelling(file_path: Path, checkpoint_id: CheckpointID) -> None:
-        """Refuse to act on a file that only a filesystem fold resolved to.
+    def _assert_stored_spelling(
+        file_path: Path,
+        checkpoint_id: CheckpointID,
+        encoded_checkpoint: dict[str, Any] | None = None,
+    ) -> None:
+        """Refuse to act on a file that belongs to another checkpoint ID.
 
-        On a case- or normalization-folding volume, ``load("round-a")`` resolves
-        to the stored ``Round-A.json`` and would read another checkpoint's data;
-        ``delete("round-a")`` would remove it. Under the fail-closed policy a
-        variant ID names no checkpoint at all, so both operations must stop
-        where the stored spelling differs (#9466 review).
+        Filesystems can change the spelling returned by directory enumeration,
+        so the persisted checkpoint ID, rather than the filename alone, decides identity.
         """
         expected_name = f"{checkpoint_id}.json"
         try:
             siblings = [entry.name for entry in file_path.parent.iterdir()]
         except OSError as exc:
-            # Enumeration can fail where lookup succeeds; acting on a fold we
-            # could not inspect is exactly the aliasing this guard prevents.
             raise WorkflowCheckpointException(
                 f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
                 "the storage directory could not be listed."
             ) from exc
-        if expected_name in siblings:
-            return
         variant = next((name for name in siblings if _fs_key(name) == _fs_key(expected_name)), None)
         if variant is None:
+            return
+        if encoded_checkpoint is None:
+            stored_id = FileCheckpointStorage._read_stored_checkpoint_id(file_path)
+        elif isinstance(encoded_checkpoint, dict) and isinstance(encoded_checkpoint.get("checkpoint_id"), str):
+            stored_id = encoded_checkpoint["checkpoint_id"]
+        else:
+            raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
+        if stored_id == checkpoint_id:
             return
         raise WorkflowCheckpointException(
             f"No checkpoint found with ID {checkpoint_id}: the stored checkpoint is spelled "
@@ -917,17 +916,21 @@ class FileCheckpointStorage:
                 checkpoint and the other one's data is not read.
         """
         file_path = self._validate_file_path(checkpoint_id)
-        self._assert_stored_spelling(file_path, checkpoint_id)
-
-        if not file_path.exists():
-            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
         def _read() -> dict[str, Any]:
+            if not file_path.exists():
+                raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
             with open(file_path, encoding="utf-8") as f:
-                return json.load(f)
+                encoded_checkpoint = json.load(f)
+            self._assert_stored_spelling(file_path, checkpoint_id, encoded_checkpoint)
+            return encoded_checkpoint
 
         try:
             encoded_checkpoint = await asyncio.to_thread(_read)
+        except WorkflowCheckpointException:
+            raise
+        except FileNotFoundError as ex:
+            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}") from ex
         except UnicodeDecodeError as ex:
             raise WorkflowCheckpointException(
                 f"Checkpoint file for {checkpoint_id} is not valid UTF-8 and cannot be loaded."
@@ -992,11 +995,13 @@ class FileCheckpointStorage:
                 storage directory cannot be listed to rule that out.
         """
         file_path = self._validate_file_path(checkpoint_id)
-        self._assert_stored_spelling(file_path, checkpoint_id)
         file_lock = self._delete_lock(file_path)
 
         def _delete() -> bool:
             with file_lock:
+                if not file_path.exists():
+                    return False
+                self._assert_stored_spelling(file_path, checkpoint_id)
                 try:
                     file_path.unlink()
                 except FileNotFoundError:
