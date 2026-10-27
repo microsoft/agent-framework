@@ -1230,6 +1230,45 @@ class TestFileSessionStore:
         assert isinstance(restored.state["value"].message, Message)
         assert restored.state["value"].message.text == "persisted"
 
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_registered_pydantic_state_with_aliased_nested_message(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict, Field
+
+        class PydanticAliasedMessageState(BaseModel):
+            model_config = ConfigDict(
+                arbitrary_types_allowed=True,
+                serialize_by_alias=True,
+                loc_by_alias=False,
+            )
+
+            last_message: Message = Field(alias="lastMessage")
+
+        register_state_type(
+            PydanticAliasedMessageState,
+            type_id=f"pydantic_aliased_message_state_{serialization_format}_test",
+        )
+        session = AgentSession(session_id=f"aliased-{serialization_format}")
+        session.state["value"] = PydanticAliasedMessageState(lastMessage=Message(role="user", contents=["persisted"]))
+
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
+            "tenant_aliased-message", session
+        )
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get(
+            "tenant_aliased-message"
+        )
+
+        assert restored is not None
+        assert isinstance(restored.state["value"], PydanticAliasedMessageState)
+        assert isinstance(restored.state["value"].last_message, Message)
+        assert restored.state["value"].last_message.text == "persisted"
+        files = await asyncio.to_thread(lambda: list(tmp_path.iterdir()))
+        assert len(files) == 1
+        serialized = await asyncio.to_thread(files[0].read_bytes)
+        assert b"lastMessage" in serialized
+        assert b"last_message" not in serialized
+
     async def test_round_trips_binary_messagepack_session(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path, serialization_format="msgpack")
         session = AgentSession(session_id="binary-session")
