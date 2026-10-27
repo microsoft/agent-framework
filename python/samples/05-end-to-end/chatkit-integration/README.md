@@ -169,7 +169,7 @@ For **production deployment**:
 
 ```bash
 cd python/samples/05-end-to-end/chatkit-integration
-pip install agent-framework-chatkit agent-framework-foundry fastapi uvicorn azure-identity
+pip install agent-framework-chatkit agent-framework-foundry fastapi uvicorn azure-identity --pre
 ```
 
 2. **Configure Microsoft Foundry:**
