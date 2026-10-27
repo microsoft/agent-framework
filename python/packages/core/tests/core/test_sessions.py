@@ -1244,6 +1244,36 @@ class TestFileSessionStore:
         temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
         assert not temp_files
 
+    async def test_set_long_session_id_atomic_write_does_not_overflow_path(self, tmp_path: Path) -> None:
+        """Verify atomic set succeeds for maximum length session IDs close to MAX_PATH limits.
+
+        Fixes issue #9682 where the temp file name included the full snapshot name plus 38 chars,
+        causing FileNotFoundError on Windows when the final path was within limits but the temp path overflowed.
+        """
+        session_id = "s" * FileSessionStore.MAX_SESSION_ID_LENGTH
+        base_len = len(str(tmp_path))
+        # Desired final snapshot path length around 245 (within 260 character Windows MAX_PATH limit)
+        # Snapshot filename is 128 ('s' * 128) + 5 ('.json') = 133 chars
+        target_dir = tmp_path
+        needed_sub_len = 245 - base_len - 134
+        if needed_sub_len > 0:
+            target_dir = tmp_path / ("d" * needed_sub_len)
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+        store = FileSessionStore(target_dir)
+        session = AgentSession(session_id=session_id)
+        session.state["key"] = "value"
+
+        await store.set(session_id, session)
+
+        stored = await store.get(session_id)
+        assert stored is not None
+        assert stored.session_id == session_id
+        assert stored.state.get("key") == "value"
+
+        temp_files = await asyncio.to_thread(lambda: [*target_dir.glob("*.tmp"), *target_dir.glob(".*.tmp")])
+        assert not temp_files
+
     async def test_corrupt_session_file_is_quarantined_and_retry_returns_none(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
         await store.set("session-1", AgentSession(session_id="session-1"))

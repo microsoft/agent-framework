@@ -2148,7 +2148,9 @@ class FileSessionStore(SessionStore):
 
         def _write() -> None:
             with file_lock:
-                temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
+                # Use a short, ID-independent temp filename so that long session IDs
+                # close to the MAX_PATH limit on Windows do not overflow when saving.
+                temp_path = file_path.with_name(f".{uuid.uuid4().hex}.tmp")
                 try:
                     temp_path.write_bytes(serialized)
                     os.replace(temp_path, file_path)
