@@ -558,7 +558,7 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
 
 
-async def test_load_tools_skips_task_capable_tools(caplog: pytest.LogCaptureFixture) -> None:
+async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptureFixture) -> None:
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -593,19 +593,18 @@ async def test_load_tools_skips_task_capable_tools(caplog: pytest.LogCaptureFixt
     with caplog.at_level(logging.WARNING, logger=logger.name):
         await tool.load_tools()
 
-    assert [function.name for function in tool.functions] == ["forbidden", "ordinary"]
-    assert tool._tool_call_meta_by_name == {}
-    assert set(tool._tool_param_names_by_name) == {"forbidden", "ordinary"}
-    for tool_name in ("required", "optional"):
-        assert (
-            f"Skipping MCP tool '{tool_name}' because it (might) require the Tasks extension, "
-            "which MCP Python SDK 2.2 does not implement."
-        ) in caplog.messages
+    assert [function.name for function in tool.functions] == ["optional", "forbidden", "ordinary"]
+    assert tool._tool_call_meta_by_name == {"optional": {"mode": "optional"}}
+    assert set(tool._tool_param_names_by_name) == {"optional", "forbidden", "ordinary"}
+    skip_messages = [message for message in caplog.messages if message.startswith("Skipping MCP tool")]
+    assert skip_messages == [
+        "Skipping MCP tool 'required' because it requires the Tasks extension, which this client does not support."
+    ]
 
     for function in tool.functions:
         await function.invoke(arguments={})
 
-    assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["forbidden", "ordinary"]
+    assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["optional", "forbidden", "ordinary"]
 
 
 async def test_tool_refresh_preserves_prompt_when_server_advertises_same_raw_name() -> None:
