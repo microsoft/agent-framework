@@ -26,7 +26,7 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
-from microsoft_agents.hosting.aiohttp import CloudAdapter, start_agent_process
+from microsoft_agents.hosting.aiohttp import CloudAdapter, jwt_authorization_decorator, start_agent_process
 from microsoft_agents.hosting.core import (
     AgentApplication,
     AgentAuthConfiguration,
@@ -166,24 +166,12 @@ def build_agent_application(
     )
 
 
-def build_anonymous_claims_middleware(use_anonymous_mode: bool):
-    """Return a middleware that injects anonymous claims when enabled.
-
-    Args:
-        use_anonymous_mode: Whether to apply anonymous identity for each request.
-    Returns:
-        Callable: Aiohttp middleware function.
-    """
-
-    @middleware
-    async def anonymous_claims_middleware(request, handler):
-        """Inject claims for anonymous users if anonymous mode is active."""
-        if use_anonymous_mode:
-            # An anonymous identity with no claims makes the adapter skip token acquisition.
-            request["claims_identity"] = ClaimsIdentity(authentication_type="Anonymous")
-        return await handler(request)
-
-    return anonymous_claims_middleware
+@middleware
+async def anonymous_claims_middleware(request, handler):
+    """Inject an anonymous identity for local testing without authentication."""
+    # An anonymous identity with no claims makes the adapter skip token acquisition.
+    request["claims_identity"] = ClaimsIdentity(authentication_type="Anonymous")
+    return await handler(request)
 
 
 def create_app(config: AppConfig) -> web.Application:
@@ -194,8 +182,7 @@ def create_app(config: AppConfig) -> web.Application:
     Returns:
         web.Application: Fully initialized web application.
     """
-    middleware_fn = build_anonymous_claims_middleware(config.use_anonymous_mode)
-    app = web.Application(middlewares=[middleware_fn])
+    app = web.Application(middlewares=[anonymous_claims_middleware] if config.use_anonymous_mode else [])
 
     storage = MemoryStorage()
     agent = build_agent()
@@ -220,6 +207,12 @@ def create_app(config: AppConfig) -> web.Application:
 
     async def entry_point(req: web.Request) -> web.Response:
         return await start_agent_process(req, req.app["agent_app"], req.app["adapter"])
+
+    if not config.use_anonymous_mode:
+        # Validate the bearer token on every incoming activity; requests with a missing or
+        # invalid token get a 401 before they reach the agent.
+        app["agent_configuration"] = connection_manager.get_default_connection_configuration()
+        entry_point = jwt_authorization_decorator(entry_point)
 
     app.add_routes([
         web.get("/api/health", health),
