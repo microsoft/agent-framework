@@ -62,6 +62,10 @@ resumes the registered invocation only after a matching approval response.
 including `tools/list`, and disposes it before completing. The handler retains
 no per-invocation state or shared disposable resources.
 
+Standalone GET/SSE streams for unsolicited server messages are disabled because
+this handler performs request-scoped tool operations, not background subscriptions.
+SSE responses to individual tool requests remain supported.
+
 Each handler-created HTTP client is disposed with its invocation. These clients
 can reuse factory-managed HTTP handlers through the
 `DefaultMcpToolHandler(IHttpClientFactory, string)` constructor. The second

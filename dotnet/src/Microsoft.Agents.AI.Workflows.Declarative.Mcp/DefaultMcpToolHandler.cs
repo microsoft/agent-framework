@@ -25,6 +25,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// Every invocation creates and disposes a separate MCP client, including <c>tools/list</c>.
 /// Factory-created HTTP clients reuse factory-managed handlers without sharing MCP session state.
 /// Without a factory, each invocation owns a dedicated HTTP handler.
+/// Standalone GET streams for unsolicited server messages are disabled; request-scoped SSE responses remain supported.
 /// The handler owns no shared disposable resources. The host must await its invocations before disposing
 /// the application-owned factory infrastructure.
 /// Non-cancellation session and transport cleanup failures are reported through <see cref="Trace"/> warnings without replacing
@@ -183,7 +184,8 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
             // legacy HTTP+SSE transport, which trusts a server-advertised message endpoint. That
             // server-controlled endpoint is the primary vector for redirecting the Authorization token
             // to a different origin; Streamable HTTP keeps every request on the configured origin.
-            TransportMode = HttpTransportMode.StreamableHttp
+            TransportMode = HttpTransportMode.StreamableHttp,
+            EnableStandaloneGetStream = false
         };
 
         HttpClient httpClient;

@@ -233,6 +233,12 @@ Non-DI fallback clients retain explicit defaults: cookies disabled, automatic
 redirects disabled, certificate revocation checking, Streamable HTTP, and
 origin-bound credential handling. Factory defaults alone are not a substitute.
 
+Disable the SDK's standalone GET/SSE stream for unsolicited server messages.
+Unattended tool invocations do not require a background subscription channel.
+This avoids opening and closing that channel for each legacy initialization;
+request-scoped SSE responses to tool calls remain supported. This policy applies
+to both factory-backed and non-DI calls and does not change session ownership.
+
 The integration does not silently replace application factory clients'
 pipelines. Configure their primary handlers with cookies and automatic redirects
 disabled and certificate revocation checking enabled. Any credential-injecting

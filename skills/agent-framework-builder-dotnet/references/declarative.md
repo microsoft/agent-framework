@@ -25,6 +25,8 @@ commitments.
 - `DefaultMcpToolHandler` creates and disposes an MCP client per invocation, including discovery; it does not retain
   implicit server-side session state across calls, approval waits, or checkpoint resumes. Use explicit state handles
   or a custom handler with a documented session-lifetime contract when continuity is required.
+- Standalone MCP GET/SSE streams for unsolicited messages are disabled; request-scoped SSE tool responses remain
+  supported. Use an explicitly scoped integration for background subscriptions.
 - Prefer `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
   configuration for HTTP handler reuse and rotation. Factory-created clients are disposed per invocation; the
   factory remains application-owned. The parameterless non-DI fallback owns a dedicated HTTP handler per invocation.

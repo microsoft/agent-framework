@@ -23,6 +23,27 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 /// </summary>
 public sealed class DefaultMcpToolHandlerLifetimeTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RequestOnlyInvocation_DoesNotOpenStandaloneStreamAsync(bool useEventStream)
+    {
+        // Arrange
+        ProtocolStub stub = new() { UseEventStreamResult = useEventStream };
+        DefaultMcpToolHandler handler = CreateHandler(stub);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+
+        // Assert
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Equal(0, stub.StandaloneGetRequests);
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
     [Fact]
     public async Task SequentialInvocations_UseSeparateSessionsAsync()
     {
@@ -478,9 +499,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     {
         private int _initializations;
         private int _terminations;
+        private int _standaloneGetRequests;
 
         public int Initializations => this._initializations;
         public int Terminations => this._terminations;
+        public int StandaloneGetRequests => this._standaloneGetRequests;
         public List<Mock<HttpMessageHandler>> Handlers { get; } = [];
         public Func<CancellationToken, Task>? BeforeInitializationAsync { get; set; }
         public Func<CancellationToken, Task>? BeforeOperationAsync { get; set; }
@@ -488,6 +511,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         public bool FailInitialization { get; set; }
         public bool FailOperation { get; set; }
         public bool FailTransportDisposal { get; set; }
+        public bool UseEventStreamResult { get; set; }
 
         public HttpMessageHandler CreateMessageHandler()
         {
@@ -509,6 +533,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         {
             if (request.Method == HttpMethod.Get)
             {
+                Interlocked.Increment(ref this._standaloneGetRequests);
                 return EmptyResponse(HttpStatusCode.MethodNotAllowed, request);
             }
 
@@ -583,12 +608,14 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 };
             }
 
+            string responseBody = $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"result":{{{result}}}}""";
+            bool useEventStream = this.UseEventStreamResult && string.Equals(method, "tools/call", StringComparison.Ordinal);
             HttpResponseMessage response = new(HttpStatusCode.OK)
             {
                 RequestMessage = request,
                 Content = new StringContent(
-                    $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"result":{{{result}}}}""",
-                    Encoding.UTF8, "application/json")
+                    useEventStream ? $"event: message\ndata: {responseBody}\n\n" : responseBody,
+                    Encoding.UTF8, useEventStream ? "text/event-stream" : "application/json")
             };
             if (sessionId is not null)
             {
