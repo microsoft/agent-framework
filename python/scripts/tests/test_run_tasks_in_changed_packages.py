@@ -4,18 +4,8 @@
 
 from __future__ import annotations
 
-import sys
-import types
 import unittest
 from pathlib import Path
-
-# The router imports rich for CLI output. These tests only call get_changed_packages.
-if "rich" not in sys.modules:
-    _rich = types.ModuleType("rich")
-    _rich.print = lambda *_args, **_kwargs: None
-    sys.modules["rich"] = _rich
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.run_tasks_in_changed_packages import get_changed_packages
 

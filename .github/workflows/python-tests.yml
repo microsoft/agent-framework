@@ -54,6 +54,11 @@ jobs:
         run: uv run poe test -A --junitxml=pytest.xml
         working-directory: ./python
 
+      # scripts/tests is outside package discovery used by `poe test -A`.
+      - name: Run workspace script tests
+        run: uv run --locked --group dev --group tool-runtime pytest scripts/tests --import-mode=importlib -q
+        working-directory: ./python
+
       # Surface failing tests
       - name: Surface failing tests
         if: always()
