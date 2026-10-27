@@ -86,7 +86,7 @@ internal sealed class Program
             .AddHttpMessageHandler(() => new FoundryToolboxBearerTokenHandler(credential, new Uri(toolboxMcpServerUrl)))
             .SetHandlerLifetime(TimeSpan.FromMinutes(2));
         await using ServiceProvider serviceProvider = services.BuildServiceProvider();
-        await using DefaultMcpToolHandler mcpToolHandler = new(
+        DefaultMcpToolHandler mcpToolHandler = new(
             serviceProvider.GetRequiredService<IHttpClientFactory>(), McpHttpClientName);
 
         // Create the workflow factory with MCP tool provider

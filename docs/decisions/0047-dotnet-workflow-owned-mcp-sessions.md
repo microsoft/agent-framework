@@ -102,11 +102,11 @@ model. It does not change the Python implementation.
 - Preserve isolation between callers, workflows, and authentication identities.
 - Protect active operations during cancellation and disposal.
 - Keep durable workflow state independent of live network objects.
-- Respect ownership and configuration of user-supplied HTTP clients.
+- Respect ownership and configuration of application-provided HTTP infrastructure.
 - Delegate reusable HTTP handler management to standard .NET infrastructure.
 - Support console applications, worker services, and web applications without
   requiring ASP.NET or a DI container per invocation.
-- Preserve existing transport protections and authentication-provider semantics.
+- Preserve transport protections with explicit factory-based authentication.
 - Make compatibility, resource limits, and any stateful opt-in behavior explicit.
 
 ## Considered Options
@@ -132,8 +132,9 @@ This revises the original workflow-lifetime ownership proposal. It does not
 establish that arbitrary MCP clients are interchangeable or safe to share across
 workflows. The default handler uses invocation-scoped clients; applications
 requiring cross-call session continuity supply an explicitly scoped integration.
-The existing public invocation and provider contracts remain unchanged. Review
-of the changed no-provider lifetime and its migration guidance remains required.
+The public invocation contract remains unchanged. The callback constructor and
+handler-level disposal contract are removed in favor of a stateless handler.
+Review of these breaking changes and their migration guidance remains required.
 
 ### Security isolation remains a separate requirement
 
@@ -169,11 +170,11 @@ consumption, and cleanup are part of that protected lifetime. Do not dispose
 resources immediately after starting an asynchronous call or receiving an
 intermediate result.
 
-Cancellation is a request, not evidence that work has stopped. Handler shutdown
-must reject new invocations and coordinate completion of admitted operations
-before disposing resources they use. Initialization failure, cleanup failure,
-and reentrant disposal must have explicit, observable handling rather than
-leaking resources or deadlocking.
+Cancellation is a request, not evidence that work has stopped. Each invocation
+awaits its own cleanup before completing. Initialization and cleanup failures
+must have explicit, observable handling rather than leaking resources.
+The handler owns no shared disposable resources and has no shutdown operation,
+active-call registry, synchronization lock, or reentrant-disposal guard.
 
 An approval continuation starts the approved invocation with the current
 authorized connection configuration. It does not require retaining an idle MCP
@@ -183,10 +184,10 @@ transports, HTTP objects, or promises of protocol-session reattachment.
 
 The host owns admission limits, invocation deadlines, and shutdown cancellation.
 It should bound submitted work, pass cancellation covering the entire invocation,
-and cancel and await calls before disposing the handler. Handler disposal stops
-admitting new calls and drains admitted invocations without cancelling them. It
-does not impose a new global concurrency limit or a fixed shutdown deadline that
-could interrupt supported long-running tools.
+and cancel and await calls before disposing the application's HTTP factory
+infrastructure or service provider. The handler does not impose a new global
+concurrency limit or a fixed shutdown deadline that could interrupt supported
+long-running tools.
 
 Do not automatically retry a tool invocation merely because the connection was
 lost. The server may already have performed side effects even if the result was
@@ -201,21 +202,21 @@ It is not supplied by retaining a workflow-lifetime connection.
 
 | Source of HTTP client | Use and disposal contract |
 |---|---|
-| User-supplied client | Borrow as supplied; do not mutate shared configuration or dispose it |
 | Application-provided factory | Obtain an owned wrapper for the chosen client scope; dispose it after MCP cleanup; let the factory manage pooled handlers |
-| No supplied client or factory | Preserve a non-DI path that creates and owns a client with documented transport defaults |
+| No factory | Preserve a parameterless non-DI path that creates and owns a client with documented transport defaults |
 
 Owned wrappers must be disposed exactly once, including when initialization
 fails. MCP and transport cleanup must release owned HTTP resources even if
-earlier cleanup fails. Borrowed clients and application factories must not be
-disposed by the MCP integration.
+earlier cleanup fails. Application factories must not be disposed by the MCP
+integration. A factory must return a fresh client wrapper, not a borrowed shared
+client.
 
 `IHttpClientFactory` belongs to `Microsoft.Extensions.Http` and does not require
 ASP.NET. The application may use the Generic Host or a `ServiceCollection`.
-The additive `DefaultMcpToolHandler(IHttpClientFactory, string)` constructor uses
+The `DefaultMcpToolHandler(IHttpClientFactory, string)` constructor uses
 the application's stable named-client configuration on every invocation. The
-required name parameter avoids ambiguity with the existing single-argument
-callback constructor, including `new DefaultMcpToolHandler(null)`.
+name parameter selects the named configuration, with an empty string selecting
+the default configuration.
 Do not create a service provider or factory per invocation. Use a bounded set of
 stable factory configuration names, not names derived from workflow IDs,
 credentials, or arbitrary server URLs.
@@ -232,8 +233,7 @@ Non-DI fallback clients retain explicit defaults: cookies disabled, automatic
 redirects disabled, certificate revocation checking, Streamable HTTP, and
 origin-bound credential handling. Factory defaults alone are not a substitute.
 
-Application factory clients enter under the same transport-policy contract as
-callback-supplied clients; the integration does not silently replace their
+The integration does not silently replace application factory clients'
 pipelines. Configure their primary handlers with cookies and automatic redirects
 disabled and certificate revocation checking enabled. Any credential-injecting
 handler must restrict credentials to the configured server origin. Streamable
@@ -256,11 +256,15 @@ be established for every supported target; this proposal does not drop targets.
 
 ### Compatibility and explicitly stateful integrations
 
-The current `httpClientProvider` callback runs for every invocation and creates
-a fresh MCP session for every call, including discovery, even when it returns the
-same HTTP client or `null`. Preserve that contract. The callback may select
-different credentials on successive invocations and must not silently become a
-once-per-workflow factory.
+Remove the `httpClientProvider` callback constructor and the internal
+`httpMessageHandlerFactory` callback seam. Applications migrate authentication
+to named `IHttpClientFactory` configurations and origin-bound delegating handlers.
+Credentials that change per invocation must be resolved per request, not retained
+in pooled handlers. Tests use the same factory interface as applications.
+
+Remove `IAsyncDisposable` and `DisposeAsync` from `DefaultMcpToolHandler`.
+Applications remove handler disposal and instead cancel and await their active
+calls before disposing application-owned HTTP infrastructure.
 
 The previous non-provider path cached initialized clients by server URL, label,
 connection name, and explicit headers. Moving that path to invocation-scoped
@@ -290,7 +294,9 @@ notes when implementation is proposed.
 - Good, because workflow state continuity alone does not require a
   workflow-session connection registry, idle-session LRU policy, or HTTP
   reference-counting layer.
-- Neutral, because active-invocation tracking, safe shutdown, and explicit
+- Good, because invocation-local resource ownership removes handler-level
+  admission/drain synchronization and reentrant-disposal bookkeeping.
+- Neutral, because safe shutdown remains a host responsibility and explicit
   authentication boundaries remain necessary.
 - Bad, because invocation-scoped clients require initialization per invocation
   with older protocol revisions.
@@ -307,16 +313,15 @@ Before implementation is accepted, add focused regression coverage for:
   inherit one another's MCP client state or credentials.
 - Approval waits and checkpoint resumes require no retained live connection;
   the resumed invocation uses the correct authorized configuration.
-- Admission, initialization, cancellation, and shutdown do not cause early
+- Initialization, cancellation, and host shutdown do not cause early
   disposal, duplicate cleanup, leaked resources, or deadlock.
 - A lost result does not silently trigger a duplicate side-effecting tool call.
-- Owned wrappers are disposed once; borrowed clients and application factories
-  are not disposed; disposal does not disrupt another invocation's pooled HTTP
-  resources.
+- Owned wrappers are disposed once; application factories are not disposed;
+  cleanup does not disrupt another invocation's pooled HTTP resources.
 - Shared handlers contain no per-caller mutable authentication or origin state;
   origin, redirect, cookie, and credential protections remain intact.
-- Existing provider callbacks retain their per-invocation behavior, including
-  callbacks returning the same client or `null`.
+- Factory-created wrappers are acquired per invocation and the configured named
+  pipeline is preserved.
 - Compatibility with the currently supported SDK and protocol revisions is
   preserved; tests do not assume the newer protocol is already deployed.
 - Any explicit stateful integration follows its documented isolation and release
@@ -407,16 +412,15 @@ after MCP cleanup. The factory owns handler pooling and rotation; the MCP handle
 does not dispose the application factory or its shared handlers.
 
 The non-DI path creates and owns a dedicated HTTP handler and origin-policy
-handler for each invocation. The existing provider callback continues to borrow
-application-supplied clients under its existing contract; returning `null` selects
-the dedicated fallback. Handler shutdown drains admitted invocations. No
+handler for each invocation. Callback construction and handler-level disposal
+are removed. The host awaits its own invocations during shutdown. No
 handler-owned shared invoker, internal service provider, workflow-runtime
-ownership hooks, connection registry, HTTP-client cache, or lease-counting pool
+ownership hooks, invocation registry, synchronization lock, HTTP-client cache, or lease-counting pool
 are introduced.
 
 The package references `Microsoft.Extensions.Http` for all supported target
-frameworks. The additive constructor is recorded in each target's public API
-baseline. Factory integration is the reusable-transport path, not deferred work
+frameworks. New constructors and removed APIs are recorded in each target's public
+API baseline. Factory integration is the reusable-transport path, not deferred work
 or a bespoke connection-rotation implementation.
 
 Deciders must review the invocation boundary, legacy-cache migration, transport

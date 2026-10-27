@@ -229,9 +229,6 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         {
             AssertResultContains(workflowEvents, expectedResultContains);
         }
-
-        // Cleanup
-        await mcpToolProvider.DisposeAsync().ConfigureAwait(false);
     }
 
     /// <summary>

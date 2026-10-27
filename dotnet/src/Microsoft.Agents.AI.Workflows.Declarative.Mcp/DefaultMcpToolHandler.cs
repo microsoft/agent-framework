@@ -22,16 +22,15 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// Default implementation of <see cref="IMcpToolHandler"/> using the MCP C# SDK.
 /// </summary>
 /// <remarks>
-/// This provider supports per-server authentication via the <c>httpClientProvider</c> callback.
-/// The callback allows different MCP servers to use different authentication configurations by returning
-/// a pre-configured <see cref="HttpClient"/> for each server.
 /// Every invocation creates and disposes a separate MCP client, including <c>tools/list</c>.
 /// Factory-created HTTP clients reuse factory-managed handlers without sharing MCP session state.
-/// Without a factory or supplied client, each invocation owns a dedicated HTTP handler.
+/// Without a factory, each invocation owns a dedicated HTTP handler.
+/// The handler owns no shared disposable resources. The host must await its invocations before disposing
+/// the application-owned factory infrastructure.
 /// Non-cancellation session and transport cleanup failures are reported through <see cref="Trace"/> warnings without replacing
 /// the invocation result or error.
 /// </remarks>
-public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
+public sealed class DefaultMcpToolHandler : IMcpToolHandler
 {
     private const string FilenameAdditionalPropertyName = "filename";
 
@@ -43,42 +42,18 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
-    private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
-    private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly string _httpClientName = string.Empty;
-    private readonly object _invocationLock = new();
-    private readonly AsyncLocal<InvocationScope?> _currentInvocation = new();
-    private TaskCompletionSource<bool>? _invocationsDrained;
-    private int _activeInvocations;
-    private bool _disposing;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class.
     /// </summary>
-    /// <param name="httpClientProvider">
-    /// An optional callback that provides an <see cref="HttpClient"/> for each MCP server.
-    /// The callback receives (serverUrl, cancellationToken) and should return an HttpClient
-    /// configured with any required authentication. Return <see langword="null"/> to use a default HttpClient with no auth.
-    /// <para>
-    /// The callback is invoked for each tool invocation. MCP sessions are not cached when a callback is
-    /// configured, even if it returns the same client or <see langword="null"/>. MCP clients are also
-    /// invocation-scoped without a callback; server-side session state is not preserved between calls.
-    /// Supplied HTTP clients remain caller-owned. Applications requiring session continuity should provide an
-    /// <see cref="IMcpToolHandler"/> with an explicitly scoped authentication and session lifetime.
-    /// </para>
-    /// <para>
-    /// Security: HttpClients created by this handler pin credential headers to the configured server
-    /// origin and disable auto-redirect. When you supply your own <see cref="HttpClient"/>, you are
-    /// responsible for equivalent protection — attach credentials only for the configured server origin
-    /// (for example via a <see cref="DelegatingHandler"/>) so a server-advertised endpoint or redirect on
-    /// a different origin cannot capture the Authorization token.
-    /// </para>
-    /// </param>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("ApiDesign", "RS0027:Public API with optional parameter(s) should have the most parameters amongst its public overloads",
-        Justification = "Preserve the released callback constructor. The factory overload requires two arguments and cannot make existing calls ambiguous.")]
-    public DefaultMcpToolHandler(Func<string, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
-        : this(httpClientProvider, CreateHttpMessageHandler)
+    /// <remarks>
+    /// Each invocation owns its HTTP client and handler. Cookies and automatic redirects are disabled,
+    /// certificate revocation checking is enabled, and credential headers are pinned to the configured server origin.
+    /// Use the factory constructor for application-managed HTTP handler pooling and authentication.
+    /// </remarks>
+    public DefaultMcpToolHandler()
     {
     }
 
@@ -94,25 +69,16 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     /// Do not derive names from workflow identifiers, credentials, or arbitrary server URLs.
     /// </param>
     /// <remarks>
-    /// As with callback-supplied clients, the application is responsible for the HTTP pipeline's transport policy.
+    /// The application is responsible for the HTTP pipeline's transport policy.
     /// Disable cookies and automatic redirects, enable certificate revocation checking, and restrict credential injection
     /// to the configured server origin. Pooled handlers must not retain per-invocation credentials or mutable origin state.
     /// Configure a finite handler lifetime so new invocations can pick up endpoint changes without disrupting active calls.
     /// </remarks>
     /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
     public DefaultMcpToolHandler(IHttpClientFactory httpClientFactory, string httpClientName)
-        : this(null, CreateHttpMessageHandler)
     {
         this._httpClientFactory = Throw.IfNull(httpClientFactory);
         this._httpClientName = Throw.IfNull(httpClientName);
-    }
-
-    internal DefaultMcpToolHandler(
-        Func<string, CancellationToken, Task<HttpClient?>>? httpClientProvider,
-        Func<HttpMessageHandler> httpMessageHandlerFactory)
-    {
-        this._httpClientProvider = httpClientProvider;
-        this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
     }
 
     /// <inheritdoc/>
@@ -146,7 +112,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        using InvocationScope invocation = this.EnterInvocation();
         ClientConnection connection = await this.CreateClientAsync(
             serverUrl.Trim(), serverLabel, headers, cancellationToken).ConfigureAwait(false);
         await using (connection.ConfigureAwait(false))
@@ -202,65 +167,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         return resultContent;
     }
 
-    /// <inheritdoc/>
-    /// <exception cref="InvalidOperationException">
-    /// Disposal is requested from an active MCP invocation, including a child execution context.
-    /// Dispose the handler from its owning scope instead.
-    /// </exception>
-    /// <remarks>
-    /// Stops admitting new invocations and waits for admitted invocations to finish cleanup without cancelling them.
-    /// The host owns concurrency limits and invocation deadlines and should cancel and await its calls before disposal.
-    /// </remarks>
-    public async ValueTask DisposeAsync()
-    {
-        for (InvocationScope? context = this._currentInvocation.Value; context is not null; context = context.Parent)
-        {
-            if (!context.Completion.IsCompleted)
-            {
-                throw new InvalidOperationException("Cannot dispose the MCP handler from an active MCP invocation.");
-            }
-        }
-
-        Task? invocations;
-        lock (this._invocationLock)
-        {
-            this.ThrowIfDisposing();
-            this._disposing = true;
-            invocations = this._invocationsDrained?.Task;
-        }
-
-        if (invocations is not null)
-        {
-            await invocations.ConfigureAwait(false);
-        }
-    }
-
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
-        Justification = "The helper is not available on .NET Framework or .NET Standard 2.0.")]
-    private void ThrowIfDisposing()
-    {
-        if (this._disposing)
-        {
-            throw new ObjectDisposedException(nameof(DefaultMcpToolHandler));
-        }
-    }
-
-    private InvocationScope EnterInvocation()
-    {
-        lock (this._invocationLock)
-        {
-            this.ThrowIfDisposing();
-            if (this._activeInvocations++ == 0)
-            {
-                this._invocationsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-        }
-
-        InvocationScope invocation = new(this, this._currentInvocation.Value);
-        this._currentInvocation.Value = invocation;
-        return invocation;
-    }
-
     private async Task<ClientConnection> CreateClientAsync(
         string serverUrl,
         string? serverLabel,
@@ -280,18 +186,12 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             TransportMode = HttpTransportMode.StreamableHttp
         };
 
-        HttpClient? httpClient = null;
-        if (this._httpClientProvider is not null)
-        {
-            httpClient = await this._httpClientProvider(serverUrl, cancellationToken).ConfigureAwait(false);
-        }
-
-        bool ownsHttpClient = httpClient is null;
-        if (httpClient is null && this._httpClientFactory is not null)
+        HttpClient httpClient;
+        if (this._httpClientFactory is not null)
         {
             httpClient = this._httpClientFactory.CreateClient(this._httpClientName);
         }
-        else if (httpClient is null)
+        else
         {
             // Pin credential headers to the configured server origin as defense-in-depth. Forcing
             // StreamableHttp (below) already removes the primary vector (a server-advertised cross-origin
@@ -307,7 +207,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             // those auth-server origins would need to be allow-listed to avoid breaking the token exchange.
             OriginPinningHandler pinningHandler = new(endpoint)
             {
-                InnerHandler = this._httpMessageHandlerFactory()
+                InnerHandler = CreateHttpMessageHandler()
             };
             httpClient = new HttpClient(pinningHandler);
         }
@@ -315,7 +215,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         HttpClientTransport? transport = null;
         try
         {
-            transport = new(transportOptions, httpClient, ownsHttpClient: ownsHttpClient);
+            transport = new(transportOptions, httpClient, ownsHttpClient: true);
             McpClient client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
             return new ClientConnection(client, transport);
         }
@@ -325,7 +225,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             {
                 await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
             }
-            else if (ownsHttpClient)
+            else
             {
                 httpClient.Dispose();
             }
@@ -334,37 +234,14 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
     }
 
-    private static HttpMessageHandler CreateHttpMessageHandler() =>
-        new HttpClientHandler
+    private static HttpClientHandler CreateHttpMessageHandler() =>
+        new()
         {
             // Keep cookies out of transport state and prevent credential-bearing redirects.
             UseCookies = false,
             AllowAutoRedirect = false,
             CheckCertificateRevocationList = true
         };
-
-    private sealed class InvocationScope(DefaultMcpToolHandler owner, InvocationScope? parent) : IDisposable
-    {
-        private readonly TaskCompletionSource<bool> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public Task Completion => this._completion.Task;
-
-        public InvocationScope? Parent { get; } = parent;
-
-        public void Dispose()
-        {
-            lock (owner._invocationLock)
-            {
-                this._completion.SetResult(true);
-                if (--owner._activeInvocations == 0)
-                {
-                    owner._invocationsDrained!.SetResult(true);
-                }
-            }
-
-            owner._currentInvocation.Value = this.Parent;
-        }
-    }
 
     internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable
     {

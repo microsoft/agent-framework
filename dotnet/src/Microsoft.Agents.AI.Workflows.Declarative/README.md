@@ -59,9 +59,8 @@ resumes the registered invocation only after a matching approval response.
 ### MCP session lifetime
 
 `DefaultMcpToolHandler` creates a separate MCP client for every invocation,
-including `tools/list`, and disposes it before completing. This applies with or
-without `httpClientProvider`, even when the provider returns the same
-`HttpClient` or `null`. The provider is still called for every invocation.
+including `tools/list`, and disposes it before completing. The handler retains
+no per-invocation state or shared disposable resources.
 
 Each handler-created HTTP client is disposed with its invocation. These clients
 can reuse factory-managed HTTP handlers through the
@@ -69,8 +68,7 @@ can reuse factory-managed HTTP handlers through the
 argument is a stable named-client configuration, or `string.Empty` for the
 default configuration. Factory-created wrappers are owned by the invocation;
 the factory and its pooled handlers remain application-owned. Without a factory,
-the fallback creates a dedicated HTTP handler per invocation. Clients supplied
-through the existing callback remain caller-owned.
+the parameterless constructor creates a dedicated HTTP handler per invocation.
 
 Configure the factory once in the application, not once per invocation. For
 example, with `Microsoft.Extensions.DependencyInjection`:
@@ -89,27 +87,29 @@ services.AddSingleton<IMcpToolHandler>(serviceProvider => new DefaultMcpToolHand
     serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp"));
 ```
 
-As with callback-supplied clients, factory clients use the application's
-transport-policy configuration. Restrict credential-injecting handlers to the
-configured server origin. Do not store per-workflow credentials, cookies, or
+Factory clients use the application's transport-policy configuration.
+Restrict credential-injecting handlers to the configured server origin.
+Do not store per-workflow credentials, cookies, or
 mutable origin policy in pooled handlers. Use a bounded set of configuration
 names, not workflow IDs, credentials, or arbitrary URLs. A finite factory handler
 lifetime lets subsequent invocations refresh connections without interrupting
 active calls. Streamable HTTP remains enforced for every client source.
 
-Dispose the handler when its owning scope ends; disposal rejects new calls and
-waits for all active invocations to finish cleanup without cancelling them.
-The workflow host owns admission limits, invocation deadlines, and shutdown
-cancellation. Bound concurrent work and pass a cancellation token covering the
-whole invocation; cancel and await those calls before disposing the handler.
-Disposal from within an active invocation (including a provider callback or its
-child tasks) throws `InvalidOperationException` without starting shutdown, rather
-than waiting on itself. Dispose the handler from its owning scope.
+The handler is not disposable. The workflow host owns admission limits,
+invocation deadlines, and shutdown cancellation. Bound concurrent work and pass
+a cancellation token covering the whole invocation; cancel and await those calls
+before disposing the application's HTTP factory infrastructure or service provider.
 Non-cancellation session and transport cleanup failures are reported through
 `System.Diagnostics.Trace` warnings and do not replace a tool result or its
 original error.
 
-This changes the previous no-provider behavior, which retained initialized MCP
+The callback-based constructor and handler-level `DisposeAsync`/`IAsyncDisposable`
+contract have been removed. Migrate callback authentication to named factory
+clients and origin-bound delegating handlers; every factory call must return a
+fresh HTTP client wrapper owned by the invocation, not a borrowed shared client.
+Remove handler `await using`/disposal calls and await active invocations in the host.
+
+This also changes the previous default behavior, which retained initialized MCP
 clients across calls. Calls now incur any protocol session setup per invocation
 and do not preserve implicit server-side session state between calls, including
 across approval waits or checkpoint resumes. Keep durable workflow state in

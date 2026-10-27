@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Protocol;
+using Moq;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 
@@ -17,78 +18,28 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 /// </summary>
 public sealed class DefaultMcpToolHandlerTests
 {
-    #region Constructor Tests
-
     [Fact]
-    public async Task Constructor_WithNoParameters_ShouldCreateInstanceAsync()
+    public void Constructor_WithNullHttpClientFactory_ShouldThrow()
     {
         // Act
-        DefaultMcpToolHandler handler = new();
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() => new DefaultMcpToolHandler(null!, "workflow-mcp"));
 
         // Assert
-        Assert.NotNull(handler);
-        await handler.DisposeAsync();
+        Assert.Equal("httpClientFactory", exception.ParamName);
     }
 
     [Fact]
-    public async Task Constructor_WithNullHttpClientProvider_ShouldCreateInstanceAsync()
-    {
-        // Act
-        DefaultMcpToolHandler handler = new(null);
-
-        // Assert
-        Assert.NotNull(handler);
-        await handler.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Constructor_WithHttpClientProvider_ShouldCreateInstanceAsync()
+    public void Constructor_WithNullHttpClientName_ShouldThrow()
     {
         // Arrange
-        static Task<HttpClient?> ProviderAsync(string url, CancellationToken ct) => Task.FromResult<HttpClient?>(new HttpClient());
+        Mock<IHttpClientFactory> factory = new();
 
         // Act
-        DefaultMcpToolHandler handler = new(httpClientProvider: ProviderAsync);
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() => new DefaultMcpToolHandler(factory.Object, null!));
 
         // Assert
-        Assert.NotNull(handler);
-        await handler.DisposeAsync();
+        Assert.Equal("httpClientName", exception.ParamName);
     }
-
-    #endregion
-
-    #region DisposeAsync Tests
-
-    [Fact]
-    public async Task DisposeAsync_WhenCalled_ShouldCompleteWithoutErrorAsync()
-    {
-        // Arrange
-        DefaultMcpToolHandler handler = new();
-
-        // Act
-        async Task actAsync() => await handler.DisposeAsync();
-
-        // Assert
-        Assert.Null(await Record.ExceptionAsync(actAsync));
-    }
-
-    [Fact]
-    public async Task DisposeAsync_WhenCalledMultipleTimes_ShouldHandleGracefullyAsync()
-    {
-        // Arrange
-        DefaultMcpToolHandler handler = new();
-
-        // Act
-        await handler.DisposeAsync();
-        async Task actAsync() => await handler.DisposeAsync();
-
-        // Assert
-        await Assert.ThrowsAsync<ObjectDisposedException>(actAsync);
-    }
-
-    #endregion
-
-    #region HttpClientProvider Tests
 
     [Theory]
     [InlineData("\r", false, false)]
@@ -106,270 +57,41 @@ public sealed class DefaultMcpToolHandlerTests
     public async Task InvokeToolAsync_WithInvalidHeader_ShouldRejectBeforeClientCreationAsync(
         string invalidCharacter,
         bool invalidName,
-        bool useProvider)
+        bool useFactory)
     {
         // Arrange
-        bool clientCreationAttempted = false;
-        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
-        {
-            clientCreationAttempted = true;
-            throw new InvalidOperationException("Client creation should not be reached.");
-        }
-
-        HttpMessageHandler CreateHandler()
-        {
-            clientCreationAttempted = true;
-            throw new InvalidOperationException("Client creation should not be reached.");
-        }
-
-        await using DefaultMcpToolHandler handler = new(useProvider ? ProviderAsync : null, CreateHandler);
+        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = useFactory ? new(factory.Object, "workflow-mcp") : new();
         Dictionary<string, string> headers = new()
         {
             [invalidName ? $"X-Test{invalidCharacter}" : "X-Test"] = invalidName ? "value" : $"value{invalidCharacter}"
         };
 
         // Act
-        async Task actAsync() => await handler.InvokeToolAsync(
-            serverUrl: "https://example.com/mcp",
-            serverLabel: null,
-            toolName: "testTool",
-            arguments: null,
-            headers: headers,
-            connectionName: null);
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(
+            "https://example.com/mcp", null, "ping", null, headers, null));
 
         // Assert
-        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
         Assert.Equal("headers", exception.ParamName);
-        Assert.False(clientCreationAttempted);
+        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
-    public async Task InvokeToolAsync_WithHttpClientProvider_ShouldCallProviderAsync()
+    public async Task InvokeToolAsync_WithCancelledToken_ShouldRejectBeforeClientCreationAsync()
     {
         // Arrange
-        bool providerCalled = false;
-        string? capturedServerUrl = null;
+        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
 
-        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
-        {
-            providerCalled = true;
-            capturedServerUrl = url;
-            return Task.FromResult<HttpClient?>(null);
-        }
-
-        DefaultMcpToolHandler handler = new(httpClientProvider: ProviderAsync);
-
-        // Act & Assert - The call will fail because there's no real MCP server, but the provider should be called
-        try
-        {
-            await handler.InvokeToolAsync(
-                serverUrl: "http://localhost:12345/mcp",
-                serverLabel: "test",
-                toolName: "testTool",
-                arguments: null,
-                headers: null,
-                connectionName: null);
-        }
-        catch
-        {
-            // Expected to fail - no real server
-        }
-        finally
-        {
-            await handler.DisposeAsync();
-        }
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => handler.InvokeToolAsync(
+            "https://example.com/mcp", null, "ping", null, null, null, cancellation.Token));
 
         // Assert
-        Assert.True(providerCalled);
-        Assert.Equal("http://localhost:12345/mcp", capturedServerUrl);
+        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
     }
-
-    [Fact]
-    public async Task InvokeToolAsync_WithHttpClientProviderReturningClient_ShouldUseProvidedClientAsync()
-    {
-        // Arrange
-        bool providerCalled = false;
-        HttpClient? providedClient = null;
-
-        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
-        {
-            providerCalled = true;
-            providedClient = new HttpClient();
-            return Task.FromResult<HttpClient?>(providedClient);
-        }
-
-        DefaultMcpToolHandler handler = new(httpClientProvider: ProviderAsync);
-
-        // Act & Assert - The call will fail because there's no real MCP server, but the provider should be called
-        try
-        {
-            await handler.InvokeToolAsync(
-                serverUrl: "http://localhost:12345/mcp",
-                serverLabel: "test",
-                toolName: "testTool",
-                arguments: null,
-                headers: null,
-                connectionName: null);
-        }
-        catch
-        {
-            // Expected to fail - no real server
-        }
-        finally
-        {
-            await handler.DisposeAsync();
-            providedClient?.Dispose();
-        }
-
-        // Assert
-        Assert.True(providerCalled);
-    }
-
-    #endregion
-
-    #region Invocation Tests
-
-    [Fact]
-    public async Task InvokeToolAsync_SameServerUrl_ShouldCallProviderOncePerAttemptWhenConnectionFailsAsync()
-    {
-        // Arrange
-        int providerCallCount = 0;
-
-        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
-        {
-            providerCallCount++;
-            return Task.FromResult<HttpClient?>(null);
-        }
-
-        DefaultMcpToolHandler handler = new(httpClientProvider: ProviderAsync);
-        const string ServerUrl = "http://localhost:12345/mcp";
-
-        try
-        {
-            // Act - Call twice with the same server URL
-            for (int i = 0; i < 2; i++)
-            {
-                try
-                {
-                    await handler.InvokeToolAsync(
-                        serverUrl: ServerUrl,
-                        serverLabel: "test",
-                        toolName: "testTool",
-                        arguments: null,
-                        headers: null,
-                        connectionName: null);
-                }
-                catch
-                {
-                    // Expected to fail - no real server
-                }
-            }
-
-            // Assert
-            Assert.Equal(2, providerCallCount);
-        }
-        finally
-        {
-            await handler.DisposeAsync();
-        }
-    }
-
-    [Fact]
-    public async Task InvokeToolAsync_DifferentServerUrls_ShouldCreateSeparateClientsAsync()
-    {
-        // Arrange
-        int providerCallCount = 0;
-
-        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
-        {
-            providerCallCount++;
-            return Task.FromResult<HttpClient?>(null);
-        }
-
-        DefaultMcpToolHandler handler = new(httpClientProvider: ProviderAsync);
-
-        try
-        {
-            // Act - Call with different server URLs
-            foreach (string serverUrl in new[] { "http://localhost:12345/mcp1", "http://localhost:12345/mcp2" })
-            {
-                try
-                {
-                    await handler.InvokeToolAsync(
-                        serverUrl: serverUrl,
-                        serverLabel: "test",
-                        toolName: "testTool",
-                        arguments: null,
-                        headers: null,
-                        connectionName: null);
-                }
-                catch
-                {
-                    // Expected to fail - no real server
-                }
-            }
-
-            // Assert - Provider should be called once per unique server URL
-            Assert.Equal(2, providerCallCount);
-        }
-        finally
-        {
-            await handler.DisposeAsync();
-        }
-    }
-
-    [Fact]
-    public async Task InvokeToolAsync_SameUrlDifferentHeaders_ShouldCreateSeparateClientsAsync()
-    {
-        // Arrange
-        int providerCallCount = 0;
-
-        Task<HttpClient?> ProviderAsync(string url, CancellationToken ct)
-        {
-            providerCallCount++;
-            return Task.FromResult<HttpClient?>(null);
-        }
-
-        DefaultMcpToolHandler handler = new(httpClientProvider: ProviderAsync);
-        const string ServerUrl = "http://localhost:12345/mcp";
-
-        try
-        {
-            // Act - Call with same URL but different headers
-            Dictionary<string, string>[] headerSets =
-            [
-                new() { ["Authorization"] = "Bearer token1" },
-                new() { ["Authorization"] = "Bearer token2" }
-            ];
-
-            foreach (Dictionary<string, string> headers in headerSets)
-            {
-                try
-                {
-                    await handler.InvokeToolAsync(
-                        serverUrl: ServerUrl,
-                        serverLabel: "test",
-                        toolName: "testTool",
-                        arguments: null,
-                        headers: headers,
-                        connectionName: null);
-                }
-                catch
-                {
-                    // Expected to fail - no real server
-                }
-            }
-
-            // Assert
-            Assert.Equal(2, providerCallCount);
-        }
-        finally
-        {
-            await handler.DisposeAsync();
-        }
-    }
-
-    #endregion
 
     #region Reserved Tools/List Tests
 
@@ -397,27 +119,17 @@ public sealed class DefaultMcpToolHandlerTests
     public async Task InvokeToolAsync_WithListToolsArguments_ShouldThrowArgumentExceptionAsync()
     {
         // Arrange
-        DefaultMcpToolHandler handler = new();
+        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
 
-        try
-        {
-            // Act
-            async Task actAsync() => await handler.InvokeToolAsync(
-                serverUrl: "http://localhost:12345/mcp",
-                serverLabel: "test",
-                toolName: DefaultMcpToolHandler.ListToolsToolName,
-                arguments: new Dictionary<string, object?> { ["ignored"] = true },
-                headers: null,
-                connectionName: null);
+        // Act
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(
+            "https://example.com/mcp", "test", DefaultMcpToolHandler.ListToolsToolName,
+            new Dictionary<string, object?> { ["ignored"] = true }, null, null));
 
-            // Assert
-            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
-            Assert.Contains("does not accept tool arguments", exception.Message);
-        }
-        finally
-        {
-            await handler.DisposeAsync();
-        }
+        // Assert
+        Assert.Contains("does not accept tool arguments", exception.Message);
+        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -453,32 +165,6 @@ public sealed class DefaultMcpToolHandlerTests
         Assert.Equal("search", listedTool.GetProperty("name").GetString());
         Assert.Equal("Searches documentation.", listedTool.GetProperty("description").GetString());
         Assert.Equal("string", listedTool.GetProperty("inputSchema").GetProperty("properties").GetProperty("query").GetProperty("type").GetString());
-    }
-
-    #endregion
-
-    #region Interface Implementation Tests
-
-    [Fact]
-    public async Task DefaultMcpToolHandler_ShouldImplementIMcpToolHandlerAsync()
-    {
-        // Arrange & Act
-        DefaultMcpToolHandler handler = new();
-
-        // Assert
-        Assert.IsAssignableFrom<IMcpToolHandler>(handler);
-        await handler.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task DefaultMcpToolHandler_ShouldImplementIAsyncDisposableAsync()
-    {
-        // Arrange & Act
-        DefaultMcpToolHandler handler = new();
-
-        // Assert
-        Assert.IsAssignableFrom<IAsyncDisposable>(handler);
-        await handler.DisposeAsync();
     }
 
     #endregion

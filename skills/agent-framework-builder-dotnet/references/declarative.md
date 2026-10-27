@@ -27,13 +27,13 @@ commitments.
   or a custom handler with a documented session-lifetime contract when continuity is required.
 - Prefer `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
   configuration for HTTP handler reuse and rotation. Factory-created clients are disposed per invocation; the
-  factory remains application-owned. The non-DI fallback owns a dedicated HTTP handler per invocation, while
-  callback-supplied `HttpClient` instances remain caller-owned.
+  factory remains application-owned. The parameterless non-DI fallback owns a dedicated HTTP handler per invocation.
+  Callback-based constructors and handler-level disposal are no longer supported.
 - Configure factory clients with cookies and redirects disabled, certificate revocation checking enabled, and
   origin-bound credential injection. Do not retain per-workflow credentials or mutable origin state in pooled
   handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
-- Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. Handler disposal stops
-  admission and drains existing calls without cancelling them; cancel and await calls before disposing the handler.
+- Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. The handler owns no shared
+  disposable resources; cancel and await calls before disposing the application's HTTP factory infrastructure.
 - When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
   to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
 - Keep configuration exposure restricted to intentional values.
