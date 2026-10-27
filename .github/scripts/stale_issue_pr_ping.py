@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from github import Auth, Github, GithubException
 from github.Issue import Issue
 from github.IssueComment import IssueComment
+from github.Repository import Repository
 
 
 PING_COMMENT = (
@@ -28,25 +29,34 @@ TRIGGER_LABEL = "waiting-for-author"
 PINGED_LABEL = "requested-info"
 
 
-def get_team_members(g: Github, org: str, team_slug: str) -> set[str]:
-    """Fetch active team member usernames."""
-    try:
-        org_obj = g.get_organization(org)
-        team = org_obj.get_team_by_slug(team_slug)
-        return {m.login for m in team.get_members()}
-    except GithubException as exc:
-        if exc.status in (403, 404):
-            print(
-                f"ERROR: Failed to fetch team members for {org}/{team_slug} "
-                f"(HTTP {exc.status}). Check that the token has the 'read:org' "
-                f"scope and that the team slug '{team_slug}' is correct."
-            )
-        else:
-            print(f"ERROR: Failed to fetch team members for {org}/{team_slug}: {exc}")
-        sys.exit(1)
-    except Exception as exc:
-        print(f"ERROR: Failed to fetch team members for {org}/{team_slug}: {exc}")
-        sys.exit(1)
+def get_maintainers(repo: Repository) -> set[str]:
+    """Fetch maintainer usernames from CODEOWNERS on the default branch."""
+    codeowners = repo.get_contents(
+        ".github/CODEOWNERS",
+        ref=repo.default_branch,
+    )
+
+    if isinstance(codeowners, list):
+        raise RuntimeError("Expected CODEOWNERS to be a file")
+
+    content = codeowners.decoded_content.decode("utf-8")
+    owners = set()
+
+    for line in content.splitlines():
+        parts = line.split()
+        if not parts or parts[0] not in {"/python/", "/dotnet/"}:
+            continue
+
+        owners.update(
+            owner.removeprefix("@").lower()
+            for owner in parts[1:]
+            if owner.startswith("@")
+        )
+
+    if not owners:
+        raise RuntimeError("No maintainers found in CODEOWNERS")
+
+    return owners
 
 
 def find_last_team_comment(
@@ -163,11 +173,6 @@ def main() -> None:
         print("ERROR: GITHUB_REPOSITORY environment variable is required")
         sys.exit(1)
 
-    team_slug = os.environ.get("TEAM_SLUG")
-    if not team_slug:
-        print("ERROR: TEAM_SLUG environment variable is required")
-        sys.exit(1)
-
     days_threshold_raw = os.environ.get("DAYS_THRESHOLD", "4")
     try:
         days_threshold = int(days_threshold_raw)
@@ -184,9 +189,13 @@ def main() -> None:
     g = Github(auth=Auth.Token(token))
     repo = g.get_repo(repository)
 
-    print(f"Fetching team members for {org}/{team_slug}...")
-    team_members = get_team_members(g, org, team_slug)
+    print("Fetching maintainers...")
+    team_members = get_maintainers(repo)
     print(f"Found {len(team_members)} team members.\n")
+    for maintainer in sorted(team_members):
+        print(f"  @{maintainer}")
+
+    return
 
     now = datetime.now(timezone.utc)
     pinged = []

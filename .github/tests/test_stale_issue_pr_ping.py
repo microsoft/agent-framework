@@ -20,7 +20,7 @@ from stale_issue_pr_ping import (
     TRIGGER_LABEL,
     author_replied_after,
     find_last_team_comment,
-    get_team_members,
+    get_maintainers,
     main,
     ping,
     should_ping,
@@ -227,48 +227,45 @@ class TestPing:
 
 
 # ---------------------------------------------------------------------------
-# get_team_members
+# get_maintainers
 # ---------------------------------------------------------------------------
 
-class TestGetTeamMembers:
-    def test_success(self):
-        g = MagicMock()
-        member = MagicMock()
-        member.login = "alice"
-        g.get_organization.return_value.get_team_by_slug.return_value.get_members.return_value = [member]
-        assert get_team_members(g, "org", "my-team") == {"alice"}
+class TestGetMaintainers:
+    def test_fetches_and_parses_unique_python_and_dotnet_owners(self):
+        repo = MagicMock()
+        repo.default_branch = "feature-branch"
+        codeowners = MagicMock()
+        codeowners.decoded_content = b"""
+/python/ @Alice @shared
+/dotnet/ @BOB @Shared
+/docs/ @ignored
+        """
+        repo.get_contents.return_value = codeowners
 
-    def test_403_error_message(self, capsys):
-        from github import GithubException
-
-        g = MagicMock()
-        g.get_organization.return_value.get_team_by_slug.side_effect = GithubException(
-            403, {"message": "Forbidden"}, None
+        assert get_maintainers(repo) == {"alice", "bob", "shared"}
+        repo.get_contents.assert_called_once_with(
+            ".github/CODEOWNERS",
+            ref="feature-branch",
         )
-        with pytest.raises(SystemExit):
-            get_team_members(g, "org", "my-team")
-        out = capsys.readouterr().out
-        assert "read:org" in out
-        assert "403" in out
 
-    def test_404_error_message(self, capsys):
-        from github import GithubException
+    def test_rejects_directory_response(self):
+        repo = MagicMock()
+        repo.get_contents.return_value = [MagicMock()]
 
-        g = MagicMock()
-        g.get_organization.return_value.get_team_by_slug.side_effect = GithubException(
-            404, {"message": "Not Found"}, None
-        )
-        with pytest.raises(SystemExit):
-            get_team_members(g, "org", "bad-slug")
-        out = capsys.readouterr().out
-        assert "read:org" in out
-        assert "bad-slug" in out
+        with pytest.raises(RuntimeError, match="Expected CODEOWNERS to be a file"):
+            get_maintainers(repo)
 
-    def test_generic_error(self, capsys):
-        g = MagicMock()
-        g.get_organization.side_effect = RuntimeError("boom")
-        with pytest.raises(SystemExit):
-            get_team_members(g, "org", "team")
+    def test_rejects_codeowners_without_matching_owners(self):
+        repo = MagicMock()
+        codeowners = MagicMock()
+        codeowners.decoded_content = b"""
+/docs/ @docs-owner
+/python/** @python-owner
+        """
+        repo.get_contents.return_value = codeowners
+
+        with pytest.raises(RuntimeError, match="No maintainers found in CODEOWNERS"):
+            get_maintainers(repo)
 
 
 # ---------------------------------------------------------------------------
@@ -279,19 +276,9 @@ class TestMain:
     @patch.dict(os.environ, {
         "GITHUB_TOKEN": "tok",
         "GITHUB_REPOSITORY": "org/repo",
-        "TEAM_SLUG": "my-team",
         "DAYS_THRESHOLD": "abc",
     }, clear=True)
     def test_invalid_days_threshold(self, capsys):
         with pytest.raises(SystemExit):
             main()
         assert "numeric" in capsys.readouterr().out
-
-    @patch.dict(os.environ, {
-        "GITHUB_TOKEN": "tok",
-        "GITHUB_REPOSITORY": "org/repo",
-    }, clear=True)
-    def test_missing_team_slug(self, capsys):
-        with pytest.raises(SystemExit):
-            main()
-        assert "TEAM_SLUG" in capsys.readouterr().out
