@@ -1058,7 +1058,7 @@ class ObservabilitySettings:
     Examples:
         .. code-block:: python
 
-            from agent_framework import ObservabilitySettings
+            from agent_framework.observability import ObservabilitySettings
 
             # Using environment variables
             # Instrumentation is enabled by default; set ENABLE_INSTRUMENTATION=false to disable.
@@ -1397,7 +1397,7 @@ def get_tracer(
     Examples:
         .. code-block:: python
 
-            from agent_framework import get_tracer
+            from agent_framework.observability import get_tracer
 
             # Get default tracer
             tracer = get_tracer()
@@ -1446,7 +1446,7 @@ def get_meter(
     Examples:
         .. code-block:: python
 
-            from agent_framework import get_meter
+            from agent_framework.observability import get_meter
 
             # Get default meter
             meter = get_meter()
