@@ -732,7 +732,10 @@ def _emit_tool_call(
 
     tool_call_id = content.call_id or flow.tool_call_id or generate_event_id()
 
-    if content.name and tool_call_id != flow.tool_call_id:
+    # Why a started-set, not the last-id cursor: declaration-only calls replay after the
+    # function loop pauses; with two calls the cursor sits on the second, so the replay of
+    # the first (and then the second) re-emitted TOOL_CALL_START (#9638).
+    if content.name and tool_call_id not in flow.tool_calls_by_id:
         flow.tool_call_id = tool_call_id
         flow.tool_call_name = content.name
         if predictive_handler:
