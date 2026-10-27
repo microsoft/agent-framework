@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -129,7 +129,7 @@ async def test_base_client_default_lifecycle(chat_client_base: BaseChatClient) -
     assert (await chat_client_base.get_response([Message("user", ["Again"])])).text == "test response - Again"
 
 
-@pytest.mark.parametrize("error", [None, RuntimeError("body failed"), asyncio.CancelledError()])
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
 async def test_base_client_context_calls_close(chat_client_base: BaseChatClient, error: BaseException | None) -> None:
     with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
         if error is None:
@@ -141,6 +141,40 @@ async def test_base_client_context_calls_close(chat_client_base: BaseChatClient,
                     raise error
             assert raised.value is error
         close.assert_awaited_once_with()
+
+
+async def test_base_client_context_closes_on_cancellation(chat_client_base: BaseChatClient) -> None:
+    entered = asyncio.Event()
+
+    async def run_client() -> None:
+        async with chat_client_base:
+            entered.set()
+            await asyncio.Event().wait()
+
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        task = asyncio.create_task(run_client())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+        close.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
+async def test_base_client_context_accepts_sync_close(
+    chat_client_base: BaseChatClient, error: RuntimeError | None
+) -> None:
+    with patch.object(chat_client_base, "close", new_callable=MagicMock, return_value=None) as close:
+        if error is None:
+            async with chat_client_base:
+                close.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError) as raised:
+                async with chat_client_base:
+                    raise error
+            assert raised.value is error
+        close.assert_called_once_with()
 
 
 async def test_base_client_context_propagates_cleanup_failure(chat_client_base: BaseChatClient) -> None:

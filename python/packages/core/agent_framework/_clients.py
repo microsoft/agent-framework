@@ -12,6 +12,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from inspect import isawaitable
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -327,13 +328,16 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         /,
     ) -> None:
         """Release resources owned by the client without suppressing exceptions."""
-        await self.close()
+        result = self.close()
+        if isawaitable(result):
+            await result
 
     async def close(self) -> None:
         """Release client-owned connections and credentials.
 
         The default implementation does nothing. Resource-owning implementations
         override this method and must leave caller-supplied resources open.
+        Context exit also accepts legacy synchronous ``close()`` overrides.
         Clients remain usable without entering an async context; callers can use
         ``await client.close()`` to release their resources explicitly.
         """

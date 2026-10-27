@@ -196,6 +196,7 @@ agent contexts sharing a connector-owned connection, since exiting either agent 
 an SDK client across agents, inject it into their chat clients and manage its lifetime outside those agent contexts.
 `BaseChatClient` provides default context methods and a no-op `close()`, so custom subclasses do not need to
 implement lifecycle methods unless they own resources. Protocol-only chat clients do not need context methods.
+Inherited context exit also supports existing subclasses whose `close()` is synchronous.
 
 ## 4. Build an Agent with Tools and Functions
 

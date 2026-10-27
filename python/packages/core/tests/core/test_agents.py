@@ -250,6 +250,24 @@ async def test_agent_still_accepts_client_without_lifecycle(client: SupportsChat
 
 
 @pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
+async def test_agent_context_accepts_client_with_sync_close(
+    agent_type: type[RawAgent], chat_client_base: MockBaseChatClient, error: RuntimeError | None
+) -> None:
+    with patch.object(chat_client_base, "close", new_callable=MagicMock, return_value=None) as close:
+        agent = agent_type(client=chat_client_base)
+        if error is None:
+            async with agent:
+                close.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError) as raised:
+                async with agent:
+                    raise error
+            assert raised.value is error
+        close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
 async def test_agent_async_with_delegates_to_open_close(agent_type: type[RawAgent]) -> None:
     events: list[str] = []
     client = _LifecycleClient(events)
