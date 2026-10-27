@@ -318,14 +318,17 @@ class FoundryLocalClient(
             prepared["max_tokens"] = prepared.pop("max_completion_tokens")
         response_format: Mapping[str, Any] | None = prepared.get("response_format")
         if isinstance(response_format, Mapping):
-            if response_format.get("type") == "json_schema":
+            if response_format.get("type") == "text":
+                # Explicit text format disables automatic tool selection in the native service.
+                prepared.pop("response_format")
+            elif response_format.get("type") == "json_schema":
                 schema: Mapping[str, Any] | None = response_format.get("json_schema")
                 if isinstance(schema, Mapping):
                     prepared["response_format"] = {
                         **response_format,
                         "json_schema": schema.get("schema", schema),
                     }
-            elif response_format.get("type") not in ("json_object", "text"):
+            elif response_format.get("type") != "json_object":
                 # Older OpenAI adapters pass raw JSON schemas through unchanged.
                 prepared["response_format"] = {"type": "json_schema", "json_schema": response_format}
         tool_choice: str | Mapping[str, Any] | None = prepared.get("tool_choice")

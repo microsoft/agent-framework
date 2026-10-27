@@ -1216,9 +1216,10 @@ async def test_foundry_local_structured_responses(
 
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("enabled", [False, True])
-@pytest.mark.parametrize("tool_choice", [None, "auto", "required"])
+@pytest.mark.parametrize("tool_choice", [None, "auto", {"mode": "auto", "allowed_tools": ["add"]}, "required"])
+@pytest.mark.parametrize("explicit_text_format", [False, True])
 async def test_foundry_local_agent_tool_loop(
-    mock_foundry_local_manager: MagicMock, stream: bool, enabled: bool, tool_choice: Literal["auto", "required"] | None
+    mock_foundry_local_manager: MagicMock, stream: bool, enabled: bool, tool_choice: Any, explicit_text_format: bool
 ) -> None:
     payloads: list[dict[str, Any]] = []
     invocations: list[tuple[int, int]] = []
@@ -1251,6 +1252,9 @@ async def test_foundry_local_agent_tool_loop(
     options: ChatOptions[None] = {"allow_multiple_tool_calls": False}
     if tool_choice is not None:
         options["tool_choice"] = tool_choice
+    if explicit_text_format:
+        options["response_format"] = {"type": "text"}
+    original_options = deepcopy(options)
     async with _client_with_transport(respond, function_invocation_configuration={"enabled": enabled}) as client:
         agent = Agent(client=client, tools=add, instructions="Use the calculator.")
         if stream:
@@ -1259,8 +1263,10 @@ async def test_foundry_local_agent_tool_loop(
             response = await agent.run("What is 2+3?", options=options)
 
     assert payloads[0]["tools"][0]["function"]["name"] == "add"
-    assert payloads[0]["tool_choice"] == (tool_choice or "auto")
+    assert payloads[0]["tool_choice"] == ("required" if tool_choice == "required" else "auto")
     assert payloads[0]["parallel_tool_calls"] is False
+    assert all("response_format" not in payload for payload in payloads)
+    assert options == original_options
     if enabled:
         assert invocations == [(2, 3)]
         assert len(payloads) == 2
