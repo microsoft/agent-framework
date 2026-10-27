@@ -184,13 +184,20 @@ internal sealed class WorkflowFormulaState
             return;
         }
 
+        string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
+        HashSet<string> declarativeKeys = await context.ReadStateKeysAsync(sensitivityScope, cancellationToken).ConfigureAwait(false);
+        legacyKeys.IntersectWith(declarativeKeys);
+        if (legacyKeys.Count == 0)
+        {
+            return;
+        }
+
         HashSet<string> localKeys = await context.ReadStateKeysAsync(VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
         if (localKeys.Overlaps(legacyKeys))
         {
             throw new DeclarativeActionException("Cannot restore checkpoint with conflicting Local and Topic scope entries.");
         }
 
-        string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
         List<(string Key, object Value, SensitivityLevel Sensitivity)> entries = [];
         foreach (string key in legacyKeys)
         {
@@ -203,9 +210,8 @@ internal sealed class WorkflowFormulaState
         {
             await context.QueueStateUpdateAsync(entry.Key, entry.Value, VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
             await context.QueueStateUpdateAsync(entry.Key, entry.Sensitivity, sensitivityScope, cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync<object>(entry.Key, null, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
         }
-
-        await context.QueueClearScopeAsync(VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
     }
 
     private Dictionary<string, WorkflowScope> CreateScopeSnapshot() =>

@@ -278,7 +278,10 @@ public class WorkflowFormulaStateTests
             [(VariableScopeNames.Local, "TestValue")] = new("first"),
             [(VariableScopeNames.Topic, "TestValue")] = new("second"),
         };
-        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = [];
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = new()
+        {
+            [(WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), "TestValue")] = SensitivityLevel.None,
+        };
         Mock<IWorkflowContext> source = CreateStateContext(values, sensitivities);
 
         // Act
@@ -291,7 +294,7 @@ public class WorkflowFormulaStateTests
         Assert.Contains("conflicting", first.Message);
         Assert.Equal(first.Message, retry.Message);
         Assert.Equal(3, values.Count);
-        Assert.Empty(sensitivities);
+        Assert.Equal(SensitivityLevel.None, Assert.Single(sensitivities).Value);
         source.Verify(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
         source.Verify(c => c.QueueClearScopeAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -308,7 +311,10 @@ public class WorkflowFormulaStateTests
         {
             [(VariableScopeNames.Topic, "TestValue")] = new(value),
         };
-        Mock<IWorkflowContext> source = CreateStateContext(values, []);
+        Mock<IWorkflowContext> source = CreateStateContext(values, new()
+        {
+            [(WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), "TestValue")] = SensitivityLevel.None,
+        });
 
         // Act
         await this.State.RestoreAsync(source.Object, CancellationToken.None);
@@ -319,13 +325,203 @@ public class WorkflowFormulaStateTests
         Assert.Equal(value, migrated.AsType(value.GetType()));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ResumeAsync_PublishesLegacyMigrationBeforeNextExecutorAsync(bool offThread, bool clear)
+    {
+        // Arrange
+        StateExecutor source = new("source", SeedLegacyStateAsync, this.State);
+        StateExecutor writer = new("writer", async (context, cancellationToken) =>
+        {
+            DeclarativeWorkflowContext declarative = new(context, this.State);
+            if (clear)
+            {
+                await declarative.QueueClearScopeAsync(VariableScopeNames.Topic, cancellationToken);
+            }
+            else
+            {
+                await declarative.QueueStateUpdateAsync("TestValue", "updated", VariableScopeNames.Topic, cancellationToken);
+            }
+        });
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, writer).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? legacyCheckpoint = null;
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    legacyCheckpoint ??= saved;
+                }
+            }
+        }
+        Assert.NotNull(legacyCheckpoint);
+
+        // Act
+        CheckpointInfo? updatedCheckpoint = null;
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, legacyCheckpoint);
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+            if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+            {
+                updatedCheckpoint = saved;
+            }
+        }
+        Assert.NotNull(updatedCheckpoint);
+        await resumed.RestoreCheckpointAsync(updatedCheckpoint);
+
+        // Assert
+        Assert.Equal(clear ? null : "updated", this.State.Get("TestValue").ToObject());
+        Assert.Equal(SensitivityLevel.None, this.State.GetSensitivity("TestValue"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResumeAsync_PublishesLegacyMigrationBeforePostLoadHooksAsync(bool offThread)
+    {
+        // Arrange
+        StateExecutor source = new("source", SeedLegacyStateAsync, this.State);
+        bool hookInvoked = false;
+        StateExecutor reader = new("reader", (_, _) => default, restored: async (context, cancellationToken) =>
+        {
+            Assert.Equal("legacy", await context.ReadStateAsync<string>("TestValue", VariableScopeNames.Local, cancellationToken));
+            Assert.Equal(SensitivityLevel.Sensitive, await context.ReadStateAsync<SensitivityLevel>(
+                "TestValue", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), cancellationToken));
+            Assert.Empty(await context.ReadStateKeysAsync(VariableScopeNames.Topic, cancellationToken));
+            hookInvoked = true;
+        });
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, reader).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? legacyCheckpoint = null;
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    legacyCheckpoint ??= saved;
+                }
+            }
+        }
+        Assert.NotNull(legacyCheckpoint);
+
+        // Act
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, legacyCheckpoint);
+        await resumed.RestoreCheckpointAsync(legacyCheckpoint);
+        await resumed.RestoreCheckpointAsync(legacyCheckpoint);
+
+        // Assert
+        Assert.True(hookInvoked);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResumeAsync_PreservesUnmarkedTopicEntriesAsync(bool offThread)
+    {
+        // Arrange
+        StateExecutor source = new("source", async (context, cancellationToken) =>
+        {
+            await SeedLegacyStateAsync(context, cancellationToken);
+            await context.QueueStateUpdateAsync("NativeValue", 42, VariableScopeNames.Topic, cancellationToken);
+            await context.QueueStateUpdateAsync("NativeValue", 7, VariableScopeNames.Local, cancellationToken);
+        }, this.State);
+        bool hookInvoked = false;
+        StateExecutor reader = new("reader", (_, _) => default, restored: async (context, cancellationToken) =>
+        {
+            Assert.Equal(42, await context.ReadStateAsync<int>("NativeValue", VariableScopeNames.Topic, cancellationToken));
+            Assert.Equal(7, await context.ReadStateAsync<int>("NativeValue", VariableScopeNames.Local, cancellationToken));
+            Assert.Equal("legacy", await context.ReadStateAsync<string>("TestValue", VariableScopeNames.Local, cancellationToken));
+            Assert.Equal("NativeValue", Assert.Single(await context.ReadStateKeysAsync(VariableScopeNames.Topic, cancellationToken)));
+            hookInvoked = true;
+        });
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, reader).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? legacyCheckpoint = null;
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    legacyCheckpoint ??= saved;
+                }
+            }
+        }
+        Assert.NotNull(legacyCheckpoint);
+
+        // Act
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, legacyCheckpoint);
+
+        // Assert
+        Assert.True(hookInvoked);
+    }
+
+    private static async ValueTask SeedLegacyStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        await context.QueueStateUpdateAsync("TestValue", "legacy", VariableScopeNames.Topic, cancellationToken);
+        await context.QueueStateUpdateAsync("TestValue", SensitivityLevel.Sensitive,
+            WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), cancellationToken);
+    }
+
+    private sealed class StateExecutor : Executor<int>, IResettableExecutor
+    {
+        private readonly Func<IWorkflowContext, CancellationToken, ValueTask> _handle;
+        private readonly Func<IWorkflowContext, CancellationToken, ValueTask>? _restored;
+
+        public StateExecutor(
+            string id,
+            Func<IWorkflowContext, CancellationToken, ValueTask> handle,
+            WorkflowFormulaState? state = null,
+            Func<IWorkflowContext, CancellationToken, ValueTask>? restored = null) : base(id)
+        {
+            this._handle = handle;
+            this._restored = restored;
+            if (state is not null)
+            {
+                this.RegisterCheckpointRestoringCallback(state, state.RestoreCheckpointAsync);
+            }
+        }
+
+        public ValueTask ResetAsync() => default;
+
+        [SendsMessage(typeof(int))]
+        public override async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            await this._handle(context, cancellationToken);
+            await context.SendMessageAsync(message, cancellationToken: cancellationToken);
+        }
+
+        protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
+            this._restored?.Invoke(context, cancellationToken) ?? default;
+    }
+
     private static Mock<IWorkflowContext> CreateStateContext(
         Dictionary<(string? Scope, string Key), PortableValue> values,
         Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities)
     {
         Mock<IWorkflowContext> source = new(MockBehavior.Strict);
-        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback((string key, object value, string? scope, CancellationToken _) => values[(scope, key)] = new PortableValue(value))
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, object? value, string? scope, CancellationToken _) =>
+            {
+                if (value is null)
+                {
+                    values.Remove((scope, key));
+                }
+                else
+                {
+                    values[(scope, key)] = new PortableValue(value);
+                }
+            })
             .Returns(default(ValueTask));
         source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<UnassignedValue>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((string key, UnassignedValue _, string? scope, CancellationToken _) => values.Remove((scope, key)))
@@ -343,7 +539,8 @@ public class WorkflowFormulaStateTests
             })
             .Returns(default(ValueTask));
         source.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string? scope, CancellationToken _) => values.Keys.Where(k => string.Equals(k.Scope, scope, StringComparison.Ordinal)).Select(k => k.Key).ToHashSet());
+            .ReturnsAsync((string? scope, CancellationToken _) => values.Keys.Concat(sensitivities.Keys)
+                .Where(k => string.Equals(k.Scope, scope, StringComparison.Ordinal)).Select(k => k.Key).ToHashSet());
         source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string key, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value) ? value : null);
         source.Setup(c => c.ReadStateAsync<SensitivityLevel>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))

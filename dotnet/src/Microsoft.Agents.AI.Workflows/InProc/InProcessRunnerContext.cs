@@ -428,6 +428,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
         // Shared state must finish restoring before any subclass post-load hook runs.
         await Task.WhenAll(restorationTasks).ConfigureAwait(false);
+        await this.StateManager.PublishUpdatesAsync(tracer: null).ConfigureAwait(false);
         await Task.WhenAll(executors.Select(InvokeCheckpointRestoredAsync)).ConfigureAwait(false);
 
         async Task RestoreStateAsync(Executor executor, List<Func<IWorkflowContext, CancellationToken, ValueTask>> callbacks)
