@@ -2,8 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
@@ -181,5 +184,59 @@ public class WorkflowFormulaStateTests
 
         // Assert
         Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("secret"));
+    }
+
+    [Theory]
+    [InlineData(VariableScopeNames.Local, VariableScopeNames.Topic, false, false)]
+    [InlineData(VariableScopeNames.Topic, VariableScopeNames.Local, false, false)]
+    [InlineData(VariableScopeNames.Local, VariableScopeNames.Topic, true, false)]
+    [InlineData(VariableScopeNames.Topic, VariableScopeNames.Local, true, false)]
+    [InlineData(VariableScopeNames.Local, VariableScopeNames.Topic, false, true)]
+    [InlineData(VariableScopeNames.Topic, VariableScopeNames.Local, false, true)]
+    public async Task RestoreAsync_PreservesLatestAliasAssignmentAsync(string firstScope, string secondScope, bool sensitive, bool clear)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = [];
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = [];
+        Mock<IWorkflowContext> source = new(MockBehavior.Strict);
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, object value, string? scope, CancellationToken _) => values[(scope, key)] = new PortableValue(value))
+            .Returns(default(ValueTask));
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<UnassignedValue>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, UnassignedValue _, string? scope, CancellationToken _) => values.Remove((scope, key)))
+            .Returns(default(ValueTask));
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<SensitivityLevel>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, SensitivityLevel value, string? scope, CancellationToken _) => sensitivities[(scope, key)] = value)
+            .Returns(default(ValueTask));
+        source.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string? scope, CancellationToken _) => values.Keys.Where(k => string.Equals(k.Scope, scope, StringComparison.Ordinal)).Select(k => k.Key).ToHashSet());
+        source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value) ? value : null);
+        source.Setup(c => c.ReadStateAsync<SensitivityLevel>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, string? scope, CancellationToken _) => sensitivities.TryGetValue((scope, key), out SensitivityLevel sensitivity) ? sensitivity : SensitivityLevel.None);
+        DeclarativeWorkflowContext context = new(source.Object, this.State);
+        await context.QueueStateUpdateAsync("TestValue", FormulaValue.New("first"), firstScope, SensitivityLevel.Sensitive);
+        if (clear)
+        {
+            await context.QueueClearScopeAsync(secondScope);
+        }
+        else
+        {
+            await context.QueueStateUpdateAsync("TestValue", "second", secondScope, sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None);
+        }
+        object? expectedValue = this.State.Get("TestValue").ToObject();
+        SensitivityLevel expectedSensitivity = this.State.GetSensitivity("TestValue");
+
+        // Act
+        WorkflowFormulaState restored = new(RecalcEngineFactory.Create());
+        await restored.RestoreAsync(source.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(clear ? null : "second", expectedValue);
+        Assert.Equal(sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None, expectedSensitivity);
+        Assert.Equal(expectedValue, restored.Get("TestValue", VariableScopeNames.Local).ToObject());
+        Assert.Equal(expectedValue, restored.Get("TestValue", VariableScopeNames.Topic).ToObject());
+        Assert.Equal(expectedSensitivity, restored.GetSensitivity("TestValue", VariableScopeNames.Local));
+        Assert.Equal(expectedSensitivity, restored.GetSensitivity("TestValue", VariableScopeNames.Topic));
     }
 }

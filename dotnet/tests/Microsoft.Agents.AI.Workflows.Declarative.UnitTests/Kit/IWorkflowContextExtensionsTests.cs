@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
@@ -16,6 +18,55 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Kit;
 
 public sealed class IWorkflowContextExtensionsTests
 {
+    [Theory]
+    [InlineData(VariableScopeNames.Topic, VariableScopeNames.Local)]
+    [InlineData(VariableScopeNames.Local, VariableScopeNames.Local)]
+    [InlineData(VariableScopeNames.Global, VariableScopeNames.Global)]
+    [InlineData("custom", "custom")]
+    [InlineData(null, null)]
+    public async Task StateAccess_UsesCanonicalScopeAsync(string? scope, string? expectedScope)
+    {
+        // Arrange
+        Mock<IWorkflowContext> source = new(MockBehavior.Strict);
+        source.Setup(c => c.ReadStateAsync<string>("TestValue", expectedScope, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("stored");
+        source.Setup(c => c.ReadOrInitStateAsync("TestValue", It.IsAny<System.Func<string>>(), expectedScope, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("stored");
+        source.Setup(c => c.ReadStateKeysAsync(expectedScope, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["TestValue"]);
+        DeclarativeWorkflowContext context = new(source.Object, new(RecalcEngineFactory.Create()));
+
+        // Act
+        string? value = await context.ReadStateAsync<string>("TestValue", scope);
+        string initialized = await context.ReadOrInitStateAsync("TestValue", () => "initial", scope);
+        HashSet<string> keys = await context.ReadStateKeysAsync(scope);
+
+        // Assert
+        Assert.Equal("stored", value);
+        Assert.Equal("stored", initialized);
+        Assert.Equal("TestValue", Assert.Single(keys));
+        source.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ReadOrInitStateAsync_FormulaAliasUsesCanonicalScopeAsync()
+    {
+        // Arrange
+        Mock<IWorkflowContext> source = new(MockBehavior.Strict);
+        source.Setup(c => c.QueueStateUpdateAsync("TestValue", It.IsAny<object>(), VariableScopeNames.Local, It.IsAny<CancellationToken>()))
+            .Returns(default(ValueTask));
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        DeclarativeWorkflowContext context = new(source.Object, state);
+
+        // Act
+        FormulaValue result = await context.ReadOrInitStateAsync<FormulaValue>("TestValue", () => FormulaValue.New("initial"), VariableScopeNames.Topic);
+
+        // Assert
+        Assert.Equal("initial", result.ToObject());
+        Assert.Equal("initial", state.Get("TestValue", VariableScopeNames.Local).ToObject());
+        source.VerifyAll();
+    }
+
     [Fact]
     public async Task FormatTemplateAsync_WithSensitiveValue_ThrowsAsync()
     {

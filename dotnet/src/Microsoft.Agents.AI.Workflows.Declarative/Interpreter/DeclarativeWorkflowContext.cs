@@ -93,6 +93,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     /// <inheritdoc/>
     public async ValueTask<TValue?> ReadStateAsync<TValue>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
+        scopeName = IsManagedScope(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
+
         return typeof(TValue) switch
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
@@ -107,6 +109,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     public async ValueTask<TValue> ReadOrInitStateAsync<TValue>(string key, Func<TValue> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
     {
+        scopeName = IsManagedScope(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
+
         return typeof(TValue) switch
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
@@ -142,7 +146,10 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     /// <inheritdoc/>
     public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
-        => this.Source.ReadStateKeysAsync(scopeName, cancellationToken);
+    {
+        scopeName = IsManagedScope(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
+        return this.Source.ReadStateKeysAsync(scopeName, cancellationToken);
+    }
 
     /// <inheritdoc/>
     public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
@@ -171,6 +178,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         {
             throw new DeclarativeActionException($"Cannot manage variable definitions in scope: '{scopeName}'.");
         }
+
+        scopeName = WorkflowFormulaState.GetScopeName(scopeName);
 
         return value switch
         {
