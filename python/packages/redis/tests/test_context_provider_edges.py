@@ -289,7 +289,7 @@ async def test_after_run_stores_vectors_in_configured_dtype(
         vector_field_name="embedding",
         redis_index=mock_index,
     )
-    provider._validate_schema_compatibility = AsyncMock()
+    object.__setattr__(provider, "_validate_schema_compatibility", AsyncMock())
     session = AgentSession(session_id="session-1")
     context = SessionContext(
         session_id=session.session_id,

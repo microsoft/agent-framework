@@ -71,7 +71,7 @@ def _provider(client: redis.Redis, *, borrowed: bool, **kwargs: Any) -> RedisCon
         provider.redis_index._redis_client = client  # pyright: ignore[reportPrivateUsage]
     provider.redis_index.exists = AsyncMock(return_value=False)
     provider.redis_index.create = AsyncMock()
-    provider._validate_schema_compatibility = AsyncMock()
+    object.__setattr__(provider, "_validate_schema_compatibility", AsyncMock())
     return provider
 
 
