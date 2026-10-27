@@ -340,13 +340,13 @@ def _reject_busy_conversation(session: AgentSession) -> None:
         )
 
 
-def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
-    """Create a response stream seeded from recovery state when available."""
+def _create_response_event_stream(context: ResponseContext, request: CreateResponse) -> ResponseEventStream:
+    """Create a response stream from recovery state or the originating request."""
     if context.is_recovery:
         persisted_response = context.persisted_response
         if persisted_response is not None:
             return ResponseEventStream(response=persisted_response, response_id=context.response_id)
-    return ResponseEventStream(response_id=context.response_id)
+    return ResponseEventStream(request=request, response_id=context.response_id)
 
 
 def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> list[AgentResponseUpdate]:
@@ -1128,7 +1128,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for event in events:
                     yield event
             return
-        response_event_stream = _create_response_event_stream(context)
+        response_event_stream = _create_response_event_stream(context, request)
         if context.is_steered_turn:
             logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
         yield response_event_stream.emit_created()

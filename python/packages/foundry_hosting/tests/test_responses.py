@@ -75,6 +75,7 @@ from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import (
     CreateResponse,
     Item,
+    Metadata,
     OutputItem,
     ResponseIncompleteReason,
     ResponseObject,
@@ -96,6 +97,7 @@ from agent_framework_foundry_hosting._responses import (
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _container_file_citations_from_function_result,  # pyright: ignore[reportPrivateUsage]
+    _create_response_event_stream,  # pyright: ignore[reportPrivateUsage]
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
@@ -1102,6 +1104,61 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 
 
 # region Serialization Helpers
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("metadata", [None, {}, {"foo": "bar", "view": "concise"}])
+async def test_request_metadata_is_returned_and_stored(stream: bool, metadata: dict[str, str] | None) -> None:
+    agent = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello!")])])
+    )
+    server = _make_server(agent)
+    payload: dict[str, Any] = {"input": "Hi", "model": "test-model", "stream": stream, "store": True}
+    if metadata is not None:
+        payload["metadata"] = metadata
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
+        response = await http.post("/responses", json=payload)
+        assert response.status_code == 200
+        if stream:
+            responses = [
+                event["data"]["response"]
+                for event in _parse_sse_events(response.text)
+                if event["event"] in {"response.created", "response.in_progress", "response.completed"}
+            ]
+            assert len(responses) == 3
+            assert [item.get("metadata") for item in responses] == [metadata] * 3
+            completed = responses[-1]
+        else:
+            completed = response.json()
+            assert completed.get("metadata") == metadata
+        assert completed["status"] == "completed"
+
+        stored = await http.get(f"/responses/{completed['id']}")
+        assert stored.status_code == 200
+        assert stored.json()["id"] == completed["id"]
+        assert stored.json().get("metadata") == metadata
+
+
+@pytest.mark.parametrize("has_persisted_response", [False, True])
+async def test_recovery_preserves_persisted_metadata_or_seeds_request(has_persisted_response: bool) -> None:
+    response_id = "resp_metadata_recovery"
+    # The SDK's Metadata TypedDict does not declare its supported arbitrary string keys.
+    request = CreateResponse(input="Hi", metadata=cast(Metadata, {"source": "request"}))
+    context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+    context.is_recovery = True
+    if has_persisted_response:
+        persisted = ResponseEventStream(
+            request=CreateResponse(input="Hi", metadata=cast(Metadata, {"source": "persisted"})),
+            response_id=response_id,
+        )
+        context.persisted_response = cast(ResponseObject, persisted.response)
+    created = _create_response_event_stream(context, request).emit_created()
+
+    assert created["type"] == "response.created"
+    assert created["response"]["id"] == response_id
+    expected = {"source": "persisted" if has_persisted_response else "request"}
+    assert created["response"]["metadata"] == expected
 
 
 class TestSerializationHelpers:
