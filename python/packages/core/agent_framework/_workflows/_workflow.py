@@ -40,6 +40,7 @@ from ._const import (
     WORKFLOW_AGENT_SESSION_ID_KEY,
     WORKFLOW_AGENT_SESSION_NAMESPACE_KEY,
     WORKFLOW_PARENT_SESSION_ID_KEY,
+    WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
     WORKFLOW_SESSION_ID_KEY,
 )
@@ -1210,6 +1211,8 @@ class Workflow(DictConvertible):
     async def _get_response_validation_batches(
         self, requests: Sequence[WorkflowEvent]
     ) -> list[_ResponseBatchValidation]:
+        from ._workflow_executor import _validate_request_parent_contexts  # pyright: ignore[reportPrivateUsage]
+
         context = self._runner.context
         if isinstance(context, _SupportsQueuedResponseInfoEvents):
             queued_requests = await context.get_queued_response_info_events()
@@ -1220,7 +1223,12 @@ class Workflow(DictConvertible):
             )
             queued_requests = _get_queued_response_info_events(checkpoint.messages)
         batch = [*queued_requests, *requests]
-        validations: list[_ResponseBatchValidation] = []
+        parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
+
+        def validate_parent_contexts(requests: Sequence[WorkflowEvent]) -> None:
+            _validate_request_parent_contexts(parent_contexts, requests)
+
+        validations: list[_ResponseBatchValidation] = [(validate_parent_contexts, batch)]
         if self._response_batch_validator is not None:
             validations.append((self._validate_response_batch, batch))
         for executor in self.executors.values():
@@ -1618,7 +1626,13 @@ class Workflow(DictConvertible):
             raise ValueError("Pending workflow request IDs must be non-empty strings.")
 
         async def apply_cancellations() -> None:
+            from ._workflow_executor import _validate_request_parent_contexts  # pyright: ignore[reportPrivateUsage]
+
             pending = await self._runner.context.get_pending_request_info_events()
+            _validate_request_parent_contexts(
+                self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}),
+                [request for request_id, request in pending.items() if request_id in selected_ids],
+            )
             computer_executor_ids = {
                 event.source_executor_id
                 for request_id, event in pending.items()

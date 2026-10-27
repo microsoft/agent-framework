@@ -29,6 +29,8 @@ maturity. Check current package status and public docstrings before making compa
 - Declarative children wrapped in `WorkflowExecutor` retain MCP session continuity across parent agent turns.
   Each binding must own a unique child workflow instance; its MCP scope remains isolated from sibling bindings.
   Replaying a parent entry checkpoint also retains child scopes when rebuilding the same workflow graph.
+  Child responses restore the originating parent scope before invoking downstream bindings, including after
+  checkpoint restoration. Submit responses from different parent scopes in separate runs.
 
 ## Validation
 

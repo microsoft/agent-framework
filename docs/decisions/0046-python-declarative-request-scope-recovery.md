@@ -90,5 +90,29 @@ scope if that child had not started. Such parents receive a new isolated scope
 with a warning; subsequent checkpoints retain it. Existing request-origin
 validation and explicit legacy-request migration rules are unchanged.
 
+## Nested response boundaries
+
+Restoring only a child's scope leaves its ancestors on a later fresh run's scope.
+If runs A and B pause in the same child and B is answered before A, a downstream
+binding could therefore select B's MCP session while processing A's continuation.
+
+Retain the originating parent run context for each forwarded child request in
+framework-owned parent shared state. Unlike transient wrapper fields, this state
+is checkpointed with its owning workflow, including at every embedded boundary.
+After a child successfully resumes or cancels a request, restore the saved parent
+context before forwarding outputs or capturing the origins of follow-up requests.
+Release completed origins, preserve still-pending origins across new inputs, and
+reject mixed-parent-scope response batches before consuming any requests, including
+batches spanning sibling bindings. Cancellation batches obey the same parent-scope
+rule because cancellation can also produce downstream outputs.
+Checkpoint preflight applies the same validation
+to queued propagated and wrapped replies before replacing live state.
+
+Older checkpoints without boundary origins cannot reconstruct those ancestors'
+original scopes. A successful child continuation therefore receives a new isolated
+parent scope with a warning rather than reusing the latest parent's session.
+This does not bypass the child's declarative request-origin checks or explicit
+legacy-request migration policy.
+
 The proposed deciders are Python code owners; maintainer and
 engineering-management approval is still required.

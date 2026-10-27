@@ -342,7 +342,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   `WorkflowExecutor` derives a child scope from the parent scope and binding ID after the child run is accepted.
   Agent turns retain their session scope; direct fresh runs select a new scope. Entry replay therefore preserves
   child scopes even when child execution had not started at the snapshot. Response-only continuations restore
-  their originating scope before further nested invocation.
+  their originating scope before further nested invocation. Each forwarded child request retains its parent
+  run context in checkpointed parent shared state. Responses and cancellations restore that context at every
+  boundary before forwarding outputs, then release the completed request's origin. Mixed-parent-scope response
+  batches are rejected before consuming requests, including across sibling bindings.
 - **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
   replacing live state or queues. `WorkflowExecutor` delegates its private validation hook to its child's runner,
   so each child uses its own response-origin policy and migration metadata stays in the candidate snapshot.

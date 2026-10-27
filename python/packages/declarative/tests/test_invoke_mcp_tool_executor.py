@@ -735,6 +735,74 @@ class TestFieldForwarding:
         for invocation in mcp_handler.invocations[2:]:
             assert invocation.workflow_session_id == original_scopes[invocation.tool_name]
 
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("depth", [1, 2])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_resumed_child_restores_parent_scope_before_next_binding(
+        self, tmp_path: Path, streaming: bool, depth: int, restore: bool
+    ) -> None:
+        from agent_framework import Workflow, WorkflowBuilder, WorkflowExecutor
+        from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+        mcp_handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=mcp_handler)
+        storage = _scope_checkpoint_storage(tmp_path)
+
+        def build() -> Workflow:
+            child = factory.create_workflow_from_definition({
+                "name": "first_child",
+                "actions": [
+                    _action(tool_name="before"),
+                    _scope_pause_action("Question"),
+                    {"kind": "SendActivity", "activity": {"text": "Completed"}},
+                ],
+            })
+            for level in range(1, depth):
+                nested = WorkflowExecutor(child, id=f"nested_{level}", propagate_request=True, allow_direct_output=True)
+                child = WorkflowBuilder(start_executor=nested).build()
+            first = WorkflowExecutor(child, id="first", propagate_request=True)
+            second = WorkflowExecutor(
+                factory.create_workflow_from_definition(_yaml(_action(tool_name="after"))), id="second"
+            )
+            return WorkflowBuilder(start_executor=first, checkpoint_storage=storage).add_edge(first, second).build()
+
+        parent = build()
+        await parent.run({})
+        [request_a] = (await parent._runner_context.get_pending_request_info_events()).values()
+        scope_a = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+        await parent.run({})
+        requests = await parent._runner_context.get_pending_request_info_events()
+        [request_b] = [request for request in requests.values() if request.request_id != request_a.request_id]
+        scope_b = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+        assert scope_a != scope_b
+        if restore:
+            checkpoint_id = parent.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            parent = build()
+            await parent.run(checkpoint_id=checkpoint_id)
+
+        before_rejection = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+        with pytest.raises(ValueError):
+            await parent.run(responses={request_a.request_id: 42})
+        assert parent._runner.state.get(WORKFLOW_SESSION_ID_KEY) == before_rejection
+        assert set(await parent._runner_context.get_pending_request_info_events()) == set(requests)
+
+        for request, scope in ((request_b, scope_b), (request_a, scope_a)):
+            responses = {request.request_id: _scope_pause_response("Question")}
+            if streaming:
+                await parent.run(responses=responses, stream=True).get_final_response()
+            else:
+                await parent.run(responses=responses)
+            assert parent._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope
+
+        scopes = [
+            invocation.workflow_session_id for invocation in mcp_handler.invocations if invocation.tool_name == "after"
+        ]
+        assert len(scopes) == 4
+        assert scopes[0] != scopes[1]
+        assert scopes[2:] == [scopes[1], scopes[0]]
+        assert not await parent._runner_context.get_pending_request_info_events()
+
     @pytest.mark.parametrize("message_list", [False, True])
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("explicit_session", [False, True])

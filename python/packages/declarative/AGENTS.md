@@ -39,6 +39,10 @@ a new `AgentSession` after checkpoint restoration.
 Nested workflow bindings derive their scopes from the checkpointed parent scope and
 binding ID, so replaying a parent entry checkpoint preserves child scopes without
 sharing them across sibling bindings.
+Forwarded child requests also checkpoint the originating context at each parent
+boundary. Interleaved continuations restore those ancestor scopes before forwarding
+outputs to subsequent bindings; responses from different parent scopes must be
+submitted separately.
 Approval continuations keep their originating active scope until the next run with new input.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes

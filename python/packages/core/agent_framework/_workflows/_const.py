@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 # Default maximum iterations for workflow execution.
 DEFAULT_MAX_ITERATIONS = 100
 
@@ -27,6 +29,7 @@ WORKFLOW_AGENT_RUN_KEY = "_workflow_agent_run"
 WORKFLOW_SESSION_ID_KEY = "_workflow_session_id"
 WORKFLOW_PARENT_SESSION_ID_KEY = "_workflow_parent_session_id"
 WORKFLOW_AGENT_SESSION_NAMESPACE_KEY = "_workflow_agent_session_namespace"
+WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY = "_workflow_request_parent_contexts"
 
 # Key used to store collision-free, executor-aware workflow invocation kwargs.
 # WORKFLOW_RUN_KWARGS_KEY remains in the legacy dict format for compatibility with

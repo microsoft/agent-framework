@@ -220,6 +220,65 @@ async def test_basic_sub_workflow() -> None:
     assert parent.result.is_valid is True
 
 
+@pytest.mark.parametrize("restore", [False, True])
+async def test_interleaved_sibling_responses_reject_mixed_parent_scopes(restore: bool) -> None:
+    from agent_framework._workflows._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, WORKFLOW_SESSION_ID_KEY
+
+    storage = InMemoryCheckpointStorage()
+
+    def build() -> Workflow:
+        start = EmailFormatValidator()
+        children = [
+            WorkflowExecutor(
+                WorkflowBuilder(start_executor=EmailDomainValidator()).build(),
+                id=name,
+                propagate_request=True,
+                allow_direct_output=True,
+            )
+            for name in ("first", "second")
+        ]
+        return (
+            WorkflowBuilder(start_executor=start, checkpoint_storage=storage).add_fan_out_edges(start, children).build()
+        )
+
+    workflow = build()
+    await workflow.run(EmailValidationRequest("a@first.example"))
+    requests_a = await workflow._runner_context.get_pending_request_info_events()
+    scope_a = workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+    await workflow.run(EmailValidationRequest("b@second.example"))
+    requests = await workflow._runner_context.get_pending_request_info_events()
+    requests_b = {key: request for key, request in requests.items() if key not in requests_a}
+    scope_b = workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+    if restore:
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        workflow = build()
+        await workflow.run(checkpoint_id=checkpoint_id)
+
+    first_a = next(iter(requests_a.values()))
+    second_b = next(
+        request for request in requests_b.values() if request.source_executor_id != first_a.source_executor_id
+    )
+    with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+        await workflow.run(responses={first_a.request_id: True, second_b.request_id: True})
+    with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+        await workflow.cancel_pending_requests([first_a.request_id, second_b.request_id])
+    assert set(await workflow._runner_context.get_pending_request_info_events()) == set(requests)
+    assert workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope_b
+
+    for batch, scope, email in (
+        (requests_b, scope_b, "b@second.example"),
+        (requests_a, scope_a, "a@first.example"),
+    ):
+        result = await workflow.run(responses=dict.fromkeys(batch, True))
+        outputs = result.get_outputs()
+        assert len(outputs) == 2
+        assert {output.email for output in outputs} == {email}
+        assert workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope
+    assert workflow._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == {}
+    assert not await workflow._runner_context.get_pending_request_info_events()
+
+
 async def test_propagated_sub_workflow_response_receives_runtime_tools() -> None:
     """Runtime tools supplied on parent resume reach the child response handler."""
     captured_runtime_tools: list[Any] = []

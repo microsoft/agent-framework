@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 import types
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -18,7 +19,12 @@ from ._const import (
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
+    WORKFLOW_AGENT_RUN_KEY,
+    WORKFLOW_AGENT_SESSION_ID_KEY,
+    WORKFLOW_PARENT_SESSION_ID_KEY,
+    WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
+    WORKFLOW_SESSION_ID_KEY,
 )
 from ._edge_runner import gather_cancelling_siblings_on_error
 from ._events import (
@@ -44,6 +50,45 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+_PARENT_RUN_CONTEXT_KEYS = (
+    WORKFLOW_SESSION_ID_KEY,
+    WORKFLOW_PARENT_SESSION_ID_KEY,
+    WORKFLOW_AGENT_RUN_KEY,
+    WORKFLOW_AGENT_SESSION_ID_KEY,
+)
+
+
+def _validate_request_parent_contexts(
+    contexts: Any, requests: Sequence[WorkflowEvent] = ()
+) -> dict[str, dict[str, Any]]:
+    """Preflight checkpointed parent origins before any child responses are consumed."""
+    if not isinstance(contexts, dict):
+        raise ValueError("Invalid parent workflow request contexts.")
+    contexts = cast(dict[str, dict[str, Any]], contexts)
+    for request_id, value in contexts.items():
+        if not isinstance(request_id, str) or not isinstance(value, dict):
+            raise ValueError("Invalid parent workflow request context.")
+        context = cast(dict[str, Any], value)
+        if set(context) != set(_PARENT_RUN_CONTEXT_KEYS):
+            raise ValueError("Invalid parent workflow request context.")
+        scope = context[WORKFLOW_SESSION_ID_KEY]
+        inherited_scope = context[WORKFLOW_PARENT_SESSION_ID_KEY]
+        agent_session = context[WORKFLOW_AGENT_SESSION_ID_KEY]
+        if (
+            not isinstance(scope, str)
+            or not scope
+            or (inherited_scope is not None and (not isinstance(inherited_scope, str) or not inherited_scope))
+            or not isinstance(context[WORKFLOW_AGENT_RUN_KEY], bool)
+            or (agent_session is not None and not isinstance(agent_session, str))
+        ):
+            raise ValueError("Invalid parent workflow request context.")
+    scopes = {
+        contexts[request.request_id][WORKFLOW_SESSION_ID_KEY] for request in requests if request.request_id in contexts
+    }
+    if len(scopes) > 1:
+        raise ValueError("Responses span multiple parent workflow scopes; submit each scope in a separate run.")
+    return contexts
 
 
 def _scope_invocation_kwargs_to_subworkflow(
@@ -292,6 +337,8 @@ class WorkflowExecutor(Executor):
     - Event processing is ordered - outputs are forwarded before requests
     - Responses are forwarded to the sub-workflow as they arrive; the sub-workflow tracks its own
       pending requests and resumes when they are answered
+    - Forwarded requests retain their parent run context in checkpointed parent shared state.
+      Responses and cancellations restore it before forwarding resumed outputs.
     - The WorkflowExecutor keeps no per-execution bookkeeping; the sub-workflow is the single source
       of truth for its pending requests. Starting a new execution while the sub-workflow still has
       pending requests logs a warning and is only safe when the wrapped workflow is stateless
@@ -495,6 +542,7 @@ class WorkflowExecutor(Executor):
         )
         self.workflow._set_parent_run_context(ctx.state, self.id)  # pyright: ignore[reportPrivateUsage]
         result = await child_run
+        self._remove_reemitted_pending_requests(result, pending_requests)
 
         logger.debug(f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} completed with {len(result)} events")
 
@@ -583,6 +631,7 @@ class WorkflowExecutor(Executor):
             function_invocation_kwargs=fi_kwargs,
             client_kwargs=ci_kwargs,
         )
+        self._restore_parent_run_context(request_id, ctx)
         self._remove_reemitted_pending_requests(result, pending_requests)
         await self._process_workflow_result(result, ctx)
 
@@ -714,6 +763,11 @@ class WorkflowExecutor(Executor):
         for event in request_info_events:
             request_id = event.request_id
             response_type = event.response_type
+            contexts = _validate_request_parent_contexts(ctx.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}))
+            origin = {key: ctx.state.get(key) for key in _PARENT_RUN_CONTEXT_KEYS}
+            origin[WORKFLOW_AGENT_RUN_KEY] = origin[WORKFLOW_AGENT_RUN_KEY] is True
+            contexts.setdefault(request_id, origin)
+            ctx.state.set(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, contexts)
             if self._propagate_request:
                 # In a workflow where the parent workflow does not handle the request, the request
                 # should be propagated via the `request_info` mechanism to an external source. And
@@ -779,5 +833,25 @@ class WorkflowExecutor(Executor):
             responses={request_id: response},
             tools=ctx.get_runtime_tools(),
         )
+        self._restore_parent_run_context(request_id, ctx)
         self._remove_reemitted_pending_requests(result, pending_requests)
         await self._process_workflow_result(result, ctx)
+
+    def _restore_parent_run_context(self, request_id: str, ctx: WorkflowContext[Any]) -> None:
+        contexts = _validate_request_parent_contexts(ctx.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}))
+        origin = contexts.pop(request_id, None)
+        if origin is None:
+            logger.warning(
+                "WorkflowExecutor %s request %s has no checkpointed parent origin; assigning a new isolated scope.",
+                self.id,
+                request_id,
+            )
+            origin = {
+                WORKFLOW_SESSION_ID_KEY: uuid.uuid4().hex,
+                WORKFLOW_PARENT_SESSION_ID_KEY: None,
+                WORKFLOW_AGENT_RUN_KEY: False,
+                WORKFLOW_AGENT_SESSION_ID_KEY: None,
+            }
+        for key in _PARENT_RUN_CONTEXT_KEYS:
+            ctx.state.set(key, origin[key])
+        ctx.state.set(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, contexts)

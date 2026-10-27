@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import logging
@@ -108,7 +110,7 @@ class RunnerImpl:
         """
         self._iteration = 0
 
-    async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
+    async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent]:
         """Run the workflow until no more messages are sent.
 
         The runner's checkpoint responsibility is intentionally narrow: it creates a
@@ -402,7 +404,11 @@ class RunnerImpl:
     def _validate_checkpoint_tree(
         self, checkpoint: WorkflowCheckpoint, delegated_requests: Sequence[WorkflowEvent] = ()
     ) -> None:
-        from ._workflow_executor import SubWorkflowResponseMessage
+        from ._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY
+        from ._workflow_executor import (
+            SubWorkflowResponseMessage,
+            _validate_request_parent_contexts,  # pyright: ignore[reportPrivateUsage]
+        )
 
         if self._graph_signature_hash != checkpoint.graph_signature_hash:
             raise WorkflowCheckpointException(
@@ -417,6 +423,18 @@ class RunnerImpl:
                 if request.request_id in checkpoint.pending_request_info_events
             ),
         ]
+        _validate_request_parent_contexts(
+            checkpoint.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}),
+            [
+                *requests,
+                *(
+                    message.data.source_event
+                    for batch in checkpoint.messages.values()
+                    for message in batch
+                    if isinstance(message.data, SubWorkflowResponseMessage)
+                ),
+            ],
+        )
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
         if EXECUTOR_STATE_KEY in checkpoint.state:
