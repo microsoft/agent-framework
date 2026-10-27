@@ -4520,6 +4520,55 @@ class RawOpenAIChatClient(
                         seen_function_call_output_ids, done_item
                     ):
                         contents.append(self._parse_function_call_output_content(output_item, done_call_id))
+                elif getattr(done_item, "type", None) == "code_interpreter_call":
+                    # The completed item is the only place `outputs` (logs/images) are ever
+                    # delivered during streaming - there is no incremental outputs event for them -
+                    # and its `code` is the authoritative final value, so both are tagged `replace`
+                    # even though `code_interpreter_call_code.done` (above) usually already set the code.
+                    call_id = getattr(done_item, "call_id", None) or getattr(done_item, "id", None)
+                    outputs: list[Content] = []
+                    if done_item_outputs := getattr(done_item, "outputs", None):
+                        for code_output in done_item_outputs:
+                            if getattr(code_output, "type", None) == "logs":
+                                outputs.append(
+                                    Content.from_text(
+                                        text=code_output.logs,
+                                        raw_representation=code_output,
+                                    )
+                                )
+                            elif getattr(code_output, "type", None) == "image":
+                                outputs.append(
+                                    Content.from_uri(
+                                        uri=code_output.url,
+                                        raw_representation=code_output,
+                                        media_type="image",
+                                    )
+                                )
+                    if done_item_code := getattr(done_item, "code", None):
+                        contents.append(
+                            Content.from_code_interpreter_tool_call(
+                                call_id=call_id,
+                                inputs=[
+                                    Content.from_text(
+                                        text=done_item_code,
+                                        merge_mode="replace",
+                                        raw_representation=done_item,
+                                    )
+                                ],
+                                status=_provider_status(getattr(done_item, "status", None)),
+                                merge_mode="replace",
+                                raw_representation=done_item,
+                            )
+                        )
+                    contents.append(
+                        Content.from_code_interpreter_tool_result(
+                            call_id=call_id,
+                            outputs=outputs,
+                            status=_provider_status(getattr(done_item, "status", None)),
+                            merge_mode="replace",
+                            raw_representation=done_item,
+                        )
+                    )
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:
