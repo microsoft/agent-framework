@@ -339,12 +339,13 @@ def test_memory_file_store_does_not_quarantine_a_valid_replacement(tmp_path: Pat
     attempts: list[str] = []
     state_path: list[Path] = []
 
-    def racing_loads(text: str) -> object:
-        attempts.append(text)
+    def racing_loads(text: str | bytes) -> Any:
+        document = text.decode() if isinstance(text, bytes) else text
+        attempts.append(document)
         if len(attempts) == 1:
             # the replacement lands after the read that is already in flight
             state_path[0].write_text('{"sessions_since_consolidation": ["kept"]}', encoding="utf-8")
-            raise json.JSONDecodeError("corrupt", text, 0)
+            raise json.JSONDecodeError("corrupt", document, 0)
         return real_loads(text)
 
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id", loads=racing_loads)
