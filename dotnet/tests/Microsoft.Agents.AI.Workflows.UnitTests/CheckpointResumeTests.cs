@@ -136,6 +136,60 @@ public class CheckpointResumeTests
         Assert.Equal(1, sourceExecutorRestored);
     }
 
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread, false)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread, true)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, false)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, true)]
+    internal async Task Checkpoint_Restore_FailedPublicationCanBeRetriedAsync(ExecutionEnvironment environment, bool checkRolledBackState)
+    {
+        // Arrange
+        bool conflicting = true;
+        IWorkflowContext? restoringContext = null;
+        RestoreProbeExecutor source = new("source", async (context, cancellationToken) =>
+        {
+            restoringContext = context;
+            await context.QueueStateUpdateAsync("other", "changed", "other-scope", cancellationToken);
+            await context.QueueStateUpdateAsync("value", "source", "shared", cancellationToken);
+        }, () => true);
+        RestoreProbeExecutor sink = new("sink", (context, cancellationToken) =>
+            conflicting ? context.QueueStateUpdateAsync("value", "sink", "shared", cancellationToken) : default, () => true);
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, sink).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment().WithCheckpointing(checkpoints);
+        CheckpointInfo? checkpoint = null;
+        await using StreamingRun run = await env.RunStreamingAsync(workflow, 1);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+            {
+                checkpoint = saved;
+            }
+        }
+        Assert.NotNull(checkpoint);
+
+        // Act
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await run.RestoreCheckpointAsync(checkpoint));
+
+        // Assert
+        Assert.Contains("Expected exactly one update", error.Message);
+        Assert.Null(source.RestorationCompleteInHook);
+        Assert.Null(sink.RestorationCompleteInHook);
+        Assert.NotNull(restoringContext);
+        if (checkRolledBackState)
+        {
+            Assert.Null(await restoringContext.ReadStateAsync<string>("other", "other-scope"));
+            Assert.Null(await restoringContext.ReadStateAsync<string>("value", "shared"));
+        }
+
+        conflicting = false;
+        await run.RestoreCheckpointAsync(checkpoint);
+        Assert.True(source.RestorationCompleteInHook);
+        Assert.True(sink.RestorationCompleteInHook);
+        Assert.Equal("source", await restoringContext.ReadStateAsync<string>("value", "shared"));
+    }
+
     private sealed class RestoreProbeExecutor : Executor<int>, IResettableExecutor
     {
         private readonly Func<bool> _isRestored;

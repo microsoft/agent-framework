@@ -251,6 +251,12 @@ internal sealed class StateManager
         return this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
     }
 
+    internal ValueTask RollbackStateAsync(Checkpoint checkpoint)
+    {
+        this._queuedUpdates.Clear();
+        return this.ImportStateAsync(checkpoint);
+    }
+
     internal ValueTask ImportStateAsync(Checkpoint checkpoint)
     {
         // TODO: Should this be a warning instead?

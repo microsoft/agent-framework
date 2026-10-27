@@ -416,11 +416,18 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
 
-        Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellationToken);
-
         await this.RunContext.ImportEdgeStateAsync(checkpoint.EdgeStateData).ConfigureAwait(false);
-        await Task.WhenAll(executorNotifyTask,
-                           restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
+        try
+        {
+            await Task.WhenAll(this.RunContext.NotifyCheckpointLoadedAsync(cancellationToken),
+                               restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
+        }
+        catch
+        {
+            // All restoration callbacks have completed, so failed writes can be discarded safely.
+            await this.RunContext.StateManager.RollbackStateAsync(checkpoint).ConfigureAwait(false);
+            throw;
+        }
 
         this._lastCheckpointInfo = checkpointInfo;
         this.StepTracer.Reload(checkpoint.StepNumber);
