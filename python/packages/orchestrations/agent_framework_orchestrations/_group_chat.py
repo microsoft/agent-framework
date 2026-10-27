@@ -147,9 +147,8 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         Example:
         .. code-block:: python
 
-            from agent_framework import Agent, AgentExecutor
-            from agent_framework_orchestrations import GroupChatBuilder, GroupChatOrchestrator, GroupChatState
-            from agent_framework_orchestrations._base_group_chat_orchestrator import ParticipantRegistry
+            from agent_framework import Agent
+            from agent_framework_orchestrations import GroupChatBuilder, GroupChatState
 
 
             def round_robin_selector(state: GroupChatState) -> str:
@@ -158,18 +157,16 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
                 return names[state.current_round % len(names)]
 
 
-            participants = [
-                AgentExecutor(Agent(client=client, name="researcher"), id="researcher"),
-                AgentExecutor(Agent(client=client, name="writer"), id="writer"),
-            ]
-            orchestrator = GroupChatOrchestrator(
-                id="group_chat_orchestrator_1",
-                participant_registry=ParticipantRegistry(participants),
+            # GroupChatBuilder creates a GroupChatOrchestrator when given a selection_func.
+            workflow = GroupChatBuilder(
+                participants=[
+                    Agent(client=client, name="researcher"),
+                    Agent(client=client, name="writer"),
+                ],
                 selection_func=round_robin_selector,
-                name="Coordinator",
+                orchestrator_name="Coordinator",
                 max_rounds=10,
-            )
-            workflow = GroupChatBuilder(participants=participants, orchestrator=orchestrator).build()
+            ).build()
         """
         super().__init__(
             id,
