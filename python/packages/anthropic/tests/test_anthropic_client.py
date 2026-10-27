@@ -41,6 +41,7 @@ from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
     BetaMessage,
     BetaMessageDeltaUsage,
+    BetaRedactedThinkingBlock,
     BetaServerToolUseBlock,
     BetaTextBlock,
     BetaToolUseBlock,
@@ -1113,10 +1114,16 @@ def test_prepare_messages_preserves_reused_server_tool_call_ids(
         Content.from_code_interpreter_tool_call(call_id="code-call"),
         Content.from_code_interpreter_tool_result(call_id="code-call"),
         Content.from_shell_tool_result(call_id="shell-call"),
+        Content.from_mcp_server_tool_call(
+            call_id="mcp-call",
+            tool_name="search_docs",
+            server_name="docs",
+            arguments={},
+        ),
         Content.from_function_result(call_id="srvtoolu_editor", result="editor output"),
         Content.from_mcp_server_tool_result(call_id="mcp-call", output=[Content.from_text("mcp output")]),
     ],
-    ids=["code_call", "code_result", "shell_result", "native_function_result", "mcp_result"],
+    ids=["code_call", "code_result", "shell_result", "mcp_call", "native_function_result", "mcp_result"],
 )
 def test_pause_turn_replay_rejects_unsupported_native_tool_content(
     mock_anthropic_client: MagicMock,
@@ -1129,6 +1136,7 @@ def test_pause_turn_replay_rejects_unsupported_native_tool_content(
     appended = client._append_pause_turn_messages_for_anthropic(
         run_options,
         [Message(role="assistant", contents=[content])],
+        _AnthropicRequestState(),
     )
 
     assert appended is False
@@ -2105,6 +2113,22 @@ def test_parse_contents_from_anthropic_text(mock_anthropic_client: MagicMock) ->
     assert len(result) == 1
     assert result[0].type == "text"
     assert result[0].text == "Hello!"
+
+
+def test_parse_contents_records_dropped_redacted_thinking(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Dropped native blocks remain visible to the pause-turn replay guard."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    request_state = _AnthropicRequestState()
+
+    result = client._parse_contents_from_anthropic(
+        [BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque")],
+        request_state,
+    )
+
+    assert result == []
+    assert request_state.dropped_content_types == {"redacted_thinking"}
 
 
 def test_parse_contents_from_anthropic_tool_use(
@@ -3572,6 +3596,116 @@ async def test_streaming_code_execution_pause_turn_is_not_auto_continued(
     assert response.finish_reason == "pause_turn"
     assert response.messages[0].message_id == "msg_code_pause"
     assert response.messages[0].contents[0].type == "code_interpreter_tool_call"
+
+
+async def test_streaming_mcp_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streamed MCP arguments are not replayed until their deltas are preserved."""
+
+    async def events() -> Any:
+        yield _message_start_event("msg_mcp_pause")
+        start = _tool_start_event(
+            block_type="mcp_tool_use",
+            call_id="mcp_call",
+            name="search_docs",
+        )
+        start.content_block.server_name = "docs"
+        yield start
+        yield _argument_delta_event('{"query": "latest docs"}')
+        yield _content_block_stop_event()
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Search docs."])],
+        options={
+            "tools": [client.get_mcp_tool(name="docs", url="https://example.com/mcp")],
+            "max_tokens": 64,
+        },
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.messages[0].contents[0].type == "mcp_server_tool_call"
+    assert response.messages[0].contents[0].parse_arguments() == {}
+
+
+async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Dropped redacted reasoning prevents an incomplete continuation transcript."""
+    message = BetaMessage(
+        id="msg_redacted_pause",
+        content=[
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque"),
+            BetaTextBlock(type="text", text="Still working."),
+        ],
+        model="claude-test",
+        role="assistant",
+        stop_reason="pause_turn",
+        type="message",
+        usage=BetaUsage(input_tokens=1, output_tokens=1),
+    )
+    mock_anthropic_client.beta.messages.create.return_value = message
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    response = await client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Think carefully."])],
+        options={"max_tokens": 64},
+    )
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.text == "Still working."
+
+
+async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming also retains pause_turn when redacted reasoning was dropped."""
+
+    async def events() -> Any:
+        yield _message_start_event("msg_redacted_pause")
+        redacted_start = MagicMock()
+        redacted_start.type = "content_block_start"
+        redacted_start.index = 0
+        redacted_start.content_block = BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque")
+        yield redacted_start
+        yield _content_block_stop_event(index=0)
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 1
+        text_start.content_block.type = "text"
+        text_start.content_block.text = "Still working."
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event(index=1)
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Think carefully."])],
+        options={"max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.text == "Still working."
 
 
 async def test_anthropic_pause_turn_limit_preserves_finish_reason(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -57,5 +57,6 @@ should treat this namespace as adapter-owned replay data and must not modify it.
 
 When Anthropic returns `pause_turn`, the client automatically replays the paused assistant content with the same
 tools when every content block can be reconstructed faithfully. It performs at most 10 continuation requests.
-If the paused response contains unsupported native tool content, or Anthropic remains paused after that limit,
-the response retains `finish_reason="pause_turn"` so the caller can decide whether to continue later.
+If the paused response contains unsupported native tool content, includes a native block dropped during parsing
+(such as redacted reasoning), contains a streamed MCP call whose argument deltas are not retained, or remains paused
+after that limit, the response retains `finish_reason="pause_turn"` so the caller can decide whether to continue later.

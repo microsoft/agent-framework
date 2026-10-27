@@ -108,7 +108,6 @@ _SERVER_TOOL_RESULT_TYPES: Final[frozenset[str]] = frozenset({
 })
 _MAX_PAUSE_TURN_CONTINUATIONS: Final[int] = 10
 _PAUSE_TURN_REPLAYABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
-    "mcp_server_tool_call",
     "text",
     "text_reasoning",
 })
@@ -323,6 +322,7 @@ class _AnthropicRequestState:
     active_call_id: str | None = None
     active_call_content_type: str | None = None
     active_call_is_function_call: bool = False
+    dropped_content_types: set[str] = field(default_factory=set[str])
     stream_stop_reason: str | None = None
     tool_name_aliases: dict[str, str] = field(default_factory=dict[str, str])
 
@@ -737,7 +737,11 @@ class RawAnthropicClient(
                         or continuation_index == _MAX_PAUSE_TURN_CONTINUATIONS
                     ):
                         return
-                    if not self._append_pause_turn_messages_for_anthropic(run_options, turn_response.messages):
+                    if not self._append_pause_turn_messages_for_anthropic(
+                        run_options,
+                        turn_response.messages,
+                        turn_request_state,
+                    ):
                         return
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
@@ -767,7 +771,11 @@ class RawAnthropicClient(
                 should_continue = (
                     message.stop_reason == "pause_turn"
                     and continuation_index < _MAX_PAUSE_TURN_CONTINUATIONS
-                    and self._append_pause_turn_messages_for_anthropic(run_options, response.messages)
+                    and self._append_pause_turn_messages_for_anthropic(
+                        run_options,
+                        response.messages,
+                        turn_request_state,
+                    )
                 )
                 if should_continue:
                     continue
@@ -785,20 +793,23 @@ class RawAnthropicClient(
         self,
         run_options: dict[str, Any],
         messages: Sequence[Message],
+        request_state: _AnthropicRequestState,
     ) -> bool:
         """Append faithfully replayable paused assistant content without a synthetic user turn."""
-        # Sorting is only for deterministic diagnostics; replay behavior does not depend on type order.
-        unsupported_types = sorted({
+        unsupported_types = set(request_state.dropped_content_types)
+        unsupported_types.update(
             content.type
             for message in messages
             for content in message.contents
             if not self._is_pause_turn_content_replayable(content)
-        })
+        )
         if unsupported_types:
+            # Sorting is only for deterministic diagnostics; replay behavior does not depend on type order.
+            sorted_unsupported_types = sorted(unsupported_types)
             logger.warning(
                 "Anthropic pause_turn content cannot be replayed faithfully; returning the paused response. "
                 "Unsupported content types: %s",
-                ", ".join(unsupported_types),
+                ", ".join(sorted_unsupported_types),
             )
             return False
 
@@ -1942,6 +1953,7 @@ class RawAnthropicClient(
                         )
                     )
                 case _:
+                    request_state.dropped_content_types.add(content_block.type)
                     logger.debug(f"Ignoring unsupported content type: {content_block.type} for now")
         return contents
 
