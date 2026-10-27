@@ -33,6 +33,7 @@ from agent_framework import (
     SupportsImageGenerationTool,
     SupportsMCPTool,
     SupportsWebSearchTool,
+    TextSpanRegion,
     WorkflowBuilder,
     tool,
 )
@@ -5993,6 +5994,27 @@ def test_assistant_text_fans_out_multiple_annotated_regions() -> None:
     assert all(a["type"] == "url_citation" for a in annotations)
     spans = [(a["start_index"], a["end_index"]) for a in annotations]
     assert spans == [(4, 10), (16, 22), (36, 42)]
+
+
+def test_assistant_text_does_not_emit_source_coordinate_regions_as_output_spans() -> None:
+    """Source locations must not be serialized as generated-response offsets."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    text_content = Content.from_text(
+        "Answer",
+        annotations=[
+            Annotation(
+                type="citation",
+                title="Source document",
+                url="https://example.com/source",
+                annotated_regions=[TextSpanRegion(type="text_span", start_index=40, end_index=46)],
+                annotated_regions_coordinate_space="source",
+            )
+        ],
+    )
+
+    result = client._prepare_content_for_openai("assistant", text_content)
+
+    assert result["annotations"] == []
 
 
 def test_assistant_text_skips_regions_with_invalid_span() -> None:

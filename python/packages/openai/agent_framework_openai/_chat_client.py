@@ -72,6 +72,7 @@ from agent_framework._types import (
     Role,
     TextSpanRegion,
     UsageDetails,
+    _get_annotation_text_span_regions,  # pyright: ignore[reportPrivateUsage]
     _set_operation_state,  # pyright: ignore[reportPrivateUsage]
     detect_media_type_from_base64,
     get_namespaced_value,
@@ -530,7 +531,8 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
 
     Each Responses API annotation dict carries at most one `start_index`/`end_index` pair, so an
     `Annotation` with multiple `annotated_regions` is fanned out into one entry per region.
-    Regions missing valid integer span bounds are skipped.
+    Regions missing valid integer span bounds are skipped. Source-coordinate regions
+    are retained on the framework annotation but are not emitted as generated-text spans.
     """
     if not annotations:
         return []
@@ -539,7 +541,7 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
         if annotation.get("type") != "citation":
             continue
         props = annotation.get("additional_properties") or {}
-        regions = annotation.get("annotated_regions") or []
+        regions = _get_annotation_text_span_regions(annotation)
         file_id = annotation.get("file_id")
         url = annotation.get("url")
         title = annotation.get("title")
