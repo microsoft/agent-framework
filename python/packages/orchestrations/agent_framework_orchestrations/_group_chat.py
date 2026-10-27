@@ -147,21 +147,29 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         Example:
         .. code-block:: python
 
-            from agent_framework_orchestrations import GroupChatOrchestrator
+            from agent_framework import Agent, AgentExecutor
+            from agent_framework_orchestrations import GroupChatBuilder, GroupChatOrchestrator, GroupChatState
+            from agent_framework_orchestrations._base_group_chat_orchestrator import ParticipantRegistry
 
 
-            async def round_robin_selector(state: GroupChatState) -> str:
+            def round_robin_selector(state: GroupChatState) -> str:
                 # Simple round-robin selection among participants
-                return state.participants[state.current_round % len(state.participants)]
+                names = list(state.participants)
+                return names[state.current_round % len(names)]
 
 
+            participants = [
+                AgentExecutor(Agent(client=client, name="researcher"), id="researcher"),
+                AgentExecutor(Agent(client=client, name="writer"), id="writer"),
+            ]
             orchestrator = GroupChatOrchestrator(
                 id="group_chat_orchestrator_1",
+                participant_registry=ParticipantRegistry(participants),
                 selection_func=round_robin_selector,
-                participants=["researcher", "writer"],
                 name="Coordinator",
                 max_rounds=10,
             )
+            workflow = GroupChatBuilder(participants=participants, orchestrator=orchestrator).build()
         """
         super().__init__(
             id,
@@ -895,10 +903,10 @@ class GroupChatBuilder:
 
         .. code-block:: python
 
-            from agent_framework import MemoryCheckpointStorage
+            from agent_framework import InMemoryCheckpointStorage
             from agent_framework_orchestrations import GroupChatBuilder
 
-            storage = MemoryCheckpointStorage()
+            storage = InMemoryCheckpointStorage()
             workflow = (
                 GroupChatBuilder(
                     participants=[agent1, agent2],
