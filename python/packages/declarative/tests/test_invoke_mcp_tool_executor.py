@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skipif(
     reason="PowerFx engine not available (requires dotnet runtime)",
 )
 
-from agent_framework import AgentSession, Content, Message  # noqa: E402
+from agent_framework import AgentSession, Content, Message, Workflow  # noqa: E402
 from agent_framework.exceptions import ToolExecutionException  # noqa: E402
 
 from agent_framework_declarative._workflows import (  # noqa: E402
@@ -117,6 +117,30 @@ def _yaml(action: dict[str, Any]) -> dict[str, Any]:
     return {"name": "mcp_test", "actions": [action]}
 
 
+def _build_manual_mcp_workflow(
+    mcp_handler: MCPToolHandler, *, depth: int, require_approval: bool = False
+) -> tuple[Workflow, Workflow]:
+    from agent_framework import WorkflowBuilder, WorkflowExecutor
+
+    from agent_framework_declarative._workflows._executors_mcp import InvokeMcpToolActionExecutor
+
+    leaf = WorkflowBuilder(
+        name="manual_leaf",
+        start_executor=InvokeMcpToolActionExecutor(
+            _action(require_approval=require_approval), mcp_tool_handler=mcp_handler
+        ),
+    ).build()
+    root = leaf
+    for level in range(depth):
+        root = WorkflowBuilder(
+            name=f"manual_parent_{level}",
+            start_executor=WorkflowExecutor(
+                root, id=f"child_{level}", propagate_request=True, allow_direct_output=True
+            ),
+        ).build()
+    return root, leaf
+
+
 # ---------- Builder enforcement --------------------------------------------
 
 
@@ -151,6 +175,103 @@ class TestBuilderEnforcement:
 
 
 class TestFieldForwarding:
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("depth", [0, 1, 2])
+    async def test_manual_workflow_scopes_follow_core_run_context(self, streaming: bool, depth: int) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+        from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+        mcp_handler = StubMcpHandler(_ok())
+        storage = InMemoryCheckpointStorage()
+        root, leaf = _build_manual_mcp_workflow(mcp_handler, depth=depth)
+        expected_scopes: list[str] = []
+        entry_id: str | None = None
+        for index in range(2):
+            if streaming:
+                await root.run({}, checkpoint_storage=storage, stream=True).get_final_response()
+            else:
+                await root.run({}, checkpoint_storage=storage)
+            expected_scopes.append(leaf._runner.state.get(WORKFLOW_SESSION_ID_KEY))
+            if index == 0:
+                [entry] = [
+                    checkpoint
+                    for checkpoint in await storage.list_checkpoints(workflow_name=root.name)
+                    if checkpoint.iteration_count == 0
+                ]
+                entry_id = entry.checkpoint_id
+
+        actual_scopes = [invocation.workflow_session_id for invocation in mcp_handler.invocations]
+        assert len(set(actual_scopes)) == 2
+        assert actual_scopes == expected_scopes
+
+        agent = root.as_agent()
+        for session in (None, AgentSession()):
+            for _ in range(2):
+                if streaming:
+                    await agent.run("agent turn", session=session, stream=True).get_final_response()
+                else:
+                    await agent.run("agent turn", session=session)
+                expected_scopes.append(leaf._runner.state.get(WORKFLOW_SESSION_ID_KEY))
+            assert expected_scopes[-1] == expected_scopes[-2]
+        assert len(set(expected_scopes)) == 4
+        assert [invocation.workflow_session_id for invocation in mcp_handler.invocations] == expected_scopes
+
+        assert entry_id is not None
+        root, leaf = _build_manual_mcp_workflow(mcp_handler, depth=depth)
+        if streaming:
+            await root.run(checkpoint_id=entry_id, checkpoint_storage=storage, stream=True).get_final_response()
+        else:
+            await root.run(checkpoint_id=entry_id, checkpoint_storage=storage)
+        assert mcp_handler.invocations[-1].workflow_session_id == expected_scopes[0]
+        assert leaf._runner.state.get(WORKFLOW_SESSION_ID_KEY) == expected_scopes[0]
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_manual_approval_continuations_restore_core_scopes(self, streaming: bool, restore: bool) -> None:
+        from agent_framework import InMemoryCheckpointStorage, WorkflowEvent
+        from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+        from agent_framework_declarative._workflows import ToolApprovalResponse
+
+        mcp_handler = StubMcpHandler(_ok())
+        storage = InMemoryCheckpointStorage()
+        root, leaf = _build_manual_mcp_workflow(mcp_handler, depth=1, require_approval=True)
+        requests: list[WorkflowEvent[Any]] = []
+        for _ in range(2):
+            if streaming:
+                await root.run({}, checkpoint_storage=storage, stream=True).get_final_response()
+            else:
+                await root.run({}, checkpoint_storage=storage)
+            [request] = [
+                request
+                for request in (await root._runner_context.get_pending_request_info_events()).values()
+                if request.request_id not in {previous.request_id for previous in requests}
+            ]
+            requests.append(request)
+        scopes = [request.data.workflow_session_id for request in requests]
+        assert len(set(scopes)) == 2
+        assert mcp_handler.call_count == 0
+        if restore:
+            checkpoint_id = root.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            root, leaf = _build_manual_mcp_workflow(mcp_handler, depth=1, require_approval=True)
+            await root.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+            await root.run(responses={request.request_id: ToolApprovalResponse(approved=True) for request in requests})
+        assert mcp_handler.call_count == 0
+        assert len(await root._runner_context.get_pending_request_info_events()) == 2
+        for request, scope in reversed(list(zip(requests, scopes, strict=True))):
+            responses = {request.request_id: ToolApprovalResponse(approved=True)}
+            if streaming:
+                await root.run(responses=responses, stream=True).get_final_response()
+            else:
+                await root.run(responses=responses)
+            assert mcp_handler.invocations[-1].workflow_session_id == scope
+            assert leaf._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope
+        assert not await root._runner_context.get_pending_request_info_events()
+        assert not await leaf._runner_context.get_pending_request_info_events()
+
     @pytest.mark.asyncio
     async def test_basic_invocation_forwards_required_fields(self) -> None:
         handler = StubMcpHandler(_ok())

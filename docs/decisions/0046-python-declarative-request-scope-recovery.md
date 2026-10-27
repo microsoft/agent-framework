@@ -85,6 +85,12 @@ originating parent scope before further nested invocation. Child scope selection
 occurs only after the child accepts a fresh run, not before checkpoint validation
 or on response-only continuations.
 
+Declarative executors manually composed with Core `WorkflowBuilder` read the
+active Core scope instead of reusing a stale declarative cache. Factory
+initialization still selects its existing declarative scopes before the entry
+checkpoint; standalone state helpers retain their previous initialization behavior.
+Restored request scopes take precedence over inherited metadata from later runs.
+
 Older parent checkpoints without this scope cannot reconstruct a child's original
 scope if that child had not started. Such parents receive a new isolated scope
 with a warning; subsequent checkpoints retain it. Existing request-origin

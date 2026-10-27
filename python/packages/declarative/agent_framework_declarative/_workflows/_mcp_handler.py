@@ -40,7 +40,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
 import httpx2 as httpx
-from agent_framework._workflows._const import WORKFLOW_PARENT_SESSION_ID_KEY, WORKFLOW_SESSION_ID_KEY
+from agent_framework._workflows._const import (
+    WORKFLOW_AGENT_RUN_KEY,
+    WORKFLOW_PARENT_SESSION_ID_KEY,
+    WORKFLOW_SESSION_ID_KEY,
+)
 
 from ._errors import DeclarativeWorkflowError
 
@@ -66,6 +70,18 @@ _WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
 
 
 def get_or_create_workflow_session_id(state: State) -> str:
+    # Core runs own the active scope even without the declarative factory initializer.
+    if state.has(WORKFLOW_AGENT_RUN_KEY):
+        workflow_session_id = state.get(WORKFLOW_SESSION_ID_KEY)
+        if workflow_session_id is not None:
+            if not isinstance(workflow_session_id, str) or not workflow_session_id:
+                raise ValueError("Invalid MCP workflow session state.")
+            state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+            return workflow_session_id
+    return _get_or_create_declarative_session_id(state)
+
+
+def _get_or_create_declarative_session_id(state: State) -> str:
     agent_session_id = state.get(_WORKFLOW_AGENT_SESSION_ID_KEY)
     if agent_session_id is not None and state.get(WORKFLOW_PARENT_SESSION_ID_KEY) is None:
         if not isinstance(agent_session_id, str) or not agent_session_id:
@@ -100,7 +116,7 @@ def activate_workflow_session_id(state: State, *, reset_unscoped: bool, is_agent
             raise ValueError("Invalid parent workflow session scope.")
         state.set(_WORKFLOW_SESSION_ID_KEY, parent_scope)
     elif state.get(_WORKFLOW_AGENT_SESSION_ID_KEY) is not None:
-        get_or_create_workflow_session_id(state)
+        _get_or_create_declarative_session_id(state)
     elif is_agent_run:
         workflow_session_id = state.get(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY)
         if workflow_session_id is None:
@@ -111,7 +127,7 @@ def activate_workflow_session_id(state: State, *, reset_unscoped: bool, is_agent
         state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
     elif reset_unscoped:
         state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
-    state.set(WORKFLOW_SESSION_ID_KEY, get_or_create_workflow_session_id(state))
+    state.set(WORKFLOW_SESSION_ID_KEY, _get_or_create_declarative_session_id(state))
 
 
 def restore_workflow_session_id(state: State, workflow_session_id: str) -> None:
