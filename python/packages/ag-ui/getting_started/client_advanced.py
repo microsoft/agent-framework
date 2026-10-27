@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import cast
+from typing import Any, cast
 
 from agent_framework import ChatResponse, ChatResponseUpdate, Message, ResponseStream, tool
 from agent_framework.ag_ui import AGUIChatClient
@@ -100,7 +100,10 @@ async def non_streaming_example(client: AGUIChatClient, thread_id: str | None = 
 
     print("\nUser: What is 2 + 2?\n")
 
-    response = await client.get_response([Message(role="user", contents=["What is 2 + 2?"])], metadata=metadata)
+    response = await client.get_response(
+        [Message(role="user", contents=["What is 2 + 2?"])],
+        options={"metadata": metadata} if metadata else None,
+    )
 
     print(f"Assistant: {response.text}")
 
@@ -138,10 +141,12 @@ async def tool_example(client: AGUIChatClient, thread_id: str | None = None):
     print("Sending tool definitions to server...")
     print("(Server must be configured with matching tools to execute them)\n")
 
+    options: dict[str, Any] = {"tools": [get_weather, calculate]}
+    if metadata:
+        options["metadata"] = metadata
     response = await client.get_response(
         [Message(role="user", contents=["What's the weather in Seattle?"])],
-        tools=[get_weather, calculate],
-        metadata=metadata,
+        options=options,
     )
 
     print(f"Assistant: {response.text}")
@@ -196,8 +201,7 @@ async def conversation_example(client: AGUIChatClient):
     print("\nUser: Can you also tell me what 10 * 5 is?\n")
     response3 = await client.get_response(
         [Message(role="user", contents=["Can you also tell me what 10 * 5 is?"])],
-        options={"metadata": {"thread_id": thread_id}},
-        tools=[calculate],
+        options={"metadata": {"thread_id": thread_id}, "tools": [calculate]},
     )
     print(f"Assistant: {response3.text}")
 

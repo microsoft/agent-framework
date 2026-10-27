@@ -13,7 +13,6 @@ import uvicorn
 from agent_framework import ChatOptions
 from agent_framework._clients import SupportsChatGetResponse
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint as _add_agent_framework_fastapi_endpoint
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatCompletionClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -97,7 +96,8 @@ if load_dotenv is not None:
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents if needed
 # Set CHAT_CLIENT=anthropic for Anthropic, CHAT_CLIENT=openai (or just an
-# OPENAI_API_KEY) for OpenAI Chat-Completions; otherwise defaults to Azure OpenAI.
+# OPENAI_API_KEY) for OpenAI Chat-Completions; otherwise defaults to Azure OpenAI
+# Chat-Completions configured by AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_MODEL.
 _chat_client_kind = os.getenv("CHAT_CLIENT", "").lower()
 
 
@@ -109,7 +109,7 @@ def _default_shared_client() -> SupportsChatGetResponse[ChatOptions]:
             SupportsChatGetResponse[ChatOptions],
             OpenAIChatCompletionClient(model=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o")),
         )
-    return cast(SupportsChatGetResponse[ChatOptions], AzureOpenAIChatClient())
+    return cast(SupportsChatGetResponse[ChatOptions], OpenAIChatCompletionClient())
 
 
 client: SupportsChatGetResponse[ChatOptions] = _default_shared_client()
