@@ -674,6 +674,58 @@ class TestFieldForwarding:
     @pytest.mark.parametrize("message_list", [False, True])
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("explicit_session", [False, True])
+    @pytest.mark.parametrize("depth", [1, 2])
+    async def test_nested_agent_turns_reuse_isolated_workflow_session_ids(
+        self, streaming: bool, explicit_session: bool, depth: int, message_list: bool
+    ) -> None:
+        from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowExecutor, handler
+
+        class Start(Executor):
+            @handler
+            async def forward(self, message: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
+                await ctx.send_message(message)
+
+        mcp_handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=mcp_handler)
+        wrappers: list[WorkflowExecutor] = []
+        for index in range(2):
+            child = factory.create_workflow_from_definition(_yaml(_action(tool_name=f"tool_{index}")))
+            wrapper = WorkflowExecutor(child, id=f"child_{index}_0")
+            for level in range(1, depth):
+                child = WorkflowBuilder(start_executor=wrapper).build()
+                wrapper = WorkflowExecutor(child, id=f"child_{index}_{level}")
+            wrappers.append(wrapper)
+        start = Start(id="start")
+        parent = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, wrappers).build()
+        agent = parent.as_agent()
+        session_a = AgentSession() if explicit_session else None
+        message = [Message(role="user", contents=[Content.from_text("Agent turn")])] if message_list else "Agent turn"
+        for session in (session_a, AgentSession(), session_a):
+            if streaming:
+                await agent.run(message, session=session, stream=True).get_final_response()
+            else:
+                await agent.run(message, session=session)
+        for _ in range(2):
+            inputs = [Message(role="user", contents=[Content.from_text("Direct turn")])]
+            if streaming:
+                await parent.run(inputs, stream=True).get_final_response()
+            else:
+                await parent.run(inputs)
+
+        scopes_by_tool = [
+            [invocation.workflow_session_id for invocation in mcp_handler.invocations if invocation.tool_name == tool]
+            for tool in ("tool_0", "tool_1")
+        ]
+        for scopes in scopes_by_tool:
+            assert len(scopes) == 5
+            assert all(scopes)
+            assert scopes[2] == scopes[0]
+            assert len({scopes[0], scopes[1], scopes[3], scopes[4]}) == 4
+        assert set(scopes_by_tool[0]).isdisjoint(scopes_by_tool[1])
+
+    @pytest.mark.parametrize("message_list", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("explicit_session", [False, True])
     async def test_direct_fresh_runs_after_agent_turn_receive_separate_session_ids(
         self, message_list: bool, streaming: bool, explicit_session: bool
     ) -> None:

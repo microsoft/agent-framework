@@ -26,6 +26,8 @@ maturity. Check current package status and public docstrings before making compa
   different authentication, retries, SSRF controls, or transport behavior.
 - Direct `DefaultMCPToolHandler` calls without a non-empty `workflow_session_id` use a fresh session per invocation;
   only explicitly scoped calls without a client provider reuse cached MCP sessions.
+- Declarative children wrapped in `WorkflowExecutor` retain MCP session continuity across parent agent turns.
+  Each binding must own a unique child workflow instance; its MCP scope remains isolated from sibling bindings.
 
 ## Validation
 
