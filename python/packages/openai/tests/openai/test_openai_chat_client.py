@@ -58,11 +58,13 @@ from openai.types.responses import (
     ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
+    ResponseFunctionToolCall,
     ResponseOutputItemDoneEvent,
+    ResponseOutputMessage,
     ResponseOutputTextAnnotationAddedEvent,
     ResponseStreamEvent,
 )
-from openai.types.responses.response_reasoning_item import Summary
+from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
 )
@@ -1779,6 +1781,136 @@ def test_streaming_text_snapshots_preserve_separate_output_messages(refusal: boo
         "Checking the refund policy.",
         "The refund requires approval.",
     ]
+
+
+def test_streaming_and_non_streaming_preserve_output_message_boundaries() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    first_message = ResponseOutputMessage.model_validate({
+        "type": "message",
+        "id": "message_0",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+            {
+                "type": "output_text",
+                "text": "Checking the refund policy.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    })
+    second_message = ResponseOutputMessage.model_validate({
+        "type": "message",
+        "id": "message_1",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+            {
+                "type": "output_text",
+                "text": "The refund requires approval.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    })
+    reasoning_item = ResponseReasoningItem.model_validate({
+        "type": "reasoning",
+        "id": "reasoning_0",
+        "content": [
+            {
+                "type": "reasoning_text",
+                "text": "The amount exceeds the automatic refund threshold.",
+            }
+        ],
+        "summary": [],
+        "status": "completed",
+    })
+    function_call = ResponseFunctionToolCall.model_validate({
+        "type": "function_call",
+        "id": "function_0",
+        "call_id": "call_0",
+        "name": "refund",
+        "arguments": '{"amount": 125}',
+        "status": "completed",
+    })
+    response = MagicMock(
+        output_parsed=None,
+        output=[first_message, reasoning_item, function_call, second_message],
+        metadata={},
+        usage=None,
+        id="response_0",
+        created_at=1_000_000_000,
+        model="test-model",
+        status="completed",
+        incomplete_details=None,
+        conversation=None,
+    )
+
+    non_streaming = client._parse_response_from_openai(response, options={"store": False})
+    streaming = client._finalize_response_updates([
+        client._parse_chunk_from_openai(
+            ResponseTextDoneEvent(
+                type="response.output_text.done",
+                content_index=0,
+                item_id="message_0",
+                output_index=0,
+                sequence_number=0,
+                text="Checking the refund policy.",
+                logprobs=[],
+            ),
+            {},
+            {},
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_text_reasoning(
+                    id="reasoning_0",
+                    text="The amount exceeds the automatic refund threshold.",
+                )
+            ],
+            role="assistant",
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    call_id="call_0",
+                    name="refund",
+                    arguments='{"amount": 125}',
+                )
+            ],
+            role="assistant",
+        ),
+        client._parse_chunk_from_openai(
+            ResponseTextDoneEvent(
+                type="response.output_text.done",
+                content_index=0,
+                item_id="message_1",
+                output_index=1,
+                sequence_number=1,
+                text="The refund requires approval.",
+                logprobs=[],
+            ),
+            {},
+            {},
+        ),
+    ])
+
+    expected = [
+        ("message_0", ["text", "text_reasoning", "function_call"], "Checking the refund policy."),
+        ("message_1", ["text"], "The refund requires approval."),
+    ]
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in non_streaming.messages
+    ] == expected
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in streaming.messages
+    ] == expected
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in ChatResponse.from_dict(non_streaming.to_dict()).messages
+    ] == expected
 
 
 def test_prepare_marked_refusal_text_uses_native_assistant_shape_and_input_text_fallback() -> None:
@@ -3726,6 +3858,53 @@ def test_streaming_parse_and_replay_preserves_all_real_assistant_logprobs() -> N
     assert text_content.text == "hello"
     assert text_content.additional_properties["logprobs"] == [first_logprob, second_logprob]
     assert replayed["logprobs"] == [first_logprob, second_logprob]
+
+
+def test_streaming_parse_and_replay_scopes_logprobs_to_output_messages() -> None:
+    """Streamed token logprobs remain attached to their provider output message."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    message_logprobs = [
+        [
+            {"token": "first", "bytes": [102], "logprob": -0.1, "top_logprobs": []},
+            {"token": " message", "bytes": [109], "logprob": -0.2, "top_logprobs": []},
+        ],
+        [
+            {"token": "second", "bytes": [115], "logprob": -0.3, "top_logprobs": []},
+            {"token": " message", "bytes": [109], "logprob": -0.4, "top_logprobs": []},
+        ],
+    ]
+    updates = [
+        client._parse_chunk_from_openai(
+            ResponseTextDeltaEvent(
+                type="response.output_text.delta",
+                content_index=0,
+                item_id=f"message_{message_index}",
+                output_index=message_index,
+                sequence_number=message_index * 2 + chunk_index,
+                logprobs=[logprob],  # type: ignore[list-item]
+                delta=cast(str, logprob["token"]),
+            ),
+            options={},
+            function_call_ids={},
+        )
+        for message_index, logprobs in enumerate(message_logprobs)
+        for chunk_index, logprob in enumerate(logprobs)
+    ]
+
+    response = client._finalize_response_updates(updates)
+    replayed = client._prepare_messages_for_openai(
+        response.messages,
+        request_uses_service_side_storage=False,
+    )
+
+    assert [(message.message_id, message.text) for message in response.messages] == [
+        ("message_0", "first message"),
+        ("message_1", "second message"),
+    ]
+    assert [
+        message.contents[0].additional_properties["openai"]["logprobs"] for message in response.messages
+    ] == message_logprobs
+    assert [message["content"][0]["logprobs"] for message in replayed] == message_logprobs
 
 
 def test_prepare_messages_for_openai_assistant_history_uses_output_text_with_annotations() -> None:

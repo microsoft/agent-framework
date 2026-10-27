@@ -1073,8 +1073,28 @@ class RawOpenAIChatClient(
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
         response = super()._finalize_response_updates(updates, response_format=response_format)
         self._mark_completed_computer_calls([content for message in response.messages for content in message.contents])
-        logprobs: list[Any] = []
+        message_logprobs: list[list[Any]] = []
+        current_message_id: str | None = None
+        current_author_name: str | None = None
+        current_role: str | None = None
         for update in updates:
+            is_new_message = (
+                not message_logprobs
+                or (update.message_id and current_message_id and current_message_id != update.message_id)
+                or (update.author_name and current_author_name and current_author_name != update.author_name)
+                or (update.role and current_role != update.role)
+            )
+            if is_new_message:
+                message_logprobs.append([])
+                current_message_id = None
+                current_author_name = None
+                current_role = "assistant"
+            if update.message_id:
+                current_message_id = update.message_id
+            if update.author_name is not None:
+                current_author_name = update.author_name
+            if update.role is not None:
+                current_role = update.role
             for content in update.contents:
                 if content.type != "text":
                     continue
@@ -1085,15 +1105,15 @@ class RawOpenAIChatClient(
                     default=[],
                 )
                 if isinstance(content_logprobs, list):
-                    logprobs.extend(cast("list[Any]", content_logprobs))
-        if logprobs:
+                    message_logprobs[-1].extend(cast("list[Any]", content_logprobs))
+        for message, logprobs in zip(response.messages, message_logprobs):
+            if not logprobs or message.role != "assistant":
+                continue
             assistant_text = next(
                 (
                     content
-                    for message in response.messages
-                    if message.role == "assistant"
                     for content in message.contents
-                    if content.type == "text"
+                    if content.type == "text" and not _is_refusal_text_content(content)
                 ),
                 None,
             )
@@ -3470,13 +3490,23 @@ class RawOpenAIChatClient(
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
-        contents: list[Content] = []
+        messages: list[Message] = []
         local_shell_tool_name = self._get_local_shell_tool_name(options.get("tools"))
+
+        def contents_for_message(message_id: str | None = None) -> list[Content]:
+            if not messages or (message_id and messages[-1].message_id and messages[-1].message_id != message_id):
+                messages.append(Message(role="assistant", contents=[], message_id=message_id))
+            elif message_id:
+                messages[-1].message_id = message_id
+            return messages[-1].contents
+
         try:
             response_outputs = response.output  # type: ignore[reportUnknownMemberType]
         except AttributeError:
             response_outputs = []
         for item in response_outputs:  # type: ignore[reportUnknownVariableType]
+            message_id = cast(Any, item).id if item.type == "message" else None
+            contents = contents_for_message(message_id if isinstance(message_id, str) else None)
             match item.type:
                 # types:
                 # ParsedResponseOutputMessage[Unknown] |
@@ -3758,14 +3788,16 @@ class RawOpenAIChatClient(
                     contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
-        self._mark_completed_computer_calls(contents)
-        response_message = Message(role="assistant", contents=contents)
+        if not messages:
+            messages.append(Message(role="assistant", contents=[]))
+        all_contents = [content for message in messages for content in message.contents]
+        self._mark_completed_computer_calls(all_contents)
         args: dict[str, Any] = {
             "response_id": response.id,
             "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%S.%fZ"
             ),
-            "messages": response_message,
+            "messages": messages,
             "model": response.model,
             "additional_properties": metadata,
             "raw_representation": response,
@@ -3785,8 +3817,7 @@ class RawOpenAIChatClient(
         if response.status and response.status in ("in_progress", "queued"):
             args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
         chat_response = ChatResponse(**args)
-        if chat_response.messages:
-            self._enrich_mcp_search_citations(chat_response.messages[0].contents)
+        self._enrich_mcp_search_citations(all_contents)
         return chat_response
 
     def _parse_annotation_from_openai(self, annotation: Any, annotation_index: int) -> Annotation | None:
