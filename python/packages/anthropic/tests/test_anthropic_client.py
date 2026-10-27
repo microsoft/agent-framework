@@ -1417,6 +1417,82 @@ async def test_prepare_options_with_tool_choice_auto(
     assert "allow_multiple_tool_calls" not in run_options
 
 
+async def test_prepare_options_allow_multiple_tool_calls_without_tool_choice(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """allow_multiple_tool_calls=False must disable parallel tool use even when tool_choice is unset."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(approval_mode="never_require")
+    def get_weather(city: str) -> str:
+        """Get the weather."""
+        return f"sunny in {city}"
+
+    messages = [Message(role="user", contents=["Weather in Paris and Rome?"])]
+    run_options = client._prepare_options(messages, {"tools": [get_weather], "allow_multiple_tool_calls": False})
+
+    assert run_options["tool_choice"]["type"] == "auto"
+    assert run_options["tool_choice"]["disable_parallel_tool_use"] is True
+
+
+async def test_function_loop_keeps_parallel_tool_use_disabled_after_required_tool_choice(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """After the loop resets tool_choice='required', later requests must still disable parallel tool use."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(approval_mode="never_require")
+    def get_weather(city: str) -> str:
+        """Get the weather."""
+        return f"sunny in {city}"
+
+    usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_anthropic_client.beta.messages.create.side_effect = [
+        BetaMessage(
+            id="msg_1",
+            type="message",
+            role="assistant",
+            model="claude-test",
+            content=[BetaToolUseBlock(type="tool_use", id="toolu_1", name="get_weather", input={"city": "Paris"})],
+            stop_reason="tool_use",
+            usage=usage,
+        ),
+        BetaMessage(
+            id="msg_2",
+            type="message",
+            role="assistant",
+            model="claude-test",
+            content=[BetaToolUseBlock(type="tool_use", id="toolu_2", name="get_weather", input={"city": "Rome"})],
+            stop_reason="tool_use",
+            usage=usage,
+        ),
+        BetaMessage(
+            id="msg_3",
+            type="message",
+            role="assistant",
+            model="claude-test",
+            content=[BetaTextBlock(type="text", text="Sunny in both.")],
+            stop_reason="end_turn",
+            usage=usage,
+        ),
+    ]
+
+    await client.get_response(
+        [Message(role="user", contents=["Weather in Paris and Rome?"])],
+        options={"tools": [get_weather], "tool_choice": "required", "allow_multiple_tool_calls": False},
+    )
+
+    calls = mock_anthropic_client.beta.messages.create.call_args_list
+    assert len(calls) == 3
+    assert calls[0].kwargs["tool_choice"]["type"] == "any"
+    assert calls[0].kwargs["tool_choice"]["disable_parallel_tool_use"] is True
+    for call in calls[1:]:
+        tool_choice = call.kwargs.get("tool_choice")
+        assert tool_choice is not None
+        assert tool_choice["type"] == "auto"
+        assert tool_choice["disable_parallel_tool_use"] is True
+
+
 async def test_prepare_options_with_tool_choice_required(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -4226,6 +4302,50 @@ def test_parse_citations_search_result_location(
 
     assert result is not None
     assert len(result) > 0
+
+
+@pytest.mark.parametrize(
+    ("citation_type", "location_fields", "expected_span"),
+    [
+        ("char_location", {"start_char_index": 2, "end_char_index": 12}, (2, 12)),
+        ("page_location", {"start_page_number": 1, "end_page_number": 3}, (1, 3)),
+        ("content_block_location", {"start_block_index": 0, "end_block_index": 2}, (0, 2)),
+        ("search_result_location", {"start_block_index": 3, "end_block_index": 5}, (3, 5)),
+        ("web_search_result_location", {}, None),
+    ],
+)
+def test_parse_citations_marks_source_coordinate_space(
+    mock_anthropic_client: MagicMock,
+    citation_type: str,
+    location_fields: dict[str, int],
+    expected_span: tuple[int, int] | None,
+) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+    citation = MagicMock(
+        type=citation_type,
+        title="Source",
+        document_title="Source",
+        cited_text="Cited text",
+        file_id=None,
+        url="https://example.com",
+        source="https://example.com",
+    )
+    citation.configure_mock(**location_fields)
+    block = MagicMock(type="text", text="Answer", citations=[citation])
+
+    result = client._parse_citations_from_anthropic(block)
+
+    assert result is not None
+    assert len(result) == 1
+    annotation = result[0]
+    if expected_span is None:
+        assert "annotated_regions" not in annotation
+        assert "annotated_regions_coordinate_space" not in annotation
+    else:
+        assert annotation["annotated_regions"] == [
+            {"type": "text_span", "start_index": expected_span[0], "end_index": expected_span[1]}
+        ]
+        assert annotation["annotated_regions_coordinate_space"] == "source"
 
 
 @pytest.mark.flaky
