@@ -456,7 +456,7 @@ class RawAnthropicClient(
             name: The name for this tool. Defaults to "code_execution".
 
         Returns:
-            A dict-based tool configuration ready to pass to ChatAgent.
+            A dict-based tool configuration ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
@@ -481,7 +481,7 @@ class RawAnthropicClient(
             name: The name for this tool. Defaults to "web_search".
 
         Returns:
-            A dict-based tool configuration ready to pass to ChatAgent.
+            A dict-based tool configuration ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
@@ -569,7 +569,7 @@ class RawAnthropicClient(
             authorization_token: Authorization token for the MCP server (e.g., Bearer token).
 
         Returns:
-            A dict-based tool configuration ready to pass to ChatAgent.
+            A dict-based tool configuration ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
