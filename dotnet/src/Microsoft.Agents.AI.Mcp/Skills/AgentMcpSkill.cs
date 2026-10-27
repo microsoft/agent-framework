@@ -177,6 +177,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         {
             // Wait for our turn.
             await previous.WaitAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
 
             // Check after waiting: the previous reader may have cached fresh content.
             var cached = this._resourceCache.Get(resource.Uri);

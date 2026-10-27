@@ -39,6 +39,46 @@ public sealed partial class AgentMcpSkillTests
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReadResource_CanceledToken_DoesNotReturnFreshCachedContentAsync(bool instructions)
+    {
+        // Arrange
+        var clock = new ResourceTimeProvider();
+        using var cts = new CancellationTokenSource();
+        int reads = 0;
+        var client = CreateResourceClient((uri, _) =>
+        {
+            reads++;
+            return Task.FromResult(ResourceResponse(uri, instructions ? SkillContent : "Checklist."));
+        });
+        var skill = CreateSkill(client.Object, timeProvider: clock);
+        await ReadSnapshotAsync(skill, instructions);
+        await cts.CancelAsync();
+
+        // Act & Assert
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            if (instructions)
+            {
+                await skill.GetContentAsync(cts.Token);
+            }
+            else
+            {
+                await skill.GetResourceAsync("references/checklist.md", cts.Token);
+            }
+        });
+        Assert.Equal(cts.Token, error.CancellationToken);
+        Assert.Equal(1, reads);
+
+        // Act
+        await ReadSnapshotAsync(skill, instructions);
+
+        // Assert
+        Assert.Equal(1, reads);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
