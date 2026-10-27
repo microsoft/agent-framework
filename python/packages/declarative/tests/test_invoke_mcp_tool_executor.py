@@ -1773,6 +1773,7 @@ class TestRequestScopeContinuations:
 
         from agent_framework import (
             Executor,
+            InProcRunnerContext,
             Workflow,
             WorkflowBuilder,
             WorkflowCheckpoint,
@@ -1897,7 +1898,9 @@ class TestRequestScopeContinuations:
             assert all(recorder.value == "snapshot" and recorder.restore_calls == 1 for recorder in recorders)
             assert mcp_handler.call_count == 0
             for index, leaf in enumerate(leaves):
-                queued = await leaf._runner_context.get_queued_response_info_events()
+                context = leaf._runner_context
+                assert isinstance(context, InProcRunnerContext)
+                queued = await context.get_queued_response_info_events()
                 if mode == "pending" and index == 1:
                     [pending] = (await leaf._runner_context.get_pending_request_info_events()).values()
                     assert pending.data.workflow_session_id is None
