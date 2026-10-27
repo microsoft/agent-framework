@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import copy
@@ -80,7 +82,13 @@ from openai.types.responses.response_text_done_event import ResponseTextDoneEven
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
+from agent_framework_openai import (
+    OpenAIChatClient,
+    OpenAIChatCompletionClient,
+    OpenAIChatOptions,
+    RawOpenAIChatClient,
+    RawOpenAIChatCompletionClient,
+)
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
@@ -97,6 +105,38 @@ class OutputStruct(BaseModel):
 
     location: str
     weather: str | None = None
+
+
+@pytest.mark.parametrize(
+    "client_type", [RawOpenAIChatClient, OpenAIChatClient, RawOpenAIChatCompletionClient, OpenAIChatCompletionClient]
+)
+@pytest.mark.parametrize("azure", [False, True])
+@pytest.mark.parametrize("injected", [False, True])
+async def test_openai_chat_client_context_ownership(client_type, azure: bool, injected: bool) -> None:
+    from azure.core.credentials_async import AsyncTokenCredential
+
+    sdk_client = AsyncOpenAI(api_key="test-key") if injected else None
+    credential = MagicMock(spec=AsyncTokenCredential)
+    credential.close = AsyncMock()
+    kwargs: dict[str, Any] = {"async_client": sdk_client} if injected else {}
+    if azure:
+        kwargs.update(azure_endpoint="https://test.openai.azure.com", credential=credential)
+    else:
+        kwargs["api_key"] = "test-key"
+
+    client = client_type(model="test-model", **kwargs)
+    with patch.object(client.client, "close", wraps=client.client.close) as close:
+        async with client as entered:
+            assert entered is client
+            close.assert_not_awaited()
+        await client.close()
+        assert close.await_count == (0 if injected else 1)
+    assert client.client.is_closed() is not injected
+    credential.close.assert_not_awaited()
+    assert "_owns_client" not in client.to_dict()
+    assert "_client_closed" not in client.to_dict()
+    if sdk_client is not None:
+        await sdk_client.close()
 
 
 class _FakeAsyncEventStream:

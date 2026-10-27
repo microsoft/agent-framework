@@ -418,6 +418,7 @@ class RawAnthropicClient(
         model_setting = anthropic_settings.get("chat_model")
         base_url_setting = anthropic_settings.get("base_url")
 
+        owns_client = anthropic_client is None
         if anthropic_client is None:
             if api_key_secret is None:
                 raise ValueError(
@@ -438,8 +439,17 @@ class RawAnthropicClient(
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client
+        self._owns_client = owns_client
+        self._client_closed = False
         self.additional_beta_flags = additional_beta_flags or []
         self.model = model_setting
+
+    @override
+    async def close(self) -> None:
+        """Close the internally created SDK client, leaving supplied credentials open."""
+        if self._owns_client and not self._client_closed:
+            await self.anthropic_client.close()
+            self._client_closed = True
 
     # region Static factory methods for hosted tools
 

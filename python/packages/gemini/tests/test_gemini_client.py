@@ -76,6 +76,37 @@ def test_enterprise_integration_gate_accepts_either_mode(monkeypatch: pytest.Mon
     assert _has_gemini_integration_credentials()
 
 
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("injected", [False, True])
+@pytest.mark.parametrize("fail_async_close", [False, True])
+async def test_gemini_client_context_ownership(client_type, injected: bool, fail_async_close: bool) -> None:
+    sdk_client = MagicMock()
+    sdk_client.aio.aclose = AsyncMock(side_effect=RuntimeError("close failed") if fail_async_close else None)
+    credential = MagicMock()
+    with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=sdk_client):
+        client = client_type(
+            model="test-model",
+            enterprise=True,
+            project="test-project",
+            location="us-central1",
+            credentials=credential,
+            client=sdk_client if injected else None,
+        )
+    if fail_async_close and not injected:
+        with pytest.raises(RuntimeError, match="close failed"):
+            async with client:
+                pass
+        sdk_client.aio.aclose.assert_awaited_once()
+        sdk_client.close.assert_called_once()
+    else:
+        async with client as entered:
+            assert entered is client
+        await client.close()
+        assert sdk_client.aio.aclose.await_count == (0 if injected else 1)
+        assert sdk_client.close.call_count == (0 if injected else 1)
+    credential.close.assert_not_called()
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(
     os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() not in {"true", "1", "yes", "on"},

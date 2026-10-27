@@ -67,7 +67,10 @@ agent_framework/
 ### Chat Clients (`_clients.py`)
 
 - **`SupportsChatGetResponse`** - Protocol for chat client implementations
-- **`BaseChatClient`** - Abstract base class with middleware support; subclasses implement `_inner_get_response()` and `_inner_get_streaming_response()`
+- **`BaseChatClient`** - Abstract base class without middleware; subclasses implement `_inner_get_response()`
+  for streaming and non-streaming requests. Provides `__aenter__()` returning `self`, `__aexit__()` delegating to
+  `close()`, and a default no-op async `close()`. Connectors override cleanup for owned connections and credentials;
+  injected resources remain caller-owned. `SupportsChatGetResponse` does not require lifecycle methods.
 
 ### Types (`_types.py`)
 

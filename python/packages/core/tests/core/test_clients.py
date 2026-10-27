@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -113,6 +115,52 @@ async def test_chat_client_get_response_streaming(client: SupportsChatGetRespons
 def test_base_client(chat_client_base: SupportsChatGetResponse):
     assert isinstance(chat_client_base, BaseChatClient)
     assert isinstance(chat_client_base, SupportsChatGetResponse)
+
+
+async def test_base_client_default_lifecycle(chat_client_base: BaseChatClient) -> None:
+    await chat_client_base.close()
+    async with chat_client_base as entered:
+        assert entered is chat_client_base
+        response = await entered.get_response([Message(role="user", contents=["Hello"])])
+        assert response.text == "test response - Hello"
+        updates = [update async for update in entered.get_response([Message("user", ["Hello"])], stream=True)]
+        assert updates
+    await chat_client_base.close()
+    assert (await chat_client_base.get_response([Message("user", ["Again"])])).text == "test response - Again"
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed"), asyncio.CancelledError()])
+async def test_base_client_context_calls_close(chat_client_base: BaseChatClient, error: BaseException | None) -> None:
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        if error is None:
+            async with chat_client_base:
+                close.assert_not_awaited()
+        else:
+            with pytest.raises(type(error)) as raised:
+                async with chat_client_base:
+                    raise error
+            assert raised.value is error
+        close.assert_awaited_once_with()
+
+
+async def test_base_client_context_propagates_cleanup_failure(chat_client_base: BaseChatClient) -> None:
+    with (
+        patch.object(chat_client_base, "close", new_callable=AsyncMock, side_effect=RuntimeError("close failed")),
+        pytest.raises(RuntimeError, match="close failed"),
+    ):
+        async with chat_client_base:
+            pass
+
+
+async def test_base_client_context_closes_after_early_stream_exit(chat_client_base: BaseChatClient) -> None:
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        async with chat_client_base:
+            async with chat_client_base.get_response([Message("user", ["Hello"])], stream=True) as stream:
+                async for update in stream:
+                    assert update.text
+                    break
+            close.assert_not_awaited()
+        close.assert_awaited_once_with()
 
 
 def test_base_client_rejects_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:

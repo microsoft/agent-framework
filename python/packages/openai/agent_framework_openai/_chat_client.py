@@ -817,6 +817,8 @@ class RawOpenAIChatClient(
         )
 
         self.client = client
+        self._owns_client = async_client is None
+        self._client_closed = False
         self.model: str = settings.get("model") or ""
 
         # Store configuration for serialization
@@ -875,6 +877,13 @@ class RawOpenAIChatClient(
             ),
             inner_exception=ex,
         ) from ex
+
+    @override
+    async def close(self) -> None:
+        """Close the connector-owned SDK connection, not caller-supplied credentials."""
+        if self._owns_client and not self._client_closed:
+            await self.client.close()
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import inspect
@@ -218,6 +220,33 @@ async def test_agent_explicit_open_close(agent_type: type[RawAgent]) -> None:
     await agent.close()
 
     assert events == ["client.enter", "mcp.enter", "mcp.exit", "client.exit"]
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+@pytest.mark.parametrize("fail_on_enter", [False, True])
+async def test_agent_manages_inherited_client_context(
+    agent_type: type[RawAgent], fail_on_enter: bool, chat_client_base: MockBaseChatClient
+) -> None:
+    events: list[str] = []
+    mcp_tool = _LifecycleMCPTool("mcp", events, fail_on_enter=fail_on_enter)
+    agent = agent_type(client=chat_client_base, tools=[mcp_tool])
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        if fail_on_enter:
+            with pytest.raises(RuntimeError, match="MCP entry failed"):
+                await agent.open()
+        else:
+            async with agent:
+                close.assert_not_awaited()
+        close.assert_awaited_once_with()
+        await agent.close()
+        close.assert_awaited_once_with()
+
+
+async def test_agent_still_accepts_client_without_lifecycle(client: SupportsChatGetResponse) -> None:
+    assert not hasattr(client, "__aenter__")
+    async with RawAgent(client=client) as agent:
+        response = await agent.run("Hello")
+        assert response.text == "test response"
 
 
 @pytest.mark.parametrize("agent_type", [Agent, RawAgent])

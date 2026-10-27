@@ -341,12 +341,24 @@ class RawGeminiChatClient(
             location=google_settings.get("cloud_location"),
             credentials=credentials,
         )
+        self._owns_client = client is None
+        self._client_closed = False
 
         self.model = google_settings.get("model")
         self.max_tracked_thought_signatures = max_tracked_thought_signatures
         self._thought_signature_cache: OrderedDict[str, bytes] = OrderedDict()
 
         super().__init__(additional_properties=additional_properties)
+
+    @override
+    async def close(self) -> None:
+        """Close both owned SDK transports, leaving caller-supplied credentials open."""
+        if self._owns_client and not self._client_closed:
+            try:
+                await self._genai_client.aio.aclose()
+            finally:
+                self._genai_client.close()
+            self._client_closed = True
 
     @staticmethod
     def get_code_interpreter_tool() -> types.Tool:
