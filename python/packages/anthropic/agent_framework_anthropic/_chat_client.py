@@ -107,6 +107,11 @@ _SERVER_TOOL_RESULT_TYPES: Final[frozenset[str]] = frozenset({
     "web_search_tool_result",
 })
 _MAX_PAUSE_TURN_CONTINUATIONS: Final[int] = 10
+_PAUSE_TURN_REPLAYABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
+    "mcp_server_tool_call",
+    "text",
+    "text_reasoning",
+})
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -732,7 +737,8 @@ class RawAnthropicClient(
                         or continuation_index == _MAX_PAUSE_TURN_CONTINUATIONS
                     ):
                         return
-                    self._append_pause_turn_messages_for_anthropic(run_options, turn_response.messages)
+                    if not self._append_pause_turn_messages_for_anthropic(run_options, turn_response.messages):
+                        return
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -758,12 +764,17 @@ class RawAnthropicClient(
                 accumulated_messages.extend(response.messages)
                 aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
                 raw_messages.append(message)
-                if message.stop_reason != "pause_turn" or continuation_index == _MAX_PAUSE_TURN_CONTINUATIONS:
-                    response.messages = accumulated_messages
-                    response.usage_details = aggregated_usage
-                    response.raw_representation = raw_messages if len(raw_messages) > 1 else message
-                    return response
-                self._append_pause_turn_messages_for_anthropic(run_options, response.messages)
+                should_continue = (
+                    message.stop_reason == "pause_turn"
+                    and continuation_index < _MAX_PAUSE_TURN_CONTINUATIONS
+                    and self._append_pause_turn_messages_for_anthropic(run_options, response.messages)
+                )
+                if should_continue:
+                    continue
+                response.messages = accumulated_messages
+                response.usage_details = aggregated_usage
+                response.raw_representation = raw_messages if len(raw_messages) > 1 else message
+                return response
             raise RuntimeError("Anthropic pause-turn continuation loop exited unexpectedly.")
 
         return _get_response()
@@ -774,11 +785,47 @@ class RawAnthropicClient(
         self,
         run_options: dict[str, Any],
         messages: Sequence[Message],
-    ) -> None:
-        """Append paused assistant content without adding a synthetic user turn."""
+    ) -> bool:
+        """Append faithfully replayable paused assistant content without a synthetic user turn."""
+        unsupported_types = sorted({
+            content.type
+            for message in messages
+            for content in message.contents
+            if not self._is_pause_turn_content_replayable(content)
+        })
+        if unsupported_types:
+            logger.warning(
+                "Anthropic pause_turn content cannot be replayed faithfully; returning the paused response. "
+                "Unsupported content types: %s",
+                ", ".join(unsupported_types),
+            )
+            return False
+
         prepared_messages = cast(list[dict[str, Any]], run_options["messages"])
         for message in messages:
             prepared_messages.extend(self._prepare_message_groups_for_anthropic(message))
+        return True
+
+    def _is_pause_turn_content_replayable(self, content: Content) -> bool:
+        """Return whether the Anthropic serializer preserves this paused content item."""
+        if content.type in _PAUSE_TURN_REPLAYABLE_CONTENT_TYPES:
+            return True
+        if content.type == "function_call":
+            try:
+                return self._prepare_server_tool_call_for_anthropic(content) is not None
+            except ContentError:
+                return False
+        if content.type == "function_result":
+            try:
+                block = self._server_tool_block(content)
+            except ContentError:
+                return False
+            return bool(
+                block is not None
+                and block.get("type") in _SERVER_TOOL_RESULT_TYPES
+                and "content" in block
+            )
+        return False
 
     def _prepare_options(
         self,
@@ -1404,6 +1451,7 @@ class RawAnthropicClient(
                 Message(
                     role="assistant",
                     contents=contents,
+                    message_id=message.id,
                     raw_representation=message,
                 )
             ],
@@ -1447,6 +1495,7 @@ class RawAnthropicClient(
                 return ChatResponseUpdate(
                     role="assistant",
                     response_id=event.message.id,
+                    message_id=event.message.id,
                     contents=[
                         *self._parse_contents_from_anthropic(
                             event.message.content,

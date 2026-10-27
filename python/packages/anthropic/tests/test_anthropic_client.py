@@ -1107,6 +1107,34 @@ def test_prepare_messages_preserves_reused_server_tool_call_ids(
     assert blocks[2]["input"] == {"query": "second"}
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        Content.from_code_interpreter_tool_call(call_id="code-call"),
+        Content.from_code_interpreter_tool_result(call_id="code-call"),
+        Content.from_shell_tool_result(call_id="shell-call"),
+        Content.from_function_result(call_id="srvtoolu_editor", result="editor output"),
+        Content.from_mcp_server_tool_result(call_id="mcp-call", output=[Content.from_text("mcp output")]),
+    ],
+    ids=["code_call", "code_result", "shell_result", "native_function_result", "mcp_result"],
+)
+def test_pause_turn_replay_rejects_unsupported_native_tool_content(
+    mock_anthropic_client: MagicMock,
+    content: Content,
+) -> None:
+    """Automatic continuation must not silently drop native tool content."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    run_options: dict[str, Any] = {"messages": []}
+
+    appended = client._append_pause_turn_messages_for_anthropic(
+        run_options,
+        [Message(role="assistant", contents=[content])],
+    )
+
+    assert appended is False
+    assert run_options["messages"] == []
+
+
 # Tool Conversion Tests
 
 
@@ -1920,6 +1948,7 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     assert response.model == "claude-3-5-sonnet-20241022"
     assert len(response.messages) == 1
     assert response.messages[0].role == "assistant"
+    assert response.messages[0].message_id == "msg_123"
     assert len(response.messages[0].contents) == 1
     assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "Hello there!"
@@ -3376,6 +3405,129 @@ async def test_agent_continues_anthropic_pause_turn() -> None:
         "input_token_count": 22,
         "output_token_count": 5,
     }
+
+
+async def test_streaming_pause_turn_preserves_message_boundaries_for_structured_output(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Paused text and the final structured answer remain separate provider messages."""
+
+    class StructuredPauseResult(BaseModel):
+        answer: str
+
+    async def turn_events(response_id: str, text: str, stop_reason: str) -> Any:
+        yield _message_start_event(response_id)
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 0
+        text_start.content_block.type = "text"
+        text_start.content_block.text = text
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event()
+        yield _message_delta_event(stop_reason)
+        yield _message_stop_event()
+
+    streams = [
+        turn_events("msg_paused", "Still researching.", "pause_turn"),
+        turn_events("msg_finished", '{"answer": "done"}', "end_turn"),
+    ]
+    mock_anthropic_client.beta.messages.create.side_effect = lambda **_: streams.pop(0)
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Research this topic."])],
+        options=ChatOptions[StructuredPauseResult](
+            max_tokens=64,
+            response_format=StructuredPauseResult,
+        ),
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert [message.message_id for message in response.messages] == ["msg_paused", "msg_finished"]
+    assert [message.text for message in response.messages] == [
+        "Still researching.",
+        '{"answer": "done"}',
+    ]
+    assert response.value == StructuredPauseResult(answer="done")
+
+
+async def test_non_streaming_code_execution_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Code-execution content returns pause_turn when native replay is unavailable."""
+    code_call = MagicMock()
+    code_call.type = "server_tool_use"
+    code_call.id = "srvtoolu_code"
+    code_call.name = "code_execution"
+    code_call.input = {"code": "print('done')"}
+    code_result_content = MagicMock()
+    code_result_content.stdout = "done"
+    code_result_content.stderr = None
+    code_result_content.content = []
+    code_result = MagicMock()
+    code_result.type = "code_execution_tool_result"
+    code_result.tool_use_id = "srvtoolu_code"
+    code_result.content = code_result_content
+    message = MagicMock(spec=BetaMessage)
+    message.id = "msg_code_pause"
+    message.model = "claude-test"
+    message.content = [code_call, code_result]
+    message.usage = BetaUsage(input_tokens=1, output_tokens=1)
+    message.stop_reason = "pause_turn"
+    mock_anthropic_client.beta.messages.create.return_value = message
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    response = await client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Run code."])],
+        options={"tools": [client.get_code_interpreter_tool()], "max_tokens": 64},
+    )
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert [content.type for content in response.messages[0].contents] == [
+        "code_interpreter_tool_call",
+        "code_interpreter_tool_result",
+    ]
+
+
+async def test_streaming_code_execution_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming code-execution pauses remain caller-visible without lossy replay."""
+
+    async def events() -> Any:
+        yield _message_start_event("msg_code_pause")
+        start = _tool_start_event(
+            block_type="server_tool_use",
+            call_id="srvtoolu_code",
+            name="code_execution",
+        )
+        start.content_block.input = {"code": "print('done')"}
+        yield start
+        yield _content_block_stop_event()
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Run code."])],
+        options={"tools": [client.get_code_interpreter_tool()], "max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.messages[0].message_id == "msg_code_pause"
+    assert response.messages[0].contents[0].type == "code_interpreter_tool_call"
 
 
 async def test_anthropic_pause_turn_limit_preserves_finish_reason(monkeypatch: pytest.MonkeyPatch) -> None:
