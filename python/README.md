@@ -57,8 +57,6 @@ not provide exactly the same feature set as Python 3.14:
 | --- | --- |
 | Declarative Power Fx | `agent-framework-declarative` is installed, but its `powerfx` dependency is not. YAML values beginning with `=` produce a warning and remain unchanged instead of being evaluated. Declarative agents or workflows that rely on expressions may therefore use invalid literal values or fail later. |
 | Redis | `agent-framework-redis` is omitted from the standard install because RedisVL declares `Requires-Python <3.15`. Redis imports and Redis-backed history, context, and vector storage are unavailable. |
-| Hyperlight | `agent-framework-hyperlight` is omitted because no compatible Python 3.15 sandbox backend wheel is published. Hyperlight CodeAct and its `execute_code` tool are unavailable. |
-| AG-UI A2UI | The base `agent-framework-ag-ui` package works, but pip cannot install its optional `a2ui` extra because `ag-ui-a2ui-toolkit` declares `Requires-Python <3.15`. |
 
 ## 1. Setup API Keys
 

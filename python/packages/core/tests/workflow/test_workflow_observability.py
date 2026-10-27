@@ -21,6 +21,11 @@ from agent_framework.observability import (
 )
 
 
+def _span_attributes(span: Any) -> dict[str, Any]:
+    attributes = span.attributes
+    return dict(attributes) if attributes is not None else {}
+
+
 def _assert_workflow_error_details(
     details: WorkflowErrorDetails,
     private_error_detail: str,
@@ -228,7 +233,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     # Check that spans were created with proper attributes
     spans = span_exporter.get_finished_spans()
     # Processing spans now use executor_id as the span name
-    processing_spans = [s for s in spans if s.attributes and s.attributes.get("executor.id") == "test-executor"]
+    processing_spans = [s for s in spans if _span_attributes(s).get("executor.id") == "test-executor"]
     sending_spans = [s for s in spans if s.name == "message.send"]
 
     assert len(processing_spans) >= 1
@@ -355,7 +360,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     # Should have workflow span, processing spans, and sending spans
     # Processing spans now use executor_id as the span name, filter by executor.id attribute
     workflow_spans = [s for s in spans if s.name == "workflow.run"]
-    processing_spans = [s for s in spans if s.attributes and s.attributes.get("executor.id") is not None]
+    processing_spans = [s for s in spans if _span_attributes(s).get("executor.id") is not None]
     sending_spans = [s for s in spans if s.name == "message.send"]
     build_spans_after_run = [s for s in spans if s.name == "workflow.build"]
 
@@ -379,7 +384,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     assert "workflow.completed" in event_names
 
     # Test fan-in span linking: find the aggregator's processing span
-    aggregator_spans = [s for s in processing_spans if s.attributes and s.attributes.get("executor.id") == "aggregator"]
+    aggregator_spans = [s for s in processing_spans if _span_attributes(s).get("executor.id") == "aggregator"]
     assert len(aggregator_spans) == 1
 
     aggregator_span = aggregator_spans[0]
@@ -388,12 +393,8 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     assert aggregator_span.links is not None
 
     # Find the sending spans from executor2 and executor3 by checking parent relationships
-    executor2_processing_spans = [
-        s for s in processing_spans if s.attributes and s.attributes.get("executor.id") == "executor2"
-    ]
-    executor3_processing_spans = [
-        s for s in processing_spans if s.attributes and s.attributes.get("executor.id") == "executor3"
-    ]
+    executor2_processing_spans = [s for s in processing_spans if _span_attributes(s).get("executor.id") == "executor2"]
+    executor3_processing_spans = [s for s in processing_spans if _span_attributes(s).get("executor.id") == "executor3"]
 
     # Get span IDs from processing spans
     executor2_processing_span_ids = {format(s.context.span_id, "016x") for s in executor2_processing_spans if s.context}
@@ -582,7 +583,9 @@ def test_workflow_span_lifecycle_exceptions_are_not_failures(
     assert len(spans) == 1
     span = spans[0]
     assert span.status.status_code != trace.StatusCode.ERROR
-    assert not span.attributes or OtelAttr.ERROR_TYPE not in span.attributes
+    attributes = span.attributes
+    if attributes is not None:
+        assert OtelAttr.ERROR_TYPE not in attributes
     assert all(event.name != "exception" for event in span.events)
 
 

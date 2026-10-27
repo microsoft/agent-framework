@@ -28,6 +28,11 @@ from agent_framework._workflows._state import State
 from agent_framework.observability import EdgeGroupDeliveryStatus, OtelAttr
 
 
+def _span_attributes(span: Any) -> dict[str, Any]:
+    attributes = span.attributes
+    return dict(attributes) if attributes is not None else {}
+
+
 @dataclass
 class MockMessage:
     """A mock message for testing purposes."""
@@ -331,7 +336,7 @@ async def test_single_edge_group_tracing_success(span_exporter: InMemorySpanExpo
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -376,7 +381,7 @@ async def test_single_edge_group_tracing_condition_failure(span_exporter: InMemo
     assert success is True  # Returns True but condition failed
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -450,7 +455,7 @@ async def test_single_edge_group_tracing_type_mismatch(span_exporter: InMemorySp
     assert success is False
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -484,7 +489,7 @@ async def test_single_edge_group_tracing_target_mismatch(span_exporter: InMemory
     assert success is False
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -900,7 +905,7 @@ async def test_fan_out_edge_group_tracing_success(span_exporter: InMemorySpanExp
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -956,7 +961,7 @@ async def test_fan_out_edge_group_tracing_with_target(span_exporter: InMemorySpa
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -1126,7 +1131,7 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter: InMemorySpanExp
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -1160,7 +1165,7 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter: InMemorySpanExp
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
@@ -1206,7 +1211,7 @@ async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter: InMemorySp
     assert success is False
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
+    edge_group_spans = [s for s in spans if _span_attributes(s).get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 

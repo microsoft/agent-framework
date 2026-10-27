@@ -614,3 +614,27 @@ async def test_docker_no_network_by_default():
         # busybox wget against a host that should be unreachable with --network none
         r = await shell.run("wget -q -T 2 -O- http://example.com || echo NOACCESS")
         assert "NOACCESS" in r.stdout
+
+
+async def test_run_stateless_sets_stdin_to_devnull() -> None:
+    """Regression: stateless Docker spawns must not inherit host stdin.
+
+    Without stdin=DEVNULL, `docker run -i` forwards the host's stdin into the
+    container. Combined with model-chosen commands that read stdin (e.g., `cat`),
+    this causes the same input theft/hang bug as the local tool.
+
+    This test asserts the spawn is given stdin=DEVNULL by inspecting the
+    asyncio.create_subprocess_exec call.
+    """
+    tool = DockerShellTool(mode="stateless", image="alpine:3", shell="sh")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(
+        "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=proc),
+    ) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    kwargs = create_proc.await_args.kwargs
+    assert kwargs.get("stdin") == asyncio.subprocess.DEVNULL, f"Expected stdin=DEVNULL, got {kwargs.get('stdin')!r}"

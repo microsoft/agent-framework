@@ -60,6 +60,7 @@ async def run_stateless(
     started = time.monotonic()
     proc = await asyncio.create_subprocess_exec(
         *full_argv,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=workdir,

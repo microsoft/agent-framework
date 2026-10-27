@@ -90,7 +90,6 @@ def main() -> None:
         "--package",
         dest="project",
         metavar="PACKAGE",
-        required=True,
         help="Workspace package selector, such as `core`.",
     )
     # Keep the old long flag as a silent alias while downstream automation
@@ -98,6 +97,8 @@ def main() -> None:
     parser.add_argument("--project", dest="project", help=argparse.SUPPRESS)
     parser.add_argument("-D", "--dependency", required=True, help="Dependency specifier to add.")
     args = parser.parse_args()
+    if args.project is None:
+        parser.error("the following arguments are required: -P/--package")
 
     workspace_root = Path(__file__).resolve().parents[2]
     package = _resolve_workspace_package(workspace_root, args.project)

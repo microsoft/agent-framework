@@ -8,9 +8,7 @@ AG-UI protocol integration for Agent Framework, enabling seamless integration wi
 pip install agent-framework-ag-ui
 ```
 
-The base package supports Python 3.10–3.15. The optional A2UI integration
-currently supports Python 3.10–3.14 because `ag-ui-a2ui-toolkit` declares
-`Requires-Python <3.15`:
+The base package and optional A2UI integration support Python 3.10–3.15:
 
 ```bash
 pip install "agent-framework-ag-ui[a2ui]"

@@ -14,6 +14,7 @@ using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Agents.AI.Workflows.Reflection;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -198,6 +199,11 @@ public abstract class Executor : IIdentified
 
     internal bool IsCrossRunShareable { get; }
 
+    private List<(object? SharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> Callback)>? _checkpointRestoringCallbacks;
+
+    internal IReadOnlyList<(object? SharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> Callback)> CheckpointRestoringCallbacks =>
+        this._checkpointRestoringCallbacks ?? [];
+
     /// <summary>
     /// Gets the configuration options for the executor.
     /// </summary>
@@ -345,6 +351,38 @@ public abstract class Executor : IIdentified
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
     protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
+
+    /// <summary>
+    /// Registers state restoration that runs before checkpoint post-load hooks.
+    /// </summary>
+    /// <remarks>
+    /// All registered callbacks across the workflow complete before any executor's
+    /// <see cref="OnCheckpointRestoredAsync"/> hook is invoked. Register callbacks during construction.
+    /// </remarks>
+    /// <param name="callback">The state restoration callback.</param>
+    protected void RegisterCheckpointRestoringCallback(Func<IWorkflowContext, CancellationToken, ValueTask> callback)
+    {
+        _ = Throw.IfNull(callback);
+        (this._checkpointRestoringCallbacks ??= []).Add((null, callback));
+    }
+
+    /// <summary>
+    /// Registers shared state restoration that runs once per checkpoint load before post-load hooks.
+    /// </summary>
+    /// <remarks>
+    /// Registrations with the same key instance are invoked once across the workflow for each checkpoint load,
+    /// using the context of one registering executor. Shared state must use explicitly named scopes.
+    /// All restoration callbacks complete before any <see cref="OnCheckpointRestoredAsync"/> hook is invoked.
+    /// Register callbacks during construction.
+    /// </remarks>
+    /// <param name="sharedStateKey">An identity shared by executors that restore the same state.</param>
+    /// <param name="callback">The shared state restoration callback.</param>
+    protected void RegisterCheckpointRestoringCallback(object sharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> callback)
+    {
+        _ = Throw.IfNull(sharedStateKey);
+        _ = Throw.IfNull(callback);
+        (this._checkpointRestoringCallbacks ??= []).Add((sharedStateKey, callback));
+    }
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.

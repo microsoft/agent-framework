@@ -4,7 +4,11 @@ from typing import Final
 
 __version__: Final[str]
 
-from ._agent_hooks import create_agent_hooks_middleware, create_agent_hooks_middleware_from_emitter
+from ._agent_hooks import (
+    create_agent_hooks_middleware,
+    create_agent_hooks_middleware_from_declaration,
+    create_agent_hooks_middleware_from_emitter,
+)
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
 from ._clients import (
     BaseChatClient,
@@ -637,6 +641,7 @@ __all__ = [
     "background_tasks_running_message",
     "chat_middleware",
     "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_declaration",
     "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",

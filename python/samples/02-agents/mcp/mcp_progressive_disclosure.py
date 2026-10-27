@@ -52,7 +52,9 @@ async def _run_server() -> None:
     from mcp.server.lowlevel import Server
     from mcp.server.stdio import stdio_server
 
-    async def _list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+    async def _list_tools(
+        _ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
         toolList = [
             types.Tool(
                 name="get_server_status",
@@ -81,7 +83,9 @@ async def _run_server() -> None:
         ]
         return types.ListToolsResult(tools=toolList)
 
-    async def _call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    async def _call_tool(
+        _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
         name = params.name
         arguments = params.arguments or {}
 
@@ -98,7 +102,9 @@ async def _run_server() -> None:
             text = "This tool should not be discoverable because it is excluded by allowed_tools."
         else:
             # text = f"Unknown tool: {name}"
-            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True)
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True
+            )
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
 
     server: Server[Any] = Server("mcp-progressive-disclosure-demo", on_list_tools=_list_tools, on_call_tool=_call_tool)
