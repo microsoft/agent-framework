@@ -347,17 +347,58 @@ def _reject_busy_conversation(session: AgentSession, *, agent_server_history: bo
         )
 
 
-async def _release_conversation_claim(store: SessionStore, conversation_id: str, response_id: str) -> None:
+async def _release_conversation_claim(
+    store: SessionStore,
+    conversation_id: str,
+    response_id: str,
+    *,
+    persist_state: AgentSession | None = None,
+) -> None:
     """Remove a claim still owned by ``response_id`` so an uncommitted turn leaves the conversation usable.
 
-    The head is re-read so the conditional write carries the ETag of the claim record, which holds the
-    unchanged pre-turn state. A claim owned by another response is left untouched.
+    The head is re-read so the conditional write carries the ETag of the claim record. By default the claim
+    record's unchanged pre-turn state is restored. When ``persist_state`` is provided it is written instead,
+    so state the turn already consumed (such as an approval whose tool may have run) is not reopened.
+    A claim owned by another response is left untouched.
     """
     head = await store.get(conversation_id)
     if head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != response_id:
         return
-    head.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
-    await store.set(conversation_id, head)
+    if persist_state is None:
+        head.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
+        await store.set(conversation_id, head)
+    else:
+        persist_state.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
+        await store.set(conversation_id, persist_state)
+
+
+async def _release_conversation_claim_best_effort(
+    store: SessionStore,
+    conversation_id: str,
+    response_id: str,
+    *,
+    persist_state: AgentSession | None,
+) -> None:
+    """Release a claim without letting a cancellation or a storage failure skip or mask the cleanup.
+
+    The release is shielded so it still completes when the surrounding task is cancelled, and the
+    cancellation itself is left to propagate. A failed release is logged; the claim then stays held,
+    which blocks later turns rather than risking a repeated approval.
+    """
+    try:
+        await asyncio.shield(
+            _release_conversation_claim(store, conversation_id, response_id, persist_state=persist_state)
+        )
+    except Exception as release_error:
+        _log_response_failure("conversation claim release", response_id, release_error)
+
+
+def _request_carries_approval_response(request: CreateResponse) -> bool:
+    """Return whether the caller's input resumes a paused tool call with an approval response."""
+    items = request.get("input")
+    return isinstance(items, list) and any(
+        isinstance(item, Mapping) and item.get("type") == "mcp_approval_response" for item in items
+    )
 
 
 def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
@@ -1503,6 +1544,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise RuntimeError("A non-resumable agent cannot be replayed after a process crash.")
 
         stored = request.get("store") is not False
+        carries_approval_response = _request_carries_approval_response(request)
 
         request_messages_task: asyncio.Task[list[Message]] | None = None
         conversation_already_committed = False
@@ -1764,13 +1806,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # agent_server history, where it is the only guard against two concurrent turns each consuming
                 # the same pending approval from stale session copies.
                 session.state[_HOSTED_CONVERSATION_CLAIM_KEY] = context.response_id
+                if configuration.agent_server_history:
+                    # No provider thread is mutated, so an uncommitted turn can hand the conversation back.
+                    # Recorded before the write because a cancellation can land after the backend commits the
+                    # claim but before the await returns; the ownership-checked release then still cleans up.
+                    releasable_claim_conversation_id = context.conversation_id
                 try:
                     await _set_agent_session(session_storage, context.conversation_id, session)
                 finally:
                     session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
-                if configuration.agent_server_history:
-                    # No provider thread is mutated, so an uncommitted turn can hand the conversation back.
-                    releasable_claim_conversation_id = context.conversation_id
 
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
             updates: _SignalledIterator[AgentResponseUpdate] | None = None
@@ -1908,14 +1952,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 else:
                     message = "Failed to persist the Agent Framework session after a successful request"
                 _log_response_failure(message, context.response_id, save_error)
-
-            if releasable_claim_conversation_id is not None and session_storage is not None:
-                try:
-                    await _release_conversation_claim(
-                        session_storage, releasable_claim_conversation_id, context.response_id
+            finally:
+                if releasable_claim_conversation_id is not None and session_storage is not None:
+                    # An approval turn may already have run its tool, so keep the consumed approval rather than
+                    # reopening it; any other turn restores the pre-turn state.
+                    await _release_conversation_claim_best_effort(
+                        session_storage,
+                        releasable_claim_conversation_id,
+                        context.response_id,
+                        persist_state=session if carries_approval_response else None,
                     )
-                except Exception as release_error:
-                    _log_response_failure("conversation claim release", context.response_id, release_error)
 
         if request_failure is not None and save_failure is not None:
             raise RuntimeError(
