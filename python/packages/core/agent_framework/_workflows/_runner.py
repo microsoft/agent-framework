@@ -7,7 +7,7 @@ import copy
 import logging
 import warnings
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ..exceptions import (
@@ -25,6 +25,7 @@ from ._runner_context import (
     RunnerContext,
     WorkflowMessage,
     _get_queued_response_info_events,  # pyright: ignore[reportPrivateUsage]
+    _SupportsQueuedMessages,  # pyright: ignore[reportPrivateUsage]
 )
 from ._state import State
 
@@ -89,6 +90,7 @@ class RunnerImpl:
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
         self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
+        self._queued_response_validator: Callable[[], Awaitable[None]] | None = None
 
     @property
     def context(self) -> RunnerContext:
@@ -235,6 +237,8 @@ class RunnerImpl:
             tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
             await gather_cancelling_siblings_on_error(*tasks)
 
+        if self._queued_response_validator is not None:
+            await self._queued_response_validator()
         message_batches = await self._ctx.drain_messages()
         await gather_cancelling_siblings_on_error(
             *(
@@ -242,6 +246,37 @@ class RunnerImpl:
                 for source_executor_id, source_messages in message_batches.items()
             )
         )
+
+    async def _get_queued_messages(self) -> Mapping[str, Sequence[WorkflowMessage]]:
+        if isinstance(self._ctx, _SupportsQueuedMessages):
+            return await self._ctx.get_queued_messages()
+        # Legacy contexts expose their queues through non-persisting checkpoint snapshots.
+        checkpoint = await self._ctx.build_checkpoint(
+            self._workflow_name, self._graph_signature_hash, self._state, None, self._iteration
+        )
+        return checkpoint.messages
+
+    def _get_wrapped_response_requests(
+        self, messages: Mapping[str, Sequence[WorkflowMessage]]
+    ) -> dict[str, list[WorkflowEvent]]:
+        from ._workflow_executor import SubWorkflowResponseMessage
+
+        requests: defaultdict[str, list[WorkflowEvent]] = defaultdict(list)
+        for batch in messages.values():
+            for message in batch:
+                if not isinstance(message.data, SubWorkflowResponseMessage):
+                    continue
+                # Wrapped replies retain child-local source IDs; route through the parent graph.
+                targets = {
+                    edge.target_id
+                    for runner in self._edge_runner_map.get(message.source_id, [])
+                    for edge in runner._edge_group.edges  # pyright: ignore[reportPrivateUsage]
+                    if edge.source_id == message.source_id
+                    and (message.target_id is None or edge.target_id == message.target_id)
+                }
+                for target_id in targets:
+                    requests[target_id].append(message.data.source_event)
+        return dict(requests)
 
     async def _prepare_checkpoint_state(self) -> None:
         """Persist executor snapshots into committed shared state.
@@ -406,7 +441,6 @@ class RunnerImpl:
         self, checkpoint: WorkflowCheckpoint, delegated_requests: Sequence[WorkflowEvent] = ()
     ) -> None:
         from ._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY
-        from ._workflow_executor import SubWorkflowResponseMessage
 
         if self._graph_signature_hash != checkpoint.graph_signature_hash:
             raise WorkflowCheckpointException(
@@ -423,36 +457,20 @@ class RunnerImpl:
         ]
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
+        wrapped_requests = self._get_wrapped_response_requests(checkpoint.messages)
         validate_request_contexts(
             checkpoint.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}),
             [
                 *requests,
-                *(
-                    message.data.source_event
-                    for batch in checkpoint.messages.values()
-                    for message in batch
-                    if isinstance(message.data, SubWorkflowResponseMessage)
-                ),
+                *(request for batch in wrapped_requests.values() for request in batch),
             ],
         )
         if EXECUTOR_STATE_KEY in checkpoint.state:
             delegated_by_executor: defaultdict[str, list[WorkflowEvent]] = defaultdict(list)
             for request in requests:
                 delegated_by_executor[request.source_executor_id].append(request)
-            # Wrapped replies retain child-local source IDs, so use the parent graph to route them.
-            for batch in checkpoint.messages.values():
-                for message in batch:
-                    if not isinstance(message.data, SubWorkflowResponseMessage):
-                        continue
-                    targets = {
-                        edge.target_id
-                        for runner in self._edge_runner_map.get(message.source_id, [])
-                        for edge in runner._edge_group.edges  # pyright: ignore[reportPrivateUsage]
-                        if edge.source_id == message.source_id
-                        and (message.target_id is None or edge.target_id == message.target_id)
-                    }
-                    for target_id in targets:
-                        delegated_by_executor[target_id].append(message.data.source_event)
+            for target_id, batch in wrapped_requests.items():
+                delegated_by_executor[target_id].extend(batch)
             for _, executor, state in self._get_executor_states(checkpoint.state[EXECUTOR_STATE_KEY]):
                 executor._validate_checkpoint_restore(  # pyright: ignore[reportPrivateUsage]
                     state, delegated_by_executor[executor.id]

@@ -106,11 +106,11 @@ def _get_queued_response_info_events(messages: Mapping[str, Sequence[WorkflowMes
 
 
 @runtime_checkable
-class _SupportsQueuedResponseInfoEvents(Protocol):
-    """Optional fast path for inspecting queued responses without building a snapshot."""
+class _SupportsQueuedMessages(Protocol):
+    """Optional fast path for inspecting queued messages without building a snapshot."""
 
-    async def get_queued_response_info_events(self) -> list[WorkflowEvent[Any]]:
-        """Get original requests for queued responses without consuming messages."""
+    async def get_queued_messages(self) -> Mapping[str, Sequence[WorkflowMessage]]:
+        """Inspect queued messages without consuming them or copying their payloads."""
         ...
 
 
@@ -632,6 +632,10 @@ class InProcRunnerContext:
     async def get_queued_response_info_events(self) -> list[WorkflowEvent[Any]]:
         """Get original requests for queued responses without consuming messages."""
         return _get_queued_response_info_events(self._messages)
+
+    async def get_queued_messages(self) -> dict[str, list[WorkflowMessage]]:
+        """Inspect queued messages without consuming them or copying their payloads."""
+        return {source_id: list(messages) for source_id, messages in self._messages.items()}
 
     async def cancel_request_info_events(self, request_ids: set[str]) -> dict[str, WorkflowEvent[Any]]:
         """Remove and return pending request_info events selected for cancellation."""

@@ -717,8 +717,9 @@ async def test_workflow_response_entry_checkpoint_records_response_and_replays()
     replay_workflow._response_batch_validator = lambda requests: validated_requests.append(list(requests))
     replay_outputs = (await replay_workflow.run(checkpoint_id=response_entry.checkpoint_id)).get_outputs()
     assert replay_outputs == ["approve->yes"]
-    assert [[event.request_id for event in batch] for batch in validated_requests] == [[request_id]]
-    assert validated_requests[0][0].data == "approve"
+    # Validate both the detached checkpoint candidate and the live dispatch batch.
+    assert [[event.request_id for event in batch] for batch in validated_requests] == [[request_id], [request_id]]
+    assert all(batch[0].data == "approve" for batch in validated_requests)
 
 
 async def test_memory_checkpoint_storage_roundtrip_json_native_types():

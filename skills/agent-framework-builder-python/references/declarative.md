@@ -32,6 +32,8 @@ maturity. Check current package status and public docstrings before making compa
   Child responses restore the originating parent scope before invoking downstream bindings, including after
   checkpoint restoration. Submit responses from different parent scopes in separate runs.
   The same origin recovery applies to ordinary Core `ctx.request_info()` pauses before invoking a child.
+  Queued replies participate in response and cancellation preflight. Wrapped child replies are also validated
+  before live dispatch; do not combine different parent origins in one message or cancellation batch.
 
 ## Validation
 

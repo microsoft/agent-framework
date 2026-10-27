@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -277,6 +278,132 @@ async def test_interleaved_sibling_responses_reject_mixed_parent_scopes(restore:
         assert workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope
     assert workflow._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == {}
     assert not await workflow._runner_context.get_pending_request_info_events()
+
+
+class _WrappedReplyCoordinator(Executor):
+    def __init__(self) -> None:
+        super().__init__(id="coordinator")
+        self.requests: dict[str, SubWorkflowRequestMessage] = {}
+        self.outputs: list[tuple[str, str]] = []
+
+    @handler
+    async def start(self, email: str, ctx: WorkflowContext[DomainCheckRequest]) -> None:
+        await ctx.send_message(DomainCheckRequest(domain=email.split("@")[1], email=email))
+
+    @handler
+    async def intercept(self, request: SubWorkflowRequestMessage, ctx: WorkflowContext) -> None:
+        email = request.source_event.data.email
+        self.requests[email] = request
+        await ctx.request_info(email, bool, request_id=email)
+
+    @response_handler
+    async def respond(self, email: str, approved: bool, ctx: WorkflowContext[SubWorkflowResponseMessage]) -> None:
+        request = self.requests[email]
+        await ctx.send_message(request.create_response(approved), target_id=request.executor_id)
+
+    @handler
+    async def queue_replies(
+        self, replies: list[SubWorkflowResponseMessage], ctx: WorkflowContext[SubWorkflowResponseMessage]
+    ) -> None:
+        for reply in replies:
+            await ctx.send_message(reply)
+
+    @handler
+    async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None:
+        from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+        self.outputs.append((result.email, ctx.get_state(WORKFLOW_SESSION_ID_KEY)))
+
+
+def _build_wrapped_reply_workflow() -> tuple[Workflow, Workflow, _WrappedReplyCoordinator]:
+    coordinator = _WrappedReplyCoordinator()
+    child = WorkflowBuilder(start_executor=EmailDomainValidator()).build()
+    wrapper = WorkflowExecutor(child, id="child")
+    parent = (
+        WorkflowBuilder(start_executor=coordinator)
+        .add_edge(coordinator, wrapper)
+        .add_edge(wrapper, coordinator)
+        .build()
+    )
+    return parent, child, coordinator
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("delivery", ["live", "queued_and_new"])
+async def test_wrapped_reply_batches_reject_mixed_parent_origins(delivery: str, streaming: bool) -> None:
+    from agent_framework._workflows._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, WORKFLOW_SESSION_ID_KEY
+
+    parent, child, coordinator = _build_wrapped_reply_workflow()
+    emails = ["a@first.example", "b@second.example"]
+    scopes: list[str] = []
+    for email in emails:
+        await parent.run(email)
+        scopes.append(parent._runner.state.get(WORKFLOW_SESSION_ID_KEY))
+    child_pending = await child._runner_context.get_pending_request_info_events()
+    parent_pending = await parent._runner_context.get_pending_request_info_events()
+    origins = parent._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY)
+    replies = [coordinator.requests[email].create_response(True) for email in emails]
+    if delivery == "queued_and_new":
+        await parent._runner_context.send_message(
+            WorkflowMessage(data=replies[0], source_id=coordinator.id, target_id="child")
+        )
+
+    with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+        message = replies if delivery == "live" else None
+        responses = {emails[1]: True} if delivery == "queued_and_new" else None
+        if streaming:
+            _ = [event async for event in parent.run(message, responses=responses, stream=True)]
+        else:
+            await parent.run(message, responses=responses)
+
+    assert coordinator.outputs == []
+    assert await child._runner_context.get_pending_request_info_events() == child_pending
+    assert await parent._runner_context.get_pending_request_info_events() == parent_pending
+    assert parent._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == origins
+    queued = await parent._runner_context.drain_messages()
+    assert [message.data.source_event.request_id for batch in queued.values() for message in batch] == [
+        reply.source_event.request_id for reply in replies[: 1 if delivery == "queued_and_new" else 2]
+    ]
+
+    for email, scope in reversed(list(zip(emails, scopes, strict=True))):
+        await parent.run(responses={email: True})
+        assert coordinator.outputs[-1] == (email, scope)
+    assert not await child._runner_context.get_pending_request_info_events()
+    assert not await parent._runner_context.get_pending_request_info_events()
+    assert parent._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == {}
+
+
+@pytest.mark.parametrize("delivery", ["live", "queued_and_new"])
+async def test_wrapped_reply_preflight_applies_child_policy(delivery: str) -> None:
+    parent, child, coordinator = _build_wrapped_reply_workflow()
+    email = "a@first.example"
+    await parent.run(email)
+    parent_pending = await parent._runner_context.get_pending_request_info_events()
+    child_pending = await child._runner_context.get_pending_request_info_events()
+    reply = coordinator.requests[email].create_response(True)
+
+    def reject(requests: Sequence[WorkflowEvent]) -> None:
+        if requests:
+            raise ValueError("child reply policy")
+
+    child._response_batch_validator = reject
+    if delivery == "queued_and_new":
+        await parent._runner_context.send_message(
+            WorkflowMessage(data=reply, source_id=coordinator.id, target_id="child")
+        )
+        run = parent.run(responses={email: True})
+    else:
+        run = parent.run([reply])
+    with pytest.raises(ValueError, match="child reply policy"):
+        await run
+
+    assert coordinator.outputs == []
+    assert await parent._runner_context.get_pending_request_info_events() == parent_pending
+    assert await child._runner_context.get_pending_request_info_events() == child_pending
+    queued = await parent._runner_context.drain_messages()
+    assert [message.data.source_event.request_id for batch in queued.values() for message in batch] == [
+        reply.source_event.request_id
+    ]
 
 
 @pytest.mark.parametrize("streaming", [False, True])

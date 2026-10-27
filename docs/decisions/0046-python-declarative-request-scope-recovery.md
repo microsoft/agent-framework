@@ -124,6 +124,15 @@ including for queued checkpoint replies. Core cancellation handlers restore the
 same metadata. Propagated child responses use this path once; wrapped child
 messages retain their boundary-specific capture and restoration.
 
+Preflight includes both propagated responses and wrapped child replies already
+queued for delivery. Route wrapped replies through the parent graph to validate
+their child's own policy without treating child scopes as parent-policy scopes.
+Repeat validation before each live message batch is drained, so a rejected batch
+retains its queued replies. Cancellation validates queued replies together with
+the complete selected cancellation set before consuming requests or invoking
+cancellation handlers. Legacy runner contexts use a non-persisting snapshot when
+optional queued-message inspection is unavailable.
+
 Deep-copying all live request payloads to preflight migrations imposes an unrelated
 serialization requirement on non-checkpointed, in-process workflows. Instead,
 response policies validate without mutation and return deferred updates to the

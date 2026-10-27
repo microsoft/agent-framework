@@ -66,7 +66,6 @@ from ._runner_context import (
     RunnerContext,
     WorkflowMessage,
     _get_queued_response_info_events,  # pyright: ignore[reportPrivateUsage]
-    _SupportsQueuedResponseInfoEvents,  # pyright: ignore[reportPrivateUsage]
 )
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
@@ -429,6 +428,9 @@ class Workflow(DictConvertible):
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
         self._response_batch_validator: _ResponseBatchValidator | None = None
         self._runner._response_batch_validator = self._validate_response_batch  # pyright: ignore[reportPrivateUsage]
+        self._runner._queued_response_validator = functools.partial(  # pyright: ignore[reportPrivateUsage]
+            self._validate_response_requests, ()
+        )
         self._initial_state_initializer: Callable[[State], None] | None = None
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
@@ -1212,27 +1214,25 @@ class Workflow(DictConvertible):
     async def _get_response_validation_batches(
         self, requests: Sequence[WorkflowEvent]
     ) -> list[_ResponseBatchValidation]:
-        context = self._runner.context
-        if isinstance(context, _SupportsQueuedResponseInfoEvents):
-            queued_requests = await context.get_queued_response_info_events()
-        else:
-            # Legacy contexts expose their queues through non-persisting checkpoint snapshots.
-            checkpoint = await context.build_checkpoint(
-                self.name, self.graph_signature_hash, self._runner.state, None, 0
-            )
-            queued_requests = _get_queued_response_info_events(checkpoint.messages)
+        messages = await self._runner._get_queued_messages()  # pyright: ignore[reportPrivateUsage]
+        queued_requests = _get_queued_response_info_events(messages)
+        wrapped_requests = self._runner._get_wrapped_response_requests(messages)  # pyright: ignore[reportPrivateUsage]
         batch = [*queued_requests, *requests]
+        origin_requests = [*batch, *(request for wrapped in wrapped_requests.values() for request in wrapped)]
         parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
 
-        def validate_parent_contexts(requests: Sequence[WorkflowEvent]) -> None:
-            validate_request_contexts(parent_contexts, requests)
+        def validate_parent_contexts(_requests: Sequence[WorkflowEvent]) -> None:
+            validate_request_contexts(parent_contexts, origin_requests)
 
         validations: list[_ResponseBatchValidation] = []
         if self._response_batch_validator is not None:
             validations.append((self._response_batch_validator, batch))
         validations.append((validate_parent_contexts, batch))
         for executor in self.executors.values():
-            delegated = [request for request in batch if request.source_executor_id == executor.id]
+            delegated = [
+                *(request for request in batch if request.source_executor_id == executor.id),
+                *wrapped_requests.get(executor.id, []),
+            ]
             if delegated:
                 validations.extend(
                     await executor._get_response_validation_batches(delegated)  # pyright: ignore[reportPrivateUsage]
@@ -1627,10 +1627,6 @@ class Workflow(DictConvertible):
 
         async def apply_cancellations() -> None:
             pending = await self._runner.context.get_pending_request_info_events()
-            validate_request_contexts(
-                self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}),
-                [request for request_id, request in pending.items() if request_id in selected_ids],
-            )
             computer_executor_ids = {
                 event.source_executor_id
                 for request_id, event in pending.items()
@@ -1645,6 +1641,9 @@ class Workflow(DictConvertible):
                     for request_id, event in pending.items()
                     if event.source_executor_id in computer_executor_ids
                 )
+            await self._validate_response_requests([
+                request for request_id, request in pending.items() if request_id in selected_ids
+            ])
             cancelled_events = await self._runner.context.cancel_request_info_events(selected_ids)
             for request_id, request_event in cancelled_events.items():
                 source_executor_id = request_event.source_executor_id

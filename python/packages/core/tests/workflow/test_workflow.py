@@ -139,7 +139,7 @@ class LegacyRunnerContext:
         self.inner = InProcRunnerContext()
 
     def __getattr__(self, name: str) -> Any:
-        if name == "get_queued_response_info_events":
+        if name in {"get_queued_response_info_events", "get_queued_messages"}:
             raise AttributeError(name)
         return getattr(self.inner, name)
 
@@ -201,6 +201,75 @@ async def test_legacy_runner_context_validates_queued_responses_without_consumin
     workflow._response_batch_validator = None
     resumed = await workflow.run(responses={"second": "yes"})
     assert sorted(resumed.get_outputs()) == ["first:yes", "second:yes"]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_cancellation_preflight_checks_queued_reply_origins(legacy: bool, mixed: bool) -> None:
+    from agent_framework._workflows._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, WORKFLOW_SESSION_ID_KEY
+
+    cancelled: list[str] = []
+    handled: list[str] = []
+    delivered: list[tuple[str, str]] = []
+
+    class Requester(Executor):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext) -> None:
+            for request_id in ("a", "b") if message == "same" else (message,):
+                await ctx.request_info(request_id, str, request_id=request_id)
+
+        @response_handler
+        async def respond(self, request: str, response: str, ctx: WorkflowContext[str]) -> None:
+            handled.append(request)
+            await ctx.send_message(f"response:{request}")
+
+        async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
+            cancelled.append(request_id)
+            await ctx.send_message(f"cancelled:{request_id}")
+
+    class Collector(Executor):
+        @handler
+        async def collect(self, message: str, ctx: WorkflowContext) -> None:
+            delivered.append((message, ctx.get_state(WORKFLOW_SESSION_ID_KEY)))
+
+    requester = Requester(id="requester")
+    workflow = WorkflowBuilder(start_executor=requester).add_edge(requester, Collector(id="collector")).build()
+    if legacy:
+        workflow._runner._ctx = cast(RunnerContext, LegacyRunnerContext())
+    context = workflow._runner.context
+    if mixed:
+        await workflow.run("a")
+        await workflow.run("b")
+    else:
+        await workflow.run("same")
+    scope = workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+    await context.send_request_info_response("a", "yes")
+    checkpoint = await workflow._runner.build_checkpoint()
+    await workflow._runner.restore_checkpoint(checkpoint)
+    before = await context.build_checkpoint(
+        workflow.name, workflow.graph_signature_hash, workflow._runner.state, None, 0
+    )
+    pending = await context.get_pending_request_info_events()
+    origins = workflow._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY)
+
+    if mixed:
+        with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+            await workflow.cancel_pending_requests(["b"])
+        assert cancelled == handled == delivered == []
+        assert await context.get_pending_request_info_events() == pending
+        snapshot = await context.build_checkpoint(
+            workflow.name, workflow.graph_signature_hash, workflow._runner.state, None, 0
+        )
+        assert snapshot.messages == before.messages
+        assert workflow._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == origins
+        assert workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope
+    else:
+        await workflow.cancel_pending_requests(["b"])
+        assert cancelled == ["b"]
+        assert handled == ["a"]
+        assert sorted(delivered) == [("cancelled:b", scope), ("response:a", scope)]
+        assert not await context.get_pending_request_info_events()
+        assert workflow._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == {}
 
 
 async def test_public_stream_close_immediately_drains_live_executor_without_gc() -> None:

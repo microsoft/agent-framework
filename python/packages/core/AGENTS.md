@@ -347,7 +347,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   Core restores and releases that context before invoking response or cancellation handlers, including queued
   checkpoint replies. Wrapped child replies use the same helpers at their message boundary; propagated replies
   are restored only once. Mixed-parent-scope response batches are rejected before consuming requests, including
-  across sibling bindings.
+  across sibling bindings. Validation includes queued wrapped replies and runs before each live message
+  batch is drained, routing wrapped replies to their child's own policy. Cancellation preflight combines
+  queued replies with the complete selected cancellation set before consuming any requests.
 - **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
   replacing live state or queues. `WorkflowExecutor` delegates its private validation hook to its child's runner,
   so each child uses its own response-origin policy and migration metadata stays in the candidate snapshot.
@@ -355,7 +357,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   without mutation and may return deferred metadata updates; all policies in the workflow tree must succeed
   before those updates are applied. This preserves in-process non-copyable payloads and atomic legacy-scope
   migration without imposing checkpoint serialization requirements on ordinary requests.
-- **Runner context compatibility** - Queued-response inspection is an optional capability, not a required
+- **Runner context compatibility** - Queued-message inspection is an optional capability, not a required
   `RunnerContext` member. Contexts without it use their non-persisting `build_checkpoint` snapshot so response
   validation still includes queued replies without draining messages or consuming pending requests.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
