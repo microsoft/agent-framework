@@ -657,15 +657,15 @@ class HandoffBuilder:
     tool injection, and middleware — capabilities only available on ``Agent``.
 
     Outputs:
-    Each agent's response surfaces as a workflow `output` event as it speaks; there is no
+    By default, each agent's response surfaces as a workflow `output` event as it speaks; there is no
     synthetic terminal event. Consumers iterating events see per-agent ``AgentResponse`` (or
     ``AgentResponseUpdate`` while streaming) in conversation order. The workflow returns to
     idle once the termination condition is met (or the user terminates an interactive run).
 
     Note:
     1. Agents in handoff workflows must be ``Agent`` instances and support local tool calls.
-    2. Because each agent's response is itself Workflow Output, handoff has no separate
-       "intermediate outputs" channel — every per-agent response is the primary output.
+    2. Use ``output_from`` and ``intermediate_output_from`` to select participants for Workflow Output
+       and Intermediate Output. Unselected participant outputs are hidden.
     """
 
     def __init__(

@@ -39,7 +39,7 @@ dev = [
     "azure-monitor-opentelemetry>=1.8.10,<2",
     "mcp",
     # Optional SDK used by the agent-hooks tests and isolated source checks.
-    "agent-hooks-sdk>=0.1.0a4,<0.2",
+    "agent-hooks-sdk>=0.1.0b2,<0.2",
     "opentelemetry-sdk",
     # Task runtime used by every supported Python version.
     "poethepoet==0.49.0",
@@ -108,6 +108,7 @@ agent-framework-mem0 = { workspace = true }
 agent-framework-mistral = { workspace = true }
 agent-framework-mongodb = { workspace = true }
 agent-framework-monty = { workspace = true }
+agent-framework-nvidia = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
 agent-framework-oracle = { workspace = true }

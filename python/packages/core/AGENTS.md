@@ -82,6 +82,9 @@ agent_framework/
   `additional_properties` namespaces and streamed mergeable content uses `merge_mode`; response updates can use the
   same field to replace all contents of one logical message; see
   [spec 005](../../../docs/specs/005-python-content-identity-and-protocol-metadata.md).
+- **Citation coordinates** - `Annotation.annotated_regions_coordinate_space` distinguishes spans in generated
+  `Content.text` (`"content"`, also the default when omitted) from locations in cited source material (`"source"`).
+  Protocol adapters must not interpret source-coordinate regions as generated-text offsets.
 - **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
   constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
   results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.
@@ -241,7 +244,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   `cacheScope` hints. Legacy peers default to zero TTL, caller-supplied `ClientSession` connections stay uncached,
   and reconnect or effective header-identity changes replace a framework-owned Client's per-Client cache. Agent
   Framework does not expose shared-store or cache-mode configuration.
-- **MCP Tasks extension** - MCP Python SDK 2.2 does not implement the 2026 `io.modelcontextprotocol/tasks` runtime. Tools that advertise `execution.taskSupport == "required"` are skipped with a warning; optional and task-free tools continue through ordinary `tools/call`. Restoration of the experimental Tasks API and removed sample is tracked in microsoft/agent-framework#8245.
+- **MCP Tasks extension** - The current Agent Framework MCP client does not implement the `io.modelcontextprotocol/tasks` runtime. Tools that advertise `execution.taskSupport == "required"` are skipped with a warning; optional and task-free tools continue through ordinary `tools/call`. Tasks client support is tracked in microsoft/agent-framework#9215.
 
 ### File Access Harness (`_harness/_file_access.py`)
 

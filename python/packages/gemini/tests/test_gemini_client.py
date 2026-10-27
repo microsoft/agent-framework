@@ -548,6 +548,38 @@ async def test_get_response_model_from_response() -> None:
     assert response.model == "gemini-2.5-pro-002"
 
 
+async def test_get_response_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when the response carries no model_version."""
+    client, mock = _make_gemini_client()
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert response.model == "gemini-2.5-flash"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_get_response_reports_requested_model_on_both_paths(stream: bool) -> None:
+    """Without a model_version, both paths report the model requested in options, not the client default."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([raw]))
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(
+            messages=messages, options={"model": "gemini-2.5-pro"}, stream=True
+        ).get_final_response()
+    else:
+        response = await client.get_response(messages=messages, options={"model": "gemini-2.5-pro"})
+
+    assert response.model == "gemini-2.5-pro"
+
+
 async def test_get_response_streaming_model_from_chunk() -> None:
     """Populates the update model from the model_version field on each chunk."""
     client, mock = _make_gemini_client()
