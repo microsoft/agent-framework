@@ -335,7 +335,8 @@ def _reject_busy_conversation(session: AgentSession, *, agent_server_history: bo
             raise _PublicResponseFailure(
                 RuntimeError(
                     "The conversation already has an in-flight turn. Wait for it to finish before sending "
-                    "another request; if the host stopped abruptly during that turn, start a new conversation."
+                    "another request; if that turn ended abnormally (for example, the host stopped or its "
+                    "cleanup failed), start a new conversation."
                 )
             )
         raise _PublicResponseFailure(
