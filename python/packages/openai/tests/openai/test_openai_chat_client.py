@@ -8319,6 +8319,9 @@ def test_parse_chunk_from_openai_code_interpreter_output_item_done() -> None:
     mock_log_output = MagicMock()
     mock_log_output.type = "logs"
     mock_log_output.logs = "hello"
+    mock_image_output = MagicMock()
+    mock_image_output.type = "image"
+    mock_image_output.url = "https://example.com/plot.png"
 
     mock_done_event = MagicMock()
     mock_done_event.type = "response.output_item.done"
@@ -8327,7 +8330,7 @@ def test_parse_chunk_from_openai_code_interpreter_output_item_done() -> None:
     mock_done_item.call_id = "ci_789"
     mock_done_item.id = "ci_789"
     mock_done_item.code = "print('hello')"
-    mock_done_item.outputs = [mock_log_output]
+    mock_done_item.outputs = [mock_log_output, mock_image_output]
     mock_done_item.status = "completed"
     mock_done_event.item = mock_done_item
 
@@ -8345,6 +8348,10 @@ def test_parse_chunk_from_openai_code_interpreter_output_item_done() -> None:
     assert result_contents[0].merge_mode == "replace"
     assert result_contents[0].outputs
     assert any(out.type == "text" and out.text == "hello" for out in result_contents[0].outputs)
+    assert any(
+        out.type == "uri" and out.uri == "https://example.com/plot.png" and out.media_type == "image"
+        for out in result_contents[0].outputs
+    )
 
 
 def test_code_interpreter_streaming_sequence_does_not_duplicate_code_and_captures_outputs() -> None:
