@@ -32,26 +32,7 @@ from agent_framework._middleware import (
 )
 from agent_framework._tools import FunctionTool, ToolTypes
 
-_TERMINATION_TEXT = "Sorry, blocked."
-
-
-def _termination_result(kind: str, stream: bool) -> Any:
-    """The response a middleware hands to ``MiddlewareTermination(result=...)``."""
-    if kind == "agent":
-        if not stream:
-            return AgentResponse(messages=[Message(role="assistant", contents=[_TERMINATION_TEXT])])
-
-        async def _agent_updates() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[Content.from_text(_TERMINATION_TEXT)], role="assistant")
-
-        return ResponseStream(_agent_updates(), finalizer=AgentResponse.from_updates)
-    if not stream:
-        return ChatResponse(messages=[Message(role="assistant", contents=[_TERMINATION_TEXT])])
-
-    async def _chat_updates() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(contents=[Content.from_text(_TERMINATION_TEXT)], role="assistant")
-
-    return ResponseStream(_chat_updates(), finalizer=ChatResponse.from_updates)
+from .utils import termination_result
 
 
 class TestAgentContext:
@@ -1960,7 +1941,7 @@ class TestMiddlewareTerminationResult:
     async def test_termination_result_is_returned(
         self, kind: str, stream: bool, mock_agent: SupportsAgentRun, mock_chat_client: Any
     ) -> None:
-        expected = _termination_result(kind, stream)
+        expected = termination_result(kind, stream)
         handler_calls: list[str] = []
 
         async def terminate(context: Any, call_next: Callable[[], Awaitable[None]]) -> None:
@@ -1990,8 +1971,8 @@ class TestMiddlewareTerminationResult:
         self, kind: str, stream: bool, mock_agent: SupportsAgentRun, mock_chat_client: Any
     ) -> None:
         """A result the middleware already set on the context wins, as in the function pipeline."""
-        from_context = _termination_result(kind, stream)
-        from_exception = _termination_result(kind, stream)
+        from_context = termination_result(kind, stream)
+        from_exception = termination_result(kind, stream)
 
         async def set_then_terminate(context: Any, call_next: Callable[[], Awaitable[None]]) -> None:
             context.result = from_context

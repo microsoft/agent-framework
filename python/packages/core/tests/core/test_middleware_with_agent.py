@@ -37,7 +37,7 @@ from agent_framework import (
 from agent_framework._sessions import InMemoryHistoryProvider
 
 from .conftest import MockBaseChatClient, MockChatClient
-from .test_middleware import _TERMINATION_TEXT, _termination_result
+from .utils import TERMINATION_TEXT, termination_result
 
 # region Agent Tests
 
@@ -3288,11 +3288,11 @@ class TestMiddlewareTerminationResultWithAgent:
     ) -> None:
         @agent_middleware
         async def block_agent(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            raise MiddlewareTermination("blocked", result=_termination_result("agent", context.stream))
+            raise MiddlewareTermination("blocked", result=termination_result("agent", context.stream))
 
         @chat_middleware
         async def block_chat(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            raise MiddlewareTermination("blocked", result=_termination_result("chat", context.stream))
+            raise MiddlewareTermination("blocked", result=termination_result("chat", context.stream))
 
         agent = Agent(client=chat_client_base, middleware=[block_agent if kind == "agent" else block_chat])
 
@@ -3300,10 +3300,10 @@ class TestMiddlewareTerminationResultWithAgent:
             response_stream = agent.run("hello", stream=True)
             updates = [update async for update in response_stream]
             response = await response_stream.get_final_response()
-            assert "".join(update.text for update in updates) == _TERMINATION_TEXT
+            assert "".join(update.text for update in updates) == TERMINATION_TEXT
         else:
             response = await agent.run("hello")
 
         assert response is not None
-        assert response.text == _TERMINATION_TEXT
+        assert response.text == TERMINATION_TEXT
         assert chat_client_base.call_count == 0
