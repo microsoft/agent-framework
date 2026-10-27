@@ -338,8 +338,11 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   by that continuation, can atomically restore a supplied checkpoint before cancellation, and returns the resulting
   `WorkflowRunResult`. Cancelling a computer request also cancels the other pending requests in that agent's batch,
   retains already resolved sibling evidence in terminal output, and resets its session before new input.
-- **Nested agent turns** - `WorkflowExecutor` forwards the parent agent-run context after a fresh child run is
-  accepted, before executing it. Response-only continuations and checkpoint restores keep their saved context.
+- **Nested workflow scopes** - Fresh runs select a checkpoint-backed scope before the entry snapshot.
+  `WorkflowExecutor` derives a child scope from the parent scope and binding ID after the child run is accepted.
+  Agent turns retain their session scope; direct fresh runs select a new scope. Entry replay therefore preserves
+  child scopes even when child execution had not started at the snapshot. Response-only continuations restore
+  their originating scope before further nested invocation.
 - **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
   replacing live state or queues. `WorkflowExecutor` delegates its private validation hook to its child's runner,
   so each child uses its own response-origin policy and migration metadata stays in the candidate snapshot.

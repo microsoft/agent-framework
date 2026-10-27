@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
 import httpx2 as httpx
+from agent_framework._workflows._const import WORKFLOW_PARENT_SESSION_ID_KEY, WORKFLOW_SESSION_ID_KEY
 
 from ._errors import DeclarativeWorkflowError
 
@@ -66,7 +67,7 @@ _WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
 
 def get_or_create_workflow_session_id(state: State) -> str:
     agent_session_id = state.get(_WORKFLOW_AGENT_SESSION_ID_KEY)
-    if agent_session_id is not None:
+    if agent_session_id is not None and state.get(WORKFLOW_PARENT_SESSION_ID_KEY) is None:
         if not isinstance(agent_session_id, str) or not agent_session_id:
             raise ValueError("Invalid agent session state.")
         namespace_value = state.get(_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY)
@@ -93,7 +94,12 @@ def get_or_create_workflow_session_id(state: State) -> str:
 
 
 def activate_workflow_session_id(state: State, *, reset_unscoped: bool, is_agent_run: bool = False) -> None:
-    if state.get(_WORKFLOW_AGENT_SESSION_ID_KEY) is not None:
+    parent_scope = state.get(WORKFLOW_PARENT_SESSION_ID_KEY)
+    if parent_scope is not None:
+        if not isinstance(parent_scope, str) or not parent_scope:
+            raise ValueError("Invalid parent workflow session scope.")
+        state.set(_WORKFLOW_SESSION_ID_KEY, parent_scope)
+    elif state.get(_WORKFLOW_AGENT_SESSION_ID_KEY) is not None:
         get_or_create_workflow_session_id(state)
     elif is_agent_run:
         workflow_session_id = state.get(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY)
@@ -105,6 +111,7 @@ def activate_workflow_session_id(state: State, *, reset_unscoped: bool, is_agent
         state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
     elif reset_unscoped:
         state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
+    state.set(WORKFLOW_SESSION_ID_KEY, get_or_create_workflow_session_id(state))
 
 
 def restore_workflow_session_id(state: State, workflow_session_id: str) -> None:
@@ -113,6 +120,7 @@ def restore_workflow_session_id(state: State, workflow_session_id: str) -> None:
     # A response resumes its originating scope, not the latest agent turn's scope.
     state.set(_WORKFLOW_AGENT_SESSION_ID_KEY, None)
     state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+    state.set(WORKFLOW_SESSION_ID_KEY, workflow_session_id)
 
 
 def get_request_workflow_session_id(workflow_session_id: str | None) -> str:

@@ -18,8 +18,6 @@ from ._const import (
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
-    WORKFLOW_AGENT_RUN_KEY,
-    WORKFLOW_AGENT_SESSION_ID_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
 from ._edge_runner import gather_cancelling_siblings_on_error
@@ -495,8 +493,7 @@ class WorkflowExecutor(Executor):
             function_invocation_kwargs=fi_kwargs,
             client_kwargs=ci_kwargs,
         )
-        if ctx.get_state(WORKFLOW_AGENT_RUN_KEY) is True:
-            self.workflow._set_agent_run_context(ctx.get_state(WORKFLOW_AGENT_SESSION_ID_KEY))  # pyright: ignore[reportPrivateUsage]
+        self.workflow._set_parent_run_context(ctx.state, self.id)  # pyright: ignore[reportPrivateUsage]
         result = await child_run
 
         logger.debug(f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} completed with {len(result)} events")

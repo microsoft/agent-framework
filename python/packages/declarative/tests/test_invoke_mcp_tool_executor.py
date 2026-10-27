@@ -671,6 +671,70 @@ class TestFieldForwarding:
         assert session_a_id != session_b_id
         assert handler.invocations[2].workflow_session_id == session_a_id
 
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("run_kind", ["direct", "sessionless_agent", "explicit_agent"])
+    @pytest.mark.parametrize("depth", [1, 2])
+    async def test_parent_entry_replay_preserves_child_workflow_session_ids(
+        self, streaming: bool, run_kind: str, depth: int
+    ) -> None:
+        from agent_framework import (
+            Executor,
+            InMemoryCheckpointStorage,
+            WorkflowBuilder,
+            WorkflowContext,
+            WorkflowExecutor,
+        )
+        from agent_framework import handler as workflow_handler
+
+        class Start(Executor):
+            @workflow_handler
+            async def forward(self, message: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
+                await ctx.send_message(message)
+
+        mcp_handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=mcp_handler)
+        storage = InMemoryCheckpointStorage()
+
+        def build():
+            wrappers = []
+            for index in range(2):
+                child = factory.create_workflow_from_definition(_yaml(_action(tool_name=f"tool_{index}")))
+                wrapper = WorkflowExecutor(child, id=f"child_{index}_0")
+                for level in range(1, depth):
+                    child = WorkflowBuilder(start_executor=wrapper).build()
+                    wrapper = WorkflowExecutor(child, id=f"child_{index}_{level}")
+                wrappers.append(wrapper)
+            start = Start(id="start")
+            return WorkflowBuilder(name="parent", start_executor=start).add_fan_out_edges(start, wrappers).build()
+
+        parent = build()
+        messages = [Message(role="user", contents=[Content.from_text("First turn")])]
+        if run_kind == "direct":
+            await parent.run(messages, checkpoint_storage=storage)
+        else:
+            await parent.as_agent().run(
+                messages,
+                session=AgentSession() if run_kind == "explicit_agent" else None,
+                checkpoint_storage=storage,
+            )
+        original_scopes = {
+            invocation.tool_name: invocation.workflow_session_id for invocation in mcp_handler.invocations
+        }
+        checkpoints = await storage.list_checkpoints(workflow_name=parent.name)
+        [entry] = [checkpoint for checkpoint in checkpoints if checkpoint.iteration_count == 0]
+        parent = build()
+        if streaming:
+            await parent.run(
+                checkpoint_id=entry.checkpoint_id, checkpoint_storage=storage, stream=True
+            ).get_final_response()
+        else:
+            await parent.run(checkpoint_id=entry.checkpoint_id, checkpoint_storage=storage)
+
+        assert len(mcp_handler.invocations) == 4
+        assert len(set(original_scopes.values())) == 2
+        for invocation in mcp_handler.invocations[2:]:
+            assert invocation.workflow_session_id == original_scopes[invocation.tool_name]
+
     @pytest.mark.parametrize("message_list", [False, True])
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("explicit_session", [False, True])

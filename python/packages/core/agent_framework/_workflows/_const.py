@@ -23,6 +23,11 @@ WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
 # State key identifying WorkflowAgent turns, including turns without an AgentSession.
 WORKFLOW_AGENT_RUN_KEY = "_workflow_agent_run"
 
+# Checkpoint-backed workflow scope and the binding-specific scope inherited by a child.
+WORKFLOW_SESSION_ID_KEY = "_workflow_session_id"
+WORKFLOW_PARENT_SESSION_ID_KEY = "_workflow_parent_session_id"
+WORKFLOW_AGENT_SESSION_NAMESPACE_KEY = "_workflow_agent_session_namespace"
+
 # Key used to store collision-free, executor-aware workflow invocation kwargs.
 # WORKFLOW_RUN_KWARGS_KEY remains in the legacy dict format for compatibility with
 # older first-party packages and checkpoints.

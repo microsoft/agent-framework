@@ -36,6 +36,9 @@ Entry replays. Sessionless WorkflowAgent turns select their own checkpointed sco
 independent of explicit agent sessions, direct runs, and restored approval scopes.
 Response-only continuations retain the originating workflow scope even when supplied
 a new `AgentSession` after checkpoint restoration.
+Nested workflow bindings derive their scopes from the checkpointed parent scope and
+binding ID, so replaying a parent entry checkpoint preserves child scopes without
+sharing them across sibling bindings.
 Approval continuations keep their originating active scope until the next run with new input.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes

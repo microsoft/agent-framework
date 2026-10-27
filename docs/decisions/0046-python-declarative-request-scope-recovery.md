@@ -70,5 +70,25 @@ Migration does not reconstruct state already overwritten in a legacy checkpoint.
 This is a checkpoint-compatibility change with an explicit recovery path, not
 transparent restoration of an old session.
 
+## Nested entry checkpoint replay
+
+Selecting a random child scope only when the child first executes is insufficient:
+the parent's entry checkpoint predates that selection. Rebuilding the graph and
+replaying that checkpoint would select a different child scope. Pre-seeding every
+descendant's mutable state before the parent snapshot would instead couple parent
+checkpoint creation to child initialization.
+
+Select a parent scope before its entry checkpoint and derive each child scope from
+that scope and the binding ID. Agent turns select a stable scope for their session;
+direct fresh runs select new scopes. Declarative response handlers restore the
+originating parent scope before further nested invocation. Child scope selection
+occurs only after the child accepts a fresh run, not before checkpoint validation
+or on response-only continuations.
+
+Older parent checkpoints without this scope cannot reconstruct a child's original
+scope if that child had not started. Such parents receive a new isolated scope
+with a warning; subsequent checkpoints retain it. Existing request-origin
+validation and explicit legacy-request migration rules are unchanged.
+
 The proposed deciders are Python code owners; maintainer and
 engineering-management approval is still required.

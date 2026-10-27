@@ -38,7 +38,10 @@ from ._const import (
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
     WORKFLOW_AGENT_RUN_KEY,
     WORKFLOW_AGENT_SESSION_ID_KEY,
+    WORKFLOW_AGENT_SESSION_NAMESPACE_KEY,
+    WORKFLOW_PARENT_SESSION_ID_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
+    WORKFLOW_SESSION_ID_KEY,
 )
 from ._edge import (
     EdgeGroup,
@@ -447,6 +450,40 @@ class Workflow(DictConvertible):
         self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, True)
         self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, session_id)
 
+    def _initialize_workflow_session_id(self) -> None:
+        state = self._runner.state
+        scope = state.get(WORKFLOW_PARENT_SESSION_ID_KEY)
+        if scope is None:
+            if state.get(WORKFLOW_AGENT_RUN_KEY) is True:
+                namespace = state.get(WORKFLOW_AGENT_SESSION_NAMESPACE_KEY)
+                if namespace is None:
+                    namespace = uuid.uuid4().hex
+                    state.set(WORKFLOW_AGENT_SESSION_NAMESPACE_KEY, namespace)
+                if not isinstance(namespace, str):
+                    raise ValueError("Invalid workflow agent session namespace.")
+                scope = uuid.uuid5(uuid.UUID(namespace), json.dumps([state.get(WORKFLOW_AGENT_SESSION_ID_KEY)])).hex
+            else:
+                scope = uuid.uuid4().hex
+        if not isinstance(scope, str) or not scope:
+            raise ValueError("Invalid workflow session scope.")
+        state.set(WORKFLOW_SESSION_ID_KEY, scope)
+
+    def _set_parent_run_context(self, parent_state: State, binding_id: str) -> None:
+        parent_scope = parent_state.get(WORKFLOW_SESSION_ID_KEY)
+        if parent_scope is None:
+            logger.warning("Parent workflow has no checkpointed session scope; assigning a new isolated scope.")
+            parent_scope = uuid.uuid4().hex
+            parent_state.set(WORKFLOW_SESSION_ID_KEY, parent_scope)
+        if not isinstance(parent_scope, str) or not parent_scope:
+            raise ValueError("Invalid parent workflow session scope.")
+        state = self._runner.state
+        state.set(
+            WORKFLOW_PARENT_SESSION_ID_KEY,
+            uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([parent_scope, binding_id])).hex,
+        )
+        state.set(WORKFLOW_AGENT_RUN_KEY, parent_state.get(WORKFLOW_AGENT_RUN_KEY) is True)
+        state.set(WORKFLOW_AGENT_SESSION_ID_KEY, parent_state.get(WORKFLOW_AGENT_SESSION_ID_KEY))
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
         data: dict[str, Any] = {
@@ -779,6 +816,7 @@ class Workflow(DictConvertible):
                     f"Expected input types: {start_executor.input_types}."
                 )
 
+            self._initialize_workflow_session_id()
             if self._initial_state_initializer is not None:
                 self._initial_state_initializer(self._runner.state)
 
@@ -895,6 +933,7 @@ class Workflow(DictConvertible):
         if message is not None:
             self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, False)
             self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, None)
+            self._runner.state.set(WORKFLOW_PARENT_SESSION_ID_KEY, None)
 
         # No run is active, so any runtime checkpoint storage override still set on the
         # context is stale - left over from a prior run whose stream was dropped before
