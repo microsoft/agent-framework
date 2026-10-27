@@ -524,7 +524,7 @@ class RawGeminiChatClient(
                 raise
             except Exception as ex:
                 raise _wrap_gemini_error(ex) from ex
-            return self._process_generate_response(raw, response_format=validated.get("response_format"))
+            return self._process_generate_response(raw, model=model, response_format=validated.get("response_format"))
 
         return _get_response()
 
@@ -1065,12 +1065,14 @@ class RawGeminiChatClient(
         self,
         response: types.GenerateContentResponse,
         *,
+        model: str | None = None,
         response_format: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Convert a Gemini generate_content response to a framework ChatResponse.
 
         Args:
             response: The raw ``GenerateContentResponse`` from the Gemini API.
+            model: The model the request was sent to, reported when the response carries no model version.
             response_format: Optional Pydantic model type for structured output parsing.
                 When provided, the response text is parsed into the given model and
                 made available via ``ChatResponse.value``.
@@ -1085,7 +1087,7 @@ class RawGeminiChatClient(
             response_id=None,
             messages=[Message(role="assistant", contents=contents, raw_representation=candidate)],
             usage_details=self._parse_usage(response.usage_metadata),
-            model=response.model_version or self.model,
+            model=response.model_version or model or self.model,
             finish_reason=self._map_finish_reason(
                 candidate.finish_reason.name if candidate and candidate.finish_reason else None
             ),

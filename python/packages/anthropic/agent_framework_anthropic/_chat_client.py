@@ -1162,14 +1162,18 @@ class RawAnthropicClient(
             request_state.tool_name_aliases = {}
 
         # Process tool choice
+        allow_multiple = options.get("allow_multiple_tool_calls")
         if options.get("tool_choice") is None:
+            # Anthropic only exposes parallel tool use through tool_choice, so carry the setting
+            # on its default "auto" mode (e.g. after the function loop resets tool_choice="required").
+            if allow_multiple is not None and result.get("tools"):
+                result["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": not allow_multiple}
             return result or None
         tool_mode = validate_tool_mode(options.get("tool_choice"))
         if tool_mode is None:
             return result or None
         if "allowed_tools" in tool_mode:
             logger.warning("allowed_tools is not supported by Anthropic; the setting will be ignored")
-        allow_multiple = options.get("allow_multiple_tool_calls")
         match tool_mode.get("mode"):
             case "auto":
                 tool_choice: dict[str, Any] = {"type": "auto"}
@@ -1721,6 +1725,13 @@ class RawAnthropicClient(
     def _parse_citations_from_anthropic(
         self, content_block: BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock
     ) -> list[Annotation] | None:
+        """Parse Anthropic citations into annotations.
+
+        Note:
+            Document and search-result citations retain their source coordinates in ``annotated_regions``.
+            Their ``annotated_regions_coordinate_space`` is ``"source"`` to distinguish these locations from
+            generated-content character offsets. Protocol adapters do not emit these regions as output-text spans.
+        """
         content_blocks = getattr(content_block, "citations", None)
         if not content_blocks:
             return None
@@ -1785,6 +1796,8 @@ class RawAnthropicClient(
                     )
                 case _:
                     logger.debug(f"Unknown citation type encountered: {citation.type}")
+            if cit.get("annotated_regions"):
+                cit["annotated_regions_coordinate_space"] = "source"
             annotations.append(cit)
         return annotations or None
 
