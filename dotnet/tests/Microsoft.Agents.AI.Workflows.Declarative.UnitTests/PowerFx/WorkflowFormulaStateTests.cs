@@ -573,6 +573,142 @@ public class WorkflowFormulaStateTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false, SensitivityLevel.None)]
+    [InlineData(false, false, SensitivityLevel.Sensitive)]
+    [InlineData(false, true, SensitivityLevel.None)]
+    [InlineData(false, true, SensitivityLevel.Sensitive)]
+    [InlineData(true, false, SensitivityLevel.None)]
+    [InlineData(true, false, SensitivityLevel.Sensitive)]
+    [InlineData(true, true, SensitivityLevel.None)]
+    [InlineData(true, true, SensitivityLevel.Sensitive)]
+    public async Task ResumeAsync_PlainLegacyHelpersWorkWithoutFormulaCallbacksAsync(bool offThread, bool overwrite, SensitivityLevel sensitivity)
+    {
+        // Arrange
+        bool resuming = false;
+        IWorkflowContext? resumedContext = null;
+        string expected = overwrite ? "updated" : "legacy";
+        SensitivityLevel expectedSensitivity = overwrite
+            ? sensitivity == SensitivityLevel.Sensitive ? SensitivityLevel.None : SensitivityLevel.Sensitive
+            : sensitivity;
+        StateExecutor source = new("source", async (context, cancellationToken) =>
+        {
+            await context.QueueStateUpdateAsync("TestValue", "legacy", VariableScopeNames.Topic, cancellationToken);
+            await context.QueueStateUpdateAsync("TestValue", sensitivity,
+                WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), cancellationToken);
+            await context.QueueStateUpdateAsync("OtherValue", "untouched", VariableScopeNames.Topic, cancellationToken);
+            await context.QueueStateUpdateAsync("OtherValue", SensitivityLevel.None,
+                WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), cancellationToken);
+            await context.QueueStateUpdateAsync("NativeValue", 42, VariableScopeNames.Topic, cancellationToken);
+        });
+        StateExecutor writer = new("writer", async (context, cancellationToken) =>
+        {
+            if (!resuming)
+            {
+                return;
+            }
+            resumedContext = context;
+            if (overwrite)
+            {
+                await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<string>("updated", expectedSensitivity), VariableScopeNames.Topic, cancellationToken);
+            }
+            foreach (string? scope in new string?[] { null, VariableScopeNames.Local, VariableScopeNames.Topic })
+            {
+                EvaluationResult<string?> result = await context.ReadStateWithSensitivityAsync<string>("TestValue", scope, cancellationToken);
+                Assert.Equal(expected, result.Value);
+                Assert.Equal(expectedSensitivity, result.Sensitivity);
+            }
+            if (!overwrite)
+            {
+                Assert.Equal("legacy", await context.ReadStateAsync<string>("TestValue", VariableScopeNames.Topic, cancellationToken));
+                Assert.DoesNotContain("TestValue", await context.ReadStateKeysAsync(VariableScopeNames.Local, cancellationToken));
+            }
+            Assert.Equal("untouched", await context.ReadStateAsync<string>("OtherValue", VariableScopeNames.Topic, cancellationToken));
+            Assert.DoesNotContain("OtherValue", await context.ReadStateKeysAsync(VariableScopeNames.Local, cancellationToken));
+            EvaluationResult<string?> evaluated = await context.EvaluateValueWithSensitivityAsync<string>("Local.TestValue", cancellationToken);
+            Assert.Equal(expected, evaluated.Value);
+            Assert.Equal(expectedSensitivity, evaluated.Sensitivity);
+        });
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, writer).Build();
+        CheckpointManager checkpoints = CheckpointManager.CreateInMemory();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? checkpoint = null;
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint ??= saved;
+                }
+            }
+        }
+        Assert.NotNull(checkpoint);
+
+        // Act
+        resuming = true;
+        CheckpointInfo? updatedCheckpoint = null;
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, checkpoint);
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+            if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+            {
+                updatedCheckpoint = saved;
+            }
+        }
+        Assert.NotNull(updatedCheckpoint);
+        await resumed.RestoreCheckpointAsync(updatedCheckpoint);
+
+        // Assert
+        Assert.NotNull(resumedContext);
+        EvaluationResult<string?> restored = await resumedContext.ReadStateWithSensitivityAsync<string>("TestValue", VariableScopeNames.Topic);
+        Assert.Equal(expected, restored.Value);
+        Assert.Equal(expectedSensitivity, restored.Sensitivity);
+        Assert.DoesNotContain("TestValue", await resumedContext.ReadStateKeysAsync(VariableScopeNames.Topic));
+        Assert.Equal(42, await resumedContext.ReadStateAsync<int>("NativeValue", VariableScopeNames.Topic));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlainLegacyHelpers_RejectOverlappingMarkedEntriesAsync(bool overwrite)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Local, "TestValue")] = new("local"),
+            [(VariableScopeNames.Topic, "TestValue")] = new("legacy"),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = new()
+        {
+            [(WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), "TestValue")] = SensitivityLevel.None,
+        };
+        IWorkflowContext context = CreateStateContext(values, sensitivities).Object;
+
+        // Act
+        DeclarativeActionException error = await Assert.ThrowsAsync<DeclarativeActionException>(async () =>
+        {
+            if (overwrite)
+            {
+                await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<object?>("updated", SensitivityLevel.Sensitive), VariableScopeNames.Topic);
+            }
+            else
+            {
+                await context.ReadStateWithSensitivityAsync<string>("TestValue", VariableScopeNames.Topic);
+            }
+        });
+
+        // Assert
+        Assert.Contains("conflicting Local and Topic", error.Message);
+        Assert.Equal("local", values[(VariableScopeNames.Local, "TestValue")].As<string>());
+        Assert.Equal("legacy", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
+        Assert.Equal(SensitivityLevel.None, Assert.Single(sensitivities).Value);
+    }
+
     private static async ValueTask SeedLegacyStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         await context.QueueStateUpdateAsync("TestValue", "legacy", VariableScopeNames.Topic, cancellationToken);

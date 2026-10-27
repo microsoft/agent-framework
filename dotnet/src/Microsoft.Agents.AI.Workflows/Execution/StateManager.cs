@@ -251,9 +251,11 @@ internal sealed class StateManager
         return this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
     }
 
+    internal void DiscardQueuedUpdates() => this._queuedUpdates.Clear();
+
     internal ValueTask RollbackStateAsync(Checkpoint checkpoint)
     {
-        this._queuedUpdates.Clear();
+        this.DiscardQueuedUpdates();
         return this.ImportStateAsync(checkpoint);
     }
 

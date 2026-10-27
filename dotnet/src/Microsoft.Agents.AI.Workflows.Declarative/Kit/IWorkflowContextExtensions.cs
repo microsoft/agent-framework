@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
@@ -201,7 +202,8 @@ public static class IWorkflowContextExtensions
         }
 
         string plainScopeName = GetPlainScopeName(scopeName);
-        TValue? value = await context.ReadStateAsync<TValue>(key, plainScopeName, cancellationToken).ConfigureAwait(false);
+        bool legacyEntry = await HasLegacyTopicEntryAsync(context, key, plainScopeName, cancellationToken).ConfigureAwait(false);
+        TValue? value = await context.ReadStateAsync<TValue>(key, legacyEntry ? VariableScopeNames.Topic : plainScopeName, cancellationToken).ConfigureAwait(false);
         SensitivityLevel sensitivity = ShouldPersistSensitivity(plainScopeName)
             ? await context.ReadStateAsync<SensitivityLevel>(key, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false)
             : SensitivityLevel.None;
@@ -233,10 +235,15 @@ public static class IWorkflowContextExtensions
         }
 
         string plainScopeName = GetPlainScopeName(scopeName);
+        bool legacyEntry = await HasLegacyTopicEntryAsync(context, key, plainScopeName, cancellationToken).ConfigureAwait(false);
         await context.QueueStateUpdateAsync(key, value.Value, plainScopeName, cancellationToken).ConfigureAwait(false);
         if (ShouldPersistSensitivity(plainScopeName))
         {
             await context.QueueStateUpdateAsync(key, value.Sensitivity, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false);
+        }
+        if (legacyEntry)
+        {
+            await context.QueueStateUpdateAsync<object>(key, null, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -332,6 +339,34 @@ public static class IWorkflowContextExtensions
 
     private static string GetPlainScopeName(string? scopeName) =>
         scopeName is null || VariableScopeNames.IsValidName(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
+
+    private static async ValueTask<bool> HasLegacyTopicEntryAsync(IWorkflowContext context, string key, string scopeName, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(scopeName, VariableScopeNames.Local, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        HashSet<string> legacyKeys = await context.ReadStateKeysAsync(VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+        if (!legacyKeys.Contains(key))
+        {
+            return false;
+        }
+
+        HashSet<string> declarativeKeys = await context.ReadStateKeysAsync(WorkflowFormulaState.GetSensitivityScopeName(scopeName), cancellationToken).ConfigureAwait(false);
+        if (!declarativeKeys.Contains(key))
+        {
+            return false;
+        }
+
+        HashSet<string> localKeys = await context.ReadStateKeysAsync(scopeName, cancellationToken).ConfigureAwait(false);
+        if (localKeys.Contains(key))
+        {
+            throw new DeclarativeActionException("Cannot access state with conflicting Local and Topic scope entries.");
+        }
+
+        return true;
+    }
 
     private static bool ShouldPersistSensitivity(string scopeName) =>
         DeclarativeWorkflowContext.ManagedScopes.Contains(scopeName) ||

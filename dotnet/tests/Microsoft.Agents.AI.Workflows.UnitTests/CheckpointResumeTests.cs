@@ -234,6 +234,76 @@ public class CheckpointResumeTests
         Assert.Equal(liveValue, await restoringContext.ReadStateAsync<string>("value", "shared"));
     }
 
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread, false)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread, true)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, false)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep, true)]
+    internal async Task Checkpoint_Restore_LaterFailureDiscardsHookUpdatesAsync(ExecutionEnvironment environment, bool failIndex)
+    {
+        // Arrange
+        InvalidOperationException failure = new("Checkpoint load failed.");
+        bool failing = true;
+        TaskCompletionSource<bool> hookEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<bool> releaseHook = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        IWorkflowContext? restoringContext = null;
+        RestoreProbeExecutor source = new("source", async (context, cancellationToken) =>
+        {
+            restoringContext = context;
+            await context.QueueStateUpdateAsync("value", "restored", "shared", cancellationToken);
+        }, () => true, postLoad: async (context, cancellationToken) =>
+        {
+            if (failing)
+            {
+                hookEntered.TrySetResult(true);
+                await releaseHook.Task;
+                await context.QueueStateUpdateAsync("hook-value", "pending", "shared", cancellationToken);
+            }
+        });
+        RestoreProbeExecutor sink = new("sink", (_, _) => default, () => !failing || failIndex ? true : throw failure);
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, sink).Build();
+        IndexFailureCheckpointManager manager = new();
+        CheckpointManager checkpoints = new(manager);
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment().WithCheckpointing(checkpoints);
+        CheckpointInfo? saved = null;
+        await using StreamingRun run = await env.RunStreamingAsync(workflow, 1);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+            {
+                saved = checkpoint;
+            }
+        }
+        Assert.NotNull(saved);
+
+        // Act
+        manager.IndexFailure = failIndex ? failure : null;
+        Task<InvalidOperationException> restoreTask = Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await run.RestoreCheckpointAsync(saved));
+        await hookEntered.Task;
+        try
+        {
+            Assert.False(restoreTask.IsCompleted);
+        }
+        finally
+        {
+            releaseHook.TrySetResult(true);
+        }
+        InvalidOperationException error = await restoreTask;
+
+        // Assert
+        Assert.Same(failure, error);
+        Assert.NotNull(restoringContext);
+        Assert.Equal("restored", await restoringContext.ReadStateAsync<string>("value", "shared"));
+        Assert.Null(await restoringContext.ReadStateAsync<string>("hook-value", "shared"));
+
+        failing = false;
+        manager.IndexFailure = null;
+        await run.RestoreCheckpointAsync(saved);
+        Assert.Equal("restored", await restoringContext.ReadStateAsync<string>("value", "shared"));
+        Assert.Null(await restoringContext.ReadStateAsync<string>("hook-value", "shared"));
+    }
+
     private sealed class IndexFailureCheckpointManager : ICheckpointManager
     {
         private readonly ICheckpointManager _inner = CheckpointManager.CreateInMemory();
@@ -253,15 +323,18 @@ public class CheckpointResumeTests
     private sealed class RestoreProbeExecutor : Executor<int>, IResettableExecutor
     {
         private readonly Func<bool> _isRestored;
+        private readonly Func<IWorkflowContext, CancellationToken, ValueTask>? _postLoad;
 
         public RestoreProbeExecutor(
             string id,
             Func<IWorkflowContext, CancellationToken, ValueTask> restore,
             Func<bool> isRestored,
             object? sharedStateKey = null,
-            Func<IWorkflowContext, CancellationToken, ValueTask>? restoreExecutor = null) : base(id)
+            Func<IWorkflowContext, CancellationToken, ValueTask>? restoreExecutor = null,
+            Func<IWorkflowContext, CancellationToken, ValueTask>? postLoad = null) : base(id)
         {
             this._isRestored = isRestored;
+            this._postLoad = postLoad;
             if (sharedStateKey is null)
             {
                 this.RegisterCheckpointRestoringCallback(restore);
@@ -284,10 +357,13 @@ public class CheckpointResumeTests
         public override ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
             context.SendMessageAsync(message, cancellationToken: cancellationToken);
 
-        protected internal override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             this.RestorationCompleteInHook = this._isRestored();
-            return default;
+            if (this._postLoad is { } postLoad)
+            {
+                await postLoad(context, cancellationToken);
+            }
         }
     }
 

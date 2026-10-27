@@ -42,6 +42,10 @@ Checkpoints containing an identified declarative key in both physical scopes are
 is unavailable. Reconcile those entries explicitly or start a fresh session before resuming. Legacy entries without
 declarative metadata require explicit reconciliation rather than automatic migration.
 
+For code-first executors using the declarative sensitivity helpers without a formula-state restoration callback,
+reads fall back to the requested metadata-marked legacy entry without modifying it. Writes use `Local` and remove
+only that entry from `Topic`; unrelated legacy entries are not migrated by these point operations.
+
 ## Learn more
 
 - [Declarative agents](https://learn.microsoft.com/agent-framework/agents/declarative)

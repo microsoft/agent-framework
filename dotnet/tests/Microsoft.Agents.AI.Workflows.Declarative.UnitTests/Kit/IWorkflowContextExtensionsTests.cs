@@ -180,6 +180,7 @@ public sealed class IWorkflowContextExtensionsTests
     {
         // Arrange
         Mock<IWorkflowContext> context = new(MockBehavior.Loose);
+        context.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
         context
             .Setup(c => c.ReadStateAsync<object>("TestValue", VariableScopeNames.Local, default))
             .Returns(new ValueTask<object?>("secret-value"));
@@ -200,6 +201,7 @@ public sealed class IWorkflowContextExtensionsTests
     {
         // Arrange
         Mock<IWorkflowContext> context = new(MockBehavior.Strict);
+        context.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
         context
             .Setup(c => c.QueueStateUpdateAsync("TestValue", "secret-value", VariableScopeNames.Local, default))
             .Returns(default(ValueTask));
@@ -250,6 +252,7 @@ public sealed class IWorkflowContextExtensionsTests
     {
         // Arrange
         Mock<IWorkflowContext> context = new(MockBehavior.Loose);
+        context.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
         context
             .Setup(c => c.ReadStateAsync<PortableValue>("TestValue", VariableScopeNames.Local, default))
             .Returns(new ValueTask<PortableValue?>(new PortableValue("42")));
