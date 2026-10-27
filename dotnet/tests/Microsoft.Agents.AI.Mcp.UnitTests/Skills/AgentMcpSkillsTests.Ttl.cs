@@ -143,7 +143,7 @@ public sealed partial class AgentMcpSkillsTests
     public async Task GetSkillsAsync_PaginatedTtl_ExpiresWhenAnyPageExpiresAsync(long firstTtl, long secondTtl, long thirdTtl, long remaining)
     {
         // Arrange
-        var clock = new ManualTimeProvider();
+        var clock = new ManualTimeProvider(timestampFrequency: 1000);
         List<string?> cursors = [];
         var client = CreateTtlClient((request, _) =>
         {
@@ -731,6 +731,9 @@ public sealed partial class AgentMcpSkillsTests
         otherSource.Verify(source => source.GetSkillsAsync(It.IsAny<AgentSkillsSourceContext>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    /// <summary>
+    /// Creates a listing response with an optional TTL.
+    /// </summary>
     private static JsonObject TtlListResult(long? ttl, params JsonNode?[] entries)
     {
         JsonObject result = ListResult(entries);
@@ -742,6 +745,9 @@ public sealed partial class AgentMcpSkillsTests
         return result;
     }
 
+    /// <summary>
+    /// Creates a client whose server declares support for skills.
+    /// </summary>
     private static Mock<McpClient> CreateSkillsClient()
     {
         var client = new Mock<McpClient>();
@@ -755,6 +761,9 @@ public sealed partial class AgentMcpSkillsTests
         return client;
     }
 
+    /// <summary>
+    /// Creates a client that forwards requests to the test handler.
+    /// </summary>
     private static Mock<McpClient> CreateTtlClient(Func<JsonRpcRequest, CancellationToken, Task<JsonObject>> handler)
     {
         var client = CreateSkillsClient();
@@ -766,14 +775,17 @@ public sealed partial class AgentMcpSkillsTests
             new() { Id = request.Id, Result = await handler(request, token) };
     }
 
-    private sealed class ManualTimeProvider : TimeProvider
+    /// <summary>
+    /// Provides a test-controlled clock with a configurable timestamp frequency.
+    /// </summary>
+    private sealed class ManualTimeProvider(long timestampFrequency = TimeSpan.TicksPerSecond) : TimeProvider
     {
         private long _timestamp;
 
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long TimestampFrequency => timestampFrequency;
 
         public override long GetTimestamp() => Interlocked.Read(ref this._timestamp);
 
-        public void Advance(TimeSpan duration) => Interlocked.Add(ref this._timestamp, duration.Ticks);
+        public void Advance(TimeSpan duration) => Interlocked.Add(ref this._timestamp, (long)(duration.TotalSeconds * this.TimestampFrequency));
     }
 }

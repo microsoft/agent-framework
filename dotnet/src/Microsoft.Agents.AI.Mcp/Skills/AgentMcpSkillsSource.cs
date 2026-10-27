@@ -12,65 +12,80 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// An <see cref="AgentSkillsSource"/> that discovers Agent Skills served over the Model Context Protocol (MCP).
+/// Lists skills from an MCP server and provides access to their <c>SKILL.md</c> files and supporting resources.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Uses <c>skills/list</c> when the server declares the <c>io.modelcontextprotocol/skills</c> extension.
-/// Returns an empty skill list without sending a discovery request when the extension is not declared.
+/// <see cref="GetSkillsAsync"/> requests the available skills through <c>skills/list</c>.
+/// The server must declare the <c>io.modelcontextprotocol/skills</c> extension;
+/// otherwise, this source returns an empty list without sending a request.
+/// Each listed skill includes a name, description, and resource list with expected byte sizes and content hashes.
+/// This resource list is called the manifest and includes <c>SKILL.md</c>, which contains the skill's instructions.
 /// </para>
 /// <para>
-/// Listed skill discovery is based on the Skills extension specification incorporating the
-/// working group's decision dated <c>2026-09-08</c>.
-/// Support currently includes skill discovery through <c>skills/list</c> and reading listed skill resources,
-/// but not the full extension.
+/// The skill list may span multiple response pages, each with a time to live (TTL).
+/// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
+/// A missing, zero, or negative page TTL causes the list to be fetched on every call.
+/// Disable other caches around this source, including the builder's cache through
+/// <see cref="AgentSkillsProviderBuilder.DisableCaching"/>, so this source can check expiration on each call.
 /// </para>
 /// <para>
-/// Listed skills provide a name, description, and list of resources. Instructions and supporting resources
-/// are fetched from the MCP server when requested. Only supporting resources listed by the server are available.
-/// Each listed resource read must return exactly one text or binary content block; <c>SKILL.md</c> must contain text.
-/// Page counts, total skill counts, and individual resource sizes
-/// are bounded by <see cref="AgentMcpSkillsSourceOptions"/>. Discovery follows continuation cursors
-/// until exhausted and fails on repeated cursors, invalid pages, or exceeded limits instead of returning a partial catalog.
-/// These checks do not limit incoming messages before the supplied client receives and parses them.
+/// Listing a skill does not fetch its files. The returned skill object fetches <c>SKILL.md</c>
+/// and supporting resources only when their content is requested. Only resources in its manifest are available.
+/// Each resource response must contain one text or binary content block; <c>SKILL.md</c> must contain text.
+/// Fetched content is checked against the resource's expected size and content hash.
+/// The name and description at the start of <c>SKILL.md</c> must also match the listed skill.
 /// </para>
 /// <para>
-/// Skills discovered through <c>skills/list</c> are cached according to server-provided TTLs.
-/// When any page expires, the skills are refreshed on the next request.
-/// If any page has no TTL, the skill list is requested from the server on every call.
-/// To honor these TTLs, disable any additional caching layers around this source,
-/// including the builder's cache by calling <see cref="AgentSkillsProviderBuilder.DisableCaching"/>.
+/// Each skill object caches resource content separately from the skill list, using each resource response's TTL.
+/// Expired resource content is fetched again on access. A missing, zero, or negative resource TTL
+/// causes content to be fetched on every access. All TTLs start when responses arrive, before validation.
 /// </para>
 /// <para>
-/// Supporting resource names are checked for absolute paths, parent traversal (including
-/// percent-encoded forms), and control characters before an MCP request is sent. Resource URIs
-/// retain their MCP resource schemes: they are sent to the connected server, not opened locally.
-/// This client-side guard does not replace server-side authorization.
+/// If fetched resource content has a different size or content hash than its manifest entry,
+/// the skill that owns that resource is queued for refresh.
+/// The resource read returns previously verified cached content if available, without extending its TTL;
+/// otherwise, it throws. Other resource-read and validation errors propagate without queuing a skill refresh.
 /// </para>
 /// <para>
-/// <strong>Security considerations:</strong> This source discovers and loads skills — including full
-/// skill instructions and supporting resources — from a
-/// remote MCP server that the caller connects to explicitly (via <c>UseMcpSkills</c>); it is never
-/// enabled by default. A compromised, malicious, or simply untrustworthy MCP server can return
-/// adversarial skill content designed to manipulate the agent through indirect prompt injection, or
-/// instructions/scripts designed to exfiltrate data once loaded and, for script-capable skills,
-/// executed. Only connect this source to MCP servers you trust, and review discovery and resource limits (<see cref="AgentMcpSkillsSourceOptions"/>)
-/// to bound the impact of a malicious server. A matching digest proves consistency with the resource manifest,
-/// not trustworthiness: a server controlling both the manifest and resource can replace both.
+/// On the next <see cref="GetSkillsAsync"/> call, <c>skills/get</c> fetches updated metadata and resource lists
+/// for queued skills. Skills that no longer exist on the server are removed from the cached list.
+/// If the cached skill list has expired, <c>skills/list</c> fetches the whole list instead.
+/// A failed refresh leaves the previous list unchanged and is retried on a later call.
 /// </para>
 /// <para>
-/// This source does not impose a byte limit on individual or combined <c>skills/list</c> responses.
-/// Page-count, skill-count, and resource-size limits do not bound incoming message size or total
-/// memory consumption. A malicious, compromised, or misconfigured server can return oversized
-/// responses that cause excessive memory consumption. Application developers are responsible for
-/// configuring appropriate input-size and resource limits through their chosen MCP client, transport,
-/// or hosting environment.
+/// Refreshes return a new list with new objects for updated skills. Previously returned skill objects
+/// continue using the resource URIs, sizes, and content hashes they were created with.
+/// Previously returned content stays unchanged. Callers must load the new skill object to use an update.
+/// Refreshes happen only on request, not in the background.
+/// </para>
+/// <para>
+/// <see cref="AgentMcpSkillsSourceOptions"/> limits listing pages, skill counts, and resource sizes.
+/// Invalid pages, repeated cursors, and exceeded limits fail the request rather than returning a partial list.
+/// These limits do not bound incoming message size or total memory use. Configure input-size limits
+/// in the MCP client, transport, or host as needed.
+/// </para>
+/// <para>
+/// Supporting-resource names must stay within the skill's directory.
+/// Resource URIs are sent to the connected MCP server, not opened locally.
+/// These checks do not replace server-side authorization.
+/// </para>
+/// <para>
+/// The caller owns the MCP client. Disposing this source does not dispose the client;
+/// previously returned skills can continue reading resources while that client remains usable.
+/// </para>
+/// <para>
+/// <strong>Security:</strong> Remote skills are loaded only when this source is explicitly configured.
+/// Only connect to servers you trust and treat their content as untrusted input.
+/// Malicious instructions or scripts can manipulate the agent or expose data.
+/// A matching content hash does not prove that content is safe: the server supplies both the hash and the content.
 /// </para>
 /// </remarks>
 public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
@@ -93,8 +108,8 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional options that control skill loading.</param>
-    /// <param name="loggerFactory">Optional logger factory.</param>
+    /// <param name="options">Optional limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="loggerFactory">Optional factory for diagnostic logging.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
     public AgentMcpSkillsSource(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILoggerFactory? loggerFactory = null)
@@ -114,7 +129,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
-        this._skillsLoader = new McpSkillsLoader(this._timeProvider, this.DiscoverCoreAsync);
+        this._skillsLoader = new McpSkillsLoader(this._timeProvider, this.FetchSkillsAsync, this.FetchSkillAsync);
     }
 
     /// <inheritdoc/>
@@ -132,7 +147,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return [];
         }
 
-        IList<AgentSkill> skills = await this._skillsLoader.GetOrCreateAsync(cancellationToken).ConfigureAwait(false);
+        IList<AgentSkill> skills = await this._skillsLoader.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
 
         LogSkillsLoadedTotal(this._logger, skills.Count);
 
@@ -150,7 +165,10 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         base.Dispose(disposing);
     }
 
-    private async Task<McpSkillsSnapshot> DiscoverCoreAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Fetches the complete skill list with a lifetime ending at the earliest page expiration.
+    /// </summary>
+    private async Task<McpCacheEntry<IList<AgentSkill>>> FetchSkillsAsync(CancellationToken cancellationToken)
     {
         var (skillEntries, pageLifetimes) = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
 
@@ -160,19 +178,99 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
-            List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
-
-            skills.Add(new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
+            skills.Add(this.CreateSkill(entry));
         }
 
-        return new McpSkillsSnapshot(skills, pageLifetimes);
+        return new(skills, this.CombineLifetimes(pageLifetimes));
     }
 
-    private async Task<(List<McpSkillEntry> Entries, List<McpSkillsPageLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Fetches updated details for one skill and creates a replacement object, or returns null if the skill no longer exists.
+    /// </summary>
+    private async Task<AgentMcpSkill?> FetchSkillAsync(string skillUri, CancellationToken cancellationToken)
+    {
+        JsonRpcResponse response;
+        try
+        {
+            response = await this._client.SendRequestAsync(new JsonRpcRequest
+            {
+                Method = "skills/get",
+                Params = new JsonObject { ["uri"] = skillUri },
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (McpProtocolException ex) when (ex.ErrorCode == McpErrorCode.InvalidParams || ex.ErrorCode == McpErrorCode.ResourceNotFound)
+        {
+            return null;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        McpSkillsGetResult result = response.Result?.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult)
+            ?? throw new InvalidOperationException("The server returned no skills/get result.");
+
+        if (result.ResultType != CompleteResultType)
+        {
+            throw new InvalidOperationException($"A skills/get result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
+        }
+
+        if (!string.Equals(result.Skill.Uri, skillUri, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
+        }
+
+        return this.CreateSkill(result.Skill);
+    }
+
+    /// <summary>
+    /// Checks the server's skill details and creates a skill object with its own resource cache.
+    /// </summary>
+    private AgentMcpSkill CreateSkill(McpSkillEntry entry)
+    {
+        AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
+
+        List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
+
+        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._skillsLoader, this._logger, this._maxResourceSizeBytes, this._timeProvider);
+    }
+
+    /// <summary>
+    /// Creates one lifetime that ends when the earliest page expires.
+    /// </summary>
+    private McpCacheLifetime CombineLifetimes(List<McpCacheLifetime> lifetimes)
+    {
+        if (lifetimes.Count == 0)
+        {
+            throw new ArgumentException("At least one lifetime is required.", nameof(lifetimes));
+        }
+
+        long now = this._timeProvider.GetTimestamp();
+        TimeSpan shortestRemaining = TimeSpan.MaxValue;
+
+        // Compare all pages at the same timestamp; combining them must not extend the earliest expiration.
+        foreach (McpCacheLifetime lifetime in lifetimes)
+        {
+            TimeSpan elapsed = this._timeProvider.GetElapsedTime(lifetime.ReceivedTimestamp, now);
+            TimeSpan remaining = lifetime.TimeToLive <= elapsed ? TimeSpan.Zero : lifetime.TimeToLive - elapsed;
+
+            if (remaining < shortestRemaining)
+            {
+                shortestRemaining = remaining;
+            }
+        }
+
+        return new McpCacheLifetime(now, shortestRemaining);
+    }
+
+    /// <summary>
+    /// Fetches all listing pages and records their lifetimes.
+    /// </summary>
+    /// <remarks>
+    /// Invalid pages, repeated cursors, and exceeded limits fail the whole request.
+    /// </remarks>
+    private async Task<(List<McpSkillEntry> Entries, List<McpCacheLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
     {
         List<McpSkillEntry> skillEntries = [];
-        List<McpSkillsPageLifetime> pageLifetimes = [];
+        List<McpCacheLifetime> pageLifetimes = [];
         HashSet<string> cursors = new(StringComparer.Ordinal);
         string? cursor = null;
         int pageCount = 0;
@@ -226,7 +324,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
                 pageTimeToLive = TimeSpan.Zero;
             }
 
-            pageLifetimes.Add(new McpSkillsPageLifetime(receivedTimestamp, pageTimeToLive));
+            pageLifetimes.Add(new McpCacheLifetime(receivedTimestamp, pageTimeToLive));
 
             cursor = result.NextCursor;
             if (cursor is not null && !cursors.Add(cursor))
@@ -250,6 +348,9 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         return (skillEntries, pageLifetimes);
     }
 
+    /// <summary>
+    /// Validates the skill URI, name, and description and returns the metadata used to list the skill.
+    /// </summary>
     private static AgentSkillFrontmatter CreateFrontmatter(McpSkillEntry entry)
     {
         // Instructions must be addressable as a safe, absolute resource, e.g. skill://unit-converter/SKILL.md.
@@ -291,8 +392,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     }
 
     /// <summary>
-    /// Validates and returns all resources listed for the skill, including <c>SKILL.md</c>, which contains
-    /// the skill's instructions.
+    /// Checks the server's resource list, including the required <c>SKILL.md</c> entry.
     /// </summary>
     private List<McpSkillResourceEntry> CreateSupportingResources(McpSkillEntry entry)
     {
@@ -325,6 +425,9 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         return resources;
     }
 
+    /// <summary>
+    /// Checks that a listed resource stays within the skill directory and has a valid content hash and size.
+    /// </summary>
     private void ValidateResourceManifestEntry([NotNull] McpSkillResourceEntry? resource, string skillUri, string skillRootUri)
     {
         // Reject null entries, e.g. "resources": [null], which deserialization can accept.
@@ -357,12 +460,21 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         }
     }
 
+    /// <summary>
+    /// Matches the required SHA-256 digest format.
+    /// </summary>
     [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ResourceDigestRegex();
 
+    /// <summary>
+    /// Reports how many skills the source returned.
+    /// </summary>
     [LoggerMessage(LogLevel.Information, "Successfully loaded {Count} skills from MCP server")]
     private static partial void LogSkillsLoadedTotal(ILogger logger, int count);
 
+    /// <summary>
+    /// Logs that the server does not declare support for skills.
+    /// </summary>
     [LoggerMessage(LogLevel.Debug, "No io.modelcontextprotocol/skills extension declared by MCP server; skill discovery is skipped.")]
     private static partial void LogSkillsExtensionAbsent(ILogger logger);
 }

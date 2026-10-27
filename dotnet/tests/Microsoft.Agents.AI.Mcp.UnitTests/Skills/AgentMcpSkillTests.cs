@@ -18,9 +18,9 @@ using ModelContextProtocol.Protocol;
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 /// <summary>
-/// Tests instruction and supporting resource access for listed skills.
+/// Tests loading and validating an MCP skill's <c>SKILL.md</c> file and supporting resources.
 /// </summary>
-public sealed class AgentMcpSkillTests
+public sealed partial class AgentMcpSkillTests
 {
     private const string SkillRootUri = "skill://unit-converter/";
     private const string SkillUri = SkillRootUri + "SKILL.md";
@@ -35,7 +35,8 @@ public sealed class AgentMcpSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client);
+        using var loader = CreateLoader();
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client, loader);
 
         // Assert
         Assert.Same(frontmatter, skill.Frontmatter);
@@ -53,11 +54,12 @@ public sealed class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Nested instructions."));
         });
         await using var client = await server.CreateClientAsync();
+        using var loader = CreateLoader();
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
         [
             Resource(NestedUri, "Nested instructions."),
             Resource(SkillUri, SkillContent),
-        ], client);
+        ], client, loader);
 
         // Act
         string instructions = await skill.GetContentAsync();
@@ -87,7 +89,8 @@ public sealed class AgentMcpSkillTests
         McpSkillResourceEntry[] resources = includeNestedInstructions
             ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
             : [];
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, resources, client);
+        using var loader = CreateLoader();
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, resources, client, loader);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
@@ -439,7 +442,8 @@ public sealed class AgentMcpSkillTests
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client);
+        using var loader = CreateLoader();
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client, loader);
 
         // Act
         string verified = await skill.GetContentAsync();
@@ -869,7 +873,8 @@ public sealed class AgentMcpSkillTests
 
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client);
+        using var loader = CreateLoader();
+        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client, loader);
 
         // Act & Assert
         if (useCharacterCount)
@@ -1119,12 +1124,16 @@ public sealed class AgentMcpSkillTests
         Assert.Equal(2, reads);
     }
 
+    /// <summary>
+    /// Creates a test skill with <c>SKILL.md</c>, supporting resources, and an optional clock for expiration tests.
+    /// </summary>
     private static AgentMcpSkill CreateSkill(
         McpClient client,
         string root = SkillRootUri,
         IReadOnlyList<McpSkillResourceEntry>? resources = null,
         string content = SkillContent,
-        long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes) =>
+        long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes,
+        TimeProvider? timeProvider = null) =>
         new(new AgentSkillFrontmatter("unit-converter", "Convert units."), root + "SKILL.md",
         [
             Resource(root + "SKILL.md", content),
@@ -1134,10 +1143,24 @@ public sealed class AgentMcpSkillTests
                 Resource(root + "assets/icon.bin", new byte[] { 1, 2, 3, 4 }),
                 Resource(root + "empty.txt", ""),
             ],
-        ], client, maxResourceSizeBytes: maxResourceSizeBytes);
+        ], client, CreateLoader(timeProvider), maxResourceSizeBytes: maxResourceSizeBytes, timeProvider: timeProvider);
 
+    /// <summary>
+    /// Creates a loader that fails on unexpected listing or skill-refresh requests.
+    /// </summary>
+    private static McpSkillsLoader CreateLoader(TimeProvider? timeProvider = null) =>
+        new(timeProvider ?? TimeProvider.System,
+            _ => throw new InvalidOperationException("No discovery was expected."),
+            (_, _) => throw new InvalidOperationException("No manifest refresh was expected."));
+
+    /// <summary>
+    /// Creates a resource entry with the supplied text's expected size and content hash.
+    /// </summary>
     private static McpSkillResourceEntry Resource(string uri, string text) => Resource(uri, Encoding.UTF8.GetBytes(text));
 
+    /// <summary>
+    /// Creates a resource entry with the supplied bytes' expected size and content hash.
+    /// </summary>
     [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Resource digests require lowercase hexadecimal characters.")]
     private static McpSkillResourceEntry Resource(string uri, byte[] bytes) => new()
     {
@@ -1146,11 +1169,18 @@ public sealed class AgentMcpSkillTests
         Size = bytes.Length,
     };
 
+    /// <summary>
+    /// Creates a text response that can be reused from the cache.
+    /// </summary>
     private static ReadResourceResult Text(string uri, string text) => new()
     {
         Contents = [new TextResourceContents { Uri = uri, Text = text }],
+        TimeToLive = TimeSpan.FromMinutes(1),
     };
 
+    /// <summary>
+    /// Creates an in-memory server using the test's resource-read handler.
+    /// </summary>
     private static InMemoryMcpServer CreateServer(Func<string, CancellationToken, ValueTask<ReadResourceResult>> readHandler) =>
         new(builder => builder.WithReadResourceHandler((request, token) => readHandler(request.Params!.Uri, token)));
 }
