@@ -296,6 +296,27 @@ clients. Never retain clients, transports, session IDs, invocation credentials,
 or mutable protocol machinery in such a profile. Every invocation must continue
 to own and dispose its client and transport independently.
 
+### Future inventory proxy (not implemented)
+
+For inventory-heavy workflows, consider an optional `IMcpToolHandler` decorator
+that caches explicit `tools/list` requests while forwarding ordinary tool calls
+unchanged. This would be new inventory caching, not preservation of the old
+initialized-client cache. Named tool calls do not automatically list tools, so
+this would not remove protocol setup from forwarded tool calls.
+
+Cache only detached, immutable or defensively copied tool metadata, never
+`McpClientTool` objects bound to a client, clients, transports, session IDs, or
+credentials. Scope entries by the complete endpoint, configuration,
+authorization scope, and relevant client capabilities, not merely origin.
+Preserve input validation and authorization on every access. Define bounded
+capacity, expiry, and invalidation without depending on unsolicited
+notifications from a session that is no longer retained.
+
+Each cache hit must produce fresh result content and correlation identity,
+without exposing mutable cached objects to callers. Do not cache failures,
+cancellations, or tool-call results. This proxy is a possible future improvement
+only; no inventory cache or MCP client reuse is introduced by this change.
+
 ### Compatibility and explicitly stateful integrations
 
 Remove the `httpClientProvider` callback constructor and the internal
