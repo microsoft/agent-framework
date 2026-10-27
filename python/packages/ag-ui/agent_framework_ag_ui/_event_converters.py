@@ -305,13 +305,15 @@ class AGUIEventConverter:
     def _handle_run_error(self, event: dict[str, Any]) -> ChatResponseUpdate:
         """Handle RUN_ERROR event."""
         error_message = event.get("message", "Unknown error")
+        raw_code = event.get("code")
+        error_code = str(raw_code) if raw_code else "RUN_ERROR"
 
         return ChatResponseUpdate(
             role="assistant",
             contents=[
                 Content.from_error(
                     message=error_message,
-                    error_code="RUN_ERROR",
+                    error_code=error_code,
                 )
             ],
             additional_properties={
