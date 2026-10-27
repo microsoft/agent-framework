@@ -732,10 +732,13 @@ def _emit_tool_call(
 
     tool_call_id = content.call_id or flow.tool_call_id or generate_event_id()
 
-    # Why a started-set, not the last-id cursor: declaration-only calls replay after the
-    # function loop pauses; with two calls the cursor sits on the second, so the replay of
-    # the first (and then the second) re-emitted TOOL_CALL_START (#9638).
-    if content.name and tool_call_id not in flow.tool_calls_by_id:
+    # Why an open-call check, not the last-id cursor: declaration-only calls replay after
+    # the function loop pauses, and with two calls the cursor sits on the second, so the
+    # replay re-emitted TOOL_CALL_START for both (#9638). An id that already ENDED is not a
+    # replay: provider call_ids may be legally reused by a later distinct call (spec 004),
+    # which must START again with a fresh snapshot entry.
+    call_is_open = tool_call_id in flow.tool_calls_by_id and tool_call_id not in flow.tool_calls_ended
+    if content.name and not call_is_open:
         flow.tool_call_id = tool_call_id
         flow.tool_call_name = content.name
         if predictive_handler:
@@ -757,6 +760,8 @@ def _emit_tool_call(
         }
         flow.pending_tool_calls.append(tool_entry)
         flow.tool_calls_by_id[tool_call_id] = tool_entry
+        # A reused provider id starting a fresh occurrence must be endable again.
+        flow.tool_calls_ended.discard(tool_call_id)
 
     elif tool_call_id:
         flow.tool_call_id = tool_call_id
