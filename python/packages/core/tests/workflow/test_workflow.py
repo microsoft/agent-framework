@@ -26,6 +26,7 @@ from agent_framework import (
     InProcRunnerContext,
     Message,
     ResponseStream,
+    RunnerContext,
     WorkflowBuilder,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
@@ -129,6 +130,77 @@ def test_coerce_request_info_response_rejects_mismatched_type() -> None:
 
     with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
         _coerce_request_info_response("not-an-int", int, "typed")
+
+
+class LegacyRunnerContext:
+    """Delegate the original context contract without the new queue-inspection method."""
+
+    def __init__(self) -> None:
+        self.inner = InProcRunnerContext()
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "get_queued_response_info_events":
+            raise AttributeError(name)
+        return getattr(self.inner, name)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_response_continuation_supports_legacy_runner_context(streaming: bool) -> None:
+    context = LegacyRunnerContext()
+    executor = MockExecutorRequestApproval(id="approver")
+    workflow = WorkflowBuilder(start_executor=executor).build()
+    workflow._runner._ctx = cast(RunnerContext, context)
+    result = await workflow.run(NumberMessage(data=7))
+    requests = result.get_request_info_events()
+    assert len(requests) == 1
+    request_id = requests[0].request_id
+    assert request_id is not None
+
+    if streaming:
+        events = [event async for event in workflow.run(responses={request_id: ApprovalMessage(True)}, stream=True)]
+        assert [event.data for event in events if event.type == "output"] == [7]
+    else:
+        resumed = await workflow.run(responses={request_id: ApprovalMessage(True)})
+        assert resumed.get_outputs() == [7]
+    assert await context.inner.get_pending_request_info_events() == {}
+
+
+async def test_legacy_runner_context_validates_queued_responses_without_consuming_them() -> None:
+    class BatchApprover(Executor):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext) -> None:
+            await ctx.request_info("first", str, request_id="first")
+            await ctx.request_info("second", str, request_id="second")
+
+        @response_handler
+        async def respond(self, original_request: str, response: str, ctx: WorkflowContext[Any, str]) -> None:
+            await ctx.yield_output(f"{original_request}:{response}")
+
+    context = LegacyRunnerContext()
+    workflow = WorkflowBuilder(start_executor=BatchApprover(id="approver")).build()
+    workflow._runner._ctx = cast(RunnerContext, context)
+    await workflow.run("start")
+    await context.inner.send_request_info_response("first", "yes")
+    pending_before = await context.inner.get_pending_request_info_events()
+    validated: list[list[str | None]] = []
+
+    def validate(requests: Sequence[WorkflowEvent]) -> None:
+        validated.append([request.request_id for request in requests])
+        if len(requests) > 1:
+            raise ValueError("mixed response batch")
+
+    workflow._response_batch_validator = validate
+    with pytest.raises(ValueError, match="mixed response batch"):
+        await workflow.run(responses={"second": "yes"})
+
+    assert validated == [["first", "second"]]
+    assert await context.inner.get_pending_request_info_events() == pending_before
+    queued = await context.inner.get_queued_response_info_events()
+    assert [request.request_id for request in queued] == ["first"]
+
+    workflow._response_batch_validator = None
+    resumed = await workflow.run(responses={"second": "yes"})
+    assert sorted(resumed.get_outputs()) == ["first:yes", "second:yes"]
 
 
 async def test_public_stream_close_immediately_drains_live_executor_without_gc() -> None:

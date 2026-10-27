@@ -341,6 +341,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
   replacing live state or queues. `WorkflowExecutor` delegates its private validation hook to its child's runner,
   so each child uses its own response-origin policy and migration metadata stays in the candidate snapshot.
+- **Runner context compatibility** - Queued-response inspection is an optional capability, not a required
+  `RunnerContext` member. Contexts without it use their non-persisting `build_checkpoint` snapshot so response
+  validation still includes queued replies without draining messages or consuming pending requests.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
   `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
   is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless

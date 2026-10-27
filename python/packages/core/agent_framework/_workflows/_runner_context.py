@@ -106,6 +106,15 @@ def _get_queued_response_info_events(messages: Mapping[str, Sequence[WorkflowMes
 
 
 @runtime_checkable
+class _SupportsQueuedResponseInfoEvents(Protocol):
+    """Optional fast path for inspecting queued responses without building a snapshot."""
+
+    async def get_queued_response_info_events(self) -> list[WorkflowEvent[Any]]:
+        """Get original requests for queued responses without consuming messages."""
+        ...
+
+
+@runtime_checkable
 class RunnerContext(Protocol):
     """Protocol for the execution context used by the runner.
 
@@ -135,10 +144,6 @@ class RunnerContext(Protocol):
         Returns:
             True if there are messages, False otherwise.
         """
-        ...
-
-    async def get_queued_response_info_events(self) -> list[WorkflowEvent[Any]]:
-        """Get original requests for queued responses without consuming messages."""
         ...
 
     async def add_event(self, event: WorkflowEvent) -> None:

@@ -57,7 +57,12 @@ from ._executor import (
 )
 from ._model_utils import DictConvertible
 from ._runner import RunnerImpl
-from ._runner_context import RunnerContext, WorkflowMessage
+from ._runner_context import (
+    RunnerContext,
+    WorkflowMessage,
+    _get_queued_response_info_events,  # pyright: ignore[reportPrivateUsage]
+    _SupportsQueuedResponseInfoEvents,  # pyright: ignore[reportPrivateUsage]
+)
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
 from ._validation import ValidationTypeEnum, WorkflowValidationError
@@ -1166,7 +1171,15 @@ class Workflow(DictConvertible):
     async def _get_response_validation_batches(
         self, requests: Sequence[WorkflowEvent]
     ) -> list[_ResponseBatchValidation]:
-        queued_requests = await self._runner.context.get_queued_response_info_events()
+        context = self._runner.context
+        if isinstance(context, _SupportsQueuedResponseInfoEvents):
+            queued_requests = await context.get_queued_response_info_events()
+        else:
+            # Legacy contexts expose their queues through non-persisting checkpoint snapshots.
+            checkpoint = await context.build_checkpoint(
+                self.name, self.graph_signature_hash, self._runner.state, None, 0
+            )
+            queued_requests = _get_queued_response_info_events(checkpoint.messages)
         batch = [*queued_requests, *requests]
         validations: list[_ResponseBatchValidation] = []
         if self._response_batch_validator is not None:
