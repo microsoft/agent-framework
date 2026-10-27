@@ -8528,39 +8528,59 @@ class TestIncompleteFinishReasonSurfacing:
         # A stream that was never marked restores nothing.
         assert _OutputItemTracker(ResponseEventStream(response_id="resp_clean")).incomplete_reason is None
 
-    async def test_full_public_metadata_content_filter_stays_incomplete(self) -> None:
-        """Sixteen caller entries are valid and must not turn a truncated turn into a failure."""
+    @pytest.mark.parametrize(
+        ("stream", "finish_reason", "expected_reason"),
+        [
+            (False, "content_filter", "content_filter"),
+            (False, "length", "max_output_tokens"),
+            (True, "content_filter", "content_filter"),
+            (True, "length", "max_output_tokens"),
+        ],
+    )
+    async def test_sixteen_public_metadata_keys_keep_truncated_output(
+        self,
+        stream: bool,
+        finish_reason: FinishReasonLiteral,
+        expected_reason: str,
+    ) -> None:
+        """A full public metadata map must not turn a truncated turn into a failure or drop its text."""
         metadata = _public_metadata(16)
-        server = _make_server(self._filtered_agent(finish_reason="content_filter"))
+        expected_text = "I'm sorry, but I cannot assist with that request."
+        server = _make_server(self._filtered_agent(finish_reason=finish_reason))
 
-        resp = await _post(server, input_text="hello", stream=False, metadata=metadata, store=True)
+        resp = await _post(server, input_text="hello", stream=stream, metadata=metadata, store=True)
         assert resp.status_code == 200
-        body = resp.json()
+        if stream:
+            events = _parse_sse_events(resp.text)
+            event_types = _sse_event_types(events)
+            assert event_types[-1] == "response.incomplete"
+            assert "response.failed" not in event_types
+            assert "response.completed" not in event_types
+            body = events[-1]["data"]["response"]
+            done_text = [event["data"].get("text") for event in events if event["event"] == "response.output_text.done"]
+            assert expected_text in done_text
+        else:
+            body = resp.json()
+
         assert body["status"] == "incomplete"
-        assert body["incomplete_details"] == {"reason": "content_filter"}
+        assert body["incomplete_details"] == {"reason": expected_reason}
         assert body.get("error") is None
         assert body.get("metadata") == metadata
+        assert "_internal_metadata" not in body["metadata"]
+        messages = [item for item in body["output"] if item["type"] == "message"]
+        assert len(messages) == 1
+        assert messages[0]["content"][0]["text"] == expected_text
 
         stored = await _get_response(server, body["id"])
         assert stored.status_code == 200
         stored_body = stored.json()
         assert stored_body["status"] == "incomplete"
-        assert stored_body["incomplete_details"] == {"reason": "content_filter"}
+        assert stored_body["incomplete_details"] == {"reason": expected_reason}
+        assert stored_body.get("error") is None
         assert stored_body.get("metadata") == metadata
-
-    async def test_full_public_metadata_streaming_length_stays_incomplete(self) -> None:
-        metadata = _public_metadata(16)
-        server = _make_server(self._filtered_agent(finish_reason="length"))
-
-        resp = await _post(server, input_text="hello", stream=True, metadata=metadata)
-        assert resp.status_code == 200
-        events = _parse_sse_events(resp.text)
-        assert _sse_event_types(events)[-1] == "response.incomplete"
-        assert "response.failed" not in _sse_event_types(events)
-        incomplete = events[-1]["data"]["response"]
-        assert incomplete["status"] == "incomplete"
-        assert incomplete["incomplete_details"] == {"reason": "max_output_tokens"}
-        assert incomplete.get("metadata") == metadata
+        stored_messages = [item for item in stored_body["output"] if item["type"] == "message"]
+        assert len(stored_messages) == 1
+        assert stored_messages[0]["content"][0]["text"] == expected_text
 
     async def test_forged_internal_metadata_does_not_mark_a_completed_turn_incomplete(self) -> None:
         agent = _make_agent(
