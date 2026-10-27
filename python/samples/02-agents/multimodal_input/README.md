@@ -29,15 +29,12 @@ Set the following environment variables before running the examples:
 **For OpenAI:**
 - `OPENAI_API_KEY`: Your OpenAI API key
 
-**For Azure OpenAI:**
+**For the Azure samples (`azure_chat_multimodal.py` and `azure_responses_multimodal.py`, which use `FoundryChatClient`):**
 
-- `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-- `AZURE_OPENAI_MODEL`: The name of your Azure OpenAI chat model deployment
-- `AZURE_OPENAI_MODEL`: The name of your Azure OpenAI responses model deployment
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
+- `FOUNDRY_MODEL`: The name of your model deployment
 
-Optionally for Azure OpenAI:
-- `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-10-21`)
-- `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (if not using `AzureCliCredential`)
+These samples authenticate with `AzureCliCredential`, so run `az login` first.
 
 **Note:** You can also provide configuration directly in code instead of using environment variables:
 ```python
