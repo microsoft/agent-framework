@@ -103,7 +103,7 @@ class _LifecycleClient(MockBaseChatClient):
         self.events = events
         self.exit_exception_type: type[BaseException] | None = None
 
-    async def __aenter__(self) -> "_LifecycleClient":
+    async def __aenter__(self) -> _LifecycleClient:
         self.events.append("client.enter")
         return self
 
@@ -119,7 +119,7 @@ class _LifecycleMCPTool(_ConnectedMCPTool):
         self.fail_on_enter = fail_on_enter
         self.exit_exception_type: type[BaseException] | None = None
 
-    async def __aenter__(self) -> "_LifecycleMCPTool":
+    async def __aenter__(self) -> _LifecycleMCPTool:
         self.events.append(f"{self.name}.enter")
         if self.fail_on_enter:
             raise RuntimeError("MCP entry failed")

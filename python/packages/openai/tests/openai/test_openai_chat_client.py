@@ -145,7 +145,7 @@ class _FakeAsyncEventStream:
         self._iterator: Iterator[object] = iter(())
         self._headers = headers or {}
 
-    def __aiter__(self) -> "_FakeAsyncEventStream":
+    def __aiter__(self) -> _FakeAsyncEventStream:
         self._iterator = iter(self._events)
         return self
 
@@ -160,14 +160,14 @@ class _FakeAsyncEventStream:
     # ``.headers``. The chat client then ``async with``-s the parsed stream so the
     # underlying socket is closed deterministically. Mimic both interfaces here so
     # test mocks remain a single object.
-    def parse(self) -> "_FakeAsyncEventStream":
+    def parse(self) -> _FakeAsyncEventStream:
         return self
 
     @property
     def headers(self) -> dict[str, str]:
         return self._headers
 
-    async def __aenter__(self) -> "_FakeAsyncEventStream":
+    async def __aenter__(self) -> _FakeAsyncEventStream:
         return self
 
     async def __aexit__(
@@ -206,7 +206,7 @@ def _as_raw(mock_response: MagicMock, *, headers: dict[str, str] | None = None) 
 
 
 class _FakeAsyncEventStreamContext(_FakeAsyncEventStream):
-    async def __aenter__(self) -> "_FakeAsyncEventStreamContext":
+    async def __aenter__(self) -> _FakeAsyncEventStreamContext:
         return self
 
     async def __aexit__(
@@ -889,7 +889,7 @@ class _BareEventStream:
         self._items = list(items)
         self._iterator: Iterator[object] = iter(())
 
-    def __aiter__(self) -> "_BareEventStream":
+    def __aiter__(self) -> _BareEventStream:
         self._iterator = iter(self._items)
         return self
 
@@ -920,7 +920,7 @@ class _FakeTelemetryStreamWrapper:
     def __init__(self, stream_async_iter: Any) -> None:
         self.stream_async_iter: Any = stream_async_iter
 
-    def __aiter__(self) -> "_FakeTelemetryStreamWrapper":
+    def __aiter__(self) -> _FakeTelemetryStreamWrapper:
         self.stream_async_iter = self.stream_async_iter.__aiter__()
         return self
 
@@ -7652,7 +7652,7 @@ async def test_streaming_azure_ai_search_output_enriches_mapped_agent_response()
         ),
     ]
 
-    async def _stream() -> AsyncGenerator[ChatResponseUpdate, None]:
+    async def _stream() -> AsyncGenerator[ChatResponseUpdate]:
         for update in updates:
             yield update
 
