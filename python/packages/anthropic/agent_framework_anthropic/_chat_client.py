@@ -323,6 +323,7 @@ class _AnthropicRequestState:
     active_call_id: str | None = None
     active_call_content_type: str | None = None
     active_call_is_function_call: bool = False
+    stream_stop_reason: str | None = None
     tool_name_aliases: dict[str, str] = field(default_factory=dict[str, str])
 
 
@@ -654,10 +655,10 @@ class RawAnthropicClient(
         run_options = self._prepare_options(messages, options, request_state, **kwargs)
 
         if stream:
+            # Streaming mode
 
             async def _stream_turn(
                 turn_request_state: _AnthropicRequestState,
-                stop_reason: list[str | None],
             ) -> AsyncIterable[ChatResponseUpdate]:
                 # Anthropic streams cumulative usage snapshots (message_start seeds it,
                 # each message_delta carries the running total), so thread a per-stream
@@ -683,11 +684,11 @@ class RawAnthropicClient(
                         elif chunk.type == "content_block_stop":
                             open_local_function_call_blocks.discard(chunk.index)
                         elif chunk.type == "message_delta" and chunk.delta.stop_reason is not None:
-                            stop_reason[0] = chunk.delta.stop_reason
+                            turn_request_state.stream_stop_reason = chunk.delta.stop_reason
                         elif chunk.type == "message_stop":
                             message_stop_received = True
                             if local_function_call_started and (
-                                open_local_function_call_blocks or stop_reason[0] != "tool_use"
+                                open_local_function_call_blocks or turn_request_state.stream_stop_reason != "tool_use"
                             ):
                                 raise ResponseInvalidatedException(
                                     "Anthropic invalidated partial response output; "
@@ -723,9 +724,8 @@ class RawAnthropicClient(
                         if continuation_index == 0
                         else _AnthropicRequestState(tool_name_aliases=dict(request_state.tool_name_aliases))
                     )
-                    stop_reason: list[str | None] = [None]
                     turn_updates: list[ChatResponseUpdate] = []
-                    async for update in _stream_turn(turn_request_state, stop_reason):
+                    async for update in _stream_turn(turn_request_state):
                         turn_updates.append(update)
                         yield update
                     turn_response = self._finalize_response_updates(
@@ -787,6 +787,7 @@ class RawAnthropicClient(
         messages: Sequence[Message],
     ) -> bool:
         """Append faithfully replayable paused assistant content without a synthetic user turn."""
+        # Sorting is only for deterministic diagnostics; replay behavior does not depend on type order.
         unsupported_types = sorted({
             content.type
             for message in messages
@@ -820,11 +821,7 @@ class RawAnthropicClient(
                 block = self._server_tool_block(content)
             except ContentError:
                 return False
-            return bool(
-                block is not None
-                and block.get("type") in _SERVER_TOOL_RESULT_TYPES
-                and "content" in block
-            )
+            return bool(block is not None and block.get("type") in _SERVER_TOOL_RESULT_TYPES and "content" in block)
         return False
 
     def _prepare_options(
@@ -1080,12 +1077,14 @@ class RawAnthropicClient(
     def _role_for_anthropic_content_block(self, content_block: Mapping[str, Any], default_role: str) -> str:
         """Return the Anthropic message role required for a content block."""
         match content_block:
-            case {"type": "tool_use" | "mcp_tool_use" | "server_tool_use"}:
+            case {
+                "type": (
+                    "tool_use" | "mcp_tool_use" | "server_tool_use" | "web_fetch_tool_result" | "web_search_tool_result"
+                )
+            }:
                 return "assistant"
             case {"type": "tool_result" | "mcp_tool_result"}:
                 return "user"
-            case {"type": "web_fetch_tool_result" | "web_search_tool_result"}:
-                return "assistant"
             case _:
                 return default_role
 
