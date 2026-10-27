@@ -997,8 +997,10 @@ def test_prepare_messages_for_anthropic_splits_assistant_embedded_tool_results(
     assert result[1]["content"][0]["tool_use_id"] == "call_1"
 
 
+@pytest.mark.parametrize("reload_history", [False, True], ids=["in_memory", "reloaded"])
 def test_prepare_messages_preserves_parallel_server_tool_use(
     mock_anthropic_client: MagicMock,
+    reload_history: bool,
 ) -> None:
     """A pending server tool remains server-owned while the local tool result is returned."""
     client = create_test_anthropic_client(mock_anthropic_client)
@@ -1022,6 +1024,8 @@ def test_prepare_messages_preserves_parallel_server_tool_use(
             contents=[Content.from_function_result(call_id="toolu_local", result="local-ok")],
         ),
     ]
+    if reload_history:
+        messages = [Message.from_dict(message.to_dict()) for message in messages]
 
     result = client._prepare_messages_for_anthropic(messages)
 
@@ -1030,6 +1034,77 @@ def test_prepare_messages_preserves_parallel_server_tool_use(
     assert result[1]["content"][0]["id"] == "srvtoolu_search"
     assert result[2]["content"][0]["type"] == "tool_result"
     assert result[2]["content"][0]["tool_use_id"] == "toolu_local"
+
+
+@pytest.mark.parametrize("reload_history", [False, True], ids=["in_memory", "reloaded"])
+def test_prepare_messages_preserves_reused_server_tool_call_ids(
+    mock_anthropic_client: MagicMock,
+    reload_history: bool,
+) -> None:
+    """A completed server call does not change a later occurrence that reuses its call ID."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    first_call = Content.from_function_call(
+        call_id="srvtoolu_search",
+        name="web_search",
+        arguments={"query": "first"},
+        informational_only=True,
+        hosted=True,
+        additional_properties={"anthropic": {"server_tool_block": {"type": "server_tool_use"}}},
+    )
+    first_result = Content.from_function_result(
+        call_id="srvtoolu_search",
+        result="first results",
+        additional_properties={
+            "anthropic": {
+                "server_tool_block": {
+                    "type": "web_search_tool_result",
+                    "content": [
+                        {
+                            "type": "web_search_result",
+                            "url": "https://example.com/first",
+                            "title": "First",
+                            "encrypted_content": "first-state",
+                        }
+                    ],
+                }
+            }
+        },
+    )
+    second_call = Content.from_function_call(
+        call_id="srvtoolu_search",
+        name="web_search",
+        arguments={"query": "second"},
+        informational_only=True,
+        hosted=True,
+        additional_properties={"anthropic": {"server_tool_block": {"type": "server_tool_use"}}},
+    )
+    messages = [
+        Message(role="user", contents=["Search once."]),
+        Message(role="assistant", contents=[first_call]),
+        Message(role="assistant", contents=[first_result, Content.from_text("First search done.")]),
+        Message(role="user", contents=["Search again."]),
+        Message(role="assistant", contents=[second_call]),
+    ]
+    if reload_history:
+        messages = [Message.from_dict(message.to_dict()) for message in messages]
+
+    result = client._prepare_messages_for_anthropic(messages)
+    blocks = [
+        block
+        for message in result
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] != "text"
+    ]
+
+    assert [(block["type"], block.get("id") or block.get("tool_use_id")) for block in blocks] == [
+        ("server_tool_use", "srvtoolu_search"),
+        ("web_search_tool_result", "srvtoolu_search"),
+        ("server_tool_use", "srvtoolu_search"),
+    ]
+    assert blocks[0]["input"] == {"query": "first"}
+    assert blocks[1]["content"][0]["encrypted_content"] == "first-state"
+    assert blocks[2]["input"] == {"query": "second"}
 
 
 # Tool Conversion Tests
@@ -2137,6 +2212,30 @@ def test_parse_contents_server_tool_use_input_json_delta_is_hosted_fragment(
     ]
 
 
+def test_parse_contents_mcp_and_code_execution_input_json_delta_ignored(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """MCP and code-execution argument deltas do not become generic function calls."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    for block_type, name in (("mcp_tool_use", "search_docs"), ("server_tool_use", "code_execution")):
+        request_state = _AnthropicRequestState()
+        tool_content = MagicMock()
+        tool_content.type = block_type
+        tool_content.id = "call_abc"
+        tool_content.name = name
+        tool_content.server_name = "docs"
+        tool_content.input = {}
+        assert client._parse_contents_from_anthropic([tool_content], request_state, streaming=True)
+
+        delta_content = MagicMock()
+        delta_content.type = "input_json_delta"
+        delta_content.partial_json = '{"query": "latest news"}'
+
+        result = client._parse_contents_from_anthropic([delta_content], request_state, streaming=True)
+        assert result == [], f"input_json_delta after {block_type} {name} should produce no content: {result!r}"
+
+
 # Stream Processing Tests
 
 
@@ -2527,6 +2626,67 @@ async def test_valid_streaming_local_tool_call_executes_and_continues(
     assert request_count == 2
     assert any(content.type == "function_result" for update in updates for content in update.contents)
     assert response.text == "done"
+
+
+async def test_streaming_parallel_server_tool_use_replays_streamed_input(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A mixed streamed turn replays the pending server call with its complete input."""
+    executions = 0
+
+    @tool(name="local_value", approval_mode="never_require")
+    def local_value() -> str:
+        nonlocal executions
+        executions += 1
+        return "local-ok"
+
+    async def parallel_tool_events() -> Any:
+        yield _message_start_event("tool-response")
+        yield _tool_start_event(block_type="tool_use", call_id="toolu_local", name="local_value", index=0)
+        yield _content_block_stop_event(index=0)
+        yield _tool_start_event(block_type="server_tool_use", call_id="srvtoolu_search", name="web_search", index=1)
+        yield _argument_delta_event('{"query": "agent framework')
+        yield _argument_delta_event(' release"}')
+        yield _content_block_stop_event(index=1)
+        yield _message_delta_event("tool_use")
+        yield _message_stop_event()
+
+    async def final_events() -> Any:
+        yield _message_start_event("final-response")
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> Any:
+        requests.append(kwargs)
+        return parallel_tool_events() if len(requests) == 1 else final_events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response(
+        [Message(role="user", contents=["Call local_value and search the web."])],
+        options={"tools": [client.get_web_search_tool(), local_value], "max_tokens": 64},
+        stream=True,
+    )
+    _ = [update async for update in stream]
+    await stream.get_final_response()
+
+    assert executions == 1
+    assert len(requests) == 2
+    replayed_blocks = [
+        block
+        for message in requests[1]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] in ("tool_use", "server_tool_use", "tool_result")
+    ]
+    assert [(block["type"], block.get("id") or block.get("tool_use_id")) for block in replayed_blocks] == [
+        ("tool_use", "toolu_local"),
+        ("server_tool_use", "srvtoolu_search"),
+        ("tool_result", "toolu_local"),
+    ]
+    assert replayed_blocks[1]["input"] == {"query": "agent framework release"}
 
 
 @pytest.mark.parametrize(
