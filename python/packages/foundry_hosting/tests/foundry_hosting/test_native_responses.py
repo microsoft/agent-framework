@@ -16,6 +16,8 @@ from agent_framework import (
     Agent,
     AgentExecutor,
     AgentResponse,
+    AgentResponseUpdate,
+    Annotation,
     BaseChatClient,
     ChatOptions,
     ChatResponse,
@@ -286,6 +288,25 @@ def _texts(response: dict[str, Any]) -> list[str]:
     ]
 
 
+def _url_citation(*, start_index: int, end_index: int) -> Annotation:
+    return Annotation(
+        type="citation",
+        url="http://test",
+        title="Test URL",
+        annotated_regions=[{"type": "text_span", "start_index": start_index, "end_index": end_index}],
+    )
+
+
+def _expected_url_citation(*, start_index: int, end_index: int) -> dict[str, Any]:
+    return {
+        "type": "url_citation",
+        "url": "http://test",
+        "title": "Test URL",
+        "start_index": start_index,
+        "end_index": end_index,
+    }
+
+
 async def test_typed_native_turns_use_fresh_graphs_and_exact_state() -> None:
     graphs: list[Workflow] = []
     scopes: list[FoundryRequestScope] = []
@@ -521,6 +542,66 @@ async def test_typed_framework_output_hides_private_provider_continuation() -> N
     assert _texts(response) == ["safe"]
     assert "private-continuation" not in json.dumps(response)
     assert "private-response" not in json.dumps(response)
+
+
+@pytest.mark.parametrize("payload_type", ["message", "message_list", "agent_response", "chat_response"])
+async def test_completed_framework_output_preserves_adjacent_cited_text_parts(payload_type: str) -> None:
+    class _Output(Executor):
+        def __init__(self) -> None:
+            super().__init__("output")
+
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext[str, Any]) -> None:
+            output_message = Message(
+                "assistant",
+                [
+                    Content.from_text("See "),
+                    Content.from_text("Python", annotations=[_url_citation(start_index=0, end_index=6)]),
+                ],
+            )
+            if payload_type == "message":
+                output: Any = output_message
+            elif payload_type == "message_list":
+                output = [output_message]
+            elif payload_type == "agent_response":
+                output = AgentResponse(messages=[output_message])
+            else:
+                output = ChatResponse(messages=[output_message])
+            await ctx.yield_output(output)
+
+    response = await _post(_server(lambda request: _build(_Output()), parser=_parse_text), "go", store=False)
+
+    assert response["status"] == "completed", response
+    message = next(item for item in response["output"] if item["type"] == "message")
+    assert [part["text"] for part in message["content"]] == ["See ", "Python"]
+    assert message["content"][0]["annotations"] == []
+    assert message["content"][1]["annotations"] == [_expected_url_citation(start_index=0, end_index=6)]
+
+
+@pytest.mark.parametrize("payload_type", ["agent_response_update", "chat_response_update"])
+async def test_streaming_framework_output_keeps_occurrence_relative_citation_offsets(payload_type: str) -> None:
+    class _Output(Executor):
+        def __init__(self) -> None:
+            super().__init__("output")
+
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext[str, Any]) -> None:
+            contents = [
+                Content.from_text("See "),
+                Content.from_text("Python", annotations=[_url_citation(start_index=4, end_index=10)]),
+            ]
+            if payload_type == "agent_response_update":
+                output: Any = AgentResponseUpdate(contents=contents, role="assistant", message_id="message")
+            else:
+                output = ChatResponseUpdate(contents=contents, role="assistant", message_id="message")
+            await ctx.yield_output(output)
+
+    response = await _post(_server(lambda request: _build(_Output()), parser=_parse_text), "go", store=False)
+
+    assert response["status"] == "completed", response
+    message = next(item for item in response["output"] if item["type"] == "message")
+    assert [part["text"] for part in message["content"]] == ["See Python"]
+    assert message["content"][0]["annotations"] == [_expected_url_citation(start_index=4, end_index=10)]
 
 
 async def test_native_agent_executor_applies_options_without_mutating_defaults_or_double_keywords() -> None:

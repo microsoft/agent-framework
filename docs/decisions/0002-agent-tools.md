@@ -1632,7 +1632,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 <details>
   <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/openapi-spec-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/openapi-spec-samples?pivots=rest-api</a><br>
-  Source: <a href="https://learn.microsoft.com/en-us/rest/api/aifoundry/aiagents/run-steps/get-run-step?view=rest-aifoundry-aiagents-v1&tabs=HTTP#runstepopenapitoolcall">https://learn.microsoft.com/en-us/rest/api/aifoundry/aiagents/run-steps/get-run-step?view=rest-aifoundry-aiagents-v1&tabs=HTTP#runstepopenapitoolcall</a>
+  Source: <a href="https://learn.microsoft.com/en-us/python/api/azure-ai-agents/azure.ai.agents.models.runstepopenapitoolcall?view=azure-python">https://learn.microsoft.com/en-us/python/api/azure-ai-agents/azure.ai.agents.models.runstepopenapitoolcall?view=azure-python</a>
 
   Message Request:
   ```json

@@ -3112,10 +3112,10 @@ class MCPTool:
 
             for tool in tool_list.tools:
                 task_support = getattr(getattr(tool, "execution", None), "task_support", None)
-                if task_support in ["required", "optional"]:
+                if task_support == "required":
                     logger.warning(
-                        "Skipping MCP tool %r because it (might) require the Tasks extension, "
-                        "which MCP Python SDK 2.2 does not implement.",
+                        "Skipping MCP tool %r because it requires the Tasks extension, "
+                        "which this client does not support.",
                         tool.name,
                     )
                     continue
