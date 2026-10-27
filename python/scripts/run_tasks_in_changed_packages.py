@@ -24,8 +24,10 @@ def get_changed_packages(
     core_package_changed = False
 
     for file_path in changed_files:
-        # Strip 'python/' prefix if present (when git diff is run from repo root)
-        file_path_str = str(file_path)
+        # Git may report repo-root paths with '/' or Windows '\'.
+        # Normalize first, then strip a leading 'python/' so the remainder
+        # joins onto workspace_root instead of python/python/...
+        file_path_str = str(file_path).replace("\\", "/")
         if file_path_str.startswith("python/"):
             file_path_str = file_path_str[7:]  # Remove 'python/' prefix
 
