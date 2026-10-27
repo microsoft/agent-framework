@@ -340,13 +340,75 @@ def _reject_busy_conversation(session: AgentSession) -> None:
         )
 
 
+def _request_without_reserved_metadata(request: CreateResponse) -> CreateResponse:
+    """Copy a create request with any client-supplied reserved metadata bag removed.
+
+    ``ResponseEventStream`` seeds the response from the request, and host recovery later trusts
+    that bag for incomplete status, provider cursors, usage, and citations. Only a persisted
+    response is a trusted source. The caller's request mapping is left unchanged.
+    """
+    raw_metadata = request.get("metadata")
+    if not isinstance(raw_metadata, Mapping):
+        return request
+    # Metadata is a TypedDict of known public keys. Cast so a client-supplied reserved key is visible.
+    metadata = cast(Mapping[str, Any], raw_metadata)
+    if _RESERVED_RESPONSE_METADATA_KEY not in metadata:
+        return request
+    public_metadata: dict[str, Any] = {
+        key: value for key, value in metadata.items() if key != _RESERVED_RESPONSE_METADATA_KEY
+    }
+    seeded: dict[str, Any] = dict(request)
+    if public_metadata:
+        seeded["metadata"] = public_metadata
+    else:
+        seeded.pop("metadata", None)
+    return cast(CreateResponse, seeded)
+
+
 def _create_response_event_stream(context: ResponseContext, request: CreateResponse) -> ResponseEventStream:
     """Create a response stream from recovery state or the originating request."""
     if context.is_recovery:
         persisted_response = context.persisted_response
         if persisted_response is not None:
             return ResponseEventStream(response=persisted_response, response_id=context.response_id)
-    return ResponseEventStream(request=request, response_id=context.response_id)
+    return ResponseEventStream(
+        request=_request_without_reserved_metadata(request),
+        response_id=context.response_id,
+    )
+
+
+def _write_hosted_internal(stream: ResponseEventStream, key: str, value: Any) -> None:
+    """Persist one host-owned recovery value without displacing public metadata.
+
+    The SDK stores this bag in the public metadata map and rejects a 17th entry. A full map of
+    caller metadata must still keep every public entry. The incomplete reason then lives on
+    ``incomplete_details``, which is outside that quota, so a truncated turn can still finish
+    ``incomplete``. Other host cursors are skipped rather than failing the response; the public
+    map is left as the caller sent it.
+    """
+    try:
+        stream.internal_metadata[key] = value
+    except ValueError:
+        if key == _INCOMPLETE_REASON_KEY and isinstance(value, str):
+            stream.response["incomplete_details"] = {"reason": value}
+            return
+        logger.debug(
+            "Skipping host metadata %s because the response metadata map cannot store another entry.",
+            key,
+        )
+
+
+def _read_persisted_incomplete_reason(stream: ResponseEventStream) -> str | None:
+    """Return a truncating finish reason restored from a trusted response snapshot."""
+    persisted = stream.internal_metadata.get(_INCOMPLETE_REASON_KEY)
+    if isinstance(persisted, str):
+        return persisted
+    details = stream.response.get("incomplete_details")
+    if isinstance(details, Mapping):
+        reason = cast(Mapping[str, Any], details).get("reason")
+        if isinstance(reason, str):
+            return reason
+    return None
 
 
 def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> list[AgentResponseUpdate]:
@@ -550,6 +612,10 @@ _LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
 # ``internal_metadata`` key carrying a truncating finish reason across resilient checkpoints, so a
 # turn cut short before a crash still ends ``incomplete`` after recovery.
 _INCOMPLETE_REASON_KEY = "_incomplete_reason"
+# SDK-reserved response metadata entry. It round-trips server-owned recovery state (this reason,
+# provider cursors, usage, and citations). Clients may send the same key; it is never trusted on a
+# fresh request. Foundry counts it toward the 16-entry public metadata limit.
+_RESERVED_RESPONSE_METADATA_KEY = "_internal_metadata"
 
 
 # Foundry Toolbox Auth integration
@@ -1770,8 +1836,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             continue
                         for event in tracker.close():
                             yield event
-                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
-                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_USAGE_KEY] = tracker.usage_details
+                        _write_hosted_internal(response_event_stream, _HOSTED_PROVIDER_OUTPUT_COUNT_KEY, output_count)
+                        _write_hosted_internal(response_event_stream, _HOSTED_PROVIDER_USAGE_KEY, tracker.usage_details)
                         if self._resilient_background:
                             yield response_event_stream.checkpoint()
             else:
@@ -2268,7 +2334,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 ):
                     return
                 yield from tracker.close()
-                response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
+                _write_hosted_internal(response_event_stream, _LATEST_CHECKPOINT_ID_KEY, checkpoint_id)
                 yield response_event_stream.checkpoint()
 
             main_iter = _SignalledIterator(
@@ -2428,12 +2494,12 @@ class _OutputItemTracker:
         self._message_text_annotations: dict[int, list[ContainerFileCitationBody]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
-        # can tell a cut-short turn from a successful one. Mirrored into the stream's
-        # ``internal_metadata`` so it survives a resilient checkpoint/recovery cycle, which
-        # rebuilds this tracker from the persisted response.
+        # can tell a cut-short turn from a successful one. Mirrored onto the response so it
+        # survives a resilient checkpoint/recovery cycle, which rebuilds this tracker from the
+        # persisted response.
         self._incomplete_reason: ResponseIncompleteReason | None = None
-        persisted_reason = stream.internal_metadata.get(_INCOMPLETE_REASON_KEY)
-        if isinstance(persisted_reason, str):
+        persisted_reason = _read_persisted_incomplete_reason(stream)
+        if persisted_reason is not None:
             with suppress(ValueError):
                 self._incomplete_reason = ResponseIncompleteReason(persisted_reason)
         persisted_citations = stream.internal_metadata.get(_PENDING_CONTAINER_FILE_CITATIONS_KEY)
@@ -2524,7 +2590,8 @@ class _OutputItemTracker:
         Only finish reasons that mean the model stopped early are retained, mapped onto the
         Responses ``incomplete_details.reason`` vocabulary. A content filter is kept in
         preference to a token limit if both are seen during a multi-step turn, since it is the
-        more actionable signal for the caller.
+        more actionable signal for the caller. The reason is recorded even when the caller's
+        metadata already fills the public map, and that map is left intact.
         """
         if finish_reason == "content_filter":
             self._incomplete_reason = ResponseIncompleteReason.CONTENT_FILTER
@@ -2532,7 +2599,7 @@ class _OutputItemTracker:
             self._incomplete_reason = ResponseIncompleteReason.MAX_OUTPUT_TOKENS
         else:
             return
-        self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
+        _write_hosted_internal(self._stream, _INCOMPLETE_REASON_KEY, self._incomplete_reason.value)
 
     def _consume_text_update(self, text: str, merge_mode: Literal["append", "replace"] | None) -> str:
         """Update the authoritative text buffer and return the wire delta still needed."""
@@ -3120,14 +3187,18 @@ class _OutputItemTracker:
         if not self._pending_container_file_citations:
             self._stream.internal_metadata.pop(_PENDING_CONTAINER_FILE_CITATIONS_KEY, None)
             return
-        self._stream.internal_metadata[_PENDING_CONTAINER_FILE_CITATIONS_KEY] = [
-            {
-                "container_id": citation.container_id,
-                "file_id": citation.file_id,
-                "filename": citation.filename,
-            }
-            for citation in self._pending_container_file_citations.values()
-        ]
+        _write_hosted_internal(
+            self._stream,
+            _PENDING_CONTAINER_FILE_CITATIONS_KEY,
+            [
+                {
+                    "container_id": citation.container_id,
+                    "file_id": citation.file_id,
+                    "filename": citation.filename,
+                }
+                for citation in self._pending_container_file_citations.values()
+            ],
+        )
 
 
 # endregion

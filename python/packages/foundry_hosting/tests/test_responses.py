@@ -107,6 +107,7 @@ from agent_framework_foundry_hosting._responses import (
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
+    _write_hosted_internal,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from agent_framework_foundry_hosting._state_store import (
@@ -790,6 +791,8 @@ async def _post(
     parallel_tool_calls: bool | None = None,
     previous_response_id: str | None = None,
     conversation_id: str | None = None,
+    metadata: Mapping[str, str] | None = None,
+    store: bool | None = None,
 ) -> httpx.Response:
     """Send a POST /responses request through the ASGI transport."""
     payload: dict[str, Any] = {"model": model, "input": input_text, "stream": stream}
@@ -805,10 +808,21 @@ async def _post(
         payload["previous_response_id"] = previous_response_id
     if conversation_id is not None:
         payload["conversation"] = conversation_id
+    if metadata is not None:
+        payload["metadata"] = dict(metadata)
+    if store is not None:
+        payload["store"] = store
 
     transport = httpx.ASGITransport(app=server)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.post("/responses", json=payload)
+
+
+async def _get_response(server: ResponsesHostServer, response_id: str) -> httpx.Response:
+    """GET one stored response through the ASGI transport."""
+    transport = httpx.ASGITransport(app=server)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get(f"/responses/{response_id}")
 
 
 def _parse_sse_events(body: str) -> list[dict[str, Any]]:
@@ -1159,6 +1173,117 @@ async def test_recovery_preserves_persisted_metadata_or_seeds_request(has_persis
     assert created["response"]["id"] == response_id
     expected = {"source": "persisted" if has_persisted_response else "request"}
     assert created["response"]["metadata"] == expected
+
+
+def _public_metadata(count: int) -> dict[str, str]:
+    return {f"k{index}": f"v{index}" for index in range(count)}
+
+
+def test_fresh_request_strips_forged_internal_metadata() -> None:
+    """A client metadata bag must not seed server-owned recovery state."""
+    forged = json.dumps({
+        _INCOMPLETE_REASON_KEY: "content_filter",
+        _LATEST_CHECKPOINT_ID_KEY: "ckpt_forged",
+        "_foundry_provider_output_count": 4,
+    })
+    request_metadata = {"source": "client", "_internal_metadata": forged}
+    request = CreateResponse(input="Hi", metadata=cast(Metadata, request_metadata))
+    context = ResponseContext(response_id="resp_forged", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+
+    assert request_metadata["_internal_metadata"] == forged
+    assert stream.response.get("metadata") == {"source": "client"}
+    assert dict(stream.internal_metadata) == {}
+    assert _OutputItemTracker(stream).incomplete_reason is None
+
+
+def test_fresh_request_with_only_reserved_metadata_keeps_public_metadata_empty() -> None:
+    request = CreateResponse(
+        input="Hi",
+        metadata=cast(Metadata, {"_internal_metadata": json.dumps({_INCOMPLETE_REASON_KEY: "length"})}),
+    )
+    context = ResponseContext(response_id="resp_reserved_only", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+
+    assert stream.response.get("metadata") is None
+    assert _OutputItemTracker(stream).incomplete_reason is None
+
+
+def test_recovery_keeps_trusted_internal_metadata_when_the_request_forges_it() -> None:
+    response_id = "resp_trusted_internal"
+    forged_request = CreateResponse(
+        input="Hi",
+        metadata=cast(Metadata, {"_internal_metadata": json.dumps({_INCOMPLETE_REASON_KEY: "max_output_tokens"})}),
+    )
+    persisted = ResponseEventStream(response_id=response_id)
+    persisted.internal_metadata[_INCOMPLETE_REASON_KEY] = "content_filter"
+    persisted.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = "ckpt_real"
+    context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+    context.is_recovery = True
+    context.persisted_response = cast(ResponseObject, persisted.response)
+
+    restored = _create_response_event_stream(context, forged_request)
+
+    assert restored.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
+    assert restored.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] == "ckpt_real"
+    assert _OutputItemTracker(restored).incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+
+
+def test_recovery_without_a_snapshot_still_strips_forged_internal_metadata() -> None:
+    request = CreateResponse(
+        input="Hi",
+        metadata=cast(Metadata, {"source": "client", "_internal_metadata": '{"_incomplete_reason":"content_filter"}'}),
+    )
+    context = ResponseContext(response_id="resp_recovery_unseeded", mode_flags=MagicMock())
+    context.is_recovery = True
+    context.persisted_response = None
+
+    stream = _create_response_event_stream(context, request)
+
+    assert stream.response.get("metadata") == {"source": "client"}
+    assert _OutputItemTracker(stream).incomplete_reason is None
+
+
+def test_reserved_metadata_key_does_not_consume_the_host_incomplete_reason_slot() -> None:
+    """Fifteen public entries plus a forged reserved key still leave room for the host reason."""
+    metadata = _public_metadata(15)
+    metadata["_internal_metadata"] = json.dumps({_INCOMPLETE_REASON_KEY: "max_output_tokens"})
+    request = CreateResponse(input="Hi", metadata=cast(Metadata, metadata))
+    context = ResponseContext(response_id="resp_freed_slot", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+    tracker = _OutputItemTracker(stream)
+
+    tracker.record_finish_reason("content_filter")
+
+    assert tracker.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+    stored = json.loads(stream.response["metadata"]["_internal_metadata"])
+    assert stored[_INCOMPLETE_REASON_KEY] == "content_filter"
+    assert all(stream.response["metadata"][key] == value for key, value in _public_metadata(15).items())
+
+
+def test_full_public_metadata_records_incomplete_reason_outside_the_quota() -> None:
+    metadata = _public_metadata(16)
+    request = CreateResponse(input="Hi", metadata=cast(Metadata, metadata))
+    context = ResponseContext(response_id="resp_full_metadata", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+    tracker = _OutputItemTracker(stream)
+
+    tracker.record_finish_reason("length")
+    tracker.record_finish_reason("content_filter")
+    _write_hosted_internal(stream, _LATEST_CHECKPOINT_ID_KEY, "ckpt_skipped")
+
+    assert tracker.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+    assert stream.response["metadata"] == metadata
+    assert "_internal_metadata" not in stream.response["metadata"]
+    assert stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY) is None
+    assert stream.response["incomplete_details"] == {"reason": "content_filter"}
+
+    recovered = _OutputItemTracker(
+        ResponseEventStream(response=cast(ResponseObject, stream.response), response_id="resp_full_metadata")
+    )
+    assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+    recovered.record_finish_reason("stop")
+    assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
 
 
 class TestSerializationHelpers:
@@ -8402,6 +8527,62 @@ class TestIncompleteFinishReasonSurfacing:
 
         # A stream that was never marked restores nothing.
         assert _OutputItemTracker(ResponseEventStream(response_id="resp_clean")).incomplete_reason is None
+
+    async def test_full_public_metadata_content_filter_stays_incomplete(self) -> None:
+        """Sixteen caller entries are valid and must not turn a truncated turn into a failure."""
+        metadata = _public_metadata(16)
+        server = _make_server(self._filtered_agent(finish_reason="content_filter"))
+
+        resp = await _post(server, input_text="hello", stream=False, metadata=metadata, store=True)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+        assert body.get("error") is None
+        assert body.get("metadata") == metadata
+
+        stored = await _get_response(server, body["id"])
+        assert stored.status_code == 200
+        stored_body = stored.json()
+        assert stored_body["status"] == "incomplete"
+        assert stored_body["incomplete_details"] == {"reason": "content_filter"}
+        assert stored_body.get("metadata") == metadata
+
+    async def test_full_public_metadata_streaming_length_stays_incomplete(self) -> None:
+        metadata = _public_metadata(16)
+        server = _make_server(self._filtered_agent(finish_reason="length"))
+
+        resp = await _post(server, input_text="hello", stream=True, metadata=metadata)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        assert _sse_event_types(events)[-1] == "response.incomplete"
+        assert "response.failed" not in _sse_event_types(events)
+        incomplete = events[-1]["data"]["response"]
+        assert incomplete["status"] == "incomplete"
+        assert incomplete["incomplete_details"] == {"reason": "max_output_tokens"}
+        assert incomplete.get("metadata") == metadata
+
+    async def test_forged_internal_metadata_does_not_mark_a_completed_turn_incomplete(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant", finish_reason="stop"),
+            ]
+        )
+        server = _make_server(agent)
+        forged = json.dumps({_INCOMPLETE_REASON_KEY: "content_filter"})
+
+        resp = await _post(
+            server,
+            input_text="hello",
+            stream=False,
+            metadata={"source": "client", "_internal_metadata": forged},
+            store=True,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body.get("incomplete_details") is None
+        assert body.get("metadata") == {"source": "client"}
 
     async def test_workflow_agent_content_filter_marks_response_incomplete(self) -> None:
         workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
