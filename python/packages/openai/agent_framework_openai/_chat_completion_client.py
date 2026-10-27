@@ -556,7 +556,7 @@ class RawOpenAIChatCompletionClient(
                     }
                 )
 
-                agent = Agent(client=client, tools=[tool])
+                agent = Agent(client=OpenAIChatCompletionClient(), tools=[tool])
         """
         tool: dict[str, Any] = {"type": "web_search"}
 

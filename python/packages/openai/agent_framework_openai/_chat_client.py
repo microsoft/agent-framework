@@ -1338,7 +1338,7 @@ class RawOpenAIChatClient(
                 tool = OpenAIChatClient.get_code_interpreter_tool(file_ids=["file-abc123"])
 
                 # Use with agent
-                agent = Agent(client=client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         container_config: CodeInterpreterContainerCodeInterpreterToolAuto = (
             container if isinstance(container, dict) else {"type": "auto"}
@@ -1383,7 +1383,7 @@ class RawOpenAIChatClient(
                     search_context_size="medium",
                 )
 
-                agent = Agent(client=client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         web_search_tool = WebSearchToolParam(type="web_search")
 
@@ -1447,7 +1447,7 @@ class RawOpenAIChatClient(
                     output_format="png",
                 )
 
-                agent = Agent(client=client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         tool: ImageGeneration = {"type": "image_generation"}
 
@@ -1622,7 +1622,7 @@ class RawOpenAIChatClient(
                     },
                 )
 
-                agent = Agent(client=client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         mcp: Mcp = {
             "type": "mcp",
@@ -1682,7 +1682,7 @@ class RawOpenAIChatClient(
                     max_num_results=10,
                 )
 
-                agent = Agent(client=client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         tool = FileSearchToolParam(
             type="file_search",
