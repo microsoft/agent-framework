@@ -99,6 +99,25 @@ names, not workflow IDs, credentials, or arbitrary URLs. A finite factory handle
 lifetime lets subsequent invocations refresh connections without interrupting
 active calls. Streamable HTTP remains enforced for every client source.
 
+`ProtocolVersion` defaults to `null`, preserving the MCP SDK's automatic protocol
+discovery and legacy fallback. If the server's supported protocol is known, set
+the init-only property on either constructor:
+
+```csharp
+DefaultMcpToolHandler handler = new(httpClientFactory, "workflow-mcp")
+{
+    ProtocolVersion = "2025-11-25"
+};
+```
+
+An explicit legacy version skips the discovery probe, including its possible
+timeout, but still initializes and disposes a separate session for every call.
+The server must negotiate that exact legacy version. Explicit newer revisions
+still perform discovery and do not downgrade to a legacy-only server.
+Incompatible selections fail rather than silently reverting to automatic
+negotiation. Use separately configured handlers for differing server protocol
+policies; do not pin a version without knowing the server supports it.
+
 The handler is not disposable. The workflow host owns admission limits,
 invocation deadlines, and shutdown cancellation. Bound concurrent work and pass
 a cancellation token covering the whole invocation; cancel and await those calls

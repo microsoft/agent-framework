@@ -47,6 +47,20 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     private readonly string _httpClientName = string.Empty;
 
     /// <summary>
+    /// Gets or initializes the protocol version requested for every invocation.
+    /// </summary>
+    /// <value>
+    /// The protocol version to pass to the MCP SDK, or <see langword="null"/> to use its automatic negotiation.
+    /// The default is <see langword="null"/>.
+    /// </value>
+    /// <remarks>
+    /// Selecting a known legacy version skips the discovery probe but still initializes a separate session per invocation.
+    /// Explicit selection restricts negotiation and fails if the server cannot satisfy the SDK's version requirements.
+    /// Use separately configured handlers for servers requiring different protocol policies.
+    /// </remarks>
+    public string? ProtocolVersion { get; init; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class.
     /// </summary>
     /// <remarks>
@@ -218,7 +232,10 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
         try
         {
             transport = new(transportOptions, httpClient, ownsHttpClient: true);
-            McpClient client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
+            McpClient client = await McpClient.CreateAsync(
+                transport,
+                new McpClientOptions { ProtocolVersion = this.ProtocolVersion },
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             return new ClientConnection(client, transport);
         }
         catch

@@ -260,6 +260,21 @@ The package supports modern .NET, .NET Standard 2.0, and .NET Framework 4.7.2.
 Compatible factory-package versions, handler APIs, and DNS-refresh behavior must
 be established for every supported target; this proposal does not drop targets.
 
+### Protocol setup
+
+Expose an init-only optional `DefaultMcpToolHandler.ProtocolVersion` property
+and pass it through a fresh SDK `McpClientOptions` for every invocation.
+Leave it unset by default so the SDK retains automatic discovery and legacy
+fallback. Do not select an older version globally to optimize one server.
+
+An application that knows a server requires an initialize-handshake revision
+can explicitly select that version to avoid the initial discovery probe and its
+possible timeout. The server must negotiate that exact legacy version. This
+does not skip initialization, share a session, or eliminate session termination.
+Explicit newer revisions still perform discovery and reject legacy-only servers
+rather than silently downgrading. Incompatible selections surface SDK errors.
+Use separately configured handlers where server protocol policies differ.
+
 ### Compatibility and explicitly stateful integrations
 
 Remove the `httpClientProvider` callback constructor and the internal

@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using Moq;
 using Moq.Protected;
@@ -23,6 +24,83 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 /// </summary>
 public sealed class DefaultMcpToolHandlerLifetimeTests
 {
+    [Theory]
+    [InlineData(null, 2)]
+    [InlineData("2025-11-25", 0)]
+    public async Task ProtocolSelection_PreservesPerInvocationInitializationAsync(string? protocolVersion, int expectedDiscoveries)
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub, protocolVersion);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent first = await InvokeAsync(handler, "session", timeout.Token);
+        McpServerToolResultContent second = await InvokeAsync(handler, "session", timeout.Token);
+
+        // Assert
+        Assert.NotNull(first.Outputs);
+        Assert.NotNull(second.Outputs);
+        Assert.NotEqual(
+            Assert.IsType<TextContent>(Assert.Single(first.Outputs)).Text,
+            Assert.IsType<TextContent>(Assert.Single(second.Outputs)).Text);
+        Assert.Equal(expectedDiscoveries, stub.DiscoverRequests);
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(2, stub.Terminations);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExplicitNewProtocol_DiscoversWithoutLegacyFallbackAsync(bool supportsDiscovery)
+    {
+        // Arrange
+        ProtocolStub stub = new() { SupportsDiscovery = supportsDiscovery };
+        DefaultMcpToolHandler handler = CreateHandler(stub, "2026-07-28");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        if (supportsDiscovery)
+        {
+            McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+            Assert.NotNull(result.Outputs);
+            Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<McpException>(() => InvokeAsync(handler, "ping", timeout.Token));
+        }
+
+        // Assert
+        Assert.Equal(1, stub.DiscoverRequests);
+        Assert.Equal(0, stub.Initializations);
+        Assert.Equal(0, stub.Terminations);
+        Assert.Single(stub.Handlers).Protected().Verify("Dispose", Times.Once(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
+    [Fact]
+    public async Task ExplicitLegacyProtocol_RejectsVersionMismatchAndDisposesResourcesAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new()
+        {
+            InitializationProtocolVersion = "2025-06-18",
+            OnOperation = _ => Assert.Fail("A tool must not run after a protocol version mismatch.")
+        };
+        DefaultMcpToolHandler handler = CreateHandler(stub, "2025-11-25");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpException exception = await Assert.ThrowsAsync<McpException>(() => InvokeAsync(handler, "ping", timeout.Token));
+
+        // Assert
+        Assert.Contains("protocol version mismatch", exception.Message);
+        Assert.Equal(0, stub.DiscoverRequests);
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+        Assert.Single(stub.Handlers).Protected().Verify("Dispose", Times.Once(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -484,11 +562,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         }
     }
 
-    private static DefaultMcpToolHandler CreateHandler(ProtocolStub stub)
+    private static DefaultMcpToolHandler CreateHandler(ProtocolStub stub, string? protocolVersion = null)
     {
         Mock<IHttpClientFactory> factory = new();
         factory.Setup(f => f.CreateClient("workflow-mcp")).Returns(() => new HttpClient(stub.CreateMessageHandler()));
-        return new(factory.Object, "workflow-mcp");
+        return new(factory.Object, "workflow-mcp") { ProtocolVersion = protocolVersion };
     }
 
     private static Task<McpServerToolResultContent> InvokeAsync(
@@ -500,10 +578,12 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         private int _initializations;
         private int _terminations;
         private int _standaloneGetRequests;
+        private int _discoverRequests;
 
         public int Initializations => this._initializations;
         public int Terminations => this._terminations;
         public int StandaloneGetRequests => this._standaloneGetRequests;
+        public int DiscoverRequests => this._discoverRequests;
         public List<Mock<HttpMessageHandler>> Handlers { get; } = [];
         public Func<CancellationToken, Task>? BeforeInitializationAsync { get; set; }
         public Func<CancellationToken, Task>? BeforeOperationAsync { get; set; }
@@ -512,6 +592,8 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         public bool FailOperation { get; set; }
         public bool FailTransportDisposal { get; set; }
         public bool UseEventStreamResult { get; set; }
+        public bool SupportsDiscovery { get; set; }
+        public string? InitializationProtocolVersion { get; set; }
 
         public HttpMessageHandler CreateMessageHandler()
         {
@@ -558,12 +640,15 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             string? method = message.GetProperty("method").GetString();
             if (method == "server/discover")
             {
+                Interlocked.Increment(ref this._discoverRequests);
+                const string DiscoverResult = """{"supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}""";
+                string discoverResponse = this.SupportsDiscovery
+                    ? $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"result":{{{DiscoverResult}}}}"""
+                    : $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"error":{"code":-32601,"message":"Method not found"}}""";
                 return new(HttpStatusCode.OK)
                 {
                     RequestMessage = request,
-                    Content = new StringContent(
-                        $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"error":{"code":-32601,"message":"Method not found"}}""",
-                        Encoding.UTF8, "application/json")
+                    Content = new StringContent(discoverResponse, Encoding.UTF8, "application/json")
                 };
             }
 
@@ -582,7 +667,9 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 }
 
                 sessionId = Interlocked.Increment(ref this._initializations).ToString(CultureInfo.InvariantCulture);
-                string protocolVersion = message.GetProperty("params").GetProperty("protocolVersion").GetRawText();
+                string protocolVersion = this.InitializationProtocolVersion is null
+                    ? message.GetProperty("params").GetProperty("protocolVersion").GetRawText()
+                    : JsonSerializer.Serialize(this.InitializationProtocolVersion);
                 result = $$$"""{"protocolVersion":{{{protocolVersion}}},"capabilities":{"tools":{}},"serverInfo":{"name":"stub","version":"1.0"}}""";
             }
             else

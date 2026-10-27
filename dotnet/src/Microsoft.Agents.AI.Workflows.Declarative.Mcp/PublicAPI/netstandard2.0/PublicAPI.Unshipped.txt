@@ -1,5 +1,7 @@
 ﻿#nullable enable
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler(System.Net.Http.IHttpClientFactory! httpClientFactory, string! httpClientName) -> void
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler() -> void
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.ProtocolVersion.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.ProtocolVersion.init -> void
 *REMOVED*Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler(System.Func<string!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Net.Http.HttpClient?>!>? httpClientProvider = null) -> void
 *REMOVED*Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DisposeAsync() -> System.Threading.Tasks.ValueTask
