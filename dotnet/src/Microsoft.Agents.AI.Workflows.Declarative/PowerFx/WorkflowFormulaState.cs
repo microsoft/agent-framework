@@ -203,13 +203,15 @@ internal sealed class WorkflowFormulaState
         string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
         HashSet<string> declarativeKeys = await context.ReadStateKeysAsync(sensitivityScope, cancellationToken).ConfigureAwait(false);
         legacyKeys.IntersectWith(declarativeKeys);
-        foreach (string key in legacyKeys.ToArray())
+        List<string> canonicalKeys = [];
+        foreach (string key in legacyKeys)
         {
             if (await HasCanonicalLocalOwnershipAsync(context, key, cancellationToken).ConfigureAwait(false))
             {
-                legacyKeys.Remove(key);
+                canonicalKeys.Add(key);
             }
         }
+        legacyKeys.ExceptWith(canonicalKeys);
         if (legacyKeys.Count == 0)
         {
             return legacyKeys;
