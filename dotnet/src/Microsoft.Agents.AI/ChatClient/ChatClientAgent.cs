@@ -1091,16 +1091,8 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         IList<ChatMessage> responseMessages = responseUpdates.ToChatResponse().Messages;
 
-        HashSet<string> toolCallIds = new(StringComparer.Ordinal);
+        HashSet<string> toolCallIds = new(requestMessages.SelectMany(m => m.Contents).OfType<ToolCallContent>().Select(x => x.CallId), StringComparer.Ordinal);
         HashSet<string> toolResultIds = new(StringComparer.Ordinal);
-
-        foreach (var content in requestMessages.SelectMany(m => m.Contents))
-        {
-            if (content is ToolCallContent toolCall)
-            {
-                toolCallIds.Add(toolCall.CallId);
-            }
-        }
 
         foreach (var content in responseMessages.SelectMany(m => m.Contents))
         {
