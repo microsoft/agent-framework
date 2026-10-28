@@ -479,7 +479,14 @@ class BackgroundAgentsProvider(ContextProvider):
         cancel_running: bool,
         timeout: float | None,
     ) -> None:
-        """Cancel and await tracked tasks, bounded by timeout."""
+        """Cancel and await tracked tasks, bounded by timeout.
+
+        Cancelled tasks are observed with :func:`asyncio.wait`, which returns at the deadline. Using
+        ``asyncio.wait_for(asyncio.gather(...))`` instead would, on timeout, cancel the gather and then
+        wait for that cancellation to complete, so a task that keeps suppressing ``CancelledError``
+        could hold the release open indefinitely. Tasks still running at the deadline are abandoned
+        with a done-callback that retrieves their eventual exception.
+        """
         loop = asyncio.get_running_loop()
         deadline = None if timeout is None else loop.time() + float(timeout)
 
@@ -512,13 +519,8 @@ class BackgroundAgentsProvider(ContextProvider):
                             task.add_done_callback(_log_abandoned_background_task)
                     return
 
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*pending, return_exceptions=True),
-                    timeout=remaining,
-                )
-            except asyncio.TimeoutError:
-                not_done = [task for task in pending if not task.done()]
+            _, not_done = await asyncio.wait(pending, timeout=remaining)
+            if not_done:
                 logger.warning(
                     "Session release timed out waiting for %s task(s). They will be abandoned.",
                     len(not_done),

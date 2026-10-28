@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from contextlib import suppress
 from typing import Any
@@ -964,6 +965,51 @@ async def test_release_session_times_out_if_task_ignores_cancellation() -> None:
     unblock.set()
     with suppress(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_release_session_times_out_if_task_repeatedly_suppresses_cancellation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """release_session must honour its timeout even if a task suppresses every cancellation."""
+    caplog.set_level(logging.DEBUG, logger=_background_agents.__name__)
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+    runtime = provider._get_runtime(session)
+    exit_gate = asyncio.Event()
+    cancellations = 0
+
+    async def _suppress_every_cancellation() -> Any:
+        nonlocal cancellations
+        while True:
+            try:
+                await exit_gate.wait()
+            except asyncio.CancelledError:
+                cancellations += 1
+                continue
+            raise RuntimeError("failed after release")
+
+    task = asyncio.create_task(_suppress_every_cancellation())
+    runtime.in_flight_tasks[1] = task
+    await asyncio.sleep(0)  # let the task start waiting on its gate
+
+    # Observe the release with asyncio.wait so an unbounded release fails the test instead of hanging it.
+    release = asyncio.create_task(provider.release_session(session, cancel_running=True, timeout=0.05))
+    try:
+        done, _ = await asyncio.wait({release}, timeout=2.0)
+        assert release in done, "release_session did not return within its timeout"
+        await release
+        assert cancellations >= 1
+        assert not task.done()
+        assert session.session_id not in provider._runtime
+        assert not runtime.in_flight_tasks
+    finally:
+        exit_gate.set()
+        await asyncio.wait({task, release}, timeout=2.0)
+
+    # The abandoned task's eventual exception is retrieved instead of going unobserved.
+    await asyncio.sleep(0)
+    assert isinstance(task.exception(), RuntimeError)
+    assert "Abandoned background task raised: failed after release" in caplog.text
 
 
 async def test_release_session_does_not_pop_replacement_runtime() -> None:
