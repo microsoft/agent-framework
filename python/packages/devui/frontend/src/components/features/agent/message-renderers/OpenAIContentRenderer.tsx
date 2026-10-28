@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import type { MessageContent } from "@/types/openai";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
-import { createPdfBlob, getSafeFileUrl } from "@/lib/file-urls";
+import { createEmbeddedFileBlob, getSafeFileUrl } from "@/lib/file-urls";
 
 interface ContentRendererProps {
   content: MessageContent;
@@ -86,9 +86,9 @@ function ImageContentRenderer({ content, className }: ContentRendererProps) {
   );
 }
 
-// Only locally created blob URLs are trusted for embedded PDFs.
-function usePdfBlobUrl(data: string | undefined): string | null {
-  const [result, setResult] = useState<{ data: string; url: string } | null>(null);
+// Only locally created blob URLs are trusted for embedded files.
+function useEmbeddedFileBlobUrl(data: string | undefined, mimeType: string | undefined): string | null {
+  const [result, setResult] = useState<{ data: string; mimeType: string | undefined; url: string } | null>(null);
 
   useEffect(() => {
     if (!data) {
@@ -96,9 +96,9 @@ function usePdfBlobUrl(data: string | undefined): string | null {
     }
 
     try {
-      const blob = createPdfBlob(data);
+      const blob = createEmbeddedFileBlob(data, mimeType);
       const url = URL.createObjectURL(blob);
-      setResult({ data, url });
+      setResult({ data, mimeType, url });
 
       // Cleanup on unmount or when data changes
       return () => {
@@ -108,9 +108,9 @@ function usePdfBlobUrl(data: string | undefined): string | null {
       console.error('Failed to convert base64 to blob URL:', error);
       setResult(null);
     }
-  }, [data]);
+  }, [data, mimeType]);
 
-  return result && result.data === data ? result.url : null;
+  return result && result.data === data && result.mimeType === mimeType ? result.url : null;
 }
 
 // File content renderer (handles both input and output files)
@@ -127,20 +127,25 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
   const isAudio = filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/);
 
   const safeFileUrl = getSafeFileUrl(fileUrl);
-  const pdfData = (isFileContent && isPdf)
-    ? (content.file_data || (safeFileUrl ? undefined : content.file_url))
+  const embeddedData = (isFileContent && (isPdf || !isAudio))
+    ? (/^data:/i.test(content.file_url || "")
+      ? content.file_url
+      : content.file_data || (safeFileUrl ? undefined : content.file_url))
     : undefined;
-  const pdfBlobUrl = usePdfBlobUrl(pdfData);
+  const embeddedMimeType = isPdf
+    ? "application/pdf"
+    : content.type === "output_file" ? content.mime_type : undefined;
+  const embeddedBlobUrl = useEmbeddedFileBlobUrl(embeddedData, embeddedMimeType);
 
   // Early return after all hooks
   if (!isFileContent) return null;
 
-  const effectivePdfUrl = pdfBlobUrl || safeFileUrl;
+  const effectiveFileUrl = embeddedBlobUrl || safeFileUrl;
 
   // Helper to open PDF in new tab
   const openPdfInNewTab = () => {
-    if (effectivePdfUrl) {
-      window.open(effectivePdfUrl, '_blank', 'noopener,noreferrer');
+    if (effectiveFileUrl) {
+      window.open(effectiveFileUrl, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -181,14 +186,14 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
             <div className="flex gap-3">
               <button
                 onClick={openPdfInNewTab}
-                disabled={!effectivePdfUrl}
+                disabled={!effectiveFileUrl}
                 className="text-sm bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-2 px-4 py-2 rounded-md transition-colors"
               >
                 Open in new tab
               </button>
-              {effectivePdfUrl && (
+              {effectiveFileUrl && (
                 <a
-                  href={effectivePdfUrl}
+                  href={effectiveFileUrl}
                   download={filename}
                   className="text-sm text-foreground hover:bg-accent flex items-center gap-2 px-4 py-2 border rounded-md transition-colors"
                 >
@@ -197,7 +202,7 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
                 </a>
               )}
             </div>
-            {!effectivePdfUrl && (
+            {!effectiveFileUrl && (
               <p role="status" className="text-sm text-muted-foreground">
                 This file cannot be opened: its link or embedded data is unavailable or unsupported.
               </p>
@@ -232,9 +237,9 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
           <FileText className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm">{filename}</span>
         </div>
-        {safeFileUrl && (
+        {effectiveFileUrl && (
           <a
-            href={safeFileUrl}
+            href={effectiveFileUrl}
             download={filename}
             className="text-xs text-primary hover:underline flex items-center gap-1"
           >
@@ -243,9 +248,9 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
           </a>
         )}
       </div>
-      {fileUrl && !safeFileUrl && (
+      {fileUrl && !effectiveFileUrl && (
         <p role="status" className="text-sm text-muted-foreground">
-          This file cannot be downloaded: its link is unsupported.
+          This file cannot be downloaded: its link or embedded data is unavailable or unsupported.
         </p>
       )}
     </div>
