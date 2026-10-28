@@ -78,8 +78,9 @@ public class ChatClientAgent_PartialApprovalsTests
 
             var ordered = messages.ToList();
             int questionIndex = ordered.FindIndex(m => m.Text == "still deciding");
-            if (questionIndex >= 0 && modelCalls == 2)
+            if (modelCalls == 2)
             {
+                Assert.True(questionIndex >= 0, "Collection-only ordinary input must reach the resumed model.");
                 Assert.True(ordered.FindLastIndex(m => m.Contents.OfType<FunctionResultContent>().Any()) < questionIndex);
             }
 
@@ -114,6 +115,7 @@ public class ChatClientAgent_PartialApprovalsTests
         // Act: answer A, persist, recreate both the agent and its native session, then replay A.
         var unanswered = await RunAsync(new ChatMessage(ChatRole.User, "still deciding"));
         Assert.Equal(requests.Count, unanswered.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Count());
+        Assert.Contains("still deciding", (await agent.SerializeSessionAsync(session)).GetRawText());
         await ReloadAsync();
         var partial = await RunAsync(new ChatMessage(ChatRole.User, [requests["call-a"].CreateResponse(approveA, "chosen-a")]));
         Assert.Empty(executed);
@@ -167,6 +169,75 @@ public class ChatClientAgent_PartialApprovalsTests
         await ReloadAsync();
         await RunAsync(new ChatMessage(ChatRole.User, [requests["call-b"].CreateResponse(true)]));
         Assert.Equal(new[] { approveA ? "a" : null, approveB ? "b" : null }.Where(value => value is not null), executed);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CollectionOnly_ServiceHistory_PreservesConversationAndOrdinaryInputAsync(bool streaming, bool perServicePersistence)
+    {
+        // Arrange
+        int modelCalls = 0;
+        var client = CreateChatClient((messages, options, _) =>
+        {
+            Assert.Equal("original-conversation", options?.ConversationId);
+            ChatResponse response;
+            if (++modelCalls == 1)
+            {
+                response = new ChatResponse([new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent("a", "protected_tool"), new FunctionCallContent("b", "protected_tool")])]);
+            }
+            else
+            {
+                if (modelCalls == 2)
+                {
+                    Assert.Single(messages, m => m.Text == "answer commentary");
+                }
+                else
+                {
+                    Assert.DoesNotContain(messages, m => m.Text == "answer commentary");
+                }
+
+                response = new ChatResponse([new ChatMessage(ChatRole.Assistant, "done")]);
+            }
+
+            response.ConversationId = "original-conversation";
+            return Task.FromResult(response);
+        });
+        ChatClientAgent NewAgent() => new(client, new ChatClientAgentOptions
+        {
+            EnablePartialApprovalResponses = true,
+            RequirePerServiceCallChatHistoryPersistence = perServicePersistence,
+            ChatOptions = new ChatOptions { Tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "canonical", "protected_tool"))] },
+        });
+        var agent = NewAgent();
+        var session = await agent.CreateSessionAsync("original-conversation");
+        Task<AgentResponse> RunAsync(params ChatMessage[] messages) => streaming
+            ? agent.RunStreamingAsync(messages, session).ToAgentResponseAsync()
+            : agent.RunAsync(messages, session);
+        var first = await RunAsync(new ChatMessage(ChatRole.User, "start"));
+        var requests = first.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+
+        // Act: save a mixed text/decision message without calling the service, then reconstruct the agent.
+        await RunAsync(new ChatMessage(ChatRole.User, [requests[0].CreateResponse(true), new TextContent("answer commentary")]));
+        Assert.Equal(1, modelCalls);
+        var saved = await agent.SerializeSessionAsync(session);
+        Assert.Contains("answer commentary", saved.GetRawText());
+        agent = NewAgent();
+        session = await agent.DeserializeSessionAsync(saved);
+        await RunAsync(new ChatMessage(ChatRole.User, [requests[1].CreateResponse(true)]));
+
+        // Assert
+        Assert.Equal(2, modelCalls);
+        Assert.Equal("original-conversation", Assert.IsType<ChatClientAgentSession>(session).ConversationId);
+        Assert.False(session.StateBag.TryGetValue<List<ChatMessage>>(ApprovalResponseBindingChatClient.InputStateBagKey, out _));
+        saved = await agent.SerializeSessionAsync(session);
+        agent = NewAgent();
+        session = await agent.DeserializeSessionAsync(saved);
+        await RunAsync(new ChatMessage(ChatRole.User, "follow-up"));
+        Assert.Equal(3, modelCalls);
     }
 
     [Fact]

@@ -79,6 +79,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     internal const string StateBagKey = "_pendingApprovalRequests";
 
     internal const string DecisionsStateBagKey = "_collectedApprovalDecisions";
+    internal const string InputStateBagKey = "_collectedApprovalInput";
 
     private readonly ILogger _logger;
     private readonly bool _enablePartialResponses;
@@ -114,10 +115,13 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        var collected = this.CollectPartialResponses(messages, session);
+        var collected = this.CollectPartialResponses(messages, session, options);
         if (collected.Waiting is not null)
         {
-            return new ChatResponse([new ChatMessage(ChatRole.Assistant, collected.Waiting)]);
+            return new ChatResponse([new ChatMessage(ChatRole.Assistant, collected.Waiting)])
+            {
+                ConversationId = options?.ConversationId,
+            };
         }
 
         var (messagesToSend, hasPendingRequests, generatedRejections) = this.ValidateInboundApprovalResponses(collected.Messages, session);
@@ -136,6 +140,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         {
             session.StateBag.TryRemoveValue(StateBagKey);
             session.StateBag.TryRemoveValue(DecisionsStateBagKey);
+            session.StateBag.TryRemoveValue(InputStateBagKey);
         }
 
         this.RecordPendingApprovalRequests(response.Messages, session);
@@ -164,10 +169,13 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        var collected = this.CollectPartialResponses(messages, session);
+        var collected = this.CollectPartialResponses(messages, session, options);
         if (collected.Waiting is not null)
         {
-            yield return new ChatResponseUpdate(ChatRole.Assistant, collected.Waiting);
+            yield return new ChatResponseUpdate(ChatRole.Assistant, collected.Waiting)
+            {
+                ConversationId = options?.ConversationId,
+            };
             yield break;
         }
 
@@ -212,6 +220,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             {
                 session.StateBag.TryRemoveValue(StateBagKey);
                 session.StateBag.TryRemoveValue(DecisionsStateBagKey);
+                session.StateBag.TryRemoveValue(InputStateBagKey);
             }
 
             // Recorded regardless of how the stream ended, because each request was already handed to the caller
@@ -227,7 +236,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     // Keep decisions separate from pending authorizations. The latter remain authoritative until the
     // complete batch succeeds, so a serialize/reload or a failed final run cannot lose unanswered calls.
     private (IEnumerable<ChatMessage> Messages, List<AIContent>? Waiting) CollectPartialResponses(
-        IEnumerable<ChatMessage> messages, AgentSession session)
+        IEnumerable<ChatMessage> messages, AgentSession session, ChatOptions? options)
     {
         if (!this._enablePartialResponses)
         {
@@ -288,9 +297,47 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         session.StateBag.SetValue(DecisionsStateBagKey, decisions, AgentJsonUtilities.DefaultOptions);
         var waiting = requests.Values.Where(r => !answers.ContainsKey(r.RequestId) && !results.ContainsKey(r.ToolCall.CallId))
             .Select(r => (AIContent)ToolApprovalHelpers.SnapshotRequest(r)).ToList();
+        session.StateBag.TryGetValue<List<ChatMessage>>(InputStateBagKey, out var queuedInput, AgentJsonUtilities.DefaultOptions);
         if (waiting.Count > 0)
         {
+            // A real service-owned conversation, or the per-service history sentinel, means the
+            // downstream history path has not received this run's ordinary input. Queue only new
+            // external content; decisions/results already have their own durable representation.
+            if (!string.IsNullOrEmpty(options?.ConversationId))
+            {
+                var pendingInput = queuedInput is null ? [] : new List<ChatMessage>(queuedInput);
+                foreach (var message in input.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External))
+                {
+                    var contents = message.Contents.Where(c => c is not ToolApprovalRequestContent
+                        and not ToolApprovalResponseContent and not FunctionResultContent).ToList();
+                    if (contents.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var copy = message.Clone();
+                    copy.Contents = contents;
+                    if (copy.AdditionalProperties is not null)
+                    {
+                        copy.AdditionalProperties = new(copy.AdditionalProperties);
+                        copy.AdditionalProperties.Remove(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey);
+                    }
+
+                    pendingInput.Add(copy);
+                }
+
+                if (pendingInput.Count > 0)
+                {
+                    session.StateBag.SetValue(InputStateBagKey, pendingInput, AgentJsonUtilities.DefaultOptions);
+                }
+            }
+
             return (input, waiting);
+        }
+
+        if (queuedInput is { Count: > 0 })
+        {
+            input.InsertRange(0, queuedInput);
         }
 
         // Repeated waiting responses can occur in persisted history. Present each current request once
