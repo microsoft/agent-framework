@@ -135,7 +135,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             }, legacyEntry ? VariableScopeNames.Topic : scopeName, cancellationToken).ConfigureAwait(false);
             if (legacyEntry)
             {
-                await this.Source.QueueStateUpdateAsync(key, result, scopeName, cancellationToken).ConfigureAwait(false);
+                PortableValue legacyValue = await ReadLegacyValueAsync().ConfigureAwait(false);
+                await this.Source.QueueStateUpdateAsync(key, legacyValue.ToPortableObject(), scopeName, cancellationToken).ConfigureAwait(false);
             }
             if (initialized || legacyEntry)
             {
@@ -152,26 +153,25 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             if (result is null or BlankValue)
             {
                 bool legacyEntry = await Kit.IWorkflowContextExtensions.HasLegacyTopicEntryAsync(this.Source, key, scopeName!, forWrite: true, cancellationToken).ConfigureAwait(false);
-                result = legacyEntry
-                    ? (await this.Source.ReadStateAsync<PortableValue>(key, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false))?.ToFormula()
-                    : initialStateFactory() as FormulaValue;
+                PortableValue? legacyValue = legacyEntry ? await ReadLegacyValueAsync().ConfigureAwait(false) : null;
+                result = legacyValue is null ? initialStateFactory() as FormulaValue : legacyValue.ToFormula();
                 if (result is null)
                 {
-                    if (legacyEntry)
-                    {
-                        throw new InvalidOperationException($"The existing state for key '{key}' in scope '{VariableScopeNames.Topic}' is missing.");
-                    }
                     throw new InvalidOperationException($"The initial state factory for key '{key}' in scope '{scopeName}' did not return a FormulaValue.");
                 }
 
                 this.State.Set(key, result, scopeName);
-                await this.Source.QueueStateUpdateAsync(key, result.AsPortable(), scopeName, cancellationToken)
+                await this.Source.QueueStateUpdateAsync(key, legacyValue is null ? result.AsPortable() : legacyValue.ToPortableObject(), scopeName, cancellationToken)
                                  .ConfigureAwait(false);
                 await CompleteInitializationAsync(legacyEntry).ConfigureAwait(false);
             }
 
             return (TValue)(object)result!; // The null analyzer is confused here, but it is impossible to hit this line with result is null
         }
+
+        async ValueTask<PortableValue> ReadLegacyValueAsync() =>
+            await this.Source.ReadStateAsync<PortableValue>(key, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"The existing state for key '{key}' in scope '{VariableScopeNames.Topic}' is missing.");
 
         async ValueTask CompleteInitializationAsync(bool legacyEntry)
         {

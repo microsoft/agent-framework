@@ -52,7 +52,8 @@ New canonical assignments, managed initializations, and migrated entries persist
 metadata. This identifies their sensitivity metadata as belonging to `Local`, not to a same-key raw code-first `Topic` entry. Concurrent
 code-first `Topic` and canonical `Local` assignments can therefore coexist; reads and restoration preserve the
 unrelated raw `Topic` value. Preserve these private metadata scopes together with values in custom checkpoint stores.
-Initialization leaves existing values and their sensitivity metadata unchanged.
+Initialization leaves existing values and their sensitivity metadata unchanged. Legacy initialization preserves the
+stored native payload even when the caller requests a formula or variant value.
 Without recorded canonical ownership, writes still reject a visible same-key unmarked code-first `Topic` entry
 before changing state; reconcile such collisions explicitly.
 

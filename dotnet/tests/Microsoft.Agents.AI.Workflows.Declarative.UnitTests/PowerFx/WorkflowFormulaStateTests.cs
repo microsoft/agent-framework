@@ -876,21 +876,7 @@ public class WorkflowFormulaStateTests
         IWorkflowContext? writerContext = null;
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Workflow workflow = CreateWorkflow(state);
-        Dictionary<CheckpointInfo, JsonElement> stored = [];
-        Mock<ICheckpointStore<JsonElement>> store = new();
-        store.Setup(s => s.CreateCheckpointAsync(It.IsAny<string>(), It.IsAny<JsonElement>(), It.IsAny<CheckpointInfo?>()))
-            .ReturnsAsync((string sessionId, JsonElement value, CheckpointInfo? _) =>
-            {
-                CheckpointInfo info = new(sessionId, Guid.NewGuid().ToString("N"));
-                stored.Add(info, value);
-                return info;
-            });
-        store.Setup(s => s.RetrieveCheckpointAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo>()))
-            .ReturnsAsync((string _, CheckpointInfo info) => stored[info]);
-        store.Setup(s => s.RetrieveIndexAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo?>()))
-            .ReturnsAsync((string sessionId, CheckpointInfo? _) =>
-                stored.Keys.Where(info => string.Equals(info.SessionId, sessionId, StringComparison.Ordinal)).ToArray().AsEnumerable());
-        CheckpointManager checkpoints = CheckpointManager.CreateJson(store.Object, DeclarativeWorkflowJsonOptions.Default);
+        CheckpointManager checkpoints = CreateJsonCheckpointManager();
         var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
         CheckpointInfo? checkpoint = null;
 
@@ -1022,6 +1008,104 @@ public class WorkflowFormulaStateTests
         await restored.RestoreSnapshotAsync(storedContext, CancellationToken.None);
         Assert.Equal("updated", restored.Get("TestValue").ToObject());
         Assert.Equal(SensitivityLevel.Sensitive, restored.GetSensitivity("TestValue"));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CanonicalOwnership_LegacyInitializationPreservesNumericPayloadsAsync(bool offThread, bool formula)
+    {
+        // Arrange
+        object[] values = [42, 42L, 1.5f, 1.5d, 1.5m];
+        bool read = false;
+        bool restored = false;
+        CheckpointManager checkpoints = CreateJsonCheckpointManager();
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? checkpoint = null;
+
+        // Act
+        await using (StreamingRun run = await environment.RunStreamingAsync(CreateWorkflow(), 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint = saved;
+                }
+            }
+        }
+
+        // Assert
+        Assert.True(read);
+        Assert.NotNull(checkpoint);
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(CreateWorkflow(), checkpoint);
+        Assert.True(restored);
+
+        Workflow CreateWorkflow()
+        {
+            WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+            StateExecutor source = new("source", async (context, cancellationToken) =>
+            {
+                for (int i = 0; i < values.Length; i++)
+                {
+                    await context.QueueStateUpdateAsync($"Value{i}", values[i], VariableScopeNames.Topic, cancellationToken);
+                    await context.QueueStateUpdateAsync($"Value{i}", SensitivityLevel.Sensitive,
+                        WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), cancellationToken);
+                }
+            });
+            StateExecutor initializer = new("initializer", async (context, cancellationToken) =>
+            {
+                DeclarativeWorkflowContext target = new(context, state);
+                for (int i = 0; i < values.Length; i++)
+                {
+                    if (formula)
+                    {
+                        await target.ReadOrInitStateAsync<FormulaValue>(
+                            $"Value{i}", () => throw new InvalidOperationException("Existing values must not be initialized."),
+                            VariableScopeNames.Topic, cancellationToken);
+                    }
+                    else
+                    {
+                        PortableValue result = await target.ReadOrInitStateAsync<PortableValue>(
+                            $"Value{i}", () => throw new InvalidOperationException("Existing values must not be initialized."),
+                            VariableScopeNames.Topic, cancellationToken);
+                        Assert.Equal(values[i], result.AsType(values[i].GetType()));
+                    }
+                }
+            });
+            StateExecutor reader = new("reader", async (context, cancellationToken) =>
+            {
+                await AssertValuesAsync(context, cancellationToken);
+                read = true;
+            }, restored: async (context, cancellationToken) =>
+            {
+                await AssertValuesAsync(context, cancellationToken);
+                restored = true;
+            });
+            return new WorkflowBuilder(source).AddEdge(source, initializer).AddEdge(initializer, reader).Build();
+        }
+
+        async Task AssertValuesAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            Assert.Equal(42, await context.ReadStateAsync<int>("Value0", VariableScopeNames.Local, cancellationToken));
+            Assert.Equal(42L, await context.ReadStateAsync<long>("Value1", VariableScopeNames.Local, cancellationToken));
+            Assert.Equal(1.5f, await context.ReadStateAsync<float>("Value2", VariableScopeNames.Local, cancellationToken));
+            Assert.Equal(1.5d, await context.ReadStateAsync<double>("Value3", VariableScopeNames.Local, cancellationToken));
+            Assert.Equal(1.5m, await context.ReadStateAsync<decimal>("Value4", VariableScopeNames.Local, cancellationToken));
+            for (int i = 0; i < values.Length; i++)
+            {
+                EvaluationResult<PortableValue?> result = await context.ReadStateWithSensitivityAsync<PortableValue>(
+                    $"Value{i}", VariableScopeNames.Local, cancellationToken);
+                Assert.NotNull(result.Value);
+                Assert.True(result.Value.TypeId.IsMatch(values[i].GetType()));
+                Assert.Equal(values[i], result.Value.AsType(values[i].GetType()));
+                Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+            }
+            Assert.Empty(await context.ReadStateKeysAsync(VariableScopeNames.Topic, cancellationToken));
+        }
     }
 
     [Theory]
@@ -1219,6 +1303,25 @@ public class WorkflowFormulaStateTests
         Assert.Equal("native", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
         Assert.Equal(2, values[(WorkflowFormulaState.LocalOwnershipScopeName, "TestValue")].As<int>());
         Assert.Equal(SensitivityLevel.None, Assert.Single(sensitivities).Value);
+    }
+
+    private static CheckpointManager CreateJsonCheckpointManager()
+    {
+        Dictionary<CheckpointInfo, JsonElement> stored = [];
+        Mock<ICheckpointStore<JsonElement>> store = new();
+        store.Setup(s => s.CreateCheckpointAsync(It.IsAny<string>(), It.IsAny<JsonElement>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, JsonElement value, CheckpointInfo? _) =>
+            {
+                CheckpointInfo info = new(sessionId, Guid.NewGuid().ToString("N"));
+                stored.Add(info, value);
+                return info;
+            });
+        store.Setup(s => s.RetrieveCheckpointAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo>()))
+            .ReturnsAsync((string _, CheckpointInfo info) => stored[info]);
+        store.Setup(s => s.RetrieveIndexAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, CheckpointInfo? _) =>
+                stored.Keys.Where(info => string.Equals(info.SessionId, sessionId, StringComparison.Ordinal)).ToArray().AsEnumerable());
+        return CheckpointManager.CreateJson(store.Object, DeclarativeWorkflowJsonOptions.Default);
     }
 
     private static async ValueTask SeedLegacyStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
