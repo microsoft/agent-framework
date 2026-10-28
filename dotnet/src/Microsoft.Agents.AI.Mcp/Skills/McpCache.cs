@@ -130,11 +130,8 @@ internal sealed class McpCache<TKey, TValue>
 /// </summary>
 internal sealed class McpCacheLifetime
 {
-    private readonly bool _neverExpires;
-
     private McpCacheLifetime()
     {
-        this._neverExpires = true;
     }
 
     /// <summary>
@@ -166,7 +163,7 @@ internal sealed class McpCacheLifetime
     /// </summary>
     public bool IsFresh(TimeProvider timeProvider)
     {
-        return this._neverExpires || this.TimeToLive > timeProvider.GetElapsedTime(this.ReceivedTimestamp);
+        return ReferenceEquals(this, Infinite) || this.TimeToLive > timeProvider.GetElapsedTime(this.ReceivedTimestamp);
     }
 }
 
