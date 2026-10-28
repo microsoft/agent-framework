@@ -227,7 +227,11 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
 - Gets updated (tainted) when untrusted content enters the context
 - Hidden content does NOT taint the context (it never enters LLM context)
 - Newly supplied caller messages are folded into the label before the first model call. Unstamped assistant/tool data
-  is treated as **UNTRUSTED + PRIVATE**, even when the session already has persisted FIDES state.
+  and data-bearing function results are treated as **UNTRUSTED + PRIVATE**, regardless of the role assigned during
+  input normalization and even when the session already has persisted FIDES state.
+- Occurrence-bound approval requests and responses remain control-plane content. Their embedded function-call
+  arguments still add confidentiality restrictions, and mismatched or unbound controls are reconstructed
+  conservatively.
 - Stored `HistoryProvider` messages are also folded into the label. A restored FIDES label remains authoritative for
   unstamped stored history already represented by that state, while explicit replay labels may still add restrictions.
   If the FIDES state is missing, unstamped assistant/tool history is reconstructed as **UNTRUSTED + PRIVATE**.

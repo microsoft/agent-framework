@@ -92,6 +92,7 @@ from ._approval_execution import (
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import (
     _APPROVAL_DECISION_IS_BOOLEAN_KEY,
+    _mark_backend_snapshot_origin,
     _take_backend_snapshot_messages,
     normalize_agui_input_messages,
 )
@@ -1768,6 +1769,7 @@ async def _resolve_approval_responses(
     pending_response_groups: dict[object, tuple[ApprovalOccurrence, list[Content]]] = {}
     intents_by_response_content_id: dict[int, AuthorizedExecution] = {}
     authenticated_non_grants: list[Content] = []
+    authenticated_rejection_call_ids: set[str] = set()
     for response in approval_responses:
         resp_id = response.id
         function_call_id = response.function_call.call_id if response.function_call else None
@@ -1865,6 +1867,7 @@ async def _resolve_approval_responses(
                 )
         if decision_is_boolean and primary_response.approved is False and not server_label:
             authenticated_non_grants.append(_approval_observer_response(pending_entry))
+            authenticated_rejection_call_ids.add(pending_entry.identity.call_id)
         if (
             (primary_response.approved is True or pending_entry.owner is ApprovalExecutionOwner.DEFERRED)
             and lifecycle is not None
@@ -1905,6 +1908,14 @@ async def _resolve_approval_responses(
         middleware_pipeline._notify_approval_responses(  # pyright: ignore[reportPrivateUsage]
             authenticated_non_grants, session=invocation_session
         )
+
+    if valid_response_content_ids:
+        for message in messages:
+            if message.contents and all(
+                content.type == "function_approval_response" and id(content) in valid_response_content_ids
+                for content in message.contents
+            ):
+                _mark_backend_snapshot_origin(message)
 
     if response_content_ids_to_strip:
         filtered_messages: list[Message] = []
@@ -2079,12 +2090,19 @@ async def _resolve_approval_responses(
     # After _replace_approval_contents_with_results, approved tool calls have their results
     # placed in user messages. OpenAI requires tool results to be in role="tool" messages.
     # This transformation ensures the message history is valid for the LLM provider.
-    _convert_approval_results_to_tool_messages(messages)
+    _convert_approval_results_to_tool_messages(
+        messages,
+        authenticated_rejection_call_ids=authenticated_rejection_call_ids,
+    )
 
     return approved_results
 
 
-def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
+def _convert_approval_results_to_tool_messages(
+    messages: list[Message],
+    *,
+    authenticated_rejection_call_ids: set[str] | None = None,
+) -> None:
     """Convert function_result content in user messages to proper tool messages.
 
     After approval processing, tool results end up in user messages. OpenAI and other
@@ -2099,6 +2117,13 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
     result: list[Message] = []
 
     for msg in messages:
+        if authenticated_rejection_call_ids and any(
+            content.type == "function_result"
+            and content.call_id in authenticated_rejection_call_ids
+            and content.result == "Error: Tool call invocation was rejected by user."
+            for content in msg.contents
+        ):
+            _mark_backend_snapshot_origin(msg)
         if get_role_value(msg) != "user":
             result.append(msg)
             continue
@@ -2117,7 +2142,8 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
 
         # Tool messages first (right after the preceding assistant message per OpenAI requirements)
         for func_result in function_results:
-            result.append(Message(role="tool", contents=[func_result]))
+            tool_message = Message(role="tool", contents=[func_result])
+            result.append(tool_message)
 
         # Then user message with remaining content (if any)
         if other_contents:
@@ -3605,6 +3631,7 @@ async def _run_agent_stream(
         forwarded_executions=forwarded_executions,
     )
     resolved_approval_results = retained_approval_results + newly_resolved_approval_results
+    _mark_fides_state_covered_messages(agent, _take_backend_snapshot_messages(messages))
 
     # Defense-in-depth: replace approval payloads in snapshot with actual tool results
     # so CopilotKit does not re-send stale approval content on subsequent turns.

@@ -4492,6 +4492,16 @@ class _PscSpyHistoryProvider(HistoryProvider):
         return list(self._messages)
 
 
+class _PscWriteOnlyHistoryProvider(_PscSpyHistoryProvider):
+    """Archive provider that supports writes but rejects reads."""
+
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
+        self.get_calls += 1
+        raise RuntimeError("archive read unavailable")
+
+
 class _PscSpyChatClient(MockBaseChatClient):
     """Chat client that scripts a function-call/final-completion sequence.
 
@@ -4787,6 +4797,47 @@ async def test_psc_flag_on_store_false_override_behaves_as_mode_a(stream: bool) 
     assert provider.get_calls >= 1
     # store=False forces local handling, so no real service conversation id.
     assert session.service_session_id is None
+
+
+@pytest.mark.parametrize(
+    ("stores_by_default", "default_options", "service_owns_history"),
+    [
+        pytest.param(False, {"store": True}, True, id="explicit-store"),
+        pytest.param(True, None, True, id="stores-by-default"),
+        pytest.param(True, {"store": False}, False, id="store-false"),
+    ],
+)
+@_psc_stream_params
+async def test_fides_approval_history_respects_effective_service_history_ownership(
+    stream: bool,
+    stores_by_default: bool,
+    default_options: ChatOptions | None,
+    service_owns_history: bool,
+) -> None:
+    """FIDES preparation never reads a write-only archive when the service owns history."""
+    provider = _PscWriteOnlyHistoryProvider()
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=stores_by_default,
+        script=[("text", "done")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+        require_per_service_call_history_persistence=True,
+        default_options=default_options,
+    )
+    session = agent.create_session()
+
+    if service_owns_history:
+        text = await _psc_run(agent, "Continue", session, stream=stream)
+        assert text == "done"
+        assert provider.get_calls == 0
+    else:
+        with pytest.raises(RuntimeError, match="archive read unavailable"):
+            await _psc_run(agent, "Continue", session, stream=stream)
+        assert provider.get_calls == 1
 
 
 @_psc_stream_params

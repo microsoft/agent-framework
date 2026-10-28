@@ -115,6 +115,7 @@ _VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
 _REWRITTEN_ARGUMENT_INDICES_KEY = "_rewritten_argument_indices"
 _SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_security_policy_errors"
 _SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_security_arguments_materialized"
+_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_security_materialized_authority"
 _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
 _MAX_REPLAY_CONTENT_DEPTH = 32
 _REPLAY_STATE_COVERED_KEY = "_agent_framework_fides_replay_state_covered"
@@ -1123,6 +1124,57 @@ def _replayed_content_labels(
     return labels, is_authenticated_hidden_wrapper
 
 
+def _function_call_replay_key(content: Content | None) -> Any | None:
+    """Return a stable key for one replayed function call."""
+    if content is None or content.type != "function_call":
+        return None
+    try:
+        return _argument_authority_token(
+            {
+                "id": content.id,
+                "call_id": content.call_id,
+                "name": content.name,
+                "arguments": content.parse_arguments(),
+            },
+            boundary="replayed approval control",
+        )
+    except (TypeError, ValueError, MiddlewareFailure):
+        return None
+
+
+def _is_bound_approval_control(content: Content) -> bool:
+    """Return whether an approval control carries one occurrence-bound function call."""
+    function_call = content.function_call
+    return (
+        content.type in {"function_approval_request", "function_approval_response"}
+        and content.id is not None
+        and function_call is not None
+        and function_call.id is not None
+        and content.id == function_call.id
+        and _function_call_replay_key(function_call) is not None
+    )
+
+
+def _replayed_function_call_argument_label(content: Content | None) -> ContentLabel | None:
+    """Conservatively retain confidentiality for replayed function-call arguments."""
+    if content is None or content.type != "function_call":
+        return None
+    try:
+        arguments = content.parse_arguments()
+    except (TypeError, ValueError):
+        return ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+            metadata={"source": "invalid_replayed_function_call_arguments"},
+        )
+    if not arguments:
+        return None
+    return ContentLabel(
+        confidentiality=ConfidentialityLabel.PRIVATE,
+        metadata={"source": "replayed_function_call_arguments"},
+    )
+
+
 def _replayed_message_label(
     message: Message,
     *,
@@ -1134,9 +1186,13 @@ def _replayed_message_label(
     content_labels: list[ContentLabel] = []
     has_data_bearing_content = False
     has_authenticated_hidden_content = False
-    control_content_types = {
-        "function_approval_request",
-        "function_approval_response",
+    has_role_independent_untrusted_content = False
+    has_bound_approval_control = False
+    bound_approval_call_keys = {
+        key
+        for content in message.contents
+        if isinstance(content, Content) and _is_bound_approval_control(content)
+        if (key := _function_call_replay_key(content.function_call)) is not None
     }
     for index, content in enumerate(message.contents):
         if not isinstance(content, Content):
@@ -1149,15 +1205,34 @@ def _replayed_message_label(
         )
         content_labels.extend(replayed_labels)
         has_authenticated_hidden_content = has_authenticated_hidden_content or is_authenticated_hidden
-        if content.type not in control_content_types and not is_authenticated_hidden:
+        is_bound_approval_control = _is_bound_approval_control(content)
+        has_bound_approval_control = has_bound_approval_control or is_bound_approval_control
+        is_bound_approval_call = (
+            content.type == "function_call" and _function_call_replay_key(content) in bound_approval_call_keys
+        )
+        argument_label = _replayed_function_call_argument_label(
+            content.function_call if is_bound_approval_control else content
+        )
+        if argument_label is not None:
+            content_labels.append(argument_label)
+        if (
+            content.type == "function_result"
+            or (
+                content.type in {"function_approval_request", "function_approval_response"}
+                and not is_bound_approval_control
+            )
+        ) and not is_authenticated_hidden:
+            has_role_independent_untrusted_content = True
+        if not is_bound_approval_control and not is_bound_approval_call and not is_authenticated_hidden:
             has_data_bearing_content = True
 
     fallback = (
         ContentLabel()
         if (
-            role in {"user", "system"}
+            (role in {"user", "system"} and not has_role_independent_untrusted_content)
             or not reconstruct_unstamped
             or (has_authenticated_hidden_content and not has_data_bearing_content)
+            or (has_bound_approval_control and not has_data_bearing_content)
         )
         else ContentLabel(
             integrity=IntegrityLabel.UNTRUSTED,
@@ -1251,6 +1326,7 @@ _STATE_VARIABLES = "variables"
 _STATE_VARIABLE_METADATA = "variable_metadata"
 _STATE_AUDIT_LOG = "audit_log"
 _STATE_PENDING_APPROVALS = "pending_policy_approvals"
+_STATE_HISTORY_RECONSTRUCTION_COMPLETE = "history_reconstruction_complete"
 _STANDALONE_SESSION_STATE_KEY = "__agent_framework_fides_security__"
 
 
@@ -2204,9 +2280,29 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             )
         return resolved
 
+    def _materialized_authority_token(self, context: FunctionInvocationContext) -> Any:
+        """Bind one fully materialized execution attempt."""
+        return _argument_authority_token(
+            {
+                "name": context.function.name,
+                "arguments": context.arguments,
+                "kwargs": _bindable_runtime_kwargs(context.kwargs),
+            },
+            boundary="materialized security policy",
+        )
+
     def _materialize_arguments(self, context: FunctionInvocationContext) -> None:
         """Apply preflighted hidden values and validate only after policy allows the call."""
         if context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is True:
+            expected_materialized_authority = context.metadata.get(_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY)
+            if (
+                expected_materialized_authority is not None
+                and self._materialized_authority_token(context) != expected_materialized_authority
+            ):
+                raise MiddlewareFailure(
+                    "Function arguments changed after security middleware processed them. "
+                    "Install argument-repair middleware before security middleware."
+                )
             return
 
         policy_errors = context.metadata.get(_SECURITY_POLICY_ERRORS_CONTEXT_KEY)
@@ -2234,6 +2330,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = post_validation_token
             if pre_validation_token != post_validation_token:
                 self._degrade_rewritten_arguments(context)
+        context.metadata[_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY] = self._materialized_authority_token(context)
         context.metadata[_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY] = True
 
     def _get_input_labels(self, context: FunctionInvocationContext) -> list[ContentLabel]:
@@ -2398,6 +2495,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             else:
                 context.kwargs = dict(cast(dict[str, Any], context.metadata["security_original_runtime_kwargs"]))
             context.metadata.pop(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY, None)
             context.metadata.pop(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY, None)
             context.metadata.pop(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY, None)
 
@@ -4131,13 +4229,14 @@ class SecureAgentConfig(ContextProvider):
         """Fold complete loaded history before function approval replay can execute."""
         reconstruct_history_unstamped = context.metadata.get(self._approval_history_metadata_key())
         if not isinstance(reconstruct_history_unstamped, bool):
-            reconstruct_history_unstamped = _STATE_CONTEXT_LABEL not in state
+            reconstruct_history_unstamped = state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
         self._fold_history_labels(
             _SecurityScope(state, scope_id=session.session_id),
             context,
             history_source_ids=self._history_source_ids(agent),
             reconstruct_history_unstamped=reconstruct_history_unstamped,
         )
+        state[_STATE_HISTORY_RECONSTRUCTION_COMPLETE] = True
 
     async def before_run(
         self,
@@ -4159,7 +4258,7 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
-        reconstruct_history_unstamped = _STATE_CONTEXT_LABEL not in state
+        reconstruct_history_unstamped = state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
         context.metadata[self._approval_history_metadata_key()] = reconstruct_history_unstamped
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
@@ -4167,7 +4266,7 @@ class SecureAgentConfig(ContextProvider):
         input_labels = [
             _replayed_message_label(
                 message,
-                reconstruct_unstamped=(reconstruct_history_unstamped if _is_replay_state_covered(message) else True),
+                reconstruct_unstamped=not _is_replay_state_covered(message),
                 scope=scope,
             )
             for message in context.input_messages

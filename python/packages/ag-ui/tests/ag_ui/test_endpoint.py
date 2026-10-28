@@ -7899,7 +7899,8 @@ async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
             "resume": [{"interruptId": replacement_id, "status": "resolved", "payload": {"approved": True}}],
         },
     )
-    results = [event for event in _decode_sse_events(approved) if event.get("type") == "TOOL_CALL_RESULT"]
+    approved_events = _decode_sse_events(approved)
+    results = [event for event in approved_events if event.get("type") == "TOOL_CALL_RESULT"]
     assert [(event["toolCallId"], event["content"]) for event in results] == [("call-guarded", "guarded result")]
     assert executed == ["guarded"]
 
@@ -8423,6 +8424,168 @@ async def test_endpoint_collected_approval_preserves_original_expiration(
     else:
         assert errors
         assert executed == []
+
+
+@pytest.mark.parametrize("mixed_decisions", [False, True], ids=["deny-only", "mixed-approve-deny"])
+async def test_endpoint_fides_authenticated_rejection_preserves_restored_context(
+    streaming_chat_client_stub: Any,
+    mixed_decisions: bool,
+) -> None:
+    """A lifecycle-authenticated denial remains control-plane replay, not external data."""
+    phase = "approval"
+    executed: list[str] = []
+    provider_calls = 0
+
+    def guarded_action() -> str:
+        executed.append("guarded")
+        return "guarded result"
+
+    def guarded_action_two() -> str:
+        executed.append("guarded-two")
+        return "guarded result two"
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal provider_calls
+        del options, kwargs
+        provider_calls += 1
+        if phase == "approval":
+            guarded_calls = [
+                Content.from_function_call(
+                    call_id="guarded-call",
+                    name="guarded_action",
+                    arguments={},
+                )
+            ]
+            if mixed_decisions:
+                guarded_calls.append(
+                    Content.from_function_call(
+                        call_id="guarded-call-two",
+                        name="guarded_action_two",
+                        arguments={},
+                    )
+                )
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=guarded_calls,
+            )
+            return
+        if phase == "denied":
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("denied")])
+            return
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=guarded_action,
+                name="guarded_action",
+                description="Require approval",
+                approval_mode="always_require",
+            ),
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            ),
+            FunctionTool(
+                func=guarded_action_two,
+                name="guarded_action_two",
+                description="Run an already-approved sibling action",
+                approval_mode="never_require",
+            ),
+        ],
+        context_providers=[security],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-authenticated-rejection",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        pause = client.post(
+            "/fides-authenticated-rejection",
+            json={
+                "runId": "run-rejection-pause",
+                "threadId": "thread-authenticated-rejection",
+                "messages": [{"id": "user-1", "role": "user", "content": "Prepare guarded action"}],
+            },
+        )
+        finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+        interrupts = _run_finished_interrupts(finished[-1])
+        assert len(interrupts) == 1
+        approval_ids = {interrupt["toolCallId"]: interrupt["id"] for interrupt in interrupts}
+        resume_entries = [
+            {
+                "interruptId": approval_ids["guarded-call"],
+                "status": "resolved",
+                "payload": {"approved": False},
+            }
+        ]
+
+        phase = "denied"
+        denied = client.post(
+            "/fides-authenticated-rejection",
+            json={
+                "runId": "run-rejection-denied",
+                "threadId": "thread-authenticated-rejection",
+                "messages": [],
+                "resume": resume_entries,
+            },
+        )
+        assert denied.status_code == 200
+        assert not [event for event in _decode_sse_events(denied) if event.get("type") == "RUN_ERROR"]
+        snapshot = await store.get(scope="test", thread_id="thread-authenticated-rejection")
+        assert snapshot is not None
+        assert snapshot.interrupt is None
+        assert snapshot.session_state is not None
+        label = json.loads(snapshot.session_state[security.source_id]["context_label"])
+        assert label["integrity"] == "trusted"
+        assert label["confidentiality"] == "public"
+
+        phase = "protected"
+        protected = client.post(
+            "/fides-authenticated-rejection",
+            json={
+                "runId": "run-rejection-protected",
+                "threadId": "thread-authenticated-rejection",
+                "messages": [{"id": "user-2", "role": "user", "content": "Run protected action"}],
+            },
+        )
+
+    assert protected.status_code == 200
+    assert not [event for event in _decode_sse_events(protected) if event.get("type") == "RUN_ERROR"]
+    assert executed == (["guarded-two", "protected"] if mixed_decisions else ["protected"])
+    assert provider_calls == 4
 
 
 async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(streaming_chat_client_stub):

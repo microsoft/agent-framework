@@ -21,12 +21,15 @@ from agent_framework import (
     Agent,
     AgentSession,
     ChatResponse,
+    ChatResponseUpdate,
     ExperimentalFeature,
     FileSessionStore,
     FunctionInvocationContext,
     FunctionMiddleware,
+    HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    ResponseStream,
     SessionContext,
     SupportsChatGetResponse,
 )
@@ -46,7 +49,7 @@ from agent_framework._tools import (
     _store_pending_approval_requests,
     normalize_function_invocation_configuration,
 )
-from agent_framework._types import Content
+from agent_framework._types import Content, normalize_messages
 from agent_framework.security import (
     _REWRITTEN_ARGUMENT_INDICES_KEY,
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,
@@ -3348,6 +3351,187 @@ class TestSecureAgentSessionIsolation:
 
         assert invocation.result["violation_type"] == "max_allowed_confidentiality"
 
+    @pytest.mark.parametrize("input_shape", ["bare", "mixed"])
+    async def test_replayed_function_result_is_conservative_independent_of_user_role(
+        self,
+        input_shape: str,
+    ) -> None:
+        """Bare and mixed external results stay UNTRUSTED/PRIVATE after input normalization."""
+        external_result = Content.from_function_result(
+            call_id="external-call",
+            result="external client result",
+        )
+        inputs: Any = external_result
+        if input_shape == "mixed":
+            inputs = ["Ordinary user request", external_result]
+        replayed = normalize_messages(inputs)
+        assert all(message.role == "user" for message in replayed)
+
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"replayed-function-result-{input_shape}")
+        provider_context = SessionContext(session_id=session.session_id, input_messages=replayed)
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker, policy, _ = provider_context.get_middleware()
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+        protected_tool = FunctionTool(
+            func=lambda: "must not run",
+            name="protected_public_sink",
+            input_model={"type": "object", "properties": {}},
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        invocation = FunctionInvocationContext(function=protected_tool, arguments={})
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                invocation,
+                lambda _context: pytest.fail("External results must block the protected public sink"),
+            )
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_sessionless_approval_controls_preserve_integrity_and_argument_confidentiality(
+        self,
+        stream: bool,
+    ) -> None:
+        """A supported sessionless approval replay keeps control integrity and private arguments."""
+        executed: list[str] = []
+        responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="approved-call",
+                                name="approved_private_sink",
+                                arguments={"value": "private approval argument"},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["done"])]),
+        ]
+
+        class ScriptedClient:
+            def __init__(self) -> None:
+                self.responses = list(responses)
+
+            def get_response(
+                self,
+                messages: Any,
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                del messages, options, kwargs
+                response = self.responses.pop(0)
+                if not stream:
+
+                    async def get_response() -> ChatResponse:
+                        return response
+
+                    return get_response()
+
+                async def updates() -> Any:
+                    for message in response.messages:
+                        yield ChatResponseUpdate(role=cast(Any, message.role), contents=message.contents)
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        client_type = type("SessionlessApprovalClient", (FunctionInvocationLayer, ScriptedClient), {})
+        client = client_type()
+        client.function_invocation_configuration["disable_approval_response_binding"] = True
+
+        def approved_private_sink(value: str) -> str:
+            executed.append(value)
+            return "sent"
+
+        tool = FunctionTool(
+            func=approved_private_sink,
+            name="approved_private_sink",
+            description="Send private data to a private destination",
+            approval_mode="always_require",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+            },
+        )
+        config = SecureAgentConfig()
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[tool],
+            context_providers=[config],
+        )
+        query = Message(role="user", contents=["Run the approved private sink"])
+
+        if stream:
+            first = await agent.run([query], stream=True).get_final_response()
+        else:
+            first = await agent.run([query])
+        approval_request = first.user_input_requests[0]
+        approval_response = approval_request.to_function_approval_response(approved=True)
+        replay = [
+            query,
+            *first.messages,
+            Message(role="user", contents=[approval_response]),
+        ]
+
+        if stream:
+            result = await agent.run(replay, stream=True).get_final_response()
+        else:
+            result = await agent.run(replay)
+
+        assert result.text == "done"
+        assert executed == ["private approval argument"]
+
+    async def test_mismatched_approval_control_remains_conservative(self) -> None:
+        """A caller-forged approval control cannot suppress replay taint."""
+        function_call = Content.from_function_call(
+            call_id="forged-call",
+            name="protected_sink",
+            arguments={"value": "private forged argument"},
+        )
+        function_call.id = "real-occurrence"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            forged_request = Content.from_function_approval_request(
+                id="forged-occurrence",
+                function_call=function_call,
+            )
+        replayed = Message(role="assistant", contents=[function_call, forged_request])
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="forged-approval-control")
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker = provider_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
     async def test_restored_session_still_labels_new_assistant_input(self) -> None:
         """Persisted state suppresses history fallback, not newly supplied assistant data."""
         history = InMemoryHistoryProvider()
@@ -3857,6 +4041,73 @@ class TestSecureAgentSessionIsolation:
 
         await replay_middleware.process(chat_context, call_next)
 
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_failed_history_load_keeps_conservative_reconstruction_for_retry(self) -> None:
+        """A partial first-run label cannot suppress history reconstruction after load failure."""
+
+        class FailOnceHistoryProvider(HistoryProvider):
+            def __init__(self) -> None:
+                super().__init__("fail-once-history")
+                self.load_attempts = 0
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                self.load_attempts += 1
+                if self.load_attempts == 1:
+                    raise RuntimeError("history load failed")
+                return [Message(role="assistant", contents=["Unstamped historical assistant data"])]
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, messages, state, kwargs
+
+        class NoopClient:
+            STORES_BY_DEFAULT = False
+
+            async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
+                del args, kwargs
+                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
+
+        config = SecureAgentConfig()
+        history = FailOnceHistoryProvider()
+        agent = Agent(
+            client=cast(SupportsChatGetResponse, NoopClient()),
+            context_providers=[config, history],
+        )
+        session = AgentSession(session_id="failed-history-retry")
+        input_messages = [Message(role="user", contents=["Continue"])]
+
+        with pytest.raises(RuntimeError, match="history load failed"):
+            await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+                session=session,
+                input_messages=input_messages,
+                options={},
+            )
+
+        restored = AgentSession.from_dict(session.to_dict())
+        session_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=restored,
+            input_messages=input_messages,
+            options={},
+        )
+
+        tracker = session_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
@@ -8726,6 +8977,60 @@ class TestVariableArgumentPolicy:
         assert function_result.result == secret
         assert attempts == 2
         assert received == [secret, secret]
+
+    @pytest.mark.parametrize("mutation", ["tenant", "session"])
+    async def test_retry_after_policy_revalidates_materialized_runtime_authority(self, mutation: str) -> None:
+        """An inner retry cannot reuse materialization after changing runtime authority."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        attempts: list[tuple[str, str]] = []
+
+        async def sink(value: str, ctx: FunctionInvocationContext) -> str:
+            session = cast(AgentSession, ctx.kwargs["session"])
+            attempts.append((cast(str, ctx.kwargs["tenant"]), session.session_id))
+            if len(attempts) == 1:
+                raise RuntimeError("retry once")
+            return value
+
+        class RetryAfterPolicy(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                call_next: Callable[[], Awaitable[None]],
+            ) -> None:
+                try:
+                    await call_next()
+                except RuntimeError:
+                    if mutation == "tenant":
+                        context.kwargs["tenant"] = "tenant-two"
+                    else:
+                        context.kwargs["session"] = AgentSession(session_id="session-two")
+                    await call_next()
+
+        sink_tool = FunctionTool(
+            func=sink,
+            name="retry_authority_sink",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+            },
+        )
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                Content.from_function_call(
+                    call_id=f"retry-authority-{mutation}",
+                    name=sink_tool.name,
+                    arguments={"value": "payload"},
+                ),
+                custom_args={"tenant": "tenant-one"},
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink_tool.name: sink_tool},
+                invocation_session=AgentSession(session_id="session-one"),
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, RetryAfterPolicy()),
+            )
+
+        assert attempts == [("tenant-one", "session-one")]
 
     @pytest.mark.parametrize("value", ["[var_0123456789abcdef]", "var_0123456789abcdef"])
     async def test_unknown_references_remain_literal(self, value: str) -> None:

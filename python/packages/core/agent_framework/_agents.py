@@ -1615,6 +1615,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session=active_session,
             input_messages=input_messages,
             options=opts,
+            service_stores_history=service_stores_history,
         )
         default_additional_args = chat_options.pop("additional_function_arguments", None)
         if isinstance(default_additional_args, Mapping):
@@ -1780,6 +1781,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session: AgentSession | None,
         input_messages: list[Message] | None = None,
         options: dict[str, Any] | None = None,
+        service_stores_history: bool = False,
     ) -> tuple[SessionContext, dict[str, Any]]:
         """Prepare the session context and messages for agent execution.
 
@@ -1790,6 +1792,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session: The conversation session (None for stateless invocation).
             input_messages: Messages to process.
             options: Runtime options dict (already copied, safe to mutate).
+            service_stores_history: Whether the service owns history for this run.
 
         Returns:
             A tuple containing:
@@ -1850,7 +1853,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when approval history is prepared.")
             approval_history_context = session_context
-            if per_service_call_history_required:
+            if per_service_call_history_required and not service_stores_history:
                 approval_history_context = SessionContext(
                     session_id=provider_session.session_id,
                     service_session_id=provider_session.service_session_id,
