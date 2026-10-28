@@ -11,35 +11,36 @@ part of the public API.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
+import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from agent_framework import FunctionTool
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
+from boto3.session import Session as Boto3Session
+from botocore.config import Config as BotoConfig
 
 from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
 
-try:
-    from boto3.session import Session as Boto3Session
-    from botocore.config import Config as BotoConfig
-except ImportError as e:
-    raise ImportError(
-        "boto3 is required for BedrockKnowledgeBaseTool. Install it with: pip install boto3>=1.43.32"
-    ) from e
-
 logger = logging.getLogger("agent_framework.bedrock")
 
 DEFAULT_REGION = "us-east-1"
 
-# Bedrock RetrievalResultContent.type values whose payload is binary (in byteContent),
-# not text. A text retrieval tool renders these as placeholders. The full enum is
-# TEXT | IMAGE | AUDIO | VIDEO | ROW; ROW is handled separately.
-_BINARY_MEDIA_CONTENT_TYPES = frozenset({"IMAGE", "AUDIO", "VIDEO"})
+# Image formats Bedrock Converse accepts in an image block (see BedrockChatClient). Other
+# image formats are rendered as text rather than injected as Content the chat client drops.
+SUPPORTED_IMAGE_FORMATS = frozenset({"gif", "jpeg", "png", "webp"})
+
+# Bedrock Converse tool names must match this pattern and be at most 64 characters.
+TOOL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+_DATA_URI_PATTERN = re.compile(r"^data:(?P<mime>[^;,]+);base64,(?P<data>.*)$", re.DOTALL)
 
 
 class BedrockKnowledgeBaseSettings(TypedDict, total=False):
@@ -56,7 +57,7 @@ class BedrockKnowledgeBaseSettings(TypedDict, total=False):
     session_token: SecretString | None
 
 
-def _build_kb_client(
+def build_kb_client(
     *,
     client: BaseClient | None,
     boto3_session: Boto3Session | None,
@@ -90,7 +91,7 @@ def _build_kb_client(
     )
     # Same precedence as BedrockChatClient: an explicit/configured region wins over a
     # supplied session's default region, so chat and KB calls target the same region.
-    session_region = boto3_session.region_name if boto3_session is not None else None
+    session_region = _session_region(boto3_session)
     resolved_region = settings.get("region") or session_region or DEFAULT_REGION
 
     if boto3_session is None:
@@ -104,11 +105,38 @@ def _build_kb_client(
             session_kwargs["aws_session_token"] = st.get_secret_value()
         boto3_session = Boto3Session(**session_kwargs)
 
-    return boto3_session.client(
-        "bedrock-agent-runtime",
-        region_name=resolved_region,
-        config=BotoConfig(user_agent_extra=f"{get_user_agent()} bedrock-kb"),
+    # boto3 has no type stubs, so ``Session.client`` is untyped; the declared return
+    # type is what callers rely on.
+    return cast(
+        "BaseClient",
+        boto3_session.client(  # pyright: ignore[reportUnknownMemberType]
+            "bedrock-agent-runtime",
+            region_name=resolved_region,
+            config=BotoConfig(user_agent_extra=f"{get_user_agent()} bedrock-kb"),
+        ),
     )
+
+
+def _session_region(session: Boto3Session | None) -> str | None:
+    """Return a boto3 session's default region (boto3 has no type stubs)."""
+    if session is None:
+        return None
+    return cast("str | None", session.region_name)  # pyright: ignore[reportUnknownMemberType]
+
+
+def client_region(client: BaseClient) -> str | None:
+    """Return the region a botocore client targets (``client.meta`` is untyped)."""
+    return cast("str | None", client.meta.region_name)  # pyright: ignore[reportUnknownMemberType]
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Return ``value`` if it is a dict, else an empty dict (typed view of SDK JSON)."""
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    """Return ``value`` if it is a list, else an empty list (typed view of SDK JSON)."""
+    return cast(list[Any], value) if isinstance(value, list) else []
 
 
 def _get_source_uri(result: dict[str, Any]) -> str:
@@ -150,27 +178,51 @@ def _extract_content_text(result: dict[str, Any]) -> str:
     ``text`` field — its data is in ``row`` as a list of ``{columnName, columnValue}``
     entries — so reading only ``content.text`` would emit an empty passage and discard
     every column value. This renders ROW columns as ``columnName: columnValue`` lines
-    instead. Binary media types (``IMAGE``, ``AUDIO``, ``VIDEO``) carry their payload in
-    ``byteContent`` (not text); since this is a text retrieval tool, each is rendered as
-    a short placeholder rather than an empty string, so it does not surface as a blank
-    numbered result or a source header with no body.
+    instead. ``AUDIO`` and ``VIDEO`` results carry a text ``transcription`` / ``summary``,
+    which is used as the passage text. ``IMAGE`` results carry binary data (see
+    ``_extract_image``); their text form is a short placeholder so they never surface as a
+    blank numbered result or a source header with no body.
     """
-    content = result.get("content", {}) or {}
-    content_type = content.get("type", "TEXT")
+    content = _as_dict(result.get("content"))
+    content_type = content.get("type") or "TEXT"
     if content_type == "ROW":
-        columns = content.get("row", []) or []
-        rendered = [
-            f"{col.get('columnName', '')}: {col.get('columnValue', '')}"
-            for col in columns
-            if col.get("columnName") or col.get("columnValue")
-        ]
+        rendered: list[str] = []
+        for item in _as_list(content.get("row")):
+            col = _as_dict(item)
+            if col.get("columnName") or col.get("columnValue"):
+                rendered.append(f"{col.get('columnName', '')}: {col.get('columnValue', '')}")
         return "\n".join(rendered)
-    if content_type in _BINARY_MEDIA_CONTENT_TYPES:
-        # Binary media payload lives in content.byteContent, not content.text. A text
-        # tool cannot render bytes, so emit a placeholder instead of an empty passage.
-        return f"[{content_type.lower()} content omitted]"
+    if content_type == "AUDIO":
+        return str(_as_dict(content.get("audio")).get("transcription") or "[audio content omitted]")
+    if content_type == "VIDEO":
+        return str(_as_dict(content.get("video")).get("summary") or "[video content omitted]")
+    if content_type == "IMAGE":
+        return str(content.get("text") or "[image content omitted]")
     # Default handling for the TEXT content type.
-    return content.get("text", "")
+    return str(content.get("text") or "")
+
+
+def _extract_image(result: dict[str, Any]) -> tuple[bytes, str] | None:
+    """Return ``(bytes, mime_type)`` for an image result, or ``None``.
+
+    Standard ``Retrieve`` returns image data as a ``data:<mime>;base64,<data>`` URI in
+    ``content.byteContent``. Agentic results return already-decoded bytes in
+    ``content.byteContent`` with a separate ``content.mimeType``.
+    """
+    content = _as_dict(result.get("content"))
+    raw: Any = content.get("byteContent")
+    if not raw:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        mime = str(content.get("mimeType") or "")
+        return (bytes(cast(bytes, raw)), mime) if mime.startswith("image/") else None
+    match = _DATA_URI_PATTERN.match(str(raw))
+    if not match or not match.group("mime").startswith("image/"):
+        return None
+    try:
+        return base64.b64decode(match.group("data"), validate=True), match.group("mime")
+    except (binascii.Error, ValueError):
+        return None
 
 
 @dataclass
@@ -186,6 +238,7 @@ class _KnowledgeBasePassage:
     content: str
     source: str
     score: float | None
+    image: tuple[bytes, str] | None = None
 
 
 def _retrieve_standard_passages(
@@ -202,22 +255,29 @@ def _retrieve_standard_passages(
     passages (the tool) or filter by score and frame them as context (the
     provider) without duplicating the request or the extraction.
     """
-    # bedrock-agent-runtime is dynamically typed by botocore (no stubs); annotate the
+    # bedrock-agent-runtime is dynamically typed by botocore (no stubs); cast the
     # response so the extraction below is typed.
-    response: dict[str, Any] = client.retrieve(  # pyright: ignore[reportUnknownMemberType]
-        knowledgeBaseId=knowledge_base_id,
-        retrievalQuery={"text": query},
-        retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": number_of_results}},
+    response = cast(
+        dict[str, Any],
+        client.retrieve(  # pyright: ignore[reportUnknownMemberType]
+            knowledgeBaseId=knowledge_base_id,
+            retrievalQuery={"text": query},
+            retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": number_of_results}},
+        ),
     )
-    results: list[dict[str, Any]] = response.get("retrievalResults", [])
-    return [
-        _KnowledgeBasePassage(
-            content=_extract_content_text(r),
-            source=_get_source_uri(r),
-            score=r.get("score", 0),
+    passages: list[_KnowledgeBasePassage] = []
+    for item in _as_list(response.get("retrievalResults")):
+        r = _as_dict(item)
+        score = r.get("score")
+        passages.append(
+            _KnowledgeBasePassage(
+                content=_extract_content_text(r),
+                source=_get_source_uri(r),
+                score=float(score) if isinstance(score, (int, float)) else 0.0,
+                image=_extract_image(r),
+            )
         )
-        for r in results
-    ]
+    return passages
 
 
 def _retrieve_agentic_passages(
@@ -234,42 +294,49 @@ def _retrieve_agentic_passages(
     reranking orders results without exposing a numeric score). ``generateResponse`` is
     disabled: callers want passages, not a service-generated answer.
     """
-    response: dict[str, Any] = client.agentic_retrieve_stream(  # pyright: ignore[reportUnknownMemberType]
-        messages=[{"content": {"text": query}, "role": "user"}],
-        generateResponse=False,
-        retrievers=[
-            {
-                "configuration": {
-                    "knowledgeBase": {
-                        "knowledgeBaseId": knowledge_base_id,
-                        "retrievalOverrides": {"maxNumberOfResults": number_of_results},
+    response = cast(
+        dict[str, Any],
+        client.agentic_retrieve_stream(  # pyright: ignore[reportUnknownMemberType]
+            messages=[{"content": {"text": query}, "role": "user"}],
+            generateResponse=False,
+            retrievers=[
+                {
+                    "configuration": {
+                        "knowledgeBase": {
+                            "knowledgeBaseId": knowledge_base_id,
+                            "retrievalOverrides": {"maxNumberOfResults": number_of_results},
+                        }
                     }
                 }
-            }
-        ],
-        agenticRetrieveConfiguration={
-            "foundationModelType": "MANAGED",
-            "rerankingModelType": "MANAGED",
-        },
+            ],
+            agenticRetrieveConfiguration={
+                "foundationModelType": "MANAGED",
+                "rerankingModelType": "MANAGED",
+            },
+        ),
     )
     passages: list[_KnowledgeBasePassage] = []
-    for event in response.get("stream", []):
-        result = event.get("result") if isinstance(event, dict) else None
-        if not result or "results" not in result:
+    for event in _as_list(response.get("stream")):
+        result = _as_dict(_as_dict(event).get("result"))
+        if "results" not in result:
             continue
-        for r in result["results"]:
-            metadata = r.get("metadata", {}) or {}
+        for item in _as_list(result["results"]):
+            r = _as_dict(item)
+            metadata = _as_dict(r.get("metadata"))
+            image = _extract_image(r)
+            text = str(_as_dict(r.get("content")).get("text") or ("[image content omitted]" if image else ""))
             passages.append(
                 _KnowledgeBasePassage(
-                    content=r.get("content", {}).get("text", ""),
-                    source=metadata.get("_source_uri", ""),
+                    content=text,
+                    source=str(metadata.get("_source_uri") or ""),
                     score=None,
+                    image=image,
                 )
             )
     return passages
 
 
-def _retrieve_passages(
+def retrieve_passages(
     client: BaseClient,
     knowledge_base_id: str,
     query: str,
@@ -352,7 +419,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         self.number_of_results = number_of_results
         self.use_agentic_retrieval = use_agentic_retrieval
 
-        self._client = _build_kb_client(
+        self._client = build_kb_client(
             client=client,
             boto3_session=boto3_session,
             region=region_name,
@@ -362,7 +429,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        self.region_name = self._client.meta.region_name
+        self.region_name = client_region(self._client)
 
         super().__init__(
             name=name,
@@ -391,7 +458,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         """
         mark_feature_used(FeatureIndex.BEDROCK)
         passages = await asyncio.to_thread(
-            _retrieve_passages,
+            retrieve_passages,
             self._client,
             self.knowledge_base_id,
             query,
@@ -405,7 +472,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         """Format retrieval passages as a readable string."""
         if not passages:
             return "No relevant documents found."
-        parts = []
+        parts: list[str] = []
         for i, p in enumerate(passages, 1):
             # Standard Retrieve results carry a numeric relevance score; agentic
             # (managed reranking) results do not, so only render it when present (> 0).

@@ -14,33 +14,50 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Literal
 
 from agent_framework import AgentSession, Content, ContextProvider, Message, SessionContext
 from agent_framework._telemetry import mark_feature_used
+from boto3.session import Session as Boto3Session
+
+from ._feature_usage import FeatureIndex
+from ._knowledge_base import (
+    SUPPORTED_IMAGE_FORMATS,
+    TOOL_NAME_PATTERN,
+    BedrockKnowledgeBaseTool,
+    build_kb_client,
+    client_region,
+    retrieve_passages,
+)
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
     from botocore.client import BaseClient
 
-try:
-    from boto3.session import Session as Boto3Session
-except ImportError as e:
-    raise ImportError(
-        "boto3 is required for BedrockKnowledgeBaseProvider. Install it with: pip install boto3>=1.43.32"
-    ) from e
-
-from ._feature_usage import FeatureIndex
-from ._knowledge_base import (
-    _BINARY_MEDIA_CONTENT_TYPES,
-    BedrockKnowledgeBaseTool,
-    _build_kb_client,
-    _retrieve_passages,
-)
-
 logger = logging.getLogger("agent_framework.bedrock")
 
 KnowledgeBaseMode = Literal["inject", "tool", "both"]
+
+DEFAULT_SOURCE_ID = "bedrock-kb"
+DEFAULT_TOOL_NAME = "bedrock_knowledge_base"
+
+
+def _resolve_tool_name(tool_name: str | None, source_id: str) -> str:
+    """Return a Bedrock-valid, per-provider tool name.
+
+    Agents reject duplicate tool names, so each provider's search tool needs a distinct name
+    when several Knowledge Bases are attached. An explicit ``tool_name`` is validated; otherwise
+    the name is derived from the (unique) ``source_id``.
+    """
+    if tool_name is not None:
+        if not TOOL_NAME_PATTERN.match(tool_name):
+            raise ValueError(f"tool_name must match [a-zA-Z0-9_-]{{1,64}}, got {tool_name!r}")
+        return tool_name
+    if source_id == DEFAULT_SOURCE_ID:
+        return DEFAULT_TOOL_NAME
+    suffix = re.sub(r"[^a-zA-Z0-9_-]", "_", source_id).strip("_") or "kb"
+    return f"{DEFAULT_TOOL_NAME}_{suffix}"[:64]
 
 
 class BedrockKnowledgeBaseProvider(ContextProvider):
@@ -78,8 +95,10 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         number_of_results: int = 5,
         min_score: float = 0.0,
         use_agentic_retrieval: bool = True,
-        source_id: str = "bedrock-kb",
+        source_id: str = DEFAULT_SOURCE_ID,
         context_prompt: str | None = None,
+        tool_name: str | None = None,
+        tool_description: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         access_key: str | None = None,
@@ -111,6 +130,13 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
                 reranking) with fallback to standard Retrieve, on both the inject and tool paths.
             source_id: Identifier for this context source.
             context_prompt: Custom prompt to prepend to injected context.
+            tool_name: Name of the KB search tool (tool mode). Defaults to
+                ``bedrock_knowledge_base`` for the default ``source_id``, otherwise to
+                ``bedrock_knowledge_base_<source_id>``, so several providers can be attached
+                to one agent without tool-name collisions. Must match ``[a-zA-Z0-9_-]{1,64}``.
+            tool_description: Description of the KB search tool shown to the model (tool
+                mode). Use it to tell the model what this Knowledge Base contains when an agent
+                has several.
             client: Pre-configured bedrock-agent-runtime client. If given, it is used as-is.
             boto3_session: Optional boto3 Session to build the client from.
             access_key: Optional AWS access key; falls back to ``BEDROCK_ACCESS_KEY``.
@@ -129,7 +155,7 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         self.use_agentic_retrieval = use_agentic_retrieval
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
 
-        self._client = _build_kb_client(
+        self._client = build_kb_client(
             client=client,
             boto3_session=boto3_session,
             region=region_name,
@@ -139,16 +165,21 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        self.region_name = self._client.meta.region_name
+        self.region_name = client_region(self._client)
 
         # Built lazily/once for the tool path so the exposed tool reuses this client.
         self._tool: BedrockKnowledgeBaseTool | None = None
         if self.mode in ("tool", "both"):
+            tool_kwargs: dict[str, Any] = {}
+            if tool_description:
+                tool_kwargs["description"] = tool_description
             self._tool = BedrockKnowledgeBaseTool(
                 knowledge_base_id=self.knowledge_base_id,
                 number_of_results=self.number_of_results,
                 use_agentic_retrieval=self.use_agentic_retrieval,
                 client=self._client,
+                name=_resolve_tool_name(tool_name, source_id),
+                **tool_kwargs,
             )
 
     async def before_run(
@@ -213,12 +244,12 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
     def _retrieve_context_items(self, query: str) -> list[Any]:
         """Retrieve passages and render them as a mixed list of text and multi-modal Content.
 
-        Text (and SQL ``ROW``) passages become delimited strings. Image/audio/video
-        passages become multi-modal ``Content`` (``Content.from_uri`` when a source URI is
-        available, otherwise ``Content.from_data``) so multi-modal models can consume them
-        directly instead of receiving a text placeholder.
+        Text, SQL ``ROW``, audio (transcription) and video (summary) passages become
+        delimited strings. Images in a format Bedrock accepts (gif/jpeg/png/webp) become
+        ``Content.from_data`` with their decoded bytes, which ``BedrockChatClient`` sends as an
+        image block; other images are rendered as a text placeholder with their source.
         """
-        passages = _retrieve_passages(
+        passages = retrieve_passages(
             self._client,
             self.knowledge_base_id,
             query,
@@ -241,16 +272,18 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
 
 
 def _media_content(passage: Any) -> Content | None:
-    """Build a multi-modal ``Content`` for a binary-media passage, or ``None`` for text.
+    """Build an image ``Content`` the Bedrock chat client can serialize, or ``None``.
 
-    A passage whose rendered content is a binary-media placeholder
-    (``"[image content omitted]"`` etc.) is turned into a ``Content.from_uri`` referencing
-    the source when a URI is available. Text/ROW passages return ``None`` (rendered as text).
+    ``BedrockChatClient`` only sends ``data`` images with a concrete gif/jpeg/png/webp MIME
+    type, so the passage's decoded image bytes are wrapped with ``Content.from_data``. Other
+    formats, and non-image passages, return ``None`` and are rendered as text instead.
     """
-    content = passage.content or ""
-    for media_type_name in (t.lower() for t in _BINARY_MEDIA_CONTENT_TYPES):
-        if content == f"[{media_type_name} content omitted]" and passage.source:
-            # e.g. IMAGE -> "image/*". Bedrock does not return an exact mime type here, so
-            # use the broad top-level type; multi-modal models resolve the concrete format.
-            return Content.from_uri(uri=passage.source, media_type=f"{media_type_name}/*")
-    return None
+    image = getattr(passage, "image", None)
+    if not image:
+        return None
+    data, mime = image
+    image_format = mime.partition("/")[2].lower()
+    image_format = "jpeg" if image_format == "jpg" else image_format
+    if image_format not in SUPPORTED_IMAGE_FORMATS:
+        return None
+    return Content.from_data(data=data, media_type=f"image/{image_format}")

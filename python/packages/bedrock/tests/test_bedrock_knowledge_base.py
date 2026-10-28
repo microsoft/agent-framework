@@ -115,7 +115,7 @@ class TestBedrockKnowledgeBaseTool:
     def test_client_uses_get_user_agent(self):
         from agent_framework_bedrock._knowledge_base import BedrockKnowledgeBaseTool
 
-        # The client is built via a boto3 Session (shared _build_kb_client), so patch the
+        # The client is built via a boto3 Session (shared build_kb_client), so patch the
         # Session and assert the user-agent extra is set on the session.client() config.
         with patch("agent_framework_bedrock._knowledge_base.Boto3Session") as mock_session_cls:
             mock_session = MagicMock()
@@ -254,7 +254,7 @@ class TestBedrockKnowledgeBaseProvider:
         from agent_framework_bedrock import BedrockKnowledgeBaseProvider
 
         with pytest.raises(ValueError, match="mode must be"):
-            BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", mode="bogus", client=MagicMock())
+            BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", mode="bogus", client=MagicMock())  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     def test_default_mode_is_both(self):
         from agent_framework_bedrock import BedrockKnowledgeBaseProvider
@@ -365,15 +365,28 @@ class TestBedrockKnowledgeBaseProvider:
         client.retrieve.assert_not_called()
         assert len(context.context_messages) == 0
 
-    def test_multimodal_image_injected_as_content(self):
-        # Comment 2: image/audio/video passages become multi-modal Content, not placeholders.
-        from agent_framework import Content
+    @staticmethod
+    def _inject(provider, query="show me the diagram"):
+        from agent_framework import Message, SessionContext
 
-        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+        context = SessionContext(input_messages=[Message(role="user", contents=[query])])
+        asyncio.run(provider.before_run(agent=MagicMock(), session=MagicMock(), context=context, state={}))
+        return context.context_messages.get(provider.source_id, [])
 
+    def test_retrieved_image_reaches_bedrock_request(self):
+        # Verified through the chat-client serializer: the image bytes must be in the actual
+        # Bedrock Converse request, not just present as a Content object.
+        import base64
+
+        from agent_framework_bedrock import BedrockChatClient, BedrockKnowledgeBaseProvider
+
+        png = b"\x89PNG\r\n\x1a\nfake"
         client = self._standard_client([
             {
-                "content": {"type": "IMAGE", "byteContent": "bytes"},
+                "content": {
+                    "type": "IMAGE",
+                    "byteContent": "data:image/png;base64," + base64.b64encode(png).decode(),
+                },
                 "score": 0.9,
                 "location": {"s3Location": {"uri": "s3://b/pic.png"}},
             }
@@ -381,11 +394,118 @@ class TestBedrockKnowledgeBaseProvider:
         provider = BedrockKnowledgeBaseProvider(
             knowledge_base_id="TEST_KB", mode="inject", use_agentic_retrieval=False, client=client
         )
-        items = provider._retrieve_context_items("show me the diagram")
+        injected = self._inject(provider)
+
+        chat = BedrockChatClient(model="m", region="us-west-2", client=MagicMock())
+        _, conversation = chat._prepare_bedrock_messages(injected)
+        blocks = [b for msg in conversation for b in msg["content"]]
+        images = [b["image"] for b in blocks if "image" in b]
+        assert images == [{"format": "png", "source": {"bytes": png}}]
+
+    def test_agentic_image_bytes_are_injected(self):
+        # Agentic results return decoded bytes plus a separate mimeType.
+        from agent_framework import Content
+
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = MagicMock()
+        client.agentic_retrieve_stream.return_value = {
+            "stream": [
+                {
+                    "result": {
+                        "results": [
+                            {
+                                "content": {"byteContent": b"jpegbytes", "mimeType": "image/jpeg"},
+                                "metadata": {"_source_uri": "s3://b/a.jpg"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", mode="inject", client=client)
+        items = provider._retrieve_context_items("q")
         media = [i for i in items if isinstance(i, Content)]
-        assert media, "expected a multi-modal Content item for the image passage"
-        assert media[0].uri == "s3://b/pic.png"
-        assert media[0].media_type == "image/*"
+        assert len(media) == 1
+        assert media[0].media_type == "image/jpeg"
+
+    def test_unsupported_image_format_falls_back_to_text(self):
+        # Bedrock accepts gif/jpeg/png/webp only; anything else is rendered as text instead of
+        # injected as Content the chat client would silently drop.
+        import base64
+
+        from agent_framework import Content
+
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = self._standard_client([
+            {
+                "content": {
+                    "type": "IMAGE",
+                    "byteContent": "data:image/tiff;base64," + base64.b64encode(b"x").decode(),
+                },
+                "score": 0.9,
+                "location": {"s3Location": {"uri": "s3://b/scan.tiff"}},
+            }
+        ])
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="inject", use_agentic_retrieval=False, client=client
+        )
+        items = provider._retrieve_context_items("q")
+        assert not [i for i in items if isinstance(i, Content)]
+        assert any("[image content omitted]" in str(i) and "s3://b/scan.tiff" in str(i) for i in items)
+
+    def test_audio_result_uses_transcription(self):
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = self._standard_client([
+            {
+                "content": {
+                    "type": "AUDIO",
+                    "audio": {"s3Uri": "s3://b/a.mp3", "transcription": "Hello from audio"},
+                },
+                "score": 0.9,
+                "location": {},
+            }
+        ])
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="inject", use_agentic_retrieval=False, client=client
+        )
+        assert "Hello from audio" in "\n".join(str(i) for i in provider._retrieve_context_items("q"))
+
+    def test_multiple_providers_get_unique_tool_names(self):
+        # Several KB providers on one agent must not produce duplicate tool names, which the
+        # agent rejects with ValueError.
+        from agent_framework._tools import _ensure_unique_tool_names
+
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        default = BedrockKnowledgeBaseProvider(knowledge_base_id="KB1", mode="tool", client=MagicMock())
+        hr = BedrockKnowledgeBaseProvider(knowledge_base_id="KB2", mode="tool", source_id="hr-docs", client=MagicMock())
+        assert default._tool is not None and hr._tool is not None
+        assert default._tool.name == "bedrock_knowledge_base"
+        assert hr._tool.name == "bedrock_knowledge_base_hr-docs"
+        _ensure_unique_tool_names([default._tool, hr._tool])  # does not raise
+
+    def test_tool_name_and_description_overrides(self):
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="KB",
+            mode="tool",
+            tool_name="search_hr_policies",
+            tool_description="Search HR policy documents.",
+            client=MagicMock(),
+        )
+        assert provider._tool is not None
+        assert provider._tool.name == "search_hr_policies"
+        assert provider._tool.description == "Search HR policy documents."
+
+    def test_invalid_tool_name_raises(self):
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        with pytest.raises(ValueError, match="tool_name must match"):
+            BedrockKnowledgeBaseProvider(knowledge_base_id="KB", mode="tool", tool_name="bad name!", client=MagicMock())
 
     def test_agentic_retrieval_used_by_default(self):
         # Comment 4: the provider uses agentic retrieval (with fallback) on the inject path.
@@ -436,12 +556,12 @@ class TestBuildKbClientRegion:
     """Region precedence matches BedrockChatClient: resolved setting > session region > default."""
 
     def test_explicit_region_overrides_session_region(self, monkeypatch):
-        from agent_framework_bedrock._knowledge_base import _build_kb_client
+        from agent_framework_bedrock._knowledge_base import build_kb_client
 
         monkeypatch.delenv("BEDROCK_REGION", raising=False)
         session = MagicMock()
         session.region_name = "eu-west-1"
-        _build_kb_client(
+        build_kb_client(
             client=None,
             boto3_session=session,
             region="us-west-2",
@@ -454,12 +574,12 @@ class TestBuildKbClientRegion:
         assert session.client.call_args.kwargs["region_name"] == "us-west-2"
 
     def test_session_region_used_when_no_region_configured(self, monkeypatch):
-        from agent_framework_bedrock._knowledge_base import _build_kb_client
+        from agent_framework_bedrock._knowledge_base import build_kb_client
 
         monkeypatch.delenv("BEDROCK_REGION", raising=False)
         session = MagicMock()
         session.region_name = "eu-west-1"
-        _build_kb_client(
+        build_kb_client(
             client=None,
             boto3_session=session,
             region=None,
