@@ -8,12 +8,13 @@ import shutil
 import signal
 import sys
 from collections.abc import Awaitable, Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 from agent_framework import Agent, AgentSession, BaseChatClient, ChatResponse, Content, FunctionInvocationLayer, Message
 from agent_framework.security import (
@@ -43,6 +44,10 @@ class _FakeExecProcess:
         communicate_results: list[tuple[bytes, bytes] | BaseException] | None = None,
     ) -> None:
         self.returncode = returncode
+        self._transport = MagicMock(spec=asyncio.SubprocessTransport)
+        self.stdout_transport = MagicMock(spec=asyncio.ReadTransport)
+        self.stderr_transport = MagicMock(spec=asyncio.ReadTransport)
+        self._transport.get_pipe_transport.side_effect = {1: self.stdout_transport, 2: self.stderr_transport}.get
         self.stdout = asyncio.StreamReader()
         self.stderr = asyncio.StreamReader()
         result = (communicate_results or [(b"", b"")])[0]
@@ -251,6 +256,8 @@ async def test_stateless_timeout_or_cancellation_preserves_reader_ownership(canc
             assert result.stdout == "partial" and result.stderr == "error"
         terminate.assert_awaited_once()
     assert all(task.done() for output in created for task in (*output._readers, output._waiter, output._completion))
+    proc.stdout_transport.close.assert_called()
+    proc.stderr_transport.close.assert_called()
 
 
 async def test_persistent_discards_idle_output_before_next_command() -> None:
@@ -294,6 +301,82 @@ async def test_capture_cleanup_does_not_wait_forever_for_inherited_pipe(
     assert output.stdout.format() == ("partial", False)
     assert all(task.done() for task in (*output._readers, output._waiter, output._completion))
     assert "did not close after termination" in caplog.text
+    proc.stdout_transport.close.assert_called()
+    proc.stderr_transport.close.assert_called()
+    await output.close()
+
+
+async def test_capture_closes_real_inherited_pipes_repeatedly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_framework_tools.shell import _capture
+
+    monkeypatch.setattr(_capture, "_DRAIN_GRACE", 0.01)
+    script = (
+        "import subprocess, sys; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)']); "
+        "print(child.pid, flush=True)"
+    )
+    for _ in range(3):
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", script, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        output = _capture._ProcessOutput(proc, max_stdout_bytes=128, max_stderr_bytes=128)
+        child: psutil.Process | None = None
+        try:
+
+            async def wait_for_parent(
+                proc: asyncio.subprocess.Process = proc, output: _capture._ProcessOutput = output
+            ) -> None:
+                while proc.returncode is None or not output.stdout.format()[0]:  # noqa: ASYNC110
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(wait_for_parent(), timeout=5)
+            child = psutil.Process(int(output.stdout.format()[0]))
+            transport = proc._transport  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+            pipes = [transport.get_pipe_transport(fd) for fd in (1, 2)]
+            assert all(pipe is not None for pipe in pipes)
+            handles = [pipe.get_extra_info("pipe") for pipe in pipes if pipe is not None]
+            await output.finish()
+            await output.close()
+
+            async def wait_for_closed_handles(handles: list[Any] = handles) -> None:
+                while not all(handle.closed for handle in handles):  # noqa: ASYNC110
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_closed_handles(), timeout=2)
+            assert all(pipe.is_closing() for pipe in pipes if pipe is not None)
+            assert child.is_running()
+            assert all(task.done() for task in (*output._readers, output._waiter, output._completion))
+        finally:
+            await output.close()
+            if proc.returncode is None:
+                proc.kill()
+            if child is not None:
+                with suppress(psutil.NoSuchProcess):
+                    child.kill()
+            await asyncio.wait_for(proc.wait(), timeout=5)
+
+
+@pytest.mark.parametrize("missing", ["stdout", "stderr"])
+async def test_capture_closes_output_with_other_stream_discarded(missing: str) -> None:
+    from agent_framework_tools.shell._capture import _ProcessOutput
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import sys; print('normal'); print('error', file=sys.stderr)",
+        stdout=asyncio.subprocess.DEVNULL if missing == "stdout" else asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL if missing == "stderr" else asyncio.subprocess.PIPE,
+    )
+    output = _ProcessOutput(proc, max_stdout_bytes=128, max_stderr_bytes=128)
+    try:
+        await output.wait(5)
+        assert output.stdout.format()[0].strip() == ("" if missing == "stdout" else "normal")
+        assert output.stderr.format()[0].strip() == ("" if missing == "stderr" else "error")
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        await output.close()
+        await asyncio.wait_for(proc.wait(), timeout=5)
 
 
 async def test_persistent_reader_failure_stops_session_and_is_reported() -> None:
@@ -477,6 +560,8 @@ async def test_run_stateless_reader_failure_is_reported_and_cleans_up() -> None:
         )
 
     kill_tree.assert_awaited_once_with(proc)
+    proc.stdout_transport.close.assert_called()
+    proc.stderr_transport.close.assert_called()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="persistent-mode sentinel on POSIX")

@@ -46,6 +46,10 @@ class _FakeProcess:
     ) -> None:
         self.pid = pid
         self.returncode = returncode
+        self._transport = MagicMock(spec=asyncio.SubprocessTransport)
+        self.stdout_transport = MagicMock(spec=asyncio.ReadTransport)
+        self.stderr_transport = MagicMock(spec=asyncio.ReadTransport)
+        self._transport.get_pipe_transport.side_effect = {1: self.stdout_transport, 2: self.stderr_transport}.get
         self.stdout = asyncio.StreamReader()
         self.stderr = asyncio.StreamReader()
         self.killed = False
@@ -505,6 +509,8 @@ async def test_docker_stateless_failure_stops_container_and_local_client(failure
             with pytest.raises(OSError, match="pipe failed"):
                 await task
     assert proc.killed
+    proc.stdout_transport.close.assert_called()
+    proc.stderr_transport.close.assert_called()
     assert create_process.await_count == 2
     assert create_process.await_args_list[1].args[1:4] == ("kill", "--signal", "KILL")
 

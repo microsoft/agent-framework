@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import cast
 
 from ._truncate import _OutputBuffer  # pyright: ignore[reportPrivateUsage] - shared shell capture
 
@@ -19,6 +20,7 @@ class _ProcessOutput:  # pyright: ignore[reportUnusedClass] - used by shell exec
     """Own pipe readers independently of a command's execution timeout."""
 
     def __init__(self, proc: asyncio.subprocess.Process, *, max_stdout_bytes: int, max_stderr_bytes: int) -> None:
+        self._proc = proc
         self.stdout = _OutputBuffer(max_stdout_bytes)
         self.stderr = _OutputBuffer(max_stderr_bytes)
         self._readers = (
@@ -55,4 +57,16 @@ class _ProcessOutput:  # pyright: ignore[reportUnusedClass] - used by shell exec
         for task in tasks:
             if not task.done():
                 task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            # Process has no public read-pipe close method. Use its transport
+            # only to close owned output pipes, not to terminate the process.
+            transport = cast(
+                asyncio.SubprocessTransport,
+                self._proc._transport,  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType] - absent from typeshed
+            )
+            for fd in (1, 2):
+                pipe = transport.get_pipe_transport(fd)
+                if pipe is not None:
+                    pipe.close()
