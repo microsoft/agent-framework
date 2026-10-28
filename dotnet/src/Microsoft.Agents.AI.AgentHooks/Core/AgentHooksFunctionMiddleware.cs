@@ -34,7 +34,9 @@ namespace Microsoft.Agents.AI.AgentHooks;
 /// Approval flows pass through structurally: the framework requests tool approvals
 /// before ever invoking the wrapped function, so an unapproved tool never reaches this
 /// seam, and the approved replay enters through <c>pre_tool_call</c> when it actually
-/// executes.
+/// executes. Because approval resolves above this seam, a <c>pre_tool_call</c> transform
+/// can still rewrite the arguments here, so the values that execute are not necessarily
+/// the values that were surfaced for approval.
 /// </para>
 /// <para>
 /// Known limitation (service-side tool execution): tools executed by the model provider
@@ -101,10 +103,11 @@ internal static class AgentHooksFunctionMiddleware
             args = ToolArgumentsCodec.WriteBack(context.Arguments, args, outcome.Target, out var merged);
             if (merged is not null)
             {
-                // The transform rewrote (some of) the arguments: execute the approved
-                // values, keeping untouched keys' original native values. The argument
-                // dictionary is mutated in place to preserve any framework-managed
-                // context riding on it.
+                // The transform rewrote (some of) the arguments: execute the transformed
+                // values, keeping untouched keys' original native values. These may differ
+                // from the values surfaced for approval, which resolves above this seam.
+                // The argument dictionary is mutated in place to preserve any
+                // framework-managed context riding on it.
                 foreach (var key in context.Arguments.Keys.ToArray())
                 {
                     if (!merged.ContainsKey(key))
