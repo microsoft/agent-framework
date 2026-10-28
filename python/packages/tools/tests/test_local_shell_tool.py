@@ -315,6 +315,15 @@ async def test_capture_closes_real_inherited_pipes_repeatedly(monkeypatch: pytes
         "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)']); "
         "print(child.pid, flush=True)"
     )
+
+    def handle_is_closed(handle: Any) -> bool:
+        # Windows PipeHandle has no .closed; both platforms reject fileno() after closure.
+        try:
+            handle.fileno()
+        except ValueError:
+            return True
+        return False
+
     for _ in range(3):
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-c", script, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -339,7 +348,7 @@ async def test_capture_closes_real_inherited_pipes_repeatedly(monkeypatch: pytes
             await output.close()
 
             async def wait_for_closed_handles(handles: list[Any] = handles) -> None:
-                while not all(handle.closed for handle in handles):  # noqa: ASYNC110
+                while not all(handle_is_closed(handle) for handle in handles):  # noqa: ASYNC110
                     await asyncio.sleep(0)
 
             await asyncio.wait_for(wait_for_closed_handles(), timeout=2)
