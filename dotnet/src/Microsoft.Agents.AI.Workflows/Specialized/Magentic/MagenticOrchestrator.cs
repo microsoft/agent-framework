@@ -154,6 +154,19 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             throw new InvalidOperationException("This Magentic orchestration is not waiting for a plan review response.");
         }
 
+        // A correlated response can arrive with ordinary messages but without a turn token
+        // to consume them. Discard that buffer before resuming or revising the plan.
+        await this.ProcessTurnMessagesAsync(async (messages, workflowContext, token) =>
+        {
+            if (messages.Count > 0)
+            {
+                await workflowContext.AddEventAsync(new WorkflowWarningEvent("Magentic Orchestrator is waiting for a plan review response; buffered ordinary messages were ignored."), token)
+                                     .ConfigureAwait(false);
+            }
+
+            return [];
+        }, context, cancellationToken).ConfigureAwait(false);
+
         if (response.IsApproved)
         {
             this._isAwaitingPlanReview = false;
