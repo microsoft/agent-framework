@@ -41,11 +41,11 @@ internal sealed class McpSkillsLoader : IDisposable
 {
     private const string CatalogKey = "catalog";
 
+    private readonly TimeProvider _timeProvider;
     private readonly Func<CancellationToken, Task<McpCacheEntry<IList<AgentSkill>>>> _fetchSkills;
     private readonly Func<string, CancellationToken, Task<AgentMcpSkill?>> _fetchSkill;
     private readonly McpCache<string, IList<AgentSkill>> _catalogCache;
     private readonly ConcurrentDictionary<AgentMcpSkill, byte> _skillsToRefresh = new();
-    private readonly SemaphoreSlim _discoveryGate = new(1, 1);
     private bool _disposed;
 
     /// <summary>
@@ -59,7 +59,7 @@ internal sealed class McpSkillsLoader : IDisposable
         Func<CancellationToken, Task<McpCacheEntry<IList<AgentSkill>>>> fetchSkills,
         Func<string, CancellationToken, Task<AgentMcpSkill?>> fetchSkill)
     {
-        _ = Throw.IfNull(timeProvider);
+        this._timeProvider = Throw.IfNull(timeProvider);
         this._fetchSkills = Throw.IfNull(fetchSkills);
         this._fetchSkill = Throw.IfNull(fetchSkill);
         this._catalogCache = new(timeProvider, StringComparer.Ordinal);
@@ -75,39 +75,15 @@ internal sealed class McpSkillsLoader : IDisposable
         ObjectDisposedException.ThrowIf(this._disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Reuse the catalog only while every page is fresh.
-        if (this._catalogCache.Get(CatalogKey) is { } cached && this._catalogCache.IsFresh(cached) && this._skillsToRefresh.IsEmpty)
-        {
-            return cached.Value;
-        }
+        IList<AgentSkill> skills = await this._catalogCache.GetOrRefreshAsync(
+            CatalogKey,
+            this.RefreshCatalogAsync,
+            cancellationToken,
+            needsRefresh: _ => !this._skillsToRefresh.IsEmpty).ConfigureAwait(false);
 
-        // Allow only one caller to discover or refresh the catalog at a time.
-        await this._discoveryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        this.RemoveObsoleteRefreshRequests();
 
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Another caller may have refreshed the cache while this caller waited.
-            cached = this._catalogCache.Get(CatalogKey);
-            if (cached is not null && this._catalogCache.IsFresh(cached))
-            {
-                return await this.RefreshPendingSkillsAsync(cached, cancellationToken).ConfigureAwait(false);
-            }
-
-            // Reloading all pages also updates queued skills, so there is no need to refresh them separately.
-            var skillsEntry = await this._fetchSkills(cancellationToken).ConfigureAwait(false);
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            this.UpdateCatalogCache(skillsEntry);
-
-            return skillsEntry.Value;
-        }
-        finally
-        {
-            this._discoveryGate.Release();
-        }
+        return skills;
     }
 
     /// <summary>
@@ -123,10 +99,24 @@ internal sealed class McpSkillsLoader : IDisposable
         _ = Throw.IfNull(skill);
 
         // Ignore refresh requests after disposal or when the skill is no longer in the cache.
-        if (!this._disposed && this._catalogCache.Get(CatalogKey)?.Value.Contains(skill) == true)
+        if (!this._disposed && this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
         {
             this._skillsToRefresh.TryAdd(skill, 0);
         }
+    }
+
+    /// <summary>
+    /// Fetches the complete list if it is missing or expired, or applies queued skill refreshes to a fresh list.
+    /// </summary>
+    private async ValueTask<McpCacheEntry<IList<AgentSkill>>> RefreshCatalogAsync(McpCacheEntry<IList<AgentSkill>>? cached, CancellationToken cancellationToken)
+    {
+        if (cached?.Lifetime.IsFresh(this._timeProvider) == true)
+        {
+            return await this.RefreshPendingSkillsAsync(cached, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Reloading all pages also updates queued skills, so there is no need to refresh them separately.
+        return await this._fetchSkills(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -136,7 +126,7 @@ internal sealed class McpSkillsLoader : IDisposable
     /// Replaces updated skills and removes missing ones in a new list, keeping the cached list's expiration time.
     /// If a fetch fails or is canceled, the previous list and pending requests remain available for retry.
     /// </remarks>
-    private async Task<IList<AgentSkill>> RefreshPendingSkillsAsync(McpCacheEntry<IList<AgentSkill>> cached, CancellationToken cancellationToken)
+    private async Task<McpCacheEntry<IList<AgentSkill>>> RefreshPendingSkillsAsync(McpCacheEntry<IList<AgentSkill>> cached, CancellationToken cancellationToken)
     {
         List<AgentSkill>? updated = null;
 
@@ -170,30 +160,26 @@ internal sealed class McpSkillsLoader : IDisposable
 
         if (updated is null)
         {
-            return cached.Value;
+            return cached;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
 
         // Commit only after every refresh succeeds; failures leave the catalog and pending work intact.
         // Targeted refreshes do not renew the listing-page lifetime.
-        this.UpdateCatalogCache(new(updated, cached.Lifetime));
-
-        return updated;
+        return new(updated, cached.Lifetime);
     }
 
     /// <summary>
-    /// Stores the skill list and removes pending refresh requests for skill objects no longer in that list.
+    /// Removes pending refresh requests for skill objects no longer in the published list.
     /// </summary>
-    private void UpdateCatalogCache(McpCacheEntry<IList<AgentSkill>> entry)
+    private void RemoveObsoleteRefreshRequests()
     {
-        this._catalogCache.Set(CatalogKey, entry);
-
         // Keep requests for skills still in the list: they may have been queued during the refresh
         // or just after the new catalog was stored.
         foreach (AgentMcpSkill skill in this._skillsToRefresh.Keys)
         {
-            if (!entry.Value.Contains(skill))
+            if (!this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
             {
                 this._skillsToRefresh.TryRemove(skill, out _);
             }
@@ -208,7 +194,6 @@ internal sealed class McpSkillsLoader : IDisposable
             this._disposed = true;
             this._catalogCache.Clear();
             this._skillsToRefresh.Clear();
-            this._discoveryGate.Dispose();
         }
     }
 }

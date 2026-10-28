@@ -3,7 +3,6 @@
 using System;
 using System.Buffers;
 using System.Buffers.Text;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -52,7 +51,6 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     private readonly McpSkillsLoader _skillsLoader;
     private readonly TimeProvider _timeProvider;
     private readonly McpCache<string, ResourceContents> _resourceCache;
-    private readonly ConcurrentDictionary<string, ReadQueue> _resourceReads = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkill"/> class.
@@ -161,87 +159,53 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// Reads of the same resource wait for earlier reads to finish.
     /// A size or content hash mismatch queues a skill refresh and returns previously verified content when available.
     /// </remarks>
-    private async ValueTask<ResourceContents> GetResourceContentAsync(McpSkillResourceEntry resource, CancellationToken cancellationToken)
+    private ValueTask<ResourceContents> GetResourceContentAsync(McpSkillResourceEntry resource, CancellationToken cancellationToken)
     {
-        // Wait for any earlier read of this resource to finish before checking the cache or fetching it.
-        ReadQueue queue = this._resourceReads.GetOrAdd(resource.Uri, static _ => new ReadQueue());
-
-        // Later readers wait for this signal. Releasing it schedules their continuation.
-        TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        // Join the end of the queue and get the task to wait for in one atomic step.
-        // The next reader will wait for our completion signal.
-        Task previous = Interlocked.Exchange(ref queue.Tail, completion.Task);
-
-        try
-        {
-            // Wait for our turn.
-            await previous.WaitAsync(cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Check after waiting: the previous reader may have cached fresh content.
-            var cached = this._resourceCache.Get(resource.Uri);
-            if (cached is not null && this._resourceCache.IsFresh(cached))
-            {
-                return cached.Value;
-            }
-
-#pragma warning disable CA2234 // Preserve the exact resource URI advertised by the server.
-            ReadResourceResult response = await this._client.ReadResourceAsync(resource.Uri, cancellationToken: cancellationToken).ConfigureAwait(false);
-#pragma warning restore CA2234
-
-            // Validation time consumes the TTL; network request time does not.
-            long receivedTimestamp = this._timeProvider.GetTimestamp();
-
-            ResourceContents content = this.GetValidatedResourceContent(resource, response);
-            if (!this.TryVerifyResourceIntegrity(resource, content, out string? mismatch))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                // The resource may have changed; request a new manifest without changing this skill's held manifest.
-                this._skillsLoader.QueueSkillRefresh(this);
-                LogResourceIntegrityMismatch(this._logger, resource.Uri, this.Uri, mismatch);
-                cancellationToken.ThrowIfCancellationRequested();
-
-                // Without previously verified content, there is no safe fallback.
-                if (cached is null)
-                {
-                    throw new InvalidOperationException($"Resource '{resource.Uri}' has a {mismatch} that differs from the resource manifest.");
-                }
-
-                // Stale content still matches the held manifest. Do not replace the entry or renew its TTL.
-                return cached.Value;
-            }
-
-            // Only the skill's SKILL.md must have frontmatter matching the listed name and description.
-            if (string.Equals(resource.Uri, this.Uri, StringComparison.Ordinal))
-            {
-                this.VerifyInstructions(content);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Cache only fully validated content, with its TTL starting at response receipt.
-            this._resourceCache.Set(resource.Uri, new(content, new(receivedTimestamp, response.TimeToLive.GetValueOrDefault())));
-
-            return content;
-        }
-        finally
-        {
-            // Release later readers even if this read fails or is canceled.
-            _ = CompleteQueuedReadAsync(previous, completion);
-        }
+        return this._resourceCache.GetOrRefreshAsync(
+            resource.Uri,
+            (cached, token) => this.FetchResourceContentAsync(resource, cached, token),
+            cancellationToken);
     }
 
     /// <summary>
-    /// Releases the next reader without letting it skip an earlier read.
+    /// Fetches and validates resource content, returning the previous entry on a size or content hash mismatch when available.
     /// </summary>
-    private static async Task CompleteQueuedReadAsync(Task previous, TaskCompletionSource<bool> completion)
+    private async ValueTask<McpCacheEntry<ResourceContents>> FetchResourceContentAsync(McpSkillResourceEntry resource, McpCacheEntry<ResourceContents>? cached, CancellationToken cancellationToken)
     {
-        // A canceled waiter must not let later reads overtake its predecessor.
-        // Queue tasks only signal completion; fetch failures stay with their caller.
-        await previous.ConfigureAwait(false);
-        completion.SetResult(true);
+#pragma warning disable CA2234 // Preserve the exact resource URI advertised by the server.
+        ReadResourceResult response = await this._client.ReadResourceAsync(resource.Uri, cancellationToken: cancellationToken).ConfigureAwait(false);
+#pragma warning restore CA2234
+
+        // Validation time consumes the TTL; network request time does not.
+        long receivedTimestamp = this._timeProvider.GetTimestamp();
+
+        ResourceContents content = this.GetValidatedResourceContent(resource, response);
+        if (!this.TryVerifyResourceIntegrity(resource, content, out string? mismatch))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // The resource may have changed; request a new manifest without changing this skill's held manifest.
+            this._skillsLoader.QueueSkillRefresh(this);
+            LogResourceIntegrityMismatch(this._logger, resource.Uri, this.Uri, mismatch);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Without previously verified content, there is no safe fallback.
+            if (cached is null)
+            {
+                throw new InvalidOperationException($"Resource '{resource.Uri}' has a {mismatch} that differs from the resource manifest.");
+            }
+
+            // Stale content still matches the held manifest. Keep its original lifetime.
+            return cached;
+        }
+
+        // Only the skill's SKILL.md must have frontmatter matching the listed name and description.
+        if (string.Equals(resource.Uri, this.Uri, StringComparison.Ordinal))
+        {
+            this.VerifyInstructions(content);
+        }
+
+        return new(content, new(receivedTimestamp, response.TimeToLive.GetValueOrDefault()));
     }
 
     /// <summary>
@@ -481,13 +445,5 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Tracks the last queued read so the next read can wait for it.
-    /// </summary>
-    private sealed class ReadQueue
-    {
-        public Task Tail = Task.CompletedTask;
     }
 }
