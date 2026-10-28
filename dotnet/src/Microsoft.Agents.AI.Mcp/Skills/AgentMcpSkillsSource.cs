@@ -32,7 +32,8 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// The skill list may span multiple response pages, each with a time to live (TTL).
 /// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
-/// A missing, zero, or negative page TTL causes the list to be fetched on every call.
+/// By default, a missing, zero, or negative page TTL causes the list to be fetched on every call.
+/// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override page and resource TTLs.
 /// Disable other caches around this source, including the builder's cache through
 /// <see cref="AgentSkillsProviderBuilder.DisableCaching"/>, so this source can check expiration on each call.
 /// </para>
@@ -45,7 +46,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Each skill object caches resource content separately from the skill list, using each resource response's TTL.
-/// Expired resource content is fetched again on access. A missing, zero, or negative resource TTL
+/// Expired resource content is fetched again on access. By default, a missing, zero, or negative resource TTL
 /// causes content to be fetched on every access. All TTLs start when responses arrive, before validation.
 /// </para>
 /// <para>
@@ -102,13 +103,14 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
     private readonly McpSkillsLoader _skillsLoader;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
     /// <param name="loggerFactory">Optional factory for diagnostic logging.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
@@ -126,6 +128,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = Throw.IfNull(timeProvider);
+        this._ttlResolver = options?.TtlResolver;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
@@ -230,7 +233,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 
         List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._skillsLoader, this._logger, this._maxResourceSizeBytes, this._timeProvider);
+        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._skillsLoader, this._logger, this._maxResourceSizeBytes, this._timeProvider, this._ttlResolver);
     }
 
     /// <summary>
@@ -318,13 +321,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
                 throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
             }
 
-            TimeSpan pageTimeToLive = result.TimeToLive.GetValueOrDefault();
-            if (pageTimeToLive < TimeSpan.Zero)
-            {
-                pageTimeToLive = TimeSpan.Zero;
-            }
-
-            pageLifetimes.Add(new McpCacheLifetime(receivedTimestamp, pageTimeToLive));
+            pageLifetimes.Add(McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
 
             cursor = result.NextCursor;
             if (cursor is not null && !cursors.Add(cursor))

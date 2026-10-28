@@ -131,6 +131,15 @@ internal sealed class McpCache<TKey, TValue>
 internal sealed class McpCacheLifetime
 {
     /// <summary>
+    /// Creates a lifetime using the response timestamp and the resolved or server-provided TTL.
+    /// </summary>
+    public static McpCacheLifetime Create(long receivedTimestamp, TimeSpan? serverTimeToLive, Func<TimeSpan?, TimeSpan>? ttlResolver)
+    {
+        TimeSpan timeToLive = ttlResolver is null ? serverTimeToLive.GetValueOrDefault() : ttlResolver(serverTimeToLive);
+        return new(receivedTimestamp, timeToLive > TimeSpan.Zero ? timeToLive : TimeSpan.Zero);
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="McpCacheLifetime"/> class.
     /// </summary>
     public McpCacheLifetime(long receivedTimestamp, TimeSpan timeToLive)
