@@ -27,6 +27,7 @@ from agent_framework import (
     SlidingWindowStrategy,
     SummarizationStrategy,
     SupportsChatGetResponse,
+    TokenBudgetComposedStrategy,
     ToolResultCompactionStrategy,
     TruncationStrategy,
     annotate_message_groups,
@@ -379,15 +380,36 @@ async def test_nested_agent_triggered_compaction_rejects_service_storage(
 ) -> None:
     class StrategyWrapper:
         def __init__(self, strategy: Any) -> None:
-            self.strategy = strategy
+            self.inner = strategy
+            self.requires_client_managed_history = strategy.requires_client_managed_history
 
         async def __call__(self, messages: list[Message]) -> bool:
-            return await self.strategy(messages)
+            return await self.inner(messages)
 
     chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     strategy = StrategyWrapper(AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1)))
 
+    with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["Hello"])],
+            compaction_strategy=strategy,
+        )
+
+
+async def test_composed_agent_triggered_compaction_rejects_service_storage(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tokenizer = _FixedTokenizer(1)
+    strategy = TokenBudgetComposedStrategy(
+        token_budget=1,
+        tokenizer=tokenizer,
+        strategies=[AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))],
+    )
+
+    assert strategy.requires_client_managed_history is True
     with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
         await chat_client_base.get_response(
             [Message(role="user", contents=["Hello"])],

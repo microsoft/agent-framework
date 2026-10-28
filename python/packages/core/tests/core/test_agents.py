@@ -3567,6 +3567,9 @@ async def test_unload_skills_uses_middleware_rewritten_selection(
             if context.function.name == strategy.tool.name:
                 context.arguments = {"skill_name": "excel"}
             await call_next()
+            if context.function.name == strategy.tool.name:
+                assert isinstance(context.result, list)
+                context.result.append(Content.from_text("middleware note"))
 
     chat_client_base.run_responses = [
         ChatResponse(

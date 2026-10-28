@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
@@ -110,7 +111,12 @@ class TokenizerProtocol(Protocol):
 
 @runtime_checkable
 class CompactionStrategy(Protocol):
-    """Protocol for in-place message compaction strategies."""
+    """Protocol for in-place message compaction strategies.
+
+    Strategies that require local/client-managed message history should expose
+    ``requires_client_managed_history = True``. Wrappers and compositions must
+    propagate that optional capability from nested strategies.
+    """
 
     async def __call__(self, messages: list[Message]) -> bool:
         """Mutate message annotations and/or list contents in place.
@@ -1211,40 +1217,34 @@ def _function_call_result_pairs(
         if include_excluded
         else [message for message in messages if not message.additional_properties.get(EXCLUDED_KEY, False)]
     )
-    open_calls_by_call_id: dict[str, list[Content]] = {}
-    open_calls_by_occurrence_id: dict[str, list[Content]] = {}
+    open_calls_by_call_id: dict[str, deque[Content]] = {}
+    open_calls_by_occurrence_id: dict[tuple[str, str], deque[Content]] = {}
     closed_call_identities: set[int] = set()
     pairs: list[tuple[Content, Content]] = []
 
     for message in candidate_messages:
         for content in message.contents:
             if content.type == "function_call" and content.call_id:
-                open_calls_by_call_id.setdefault(content.call_id, []).append(content)
+                open_calls_by_call_id.setdefault(content.call_id, deque()).append(content)
                 if content.id:
-                    open_calls_by_occurrence_id.setdefault(content.id, []).append(content)
+                    open_calls_by_occurrence_id.setdefault((content.id, content.call_id), deque()).append(content)
                 continue
             if content.type != "function_result" or not content.call_id:
                 continue
 
             matched_call: Content | None = None
             if content.id is not None:
-                matched_call = next(
-                    (
-                        call
-                        for call in open_calls_by_occurrence_id.get(content.id, ())
-                        if id(call) not in closed_call_identities and call.call_id == content.call_id
-                    ),
-                    None,
-                )
+                occurrence_queue = open_calls_by_occurrence_id.get((content.id, content.call_id))
+                while occurrence_queue and id(occurrence_queue[0]) in closed_call_identities:
+                    occurrence_queue.popleft()
+                if occurrence_queue:
+                    matched_call = occurrence_queue.popleft()
             else:
-                matched_call = next(
-                    (
-                        call
-                        for call in open_calls_by_call_id.get(content.call_id, ())
-                        if id(call) not in closed_call_identities
-                    ),
-                    None,
-                )
+                call_queue = open_calls_by_call_id.get(content.call_id)
+                while call_queue and id(call_queue[0]) in closed_call_identities:
+                    call_queue.popleft()
+                if call_queue:
+                    matched_call = call_queue.popleft()
             if matched_call is None:
                 continue
 
@@ -1291,37 +1291,8 @@ def _completed_function_calls(
     ]
 
 
-def _contains_agent_triggered_compaction_strategy(
-    strategy: object | None,
-    *,
-    _seen: set[int] | None = None,
-) -> bool:
-    if strategy is None:
-        return False
-    seen: set[int] = _seen if _seen is not None else set()
-    strategy_id = id(strategy)
-    if strategy_id in seen:
-        return False
-    seen.add(strategy_id)
-
-    if isinstance(strategy, AgentTriggeredCompactionStrategy):
-        return True
-
-    nested_strategy: object | None = getattr(strategy, "strategy", None)
-    if (
-        nested_strategy is not None
-        and nested_strategy is not strategy
-        and _contains_agent_triggered_compaction_strategy(nested_strategy, _seen=seen)
-    ):
-        return True
-
-    nested_strategies: object = getattr(strategy, "strategies", None)
-    if isinstance(nested_strategies, Sequence) and not isinstance(nested_strategies, (str, bytes, bytearray)):
-        return any(
-            _contains_agent_triggered_compaction_strategy(nested, _seen=seen)
-            for nested in cast("Sequence[object]", nested_strategies)
-        )
-    return False
+def _requires_client_managed_history(strategy: object | None) -> bool:
+    return getattr(strategy, "requires_client_managed_history", False) is True
 
 
 @experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
@@ -1345,6 +1316,7 @@ class AgentTriggeredCompactionStrategy:
     """
 
     DEFAULT_TOOL_NAME: Final[str] = "compact_context"
+    requires_client_managed_history = True
 
     def __init__(
         self,
@@ -1677,9 +1649,9 @@ class UnloadSkillsCompactionStrategy:
         requested_names: set[str] = set()
         for _, result in requests:
             selections = [
-                item.additional_properties.get(_SKILL_UNLOAD_SELECTION_KEY)
+                item.additional_properties[_SKILL_UNLOAD_SELECTION_KEY]
                 for item in (result.items or [])
-                if item.type == "text"
+                if item.type == "text" and _SKILL_UNLOAD_SELECTION_KEY in item.additional_properties
             ]
             if len(selections) != 1 or not isinstance(selections[0], list):
                 return set()
@@ -2532,6 +2504,11 @@ class TokenBudgetComposedStrategy:
         self.tokenizer = tokenizer
         self.strategies = list(strategies)
         self.early_stop = early_stop
+
+    @property
+    def requires_client_managed_history(self) -> bool:
+        """Return whether any nested strategy requires client-managed history."""
+        return any(_requires_client_managed_history(strategy) for strategy in self.strategies)
 
     async def __call__(self, messages: list[Message]) -> bool:
         annotate_message_groups(messages)

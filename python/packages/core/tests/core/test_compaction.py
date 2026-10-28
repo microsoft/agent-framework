@@ -42,6 +42,7 @@ from agent_framework._compaction import (
     _SKILL_UNLOAD_SELECTION_KEY,
     _completed_function_calls,
     _format_summary_message,
+    _function_call_result_pairs,
     _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
@@ -1280,6 +1281,22 @@ def test_completed_function_calls_uses_fifo_for_idless_reused_call_id() -> None:
     completed = _completed_function_calls(messages, tool_name="compact_context")
 
     assert completed == [first_call]
+
+
+def test_function_call_result_pairs_scales_linearly_for_idless_reused_call_id() -> None:
+    calls = [
+        Content.from_function_call(call_id="shared", name="compact_context", arguments={"index": index})
+        for index in range(500)
+    ]
+    results = [Content.from_function_result(call_id="shared", result=f"result-{index}") for index in range(500)]
+    messages = [
+        Message(role="assistant", contents=calls),
+        Message(role="tool", contents=results),
+    ]
+
+    pairs = _function_call_result_pairs(messages)
+
+    assert pairs == list(zip(calls, results))
 
 
 def test_agent_triggered_compaction_tool_describes_reason_parameter() -> None:

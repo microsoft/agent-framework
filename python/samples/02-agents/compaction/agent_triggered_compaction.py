@@ -55,6 +55,7 @@ class InspectingCompactionStrategy:
 
     def __init__(self, strategy: CompactionStrategy) -> None:
         self.strategy = strategy
+        self.requires_client_managed_history = getattr(strategy, "requires_client_managed_history", False)
 
     async def __call__(self, messages: list[Message]) -> bool:
         changed = await self.strategy(messages)

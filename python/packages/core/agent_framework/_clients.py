@@ -413,10 +413,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     ) -> list[Message]:
         prepared_messages = list(messages)
         if compaction_strategy is not None:
-            from ._compaction import _contains_agent_triggered_compaction_strategy  # pyright: ignore[reportPrivateUsage]
+            from ._compaction import _requires_client_managed_history  # pyright: ignore[reportPrivateUsage]
             from ._sessions import is_local_history_conversation_id
 
-            if _contains_agent_triggered_compaction_strategy(compaction_strategy):
+            if _requires_client_managed_history(compaction_strategy):
                 store = options.get("store") if options is not None else None
                 service_stores_history = (
                     getattr(self, "STORES_BY_DEFAULT", False) if store is None else store is not False
