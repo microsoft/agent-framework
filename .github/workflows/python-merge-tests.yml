@@ -222,8 +222,11 @@ jobs:
                 - seccomp:unconfined
               environment:
                 ETCD_ENDPOINTS: etcd:2379
+                # Local-disk object storage; no MinIO/S3. The default standalone message queue
+                # (rocksmq, local disk) pairs with this, matching Milvus's standalone_embed.sh.
+                # Do not force MQ_TYPE=woodpecker here: woodpecker needs remote object storage
+                # for its WAL, so with local storage it never acks writes and data ops hang.
                 COMMON_STORAGETYPE: local
-                MQ_TYPE: woodpecker
               ports:
                 - "19530:19530"
                 - "9091:9091"
