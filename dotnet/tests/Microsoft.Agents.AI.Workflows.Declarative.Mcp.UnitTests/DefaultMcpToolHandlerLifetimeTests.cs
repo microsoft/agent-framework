@@ -4,8 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -20,10 +22,45 @@ using Moq.Protected;
 namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 
 /// <summary>
-/// Functional session-lifetime tests using an in-memory HTTP transport and inert tool results.
+/// Functional session-lifetime tests using in-memory and loopback HTTP transports and inert tool results.
 /// </summary>
 public sealed class DefaultMcpToolHandlerLifetimeTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2025-11-25")]
+    public async Task ParameterlessHandler_SequentialInvocations_DisposeSeparateSessionsBeforeReturningAsync(string? protocolVersion)
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        await using LoopbackMcpServer server = new(stub);
+        DefaultMcpToolHandler handler = new() { ProtocolVersion = protocolVersion };
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
+
+        // Act
+        McpServerToolResultContent first = await handler.InvokeToolAsync(
+            server.Endpoint, null, "session", null, null, null, timeout.Token);
+
+        // Assert
+        Assert.NotNull(first.Outputs);
+        string firstSession = Assert.IsType<TextContent>(Assert.Single(first.Outputs)).Text;
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+        Assert.Equal(firstSession, Assert.Single(server.TerminatedSessions));
+
+        // Act
+        McpServerToolResultContent second = await handler.InvokeToolAsync(
+            server.Endpoint, null, "session", null, null, null, timeout.Token);
+
+        // Assert
+        Assert.NotNull(second.Outputs);
+        string secondSession = Assert.IsType<TextContent>(Assert.Single(second.Outputs)).Text;
+        Assert.NotEqual(firstSession, secondSession);
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(2, stub.Terminations);
+        Assert.Equal(new[] { firstSession, secondSession }, server.TerminatedSessions);
+    }
+
     [Theory]
     [InlineData(null, 2)]
     [InlineData("2025-11-25", 0)]
@@ -611,7 +648,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             return handler.Object;
         }
 
-        private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.Method == HttpMethod.Get)
             {
@@ -718,6 +755,165 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 RequestMessage = request,
                 Content = new ByteArrayContent([])
             };
+    }
+
+    private sealed class LoopbackMcpServer : IAsyncDisposable
+    {
+        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource _shutdown = new(TimeSpan.FromSeconds(30));
+        private readonly Task _requestsTask;
+
+        public LoopbackMcpServer(ProtocolStub stub)
+        {
+            this._listener.Start();
+            this.Endpoint = $"http://127.0.0.1:{((IPEndPoint)this._listener.LocalEndpoint).Port}/mcp";
+            this._requestsTask = this.ProcessRequestsAsync(stub);
+        }
+
+        public string Endpoint { get; }
+
+        public List<string> TerminatedSessions { get; } = [];
+
+        public async ValueTask DisposeAsync()
+        {
+            this._shutdown.Cancel();
+            this._listener.Stop();
+            try
+            {
+                await this._requestsTask;
+            }
+            finally
+            {
+#if NET
+                this._listener.Dispose();
+#endif
+                this._shutdown.Dispose();
+            }
+        }
+
+        private async Task ProcessRequestsAsync(ProtocolStub stub)
+        {
+            CancellationToken cancellationToken = this._shutdown.Token;
+            using CancellationTokenRegistration stopListener = cancellationToken.Register(this._listener.Stop);
+            try
+            {
+                while (true)
+                {
+                    using TcpClient client = await this._listener.AcceptTcpClientAsync();
+                    using CancellationTokenRegistration closeClient = cancellationToken.Register(client.Close);
+                    using NetworkStream stream = client.GetStream();
+                    string requestLine = await ReadLineAsync(stream, cancellationToken);
+                    using HttpRequestMessage request = new(new HttpMethod(requestLine.Split(' ')[0]), this.Endpoint);
+                    Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase);
+                    string header;
+                    while ((header = await ReadLineAsync(stream, cancellationToken)).Length > 0)
+                    {
+                        int separator = header.IndexOf(':');
+                        headers.Add(header.Substring(0, separator), header.Substring(separator + 1).Trim());
+                    }
+
+                    using MemoryStream body = new();
+                    if (headers.TryGetValue("Transfer-Encoding", out string? transferEncoding) &&
+                        string.Equals(transferEncoding, "chunked", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int size;
+                        while ((size = int.Parse(await ReadLineAsync(stream, cancellationToken), NumberStyles.HexNumber, CultureInfo.InvariantCulture)) > 0)
+                        {
+                            byte[] chunk = await ReadBytesAsync(stream, size, cancellationToken);
+                            body.Write(chunk, 0, chunk.Length);
+                            Assert.Empty(await ReadLineAsync(stream, cancellationToken));
+                        }
+
+                        Assert.Empty(await ReadLineAsync(stream, cancellationToken));
+                    }
+                    else if (headers.TryGetValue("Content-Length", out string? length))
+                    {
+                        byte[] bytes = await ReadBytesAsync(stream, int.Parse(length, CultureInfo.InvariantCulture), cancellationToken);
+                        body.Write(bytes, 0, bytes.Length);
+                    }
+
+                    request.Content = new ByteArrayContent(body.ToArray());
+                    foreach (KeyValuePair<string, string> pair in headers)
+                    {
+                        if (!request.Headers.TryAddWithoutValidation(pair.Key, pair.Value))
+                        {
+                            request.Content.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
+                        }
+                    }
+
+                    if (request.Method == HttpMethod.Delete)
+                    {
+                        this.TerminatedSessions.Add(Assert.Single(request.Headers.GetValues("Mcp-Session-Id")));
+                    }
+
+                    using HttpResponseMessage response = await stub.SendAsync(request, cancellationToken);
+                    byte[] content = await response.Content.ReadAsByteArrayAsync();
+                    StringBuilder responseHeaders = new($"HTTP/1.1 {(int)response.StatusCode} {response.ReasonPhrase}\r\n");
+                    foreach (KeyValuePair<string, IEnumerable<string>> pair in response.Headers)
+                    {
+                        responseHeaders.Append($"{pair.Key}: {string.Join(", ", pair.Value)}\r\n");
+                    }
+
+                    responseHeaders.Append($"Content-Type: {response.Content.Headers.ContentType}\r\nContent-Length: {content.Length}\r\nConnection: close\r\n\r\n");
+                    byte[] headerBytes = Encoding.ASCII.GetBytes(responseHeaders.ToString());
+#if NET
+                    await stream.WriteAsync(headerBytes, cancellationToken);
+                    await stream.WriteAsync(content, cancellationToken);
+#else
+                    await stream.WriteAsync(headerBytes, 0, headerBytes.Length, cancellationToken);
+                    await stream.WriteAsync(content, 0, content.Length, cancellationToken);
+#endif
+                }
+            }
+            catch (Exception exception) when (cancellationToken.IsCancellationRequested &&
+                exception is SocketException or ObjectDisposedException or IOException or OperationCanceledException)
+            {
+                Trace.WriteLine($"Loopback MCP server stopped: {exception.Message}");
+            }
+        }
+
+        private static async Task<string> ReadLineAsync(NetworkStream stream, CancellationToken cancellationToken)
+        {
+            StringBuilder line = new();
+            byte[] buffer = new byte[1];
+#if NET
+            while (await stream.ReadAsync(buffer, cancellationToken) > 0)
+#else
+            while (await stream.ReadAsync(buffer, 0, 1, cancellationToken) > 0)
+#endif
+            {
+                if (buffer[0] == '\n')
+                {
+                    return line.ToString().TrimEnd('\r');
+                }
+
+                line.Append((char)buffer[0]);
+            }
+
+            throw new EndOfStreamException("The HTTP request ended before its headers were complete.");
+        }
+
+        private static async Task<byte[]> ReadBytesAsync(NetworkStream stream, int count, CancellationToken cancellationToken)
+        {
+            byte[] buffer = new byte[count];
+            int offset = 0;
+            while (offset < count)
+            {
+#if NET
+                int read = await stream.ReadAsync(buffer.AsMemory(offset, count - offset), cancellationToken);
+#else
+                int read = await stream.ReadAsync(buffer, offset, count - offset, cancellationToken);
+#endif
+                if (read == 0)
+                {
+                    throw new EndOfStreamException("The HTTP request ended before its body was complete.");
+                }
+
+                offset += read;
+            }
+
+            return buffer;
+        }
     }
 
     private sealed class CleanupTraceListener : TraceListener
