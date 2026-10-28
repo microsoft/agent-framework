@@ -12,6 +12,7 @@ from agent_framework._clients import BaseEmbeddingClient
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from agent_framework.observability import EmbeddingTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
@@ -311,8 +312,15 @@ class RawOpenAIEmbeddingClient(
         for item in sorted(response.data, key=lambda item: item.index):
             vector: list[float]
             if encoding == "base64" and isinstance(item.embedding, str):
-                # Decode base64-encoded floats (little-endian IEEE 754)
-                raw = base64.b64decode(item.embedding)
+                # Decode base64-encoded floats (little-endian IEEE 754).
+                # base64.b64decode raises binascii.Error for bad padding/alphabet and
+                # UnicodeEncodeError for non-ASCII input; both are ValueError subclasses.
+                try:
+                    raw = base64.b64decode(item.embedding)
+                except ValueError as exc:
+                    raise IntegrationInvalidResponseException(
+                        f"The base64 embedding returned for input index {item.index} could not be decoded: {exc}"
+                    ) from exc
                 if len(raw) % 4:
                     # A misaligned buffer would otherwise fail inside struct.unpack with a
                     # bare buffer-size error and no hint about which response item broke.

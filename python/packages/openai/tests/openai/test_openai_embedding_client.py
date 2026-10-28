@@ -12,6 +12,7 @@ import pytest
 from agent_framework import SecretString, SupportsGetEmbeddings
 from agent_framework._telemetry import get_feature_token
 from agent_framework.exceptions import SettingNotFoundError
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
@@ -320,6 +321,38 @@ async def test_openai_base64_misaligned_payload_raises_descriptive_error(openai_
     assert "input index 1" in message
     assert "decoded to 5 bytes" in message
     assert "cannot be split into 4-byte little-endian floats" in message
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param("!!!not-base64!!!", id="invalid-characters"),
+        pytest.param("\u00e9", id="non-ascii"),
+    ],
+)
+async def test_openai_base64_decoding_rejects_undecodable_payload(
+    payload: str,
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A payload that cannot be decoded must name the input rather than raise binascii.Error."""
+    mock_item = MagicMock()
+    mock_item.embedding = payload
+    mock_item.index = 1
+
+    mock_response = MagicMock()
+    mock_response.data = [mock_item]
+    mock_response.model = "text-embedding-3-small"
+    mock_response.usage = MagicMock(prompt_tokens=3, total_tokens=3)
+
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    with pytest.raises(IntegrationInvalidResponseException, match="input index 1") as exc_info:
+        await client.get_embeddings(["test"], options={"encoding_format": "base64"})
+
+    assert exc_info.value.__cause__ is not None
 
 
 async def test_openai_error_when_no_model() -> None:
