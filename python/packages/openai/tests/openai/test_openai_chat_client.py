@@ -2589,6 +2589,127 @@ def test_malformed_local_environment_shell_call_is_not_executable(
     assert all(content.type != "function_call" for content in contents)
 
 
+@pytest.mark.parametrize("max_output_length", [None, 4096])
+@pytest.mark.parametrize("round_trip", [False, True])
+@pytest.mark.parametrize("environment", [{"type": "local"}, None])
+def test_empty_local_shell_call_replays_with_empty_output(
+    max_output_length: int | None, round_trip: bool, environment: dict[str, str] | None
+) -> None:
+    """Zero local commands must replay with a matching empty result, not an orphan call."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseFunctionShellToolCall.model_validate({
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "action": {"commands": [], "max_output_length": max_output_length},
+        "environment": environment,
+    })
+
+    contents = client._shell_item_to_contents(item, "run_shell")
+
+    assert all(content.type != "function_call" for content in contents)
+    message = Message("assistant", contents)
+    if round_trip:
+        restored_result = Message.from_json(Message("assistant", [contents[1]]).to_json()).contents[0]
+        message = Message("assistant", [contents[0], restored_result])
+    replay = client._prepare_messages_for_openai(
+        [message, Message("user", "Continue")],
+        request_uses_service_side_storage=False,
+    )
+
+    shell_calls = [entry for entry in replay if entry["type"] == "shell_call"]
+    assert len(shell_calls) == 1
+    assert shell_calls[0]["call_id"] == "call_empty"
+    assert shell_calls[0]["action"]["commands"] == []
+    shell_outputs = [entry for entry in replay if entry["type"] == "shell_call_output"]
+    expected_output: dict[str, Any] = {"type": "shell_call_output", "call_id": "call_empty", "output": []}
+    if max_output_length is not None:
+        expected_output["max_output_length"] = max_output_length
+    assert shell_outputs == [expected_output]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_empty_local_shell_call_parsing_emits_pair_without_execution(streaming: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return command
+
+    local_tool = OpenAIChatClient.get_shell_tool(func=local_exec)
+    item = ResponseFunctionShellToolCall.model_validate({
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "action": {"commands": []},
+        "environment": {"type": "local"},
+    })
+    if streaming:
+        event = ResponseOutputItemDoneEvent(
+            type="response.output_item.done", item=item, output_index=0, sequence_number=1
+        )
+        update = client._parse_chunk_from_openai(event, options={"tools": [local_tool]}, function_call_ids={})
+        finalized = ChatResponse.from_updates([update])
+        assert [content.type for content in finalized.messages[0].contents] == ["shell_tool_call", "shell_tool_result"]
+        contents = update.contents
+    else:
+        response = MagicMock(
+            output=[item],
+            output_parsed=None,
+            metadata={},
+            usage=None,
+            id="resp_empty",
+            model="test-model",
+            created_at=1000000000,
+            status="completed",
+            incomplete=None,
+        )
+        parsed = client._parse_response_from_openai(response, options={"tools": [local_tool]})
+        contents = parsed.messages[0].contents
+
+    assert [content.type for content in contents] == ["shell_tool_call", "shell_tool_result"]
+    assert [content.call_id for content in contents] == ["call_empty", "call_empty"]
+    assert contents[1].outputs == []
+    assert executed_commands == []
+
+
+@pytest.mark.parametrize(
+    ("environment", "tool_name", "item_id", "call_id", "commands"),
+    [
+        ({"type": "container_reference"}, "run_shell", "sh_empty", "call_empty", []),
+        ({"type": "local"}, None, "sh_empty", "call_empty", []),
+        (None, None, "sh_empty", "call_empty", []),
+        ({"type": "local"}, "run_shell", None, "call_empty", []),
+        ({"type": "local"}, "run_shell", "sh_empty", None, []),
+        ({"type": "local"}, "run_shell", "sh_empty", "call_empty", None),
+        ({"type": "local"}, "run_shell", "sh_empty", "call_empty", [1]),
+    ],
+)
+def test_empty_shell_result_is_not_synthesized_for_hosted_unconfigured_or_malformed_calls(
+    environment: dict[str, str] | None,
+    tool_name: str | None,
+    item_id: str | None,
+    call_id: str | None,
+    commands: Any,
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = SimpleNamespace(
+        type="shell_call",
+        id=item_id,
+        call_id=call_id,
+        environment=environment,
+        action=SimpleNamespace(commands=commands),
+        status="completed",
+    )
+
+    contents = client._shell_item_to_contents(item, tool_name)
+
+    assert [content.type for content in contents] == ["shell_tool_call"]
+
+
 @pytest.mark.asyncio
 async def test_local_shell_tool_requires_approval_before_function_loop_execution() -> None:
     """An explicit local shell call executes only after approval."""
