@@ -51,6 +51,7 @@ class PerToolDeadlineMiddleware(FunctionMiddleware):
             return
 
         task = asyncio.create_task(call_next())
+        deadline_cancel_requested = False
         try:
             done, _ = await asyncio.wait({task}, timeout=policy.seconds)
 
@@ -60,14 +61,26 @@ class PerToolDeadlineMiddleware(FunctionMiddleware):
                 return
 
             # The deadline expired while the tool task was pending.
+            deadline_cancel_requested = True
             task.cancel()
+
+            # Wait for cooperative cleanup without suppressing
+            # cancellation of the calling middleware task.
             try:
-                await task
+                await asyncio.shield(task)
             except asyncio.CancelledError:
-                pass
+                if not task.done():
+                    # Caller cancellation during cleanup must propagate.
+                    raise
+                if not task.cancelled():
+                    # A completed child may itself have raised cancellation.
+                    raise
+            except MiddlewareFailure:
+                # Preserve fatal downstream middleware failures.
+                raise
             except Exception:
-                # Cleanup failures must not turn an uncertain timeout
-                # into an apparent successful tool execution.
+                # Ordinary cleanup errors do not establish that the
+                # timed-out operation completed successfully.
                 pass
 
             if policy.read_only:
@@ -79,7 +92,10 @@ class PerToolDeadlineMiddleware(FunctionMiddleware):
             )
 
         except asyncio.CancelledError:
-            task.cancel()
+            # Avoid cancelling the child a second time while it is
+            # already performing deadline-triggered cleanup.
+            if not deadline_cancel_requested:
+                task.cancel()
             task.add_done_callback(self._observe_task_completion)
             # Preserve caller cancellation. The tool may continue cleanup.
             raise

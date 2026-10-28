@@ -365,3 +365,53 @@ async def test_mutating_deadline_aborts_real_agent_concurrent_batch() -> None:
     assert write_calls == 1
     assert sibling_cancelled.is_set()
     assert chat_client_base.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_middleware_failure_propagates() -> None:
+    """A fatal downstream failure during cleanup must not be swallowed."""
+    mw = PerToolDeadlineMiddleware({
+        "tool": DeadlinePolicy(0.01, read_only=True),
+    })
+
+    async def downstream() -> None:
+        try:
+            await asyncio.sleep(10)
+        finally:
+            raise MiddlewareFailure("fatal downstream failure")
+
+    with pytest.raises(MiddlewareFailure, match="fatal downstream failure"):
+        await mw.process(ctx(), downstream)
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_during_deadline_cleanup_propagates() -> None:
+    """Caller cancellation during cleanup must not become a timeout."""
+    mw = PerToolDeadlineMiddleware({
+        "tool": DeadlinePolicy(0.01, read_only=True),
+    })
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def slow() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await cleanup_release.wait()
+            cleanup_finished.set()
+
+    outer = asyncio.create_task(mw.process(ctx(), slow))
+
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+
+        # Cancel only after the deadline has fired and cleanup has begun.
+        outer.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(outer, timeout=1)
+    finally:
+        cleanup_release.set()
+        await asyncio.wait_for(cleanup_finished.wait(), timeout=1)
