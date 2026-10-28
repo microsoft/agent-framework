@@ -50,6 +50,11 @@ public static class ChatClientExtensions
 
     internal static IChatClient WithDefaultAgentMiddleware(this IChatClient chatClient, ChatClientAgentOptions? options, IServiceProvider? services = null)
     {
+        if (options is { EnablePartialApprovalResponses: true, DisableApprovalResponseBinding: true })
+        {
+            throw new ArgumentException("Partial approval responses require approval-response binding.", nameof(options));
+        }
+
         var chatBuilder = chatClient.AsBuilder();
 
         // ApprovalResponseBindingChatClient is registered first so that it sits as the outermost decorator,
@@ -61,7 +66,7 @@ public static class ChatClientExtensions
         if (options?.DisableApprovalResponseBinding is not true)
         {
             chatBuilder.Use((innerClient, services) =>
-                new ApprovalResponseBindingChatClient(innerClient, services.GetService<ILoggerFactory>()));
+                new ApprovalResponseBindingChatClient(innerClient, services.GetService<ILoggerFactory>(), options?.EnablePartialApprovalResponses is true));
         }
 
         // ApprovalNotRequiredFunctionBypassingChatClient is registered before FunctionInvokingChatClient so that

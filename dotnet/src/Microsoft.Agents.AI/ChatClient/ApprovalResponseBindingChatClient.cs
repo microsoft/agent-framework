@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,7 +38,9 @@ namespace Microsoft.Agents.AI;
 /// <item>If no recorded pending request exists, the response is ignored, so only approvals tied to a genuine,
 /// framework-issued request take effect.</item>
 /// <item>Any recorded request left unanswered on the next run is automatically rejected, allowing the
-/// conversation to continue without executing the unapproved tool.</item>
+/// conversation to continue without executing the unapproved tool. With partial-response collection enabled,
+/// the decorator instead records answers in the session and returns unanswered requests without invoking
+/// the inner client until the complete batch has answers.</item>
 /// </list>
 /// </para>
 /// <para>
@@ -75,7 +78,10 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// </summary>
     internal const string StateBagKey = "_pendingApprovalRequests";
 
+    internal const string DecisionsStateBagKey = "_collectedApprovalDecisions";
+
     private readonly ILogger _logger;
+    private readonly bool _enablePartialResponses;
 
     private bool _warnedNoSession;
 
@@ -84,9 +90,13 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// </summary>
     /// <param name="innerClient">The underlying chat client (typically the pipeline containing <see cref="FunctionInvokingChatClient"/>).</param>
     /// <param name="loggerFactory">An optional <see cref="ILoggerFactory"/> used to create a logger for diagnostics.</param>
-    public ApprovalResponseBindingChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null)
+    /// <param name="enablePartialResponses">Whether to wait for and persist partial decisions.</param>
+    public ApprovalResponseBindingChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null, bool enablePartialResponses = false)
         : base(innerClient)
-        => this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<ApprovalResponseBindingChatClient>();
+    {
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<ApprovalResponseBindingChatClient>();
+        this._enablePartialResponses = enablePartialResponses;
+    }
 
     /// <inheritdoc/>
     public override async Task<ChatResponse> GetResponseAsync(
@@ -99,7 +109,18 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
 
-        var (messagesToSend, hasPendingRequests, generatedRejections) = this.ValidateInboundApprovalResponses(messages, session);
+        if (this._enablePartialResponses)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        var collected = this.CollectPartialResponses(messages, session);
+        if (collected.Waiting is not null)
+        {
+            return new ChatResponse([new ChatMessage(ChatRole.Assistant, collected.Waiting)]);
+        }
+
+        var (messagesToSend, hasPendingRequests, generatedRejections) = this.ValidateInboundApprovalResponses(collected.Messages, session);
 
         var response = await base.GetResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false);
 
@@ -114,6 +135,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         if (hasPendingRequests)
         {
             session.StateBag.TryRemoveValue(StateBagKey);
+            session.StateBag.TryRemoveValue(DecisionsStateBagKey);
         }
 
         this.RecordPendingApprovalRequests(response.Messages, session);
@@ -137,7 +159,19 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             yield break;
         }
 
-        var (messagesToSend, hasPendingRequests, generatedRejections) = this.ValidateInboundApprovalResponses(messages, session);
+        if (this._enablePartialResponses)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        var collected = this.CollectPartialResponses(messages, session);
+        if (collected.Waiting is not null)
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, collected.Waiting);
+            yield break;
+        }
+
+        var (messagesToSend, hasPendingRequests, generatedRejections) = this.ValidateInboundApprovalResponses(collected.Messages, session);
 
         List<ToolApprovalRequestContent>? emitted = null;
 
@@ -177,6 +211,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             if (completedNormally && hasPendingRequests)
             {
                 session.StateBag.TryRemoveValue(StateBagKey);
+                session.StateBag.TryRemoveValue(DecisionsStateBagKey);
             }
 
             // Recorded regardless of how the stream ended, because each request was already handed to the caller
@@ -187,6 +222,139 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
                 this.MergePendingApprovalRequests(emitted, session);
             }
         }
+    }
+
+    // Keep decisions separate from pending authorizations. The latter remain authoritative until the
+    // complete batch succeeds, so a serialize/reload or a failed final run cannot lose unanswered calls.
+    private (IEnumerable<ChatMessage> Messages, List<AIContent>? Waiting) CollectPartialResponses(
+        IEnumerable<ChatMessage> messages, AgentSession session)
+    {
+        if (!this._enablePartialResponses)
+        {
+            return (messages, null);
+        }
+
+        var requests = LoadPendingApprovalRequestLookup(session);
+        var input = messages.ToList();
+        // Waiting updates may have been saved repeatedly. Completed approval envelopes are
+        // history, not new authorizations; their canonical calls/results remain in the input.
+        var settled = new HashSet<string>(input.SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>().Select(r => r.CallId), StringComparer.Ordinal);
+        input = input.Select(message =>
+        {
+            var copy = message.Clone();
+            copy.Contents = message.Contents.Where(content => content switch
+            {
+                ToolApprovalRequestContent request => !settled.Contains(request.ToolCall.CallId),
+                ToolApprovalResponseContent answer => !settled.Contains(answer.ToolCall.CallId),
+                _ => true,
+            }).ToList();
+            return copy;
+        }).Where(message => message.Contents.Count > 0).ToList();
+
+        if (requests.Count == 0)
+        {
+            return (input, null);
+        }
+
+        session.StateBag.TryGetValue<List<ChatMessage>>(DecisionsStateBagKey, out var saved, AgentJsonUtilities.DefaultOptions);
+        var answers = new Dictionary<string, ToolApprovalResponseContent>(StringComparer.Ordinal);
+        var results = new Dictionary<string, FunctionResultContent>(StringComparer.Ordinal);
+        var callIds = new HashSet<string>(requests.Values.Select(r => r.ToolCall.CallId), StringComparer.Ordinal);
+        foreach (var content in (saved ?? []).Concat(input).SelectMany(m => m.Contents))
+        {
+            if (content is ToolApprovalResponseContent answer && requests.TryGetValue(answer.RequestId, out var request)
+                && !answers.ContainsKey(answer.RequestId))
+            {
+                answers.Add(answer.RequestId, CopyResponse(answer, ToolApprovalHelpers.SnapshotRequest(request).ToolCall));
+            }
+            else if (content is FunctionResultContent result && callIds.Contains(result.CallId) && !results.ContainsKey(result.CallId))
+            {
+                results.Add(result.CallId, result);
+            }
+        }
+
+        List<ChatMessage> decisions = [];
+        if (answers.Count > 0)
+        {
+            decisions.Add(new ChatMessage(ChatRole.User, answers.Values.Cast<AIContent>().ToList()));
+        }
+
+        if (results.Count > 0)
+        {
+            decisions.Add(new ChatMessage(ChatRole.Tool, results.Values.Cast<AIContent>().ToList()));
+        }
+
+        session.StateBag.SetValue(DecisionsStateBagKey, decisions, AgentJsonUtilities.DefaultOptions);
+        var waiting = requests.Values.Where(r => !answers.ContainsKey(r.RequestId) && !results.ContainsKey(r.ToolCall.CallId))
+            .Select(r => (AIContent)ToolApprovalHelpers.SnapshotRequest(r)).ToList();
+        if (waiting.Count > 0)
+        {
+            return (input, waiting);
+        }
+
+        // Repeated waiting responses can occur in persisted history. Present each current request once
+        // to FICC, and use the durable first answer rather than a conflicting replay in caller history.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        List<ChatMessage> prepared = [];
+        int decisionIndex = 0;
+        bool foundRequest = false;
+        foreach (var message in input)
+        {
+            List<AIContent> contents = [];
+            bool hasRequest = false;
+            foreach (var content in message.Contents)
+            {
+                if (content is ToolApprovalResponseContent answer && requests.ContainsKey(answer.RequestId)
+                    || content is FunctionResultContent result && callIds.Contains(result.CallId))
+                {
+                    continue;
+                }
+
+                if (content is ToolApprovalRequestContent request && requests.TryGetValue(request.RequestId, out var recorded))
+                {
+                    if (!seen.Add(request.RequestId) || results.ContainsKey(request.ToolCall.CallId))
+                    {
+                        continue;
+                    }
+
+                    contents.Add(ToolApprovalHelpers.SnapshotRequest(recorded));
+                    hasRequest = true;
+                }
+                else
+                {
+                    contents.Add(content);
+                }
+            }
+
+            if (contents.Count > 0)
+            {
+                var copy = message.Clone();
+                copy.Contents = contents;
+                if (contents.OfType<ToolApprovalRequestContent>().Any() && copy.AdditionalProperties is not null)
+                {
+                    // FICC copies this envelope into its returned call message. Run-local attribution
+                    // must not be carried into that newly persisted output.
+                    copy.AdditionalProperties = new(copy.AdditionalProperties);
+                    copy.AdditionalProperties.Remove(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey);
+                }
+
+                prepared.Add(copy);
+            }
+
+            if (hasRequest)
+            {
+                foundRequest = true;
+                decisionIndex = prepared.Count;
+            }
+            else if (!foundRequest && message.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.ChatHistory)
+            {
+                decisionIndex = prepared.Count;
+            }
+        }
+
+        prepared.InsertRange(decisionIndex, decisions);
+        return (prepared, null);
     }
 
     /// <summary>

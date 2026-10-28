@@ -277,6 +277,18 @@ public sealed class ChatClientAgentOptions
     public bool DisableApprovalResponseBinding { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to collect partial approval decisions durably until all
+    /// surfaced requests have an answer, instead of rejecting unanswered requests on the next run.
+    /// </summary>
+    /// <remarks>
+    /// Requires approval-response binding and a persisted session. No tools or model calls run while
+    /// answers are outstanding. The first recorded answer wins; replayed answers cannot change it.
+    /// Unanswered requests are returned with their original identities. Hosts must serialize runs for
+    /// a session and save it after each run, including runs that only collect decisions.
+    /// </remarks>
+    public bool EnablePartialApprovalResponses { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to enable bypassing that stores invocable (backend) function
     /// calls in the session state and executes them on the next request when they are returned alongside
     /// declaration-only (frontend) function calls in the same response.
@@ -332,6 +344,7 @@ public sealed class ChatClientAgentOptions
             EnableMessageInjection = this.EnableMessageInjection,
             DisableApprovalNotRequiredFunctionBypassing = this.DisableApprovalNotRequiredFunctionBypassing,
             DisableApprovalResponseBinding = this.DisableApprovalResponseBinding,
+            EnablePartialApprovalResponses = this.EnablePartialApprovalResponses,
             EnableInvocableFunctionBypassing = this.EnableInvocableFunctionBypassing,
         };
 }
