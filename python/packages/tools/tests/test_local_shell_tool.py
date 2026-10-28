@@ -26,6 +26,8 @@ from agent_framework.security import (
 from agent_framework_tools._feature_usage import FeatureIndex
 from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy, ShellResult
 from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_stateless
+from agent_framework_tools.shell._truncate import _OutputBuffer
+from agent_framework_tools.shell._types import ShellMode
 
 _TEST_SHELL = "agent-framework-test-shell"
 _APPROVED_COMMAND = "printf '%s' approved-value"
@@ -41,16 +43,17 @@ class _FakeExecProcess:
         communicate_results: list[tuple[bytes, bytes] | BaseException] | None = None,
     ) -> None:
         self.returncode = returncode
-        self.stdout = object()
-        self.stderr = object()
-        self._communicate_results = list(communicate_results or [(b"", b"")])
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
+        result = (communicate_results or [(b"", b"")])[0]
+        assert isinstance(result, tuple)
+        self.stdout.feed_data(result[0])
+        self.stderr.feed_data(result[1])
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
 
-    async def communicate(self) -> tuple[bytes, bytes]:
-        result = self._communicate_results.pop(0)
-        if isinstance(result, BaseException):
-            raise result
-        stdout, stderr = result
-        return stdout, stderr
+    async def wait(self) -> int:
+        return self.returncode if self.returncode is not None else -1
 
 
 class _ScriptedFunctionClient(FunctionInvocationLayer, BaseChatClient):
@@ -126,6 +129,184 @@ async def test_stateless_echo() -> None:
     assert "hello" in result.stdout
     assert result.exit_code == 0
     assert result.timed_out is False
+
+
+@pytest.mark.parametrize("mode", ["persistent", "stateless"])
+@pytest.mark.parametrize("stream", ["stdout", "stderr", "both"])
+@pytest.mark.parametrize(("max_stdout_bytes", "max_stderr_bytes"), [(32768, 49152), (49152, 32768), (32768, 1024)])
+async def test_output_is_bounded_during_finite_command(
+    mode: ShellMode,
+    stream: str,
+    max_stdout_bytes: int,
+    max_stderr_bytes: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    caps = {"stdout": max_stdout_bytes, "stderr": max_stderr_bytes}
+    observed: list[int] = []
+    append = _OutputBuffer.append
+
+    def checked_append(self: _OutputBuffer, data: bytes) -> None:
+        append(self, data)
+        retained = len(self._head) + len(self._tail)
+        assert self._cap in caps.values()
+        assert retained <= self._cap
+        observed.append(retained)
+
+    monkeypatch.setattr(_OutputBuffer, "append", checked_append)
+    if sys.platform == "win32":
+        command = "; ".join(
+            f"[Console]::{'Out' if name == 'stdout' else 'Error'}.Write('{char}' * 65536)"
+            for name, char in (("stdout", "x"), ("stderr", "z"))
+            if stream in (name, "both")
+        )
+        command += "; [System.Threading.Thread]::Sleep(200)"
+        followup = "Write-Output healthy"
+    else:
+        script = "; ".join(
+            f"sys.{name}.write('{char}' * 65536); sys.{name}.flush()"
+            for name, char in (("stdout", "x"), ("stderr", "z"))
+            if stream in (name, "both")
+        )
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote('import sys, time; ' + script + '; time.sleep(0.2)')}"
+        followup = "printf healthy"
+    async with LocalShellTool(
+        mode=mode,
+        max_stdout_bytes=max_stdout_bytes,
+        max_stderr_bytes=max_stderr_bytes,
+        timeout=5,
+    ) as tool:
+        original_process = tool._session._proc if tool._session else None
+        result = await tool.run(command)
+        assert result.truncated and not result.timed_out
+        for name, char in (("stdout", "x"), ("stderr", "z")):
+            text = getattr(result, name)
+            if stream in (name, "both"):
+                assert text.count(char) == caps[name]
+            else:
+                assert not text
+        if mode == "persistent":
+            assert tool._session is not None
+            assert tool._session._proc is original_process
+            assert result.exit_code == 0
+        healthy = await tool.run(followup)
+        assert healthy.stdout.strip() == "healthy"
+        assert not healthy.stderr and healthy.exit_code == 0
+    assert observed
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_local_shell_rejects_invalid_output_limit_before_execution(cap: int, stream: str) -> None:
+    with pytest.raises(ValueError, match=f"max_{stream}_bytes must be positive"):
+        LocalShellTool(
+            max_stdout_bytes=cap if stream == "stdout" else 1024,
+            max_stderr_bytes=cap if stream == "stderr" else 1024,
+        )
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_stateless_timeout_or_cancellation_preserves_reader_ownership(cancel: bool) -> None:
+    from agent_framework_tools.shell._capture import _ProcessOutput
+
+    proc = _FakeExecProcess(returncode=None, communicate_results=[(b"partial", b"error")])
+    waiting = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def wait() -> int:
+        waiting.set()
+        await stopped.wait()
+        proc.returncode = -9
+        return -9
+
+    async def stop(_proc: object) -> None:
+        stopped.set()
+
+    created: list[_ProcessOutput] = []
+    output_class = _ProcessOutput
+
+    def capture(process: asyncio.subprocess.Process, *, max_stdout_bytes: int, max_stderr_bytes: int) -> _ProcessOutput:
+        output = output_class(process, max_stdout_bytes=max_stdout_bytes, max_stderr_bytes=max_stderr_bytes)
+        created.append(output)
+        return output
+
+    with (
+        patch.object(proc, "wait", wait),
+        patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        patch("agent_framework_tools.shell._executor.kill_process_tree", side_effect=stop) as terminate,
+        patch("agent_framework_tools.shell._executor._ProcessOutput", side_effect=capture),
+    ):
+        task = asyncio.create_task(
+            run_stateless(
+                ["unused"], "unused", workdir=None, env=None, timeout=0.02, max_stdout_bytes=8, max_stderr_bytes=16
+            )
+        )
+        await waiting.wait()
+        if cancel:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            result = await task
+            assert result.timed_out
+            assert result.stdout == "partial" and result.stderr == "error"
+        terminate.assert_awaited_once()
+    assert all(task.done() for output in created for task in (*output._readers, output._waiter, output._completion))
+
+
+async def test_persistent_discards_idle_output_before_next_command() -> None:
+    from agent_framework_tools.shell._session import ShellSession, _CommandOutput
+
+    session = ShellSession(["unused"], max_stdout_bytes=16, max_stderr_bytes=32)
+    for is_stdout in (True, False):
+        stream = asyncio.StreamReader()
+        stream.feed_data(b"idle" * 16384)
+        stream.feed_eof()
+        await session._reader(stream, is_stdout=is_stdout)
+        assert session._output is None
+    output = _CommandOutput(b"marker", max_stdout_bytes=16, max_stderr_bytes=32)
+    session._output = output
+    stream = asyncio.StreamReader()
+    stream.feed_data(b"next\nmarker_0\n")
+    stream.feed_eof()
+    await session._reader(stream, is_stdout=True)
+    assert output.stdout.format() == ("next", False)
+    assert output.stderr.format() == ("", False)
+    assert output.exit_code == 0
+
+
+async def test_capture_cleanup_does_not_wait_forever_for_inherited_pipe(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from agent_framework_tools.shell import _capture
+
+    proc = _FakeExecProcess()
+    # Model an exited parent whose child still holds both pipe handles.
+    proc.stdout = asyncio.StreamReader()
+    proc.stderr = asyncio.StreamReader()
+    proc.stdout.feed_data(b"partial")
+    monkeypatch.setattr(_capture, "_DRAIN_GRACE", 0.01)
+    output = _capture._ProcessOutput(
+        proc,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        max_stdout_bytes=16,
+        max_stderr_bytes=32,
+    )
+    await output.finish()
+    assert output.stdout.format() == ("partial", False)
+    assert all(task.done() for task in (*output._readers, output._waiter, output._completion))
+    assert "did not close after termination" in caplog.text
+
+
+async def test_persistent_reader_failure_stops_session_and_is_reported() -> None:
+    async with LocalShellTool(timeout=5) as tool:
+        session = tool._session
+        assert session is not None and session._proc is not None
+        proc = session._proc
+        assert proc.stderr is not None
+        proc.stderr.set_exception(OSError("pipe failed"))
+        with pytest.raises(RuntimeError, match="failed to read persistent shell output"):
+            await tool.run("Write-Output hello" if sys.platform == "win32" else "printf hello")
+        assert session._proc is None
+        assert proc.returncode is not None
 
 
 async def test_stateless_exit_code_propagates() -> None:
@@ -267,7 +448,8 @@ async def test_run_stateless_adds_powershell_encoding_preamble() -> None:
             workdir=None,
             env=None,
             timeout=1.0,
-            max_output_bytes=1024,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=2048,
         )
 
     assert result.stdout == "ok"
@@ -275,26 +457,26 @@ async def test_run_stateless_adds_powershell_encoding_preamble() -> None:
     assert create_proc.await_args.args[-1].startswith("$OutputEncoding = [Console]::OutputEncoding")
 
 
-async def test_run_stateless_timeout_returns_empty_output_if_drain_fails() -> None:
-    proc = _FakeExecProcess(returncode=None, communicate_results=[asyncio.TimeoutError(), RuntimeError("drain failed")])
+async def test_run_stateless_reader_failure_is_reported_and_cleans_up() -> None:
+    proc = _FakeExecProcess()
+    proc.stderr.set_exception(RuntimeError("drain failed"))
 
     with (
         patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
         patch("agent_framework_tools.shell._executor.kill_process_tree", AsyncMock()) as kill_tree,
+        pytest.raises(RuntimeError, match="drain failed"),
     ):
-        result = await run_stateless(
+        await run_stateless(
             ["/bin/sh", "-c"],
             "sleep 5",
             workdir=None,
             env=None,
             timeout=0.01,
-            max_output_bytes=1024,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=2048,
         )
 
     kill_tree.assert_awaited_once_with(proc)
-    assert result.timed_out is True
-    assert result.stdout == ""
-    assert result.stderr == ""
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="persistent-mode sentinel on POSIX")
@@ -568,25 +750,29 @@ async def test_persistent_confines_workdir_by_default(tmp_path: os.PathLike[str]
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
 
 
-@pytest.mark.parametrize("failure", ["timeout", "unrecoverable_timeout", "overflow"])
-async def test_persistent_queued_command_restarts_after_session_recovery(failure: str) -> None:
+@pytest.mark.parametrize(
+    ("failure", "max_stderr_bytes"),
+    [("timeout", 128), ("unrecoverable_timeout", 128), ("overflow", 1), ("overflow", 8192)],
+)
+async def test_persistent_queued_command_restarts_after_session_recovery(failure: str, max_stderr_bytes: int) -> None:
     is_timeout = failure != "overflow"
     if sys.platform == "win32":
         command = (
             "[System.Threading.Thread]::Sleep(30000)"
             if is_timeout
-            else "while ($true) { [Console]::Write('overflow') }"
+            else "[Console]::Write('overflow' * 1024); [System.Threading.Thread]::Sleep(1000)"
         )
         followup = "Write-Output recovered"
     else:
-        command = "trap '' INT; sleep 30" if is_timeout else "while :; do printf 'overflow'; done"
+        command = "trap '' INT; sleep 30" if is_timeout else "printf '%8192s' overflow; sleep 1"
         followup = "printf 'recovered'"
 
     async with LocalShellTool(
         mode="persistent",
         approval_mode="never_require",
         acknowledge_unsafe=True,
-        max_output_bytes=128,
+        max_stdout_bytes=128,
+        max_stderr_bytes=max_stderr_bytes,
     ) as tool:
         session = tool._session
         assert session is not None
@@ -661,7 +847,9 @@ async def test_persistent_restart_cancels_readers_from_exited_shell(tmp_path: Pa
             )
 
             async def wait_for_replacement() -> None:
-                while session._proc is original_process or b"started" not in session._stdout_buf:  # noqa: ASYNC110
+                while (  # noqa: ASYNC110 - synchronize against the replacement command's first output
+                    session._proc is original_process or session._output is None or session._output.stdout_bytes == 0
+                ):
                     await asyncio.sleep(0)
 
             await asyncio.wait_for(wait_for_replacement(), timeout=10.0)
@@ -758,7 +946,7 @@ async def test_persistent_close_rejects_queued_commands(queue_during_close: bool
     try:
 
         async def wait_until_running() -> None:
-            while b"running" not in session._stdout_buf:
+            while session._output is None or session._output.stdout_bytes == 0:
                 session._stdout_event.clear()
                 await session._stdout_event.wait()
 
