@@ -973,7 +973,10 @@ public sealed partial class ChatClientAgent : AIAgent
     /// This method is evaluated in an exception filter, so it must not have side effects.
     /// It returns <see langword="false"/> when per-service-call persistence is active (the
     /// <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles the notification), when chat history is
-    /// managed by the service, or when the run involves continuation tokens or background responses.
+    /// managed by the service, or when the run involves background responses or continuation tokens, either supplied by
+    /// the caller or received in the response updates. In the latter case, the caller can resume the run with the received
+    /// token, and the resumed run persists the request and the updates received so far, so persisting them here would
+    /// duplicate them in the chat history.
     /// </remarks>
     private bool ShouldNotifyProvidersOfPartialMessagesAtEndOfRun(
         Exception ex,
@@ -988,7 +991,7 @@ public sealed partial class ChatClientAgent : AIAgent
         && chatOptions?.AllowBackgroundResponses is not true
         && string.IsNullOrWhiteSpace(chatOptions?.ConversationId)
         && string.IsNullOrWhiteSpace(session.ConversationId)
-        && !responseUpdates.Any(update => !string.IsNullOrWhiteSpace(update.ConversationId))
+        && !responseUpdates.Any(update => !string.IsNullOrWhiteSpace(update.ConversationId) || update.ContinuationToken is not null)
         && this.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken);
 
     /// <summary>

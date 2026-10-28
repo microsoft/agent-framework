@@ -300,6 +300,39 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_FlagEnabled_ContinuationTokenReceived_DoesNotDuplicateHistoryOnResumeAsync()
+    {
+        // Arrange
+        using CancellationTokenSource cts = new();
+        var chatClient = new ScriptedStreamingChatClient(
+            cts,
+            new StreamingCall([new ChatResponseUpdate(ChatRole.Assistant, "partial") { MessageId = "m1", ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) }], CallEnd.CallerCancels),
+            new StreamingCall([TextUpdate(" rest", "m1")]));
+        ChatClientAgent agent = new(chatClient, options: new() { PersistPartialMessagesOnCancellation = true });
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var received = await ConsumeUntilCancelledAsync(agent, session, null, cts.Token);
+        var historyAfterCancellation = GetHistory(agent, session);
+
+        var continuationToken = Assert.Single(received).ContinuationToken;
+        Assert.NotNull(continuationToken);
+        await foreach (var _ in agent.RunStreamingAsync(session, options: new AgentRunOptions { ContinuationToken = continuationToken }))
+        {
+        }
+
+        // Assert
+        Assert.Empty(historyAfterCancellation);
+        var history = GetHistory(agent, session);
+        Assert.Equal(2, history.Count);
+        Assert.Equal(ChatRole.User, history[0].Role);
+        Assert.Equal("Hello", history[0].Text);
+        Assert.Equal(ChatRole.Assistant, history[1].Role);
+        Assert.Equal("partial rest", history[1].Text);
+        Assert.False(IsMarkedAsPartial(history[1]));
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_FlagEnabled_NextRunIncludesPersistedPartialInteractionAsync()
     {
         // Arrange
