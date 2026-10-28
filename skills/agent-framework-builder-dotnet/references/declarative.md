@@ -48,10 +48,11 @@ reads fall back to the requested metadata-marked legacy entry without modifying 
 only that entry from `Topic`; unrelated legacy entries are not migrated by these point operations.
 Ad hoc expression evaluation also reads legacy entries without persisting migration, so parallel expression readers
 do not queue competing updates. Persisted migration still runs in registered formula-state restoration callbacks.
-New canonical assignments and migrated entries persist separate, versioned ownership metadata. This identifies
-their sensitivity metadata as belonging to `Local`, not to a same-key raw code-first `Topic` entry. Concurrent
+New canonical assignments, managed initializations, and migrated entries persist separate, versioned ownership
+metadata. This identifies their sensitivity metadata as belonging to `Local`, not to a same-key raw code-first `Topic` entry. Concurrent
 code-first `Topic` and canonical `Local` assignments can therefore coexist; reads and restoration preserve the
 unrelated raw `Topic` value. Preserve these private metadata scopes together with values in custom checkpoint stores.
+Initialization leaves existing values and their sensitivity metadata unchanged.
 Without recorded canonical ownership, writes still reject a visible same-key unmarked code-first `Topic` entry
 before changing state; reconcile such collisions explicitly.
 

@@ -19,17 +19,22 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Kit;
 public sealed class IWorkflowContextExtensionsTests
 {
     [Theory]
-    [InlineData(VariableScopeNames.Topic, VariableScopeNames.Local)]
-    [InlineData(VariableScopeNames.Local, VariableScopeNames.Local)]
-    [InlineData(VariableScopeNames.Global, VariableScopeNames.Global)]
-    [InlineData("custom", "custom")]
-    [InlineData(null, null)]
-    public async Task StateAccess_UsesCanonicalScopeAsync(string? scope, string? expectedScope)
+    [InlineData(VariableScopeNames.Topic, VariableScopeNames.Local, true)]
+    [InlineData(VariableScopeNames.Local, VariableScopeNames.Local, true)]
+    [InlineData(VariableScopeNames.Global, VariableScopeNames.Global, true)]
+    [InlineData("custom", "custom", false)]
+    [InlineData(null, null, false)]
+    public async Task StateAccess_UsesCanonicalScopeAsync(string? scope, string? expectedScope, bool managed)
     {
         // Arrange
         Mock<IWorkflowContext> source = new(MockBehavior.Strict);
         source.Setup(c => c.ReadStateAsync<string>("TestValue", expectedScope, It.IsAny<CancellationToken>()))
             .ReturnsAsync("stored");
+        if (managed)
+        {
+            source.Setup(c => c.ReadStateAsync<PortableValue>("TestValue", expectedScope, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PortableValue("stored"));
+        }
         source.Setup(c => c.ReadOrInitStateAsync("TestValue", It.IsAny<System.Func<string>>(), expectedScope, It.IsAny<CancellationToken>()))
             .ReturnsAsync("stored");
         source.Setup(c => c.ReadStateKeysAsync(expectedScope, It.IsAny<CancellationToken>()))
@@ -55,6 +60,14 @@ public sealed class IWorkflowContextExtensionsTests
         Mock<IWorkflowContext> source = new(MockBehavior.Strict);
         source.Setup(c => c.QueueStateUpdateAsync("TestValue", It.IsAny<object>(), VariableScopeNames.Local, It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask));
+        source.Setup(c => c.ReadStateAsync<PortableValue>("TestValue", VariableScopeNames.Topic, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PortableValue?)null);
+        source.Setup(c => c.QueueStateUpdateAsync("TestValue", SensitivityLevel.None,
+            WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), It.IsAny<CancellationToken>()))
+            .Returns(default(ValueTask));
+        source.Setup(c => c.QueueStateUpdateAsync("TestValue", It.IsAny<int>(),
+            WorkflowFormulaState.LocalOwnershipScopeName, It.IsAny<CancellationToken>()))
+            .Returns(default(ValueTask));
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         DeclarativeWorkflowContext context = new(source.Object, state);
 
@@ -65,6 +78,88 @@ public sealed class IWorkflowContextExtensionsTests
         Assert.Equal("initial", result.ToObject());
         Assert.Equal("initial", state.Get("TestValue", VariableScopeNames.Local).ToObject());
         source.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadOrInitStateAsync_RejectsUnmarkedTopicCollisionAsync(bool formula)
+    {
+        // Arrange
+        Mock<IWorkflowContext> source = new();
+        source.Setup(c => c.ReadStateAsync<PortableValue>("TestValue", VariableScopeNames.Topic, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PortableValue("native"));
+        source.Setup(c => c.ReadOrInitStateAsync("TestValue", It.IsAny<System.Func<int>>(), VariableScopeNames.Local, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, System.Func<int> factory, string? _, CancellationToken _) => factory());
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        DeclarativeWorkflowContext context = new(source.Object, state);
+        bool factoryInvoked = false;
+
+        // Act
+        async Task InitializeAsync()
+        {
+            if (formula)
+            {
+                await context.ReadOrInitStateAsync<FormulaValue>("TestValue", () =>
+                {
+                    factoryInvoked = true;
+                    return FormulaValue.New(42);
+                }, VariableScopeNames.Topic);
+            }
+            else
+            {
+                await context.ReadOrInitStateAsync("TestValue", () =>
+                {
+                    factoryInvoked = true;
+                    return 42;
+                }, VariableScopeNames.Topic);
+            }
+        }
+
+        // Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(InitializeAsync);
+        Assert.False(factoryInvoked);
+        Assert.IsType<BlankValue>(state.Get("TestValue"));
+        Assert.DoesNotContain(source.Invocations, invocation =>
+            string.Equals(invocation.Method.Name, nameof(IWorkflowContext.QueueStateUpdateAsync), System.StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadOrInitStateAsync_ExistingValuePreservesSensitivityAsync(bool formula)
+    {
+        // Arrange
+        Mock<IWorkflowContext> source = new();
+        source.Setup(c => c.ReadStateAsync<PortableValue>("TestValue", VariableScopeNames.Local, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PortableValue(42));
+        source.Setup(c => c.ReadStateAsync<PortableValue>("TestValue", VariableScopeNames.Topic, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PortableValue("native"));
+        source.Setup(c => c.ReadOrInitStateAsync("TestValue", It.IsAny<System.Func<int>>(), VariableScopeNames.Local, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(42);
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set("TestValue", FormulaValue.New(42), VariableScopeNames.Local, SensitivityLevel.Sensitive);
+        DeclarativeWorkflowContext context = new(source.Object, state);
+
+        // Act
+        if (formula)
+        {
+            FormulaValue result = await context.ReadOrInitStateAsync<FormulaValue>(
+                "TestValue", () => throw new System.InvalidOperationException("Existing values must not be initialized."),
+                VariableScopeNames.Topic);
+            Assert.Equal(42m, result.ToObject());
+        }
+        else
+        {
+            Assert.Equal(42, await context.ReadOrInitStateAsync<int>(
+                "TestValue", () => throw new System.InvalidOperationException("Existing values must not be initialized."),
+                VariableScopeNames.Topic));
+        }
+
+        // Assert
+        Assert.Equal(SensitivityLevel.Sensitive, state.GetSensitivity("TestValue"));
+        Assert.DoesNotContain(source.Invocations, invocation =>
+            string.Equals(invocation.Method.Name, nameof(IWorkflowContext.QueueStateUpdateAsync), System.StringComparison.Ordinal));
     }
 
     [Fact]

@@ -953,6 +953,116 @@ public class WorkflowFormulaStateTests
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CanonicalOwnership_MixedFanOutInitializationAllowsLaterAssignmentsAsync(bool offThread, bool formula)
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        IWorkflowContext? storedContext = null;
+        bool updated = false;
+        StateExecutor source = new("source", (_, _) => default);
+        StateExecutor raw = new("raw", async (context, cancellationToken) =>
+            await context.QueueStateUpdateAsync("TestValue", "native", VariableScopeNames.Topic, cancellationToken));
+        StateExecutor initializer = new("initializer", async (context, cancellationToken) =>
+        {
+            DeclarativeWorkflowContext target = new(context, state);
+            if (formula)
+            {
+                FormulaValue value = await target.ReadOrInitStateAsync<FormulaValue>(
+                    "TestValue", () => FormulaValue.New(42), VariableScopeNames.Topic, cancellationToken);
+                Assert.Equal(42m, value.ToObject());
+            }
+            else
+            {
+                Assert.Equal(42, await target.ReadOrInitStateAsync(
+                    "TestValue", () => 42, VariableScopeNames.Topic, cancellationToken));
+            }
+        }, state);
+        StateExecutor writer = new("writer", async (context, cancellationToken) =>
+        {
+            storedContext = context;
+            DeclarativeWorkflowContext target = new(context, state);
+            if (formula)
+            {
+                FormulaValue existing = await target.ReadOrInitStateAsync<FormulaValue>(
+                    "TestValue", () => throw new InvalidOperationException("Existing values must not be initialized."),
+                    VariableScopeNames.Local, cancellationToken);
+                Assert.Equal(42m, existing.ToObject());
+            }
+            else
+            {
+                Assert.Equal(42, await context.ReadStateAsync<int>("TestValue", VariableScopeNames.Local, cancellationToken));
+                Assert.Equal(42, await target.ReadOrInitStateAsync<int>(
+                    "TestValue", () => throw new InvalidOperationException("Existing values must not be initialized."),
+                    VariableScopeNames.Local, cancellationToken));
+            }
+            await target.QueueStateUpdateWithSensitivityAsync("TestValue",
+                new EvaluationResult<string>("updated", SensitivityLevel.Sensitive), VariableScopeNames.Topic, cancellationToken);
+            updated = true;
+        });
+        Workflow workflow = new WorkflowBuilder(source)
+            .AddEdge(source, raw).AddEdge(source, initializer).AddEdge(initializer, writer).Build();
+        var environment = offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep;
+
+        // Act
+        await using StreamingRun run = await environment.RunStreamingAsync(workflow, 1);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+        }
+
+        // Assert
+        Assert.True(updated);
+        Assert.NotNull(storedContext);
+        Assert.Equal("native", await storedContext.ReadStateAsync<string>("TestValue", VariableScopeNames.Topic));
+        WorkflowFormulaState restored = new(RecalcEngineFactory.Create());
+        await restored.RestoreSnapshotAsync(storedContext, CancellationToken.None);
+        Assert.Equal("updated", restored.Get("TestValue").ToObject());
+        Assert.Equal(SensitivityLevel.Sensitive, restored.GetSensitivity("TestValue"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CanonicalOwnership_InitializationPreservesMarkedLegacyValueAsync(bool formula)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Topic, "TestValue")] = new("legacy"),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = new()
+        {
+            [(WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), "TestValue")] = SensitivityLevel.Sensitive,
+        };
+        IWorkflowContext source = CreateStateContext(values, sensitivities).Object;
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        DeclarativeWorkflowContext context = new(source, state);
+
+        // Act
+        if (formula)
+        {
+            FormulaValue result = await context.ReadOrInitStateAsync<FormulaValue>(
+                "TestValue", () => FormulaValue.New("replacement"), VariableScopeNames.Topic);
+            Assert.Equal("legacy", result.ToObject());
+        }
+        else
+        {
+            Assert.Equal("legacy", await context.ReadOrInitStateAsync("TestValue", () => "replacement", VariableScopeNames.Topic));
+        }
+
+        // Assert
+        EvaluationResult<string?> restored = await source.ReadStateWithSensitivityAsync<string>("TestValue");
+        Assert.Equal("legacy", restored.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, restored.Sensitivity);
+        Assert.Equal(SensitivityLevel.Sensitive, state.GetSensitivity("TestValue"));
+        Assert.False(values.ContainsKey((VariableScopeNames.Topic, "TestValue")));
+    }
+
+    [Theory]
     [InlineData(SensitivityLevel.None)]
     [InlineData(SensitivityLevel.Sensitive)]
     public async Task CanonicalOwnership_MigrationDoesNotClaimLaterRawTopicReuseAsync(SensitivityLevel sensitivity)
