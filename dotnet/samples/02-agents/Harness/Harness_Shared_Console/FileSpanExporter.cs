@@ -3,7 +3,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using OpenTelemetry;
-using OpenTelemetry.Resources;
 
 namespace Harness.Shared.Console;
 
