@@ -521,6 +521,64 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     }
 
     [Theory]
+    [InlineData(250)]
+    [InlineData(2000)]
+    public async Task Validator_ProvenanceVisitsScaleWithAliasChainLengthAsync(int aliasCount)
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var tempDir = Directory.CreateTempSubdirectory("localcodeact-validator-worklist-").FullName;
+        try
+        {
+            var scriptPath = Path.Combine(tempDir, "probe_validator.py");
+            File.WriteAllText(
+                scriptPath,
+                $$"""
+                import runpy
+                import sys
+
+                sys.stdin.read()
+                namespace = runpy.run_path({{JsonSerializer.Serialize(Internal.EmbeddedScripts.GetValidatorScriptPath())}})
+
+                class CountingValidator(namespace["_CodeValidator"]):
+                    def __init__(self):
+                        super().__init__()
+                        self.propagations = 0
+
+                    def _track_os_provenance(self, target, value):
+                        if self._collecting_provenance:
+                            self.propagations += 1
+                        super()._track_os_provenance(target, value)
+
+                alias_count = {{aliasCount}}
+                code = "import os\nif False:\n"
+                code += "".join(f"    cap{index} = cap{index + 1}\n" for index in range(alias_count))
+                code += f"    cap{alias_count} = os\n"
+                validator = CountingValidator()
+                validator.validate(code)
+                assert validator._os_aliases["cap0"] == {("os",)}
+                assert validator.propagations <= 2 * (alias_count + 1), validator.propagations
+                """);
+            var validator = new Internal.CodeValidator(
+                s_python!,
+                scriptPath,
+                TimeSpan.FromSeconds(10),
+                allowedImports: null,
+                blockedImports: null,
+                allowedBuiltins: null,
+                blockedBuiltins: null);
+
+            // Act & Assert
+            await validator.ValidateAsync("print('safe')", CancellationToken.None);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
     [InlineData("first = second\nsecond = first", true)]
     [InlineData("first = [second]\nsecond = [first]", true)]
     [InlineData("import os\nfirst = os\nsecond = first\nfirst = second\nfirst.popen()", false)]

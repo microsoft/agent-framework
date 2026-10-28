@@ -59,9 +59,10 @@ validator blocks common dangerous operations (`eval`, `exec`,
 does not make Python execution safe on an unsandboxed host.
 
 OS provenance collection uses a finite set of permitted chains and a forbidden
-state so cyclic aliases cannot grow the analysis indefinitely. Tracking is
-conservative across scopes and assignments; reusing a name for unrelated values
-can cause validation to reject otherwise benign code. Capability restrictions
+state so cyclic aliases cannot grow the analysis indefinitely. A dependency
+worklist revisits only assignments that depend on newly discovered provenance.
+Tracking is conservative across scopes and assignments; reusing a name for
+unrelated values can cause validation to reject otherwise benign code. Capability restrictions
 also apply to private asyncio process transports and Windows process helpers,
 including aliases and from-imports.
 

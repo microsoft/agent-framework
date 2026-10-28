@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import builtins as _builtins
+from collections import deque
 from typing import Any
 
 _PYTHON_BUILTIN_NAMES: frozenset[str] = frozenset(dir(_builtins))
@@ -396,6 +397,7 @@ class _CodeValidator(ast.NodeVisitor):
         self._os_aliases: dict[str, set[tuple[str, ...]]] = {"os": {_OS_ROOT_CHAIN}}
         self._os_containers: dict[str, set[tuple[str, ...]]] = {}
         self._collecting_provenance = False
+        self._changed_os_names: set[str] = set()
         self._shadowed_os_value_builtins: set[str] = set()
 
     def validate(self, code: str) -> None:
@@ -421,6 +423,7 @@ class _CodeValidator(ast.NodeVisitor):
         """Collect finite, conservative provenance before checking any uses."""
         nodes = list(ast.walk(tree))
         producers: list[ast.AST] = []
+        dependents: dict[str, list[int]] = {}
         for node in nodes:
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -435,41 +438,52 @@ class _CodeValidator(ast.NodeVisitor):
                     elif alias.name in {"os", "_os"}:
                         self._remember_os_alias(alias.asname or alias.name, _OS_ROOT_CHAIN)
             elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.For, ast.AsyncFor)):
+                value = node.iter if isinstance(node, (ast.For, ast.AsyncFor)) else node.value
+                if value is None:
+                    continue
+                index = len(producers)
                 producers.append(node)
+                for name in {child.id for child in ast.walk(value) if isinstance(child, ast.Name)}:
+                    dependents.setdefault(name, []).append(index)
 
-        names = {node.id for node in nodes if isinstance(node, ast.Name)} | self._os_aliases.keys()
         chain_count = 2 + len(self._allowed_os_attrs)  # Root, forbidden, and configured top-level members.
         if "path" in self._allowed_os_attrs:
             chain_count += len(ALLOWED_OS_PATH_ATTRS)
         if "environ" in self._allowed_os_attrs:
             chain_count += len(ALLOWED_OS_ENVIRON_ATTRS)
 
-        # Each changing sweep adds a direct or contained name/chain fact.
-        max_facts = 2 * len(names) * chain_count
-        previous_fact_count = -1
+        pending = deque(range(len(producers)))
+        scheduled = set(pending)
+        # Each direct/contained name fact can schedule each dependent at most once.
+        remaining_propagations = len(producers) + 2 * chain_count * sum(len(items) for items in dependents.values())
         self._collecting_provenance = True
         try:
-            for _ in range(max_facts + 1):
-                fact_count = sum(
-                    len(chains)
-                    for mapping in (self._os_aliases, self._os_containers)
-                    for chains in mapping.values()
-                )
-                if fact_count == previous_fact_count:
-                    return
-                previous_fact_count = fact_count
-                for node in producers:
-                    if isinstance(node, ast.Assign):
-                        for target in node.targets:
-                            self._track_os_provenance(target, node.value)
-                    elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                        self._track_os_provenance(node.target, node.value)
-                    elif isinstance(node, (ast.For, ast.AsyncFor)):
-                        self._track_os_iteration_target(node.target, node.iter)
+            while pending:
+                if remaining_propagations == 0:
+                    raise CodeValidationError(
+                        "Generated code is not allowed: OS provenance analysis exceeded its finite bound"
+                    )
+                remaining_propagations -= 1
+                index = pending.popleft()
+                scheduled.remove(index)
+                self._changed_os_names.clear()
+                node = producers[index]
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        self._track_os_provenance(target, node.value)
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    self._track_os_provenance(node.target, node.value)
+                elif isinstance(node, (ast.For, ast.AsyncFor)):
+                    self._track_os_iteration_target(node.target, node.iter)
+
+                for name in self._changed_os_names:
+                    for dependent in dependents.get(name, []):
+                        if dependent not in scheduled:
+                            pending.append(dependent)
+                            scheduled.add(dependent)
         finally:
             self._collecting_provenance = False
-
-        raise CodeValidationError("Generated code is not allowed: OS provenance analysis exceeded its finite bound")
+            self._changed_os_names.clear()
 
     def visit(self, node: ast.AST) -> Any:
         """Visit a node and check if its type is allowed."""
@@ -636,12 +650,20 @@ class _CodeValidator(ast.NodeVisitor):
         if isinstance(target, ast.Name):
             if not self._collecting_provenance:
                 return
+            previous_count = len(self._os_aliases.get(target.id, set())) + len(
+                self._os_containers.get(target.id, set())
+            )
             if direct:
                 self._os_aliases.setdefault(target.id, set()).update(self._normalize_os_chain(chain) for chain in direct)
             if contained:
                 self._os_containers.setdefault(target.id, set()).update(
                     self._normalize_os_chain(chain) for chain in contained
                 )
+            fact_count = len(self._os_aliases.get(target.id, set())) + len(
+                self._os_containers.get(target.id, set())
+            )
+            if fact_count > previous_count:
+                self._changed_os_names.add(target.id)
         elif isinstance(target, (ast.Tuple, ast.List)):
             possible = direct | contained
             for target_item in target.elts:
