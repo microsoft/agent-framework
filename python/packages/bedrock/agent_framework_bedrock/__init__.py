@@ -4,6 +4,8 @@ import importlib.metadata
 
 from ._chat_client import BedrockChatClient, BedrockChatOptions, BedrockGuardrailConfig, BedrockSettings
 from ._embedding_client import BedrockEmbeddingClient, BedrockEmbeddingOptions, BedrockEmbeddingSettings
+from ._knowledge_base import BedrockKnowledgeBaseSettings
+from ._knowledge_base_provider import BedrockKnowledgeBaseProvider
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -17,6 +19,8 @@ __all__ = [
     "BedrockEmbeddingOptions",
     "BedrockEmbeddingSettings",
     "BedrockGuardrailConfig",
+    "BedrockKnowledgeBaseProvider",
+    "BedrockKnowledgeBaseSettings",
     "BedrockSettings",
     "__version__",
 ]
