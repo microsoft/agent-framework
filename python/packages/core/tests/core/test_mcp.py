@@ -2962,6 +2962,43 @@ async def test_mcp_tool_call_not_replayed_without_idempotency_hint():
     assert server.call_tool_mock.await_count == 1
 
 
+async def test_mcp_tool_call_not_replayed_when_reconnect_adds_hint():
+    """A replacement catalog cannot make an already dispatched operation replayable."""
+
+    class TestServer(MCPTool):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.connect_count = 0
+            self.sessions: list[Any] = []
+
+        async def connect(self, *, reset: bool = False) -> None:
+            self.connect_count += 1
+            mock_session = Mock(spec=ClientSession)
+            _set_framework_owned_session(self, mock_session)
+            self.sessions.append(self.session)
+            if self.connect_count == 1:
+                mock_session.call_tool = AsyncMock(side_effect=MCPError(-32000, "Session terminated"))
+            else:
+                self._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotent_hint=True)
+                mock_session.call_tool = AsyncMock(
+                    return_value=types.CallToolResult(content=[types.TextContent(type="text", text="recovered")])
+                )
+            self.is_connected = True
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server", trust_server_idempotency_hints=True)
+    await server.connect()
+
+    with pytest.raises(ToolExecutionException, match="outcome is unknown"):
+        await server.call_tool("test_tool", param="test_value")
+
+    assert server.connect_count == 2
+    assert server.sessions[0].call_tool.await_count == 1
+    assert server.sessions[1].call_tool.await_count == 0
+
+
 async def test_mcp_tool_call_not_replayed_on_hint_alone_without_client_trust():
     """A server idempotency hint by itself must not authorize replay.
 

@@ -3396,6 +3396,8 @@ class MCPTool:
         from anyio import ClosedResourceError
         from mcp import MCPError
 
+        # A catalog refresh cannot retroactively make the first dispatch safe to repeat.
+        replay_eligible = self._is_call_replayable(tool_name)
         for attempt in range(2):
             span_error_recorded = False
             try:
@@ -3440,7 +3442,7 @@ class MCPTool:
                         if span.is_recording():
                             set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
                         raise
-                    if not self._is_call_replayable(tool_name):
+                    if not replay_eligible or not self._is_call_replayable(tool_name):
                         # The request may have reached the server before the connection
                         # dropped, so replaying it could execute a non-idempotent operation
                         # twice. Surface the unknown outcome instead of a replay; the
