@@ -158,6 +158,46 @@ async def main():
 asyncio.run(main())
 ```
 
+### Connection and credential lifetimes
+
+Chat clients support async context managers for deterministic cleanup:
+
+```python
+from agent_framework import Agent, Message
+from agent_framework.openai import OpenAIChatClient
+
+async with OpenAIChatClient() as client:
+    response = await client.get_response([Message("user", ["Hello!"])])
+
+# Alternatively, let the agent enter and exit its chat client's context.
+async with Agent(client=OpenAIChatClient(), instructions="Be helpful.") as agent:
+    response = await agent.run("Hello!")
+```
+
+Calling clients without a context manager remains supported; use `await client.close()` when finished.
+Context exit releases connections created by the connector, including on exceptions. Caller-supplied SDK clients,
+HTTP transports, and credentials remain caller-owned. In particular, closing an Azure SDK connection does not
+close the credential supplied to it. Scope credentials outside the agent or client that uses them:
+
+```python
+from azure.identity.aio import AzureCliCredential
+
+async with AzureCliCredential() as credential:
+    async with OpenAIChatClient(
+        azure_endpoint="https://YOUR-RESOURCE.openai.azure.com",
+        model="YOUR-DEPLOYMENT",
+        credential=credential,
+    ) as client:
+        response = await client.get_response([Message("user", ["Hello!"])])
+```
+
+Treat closing a resource-owning client as the end of its lifetime; reopening is SDK-dependent. Avoid overlapping
+agent contexts sharing a connector-owned connection, since exiting either agent closes that connection. To share
+an SDK client across agents, inject it into their chat clients and manage its lifetime outside those agent contexts.
+`BaseChatClient` provides default context methods and a no-op `close()`, so custom subclasses do not need to
+implement lifecycle methods unless they own resources. Protocol-only chat clients do not need context methods.
+Inherited context exit also supports existing subclasses whose `close()` is synchronous.
+
 ## 4. Build an Agent with Tools and Functions
 
 Enhance your agent with custom tools and function calling:

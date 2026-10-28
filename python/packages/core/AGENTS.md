@@ -67,7 +67,10 @@ agent_framework/
 ### Chat Clients (`_clients.py`)
 
 - **`SupportsChatGetResponse`** - Protocol for chat client implementations
-- **`BaseChatClient`** - Abstract base class with middleware support; subclasses implement `_inner_get_response()` and `_inner_get_streaming_response()`
+- **`BaseChatClient`** - Abstract base class without middleware; subclasses implement `_inner_get_response()`
+  for streaming and non-streaming requests. Provides `__aenter__()` returning `self`, `__aexit__()` delegating to
+  `close()`, and a default no-op async `close()`. Connectors override cleanup for owned connections and credentials;
+  injected resources remain caller-owned. `SupportsChatGetResponse` does not require lifecycle methods.
 
 ### Types (`_types.py`)
 
@@ -82,6 +85,9 @@ agent_framework/
   `additional_properties` namespaces and streamed mergeable content uses `merge_mode`; response updates can use the
   same field to replace all contents of one logical message; see
   [spec 005](../../../docs/specs/005-python-content-identity-and-protocol-metadata.md).
+- **Citation coordinates** - `Annotation.annotated_regions_coordinate_space` distinguishes spans in generated
+  `Content.text` (`"content"`, also the default when omitted) from locations in cited source material (`"source"`).
+  Protocol adapters must not interpret source-coordinate regions as generated-text offsets.
 - **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
   constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
   results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.

@@ -272,6 +272,20 @@ class RawFoundryChatClient(
             additional_properties=additional_properties,
         )
         self.project_client = project_client
+        self._owns_project_client = owns_project_client
+        self._project_client_closed = False
+        # get_openai_client creates an independent connection, even for an injected project.
+        self._owns_client = True
+
+    @override
+    async def close(self) -> None:
+        """Close owned OpenAI and project connections, not the supplied credential."""
+        try:
+            await super().close()
+        finally:
+            if self._owns_project_client and not self._project_client_closed:
+                await self.project_client.close()
+                self._project_client_closed = True
 
     @override
     async def _prepare_options(
