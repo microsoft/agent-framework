@@ -70,12 +70,11 @@ Foundry runs `dotnet restore` and `dotnet publish` during deployment because `az
 
 For Linux or macOS, use the same `dotnet msbuild` preparation command with an absolute destination path and the sibling [`add-local-framework-feed.sh`](../../scripts/add-local-framework-feed.sh) helper after initialization. See [`Hosted-ChatClientAgent`](../Hosted-ChatClientAgent/README.md#deploy-your-local-framework-changes-contributors) for the package helper details.
 
-For later changes, prepare a fresh source folder, copy its `.cs` and `.csproj` files and any `working/` data into the scaffolded agent directory, rerun the package helper, and run `azd deploy` from that directory. Keep the scaffolded `azure.yaml` and `.azure` environment rather than replacing them with the template. Check the raw terminal event for `response.completed` or `response.failed`; a zero CLI exit code does not prove the turn succeeded.
+For later changes, prepare a fresh source folder, copy its `.cs` and `.csproj` files into the scaffolded agent directory, rerun the package helper, and run `azd deploy` from that directory. Keep the scaffolded `azure.yaml` and `.azure` environment rather than replacing them with the template. Check the raw terminal event for `response.completed` or `response.failed`; a zero CLI exit code does not prove the turn succeeded.
 
 **Stateless web-search history:** The OpenAI chat adapter returns hosted search results with a raw `WebSearchCallResponseItem`. After another local function call, replaying that raw item to the Foundry model with `store=false` caused HTTP 400 `invalid_payload`. `StatelessWebSearchChatClient` omits only the raw search result from the *next model request*, leaving the original session history, assistant text, local function calls, and citations intact. The model does not receive that raw search metadata again, so later turns must rely on the cited assistant text for source details.
 
-## Related samples
+## Related resources
 
-- [Hosted Harness Data Processing](../Hosted-Harness-DataProcessing/README.md) also uses source ZIP deployment.
-- [Hosted Harness Scaling Capabilities](../Hosted-Harness-ScalingCapabilities/README.md) retains a Dockerfile to install Python for its skill scripts.
+- [Research console sample](../../../../02-agents/Harness/Harness_Step01_Research/README.md).
 - [Official source deployment guide](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code).
