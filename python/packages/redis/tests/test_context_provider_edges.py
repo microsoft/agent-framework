@@ -121,6 +121,48 @@ async def test_validate_schema_compatibility_raises_for_significant_mismatch(
         await provider._validate_schema_compatibility()
 
 
+@pytest.mark.parametrize("borrowed_index", [False, True])
+@pytest.mark.parametrize("compatible_schema", [False, True])
+async def test_existing_index_schema_check_uses_the_active_connection(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,
+    borrowed_index: bool,
+    compatible_schema: bool,
+) -> None:
+    client = MagicMock()
+    mock_index.client = client
+    mock_index.exists.return_value = True
+    provider = RedisContextProvider(
+        source_id="ctx",
+        user_id="user-1",
+        redis_index=mock_index if borrowed_index else None,
+    )
+    existing_schema = provider.schema_dict
+    if not compatible_schema:
+        existing_schema = {**existing_schema, "index": {**existing_schema["index"], "prefix": "other"}}
+    existing_index = MagicMock()
+    existing_index.schema.to_dict.return_value = existing_schema
+
+    async def fetch_schema(name: str, **kwargs: Any) -> MagicMock:
+        assert name == provider.index_name
+        # The supplied index may use a different server or non-URL credentials.
+        if kwargs.get("redis_client") is not client or "redis_url" in kwargs:
+            raise ConnectionError("Schema lookup reached a different Redis connection")
+        return existing_index
+
+    patch_index.from_existing.side_effect = fetch_schema
+
+    if compatible_schema:
+        await provider._ensure_index()
+        mock_index.create.assert_awaited_once_with(overwrite=False, drop=False)
+        assert provider._index_initialized is True
+    else:
+        with pytest.raises(ValueError, match="overwrite_index=True"):
+            await provider._ensure_index()
+        mock_index.create.assert_not_awaited()
+        assert provider._index_initialized is False
+
+
 async def test_add_requires_content_field(
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:

@@ -48,7 +48,7 @@ def patch_index_from_dict(mock_index: AsyncMock):
     with patch("agent_framework_redis._context_provider.AsyncSearchIndex") as mock_cls:
         mock_cls.from_dict = MagicMock(return_value=mock_index)
 
-        async def mock_from_existing(index_name: str, redis_url: str):  # noqa: ARG001
+        async def mock_from_existing(index_name: str, redis_client: Any):  # noqa: ARG001
             mock_existing = AsyncMock()
             mock_existing.schema.to_dict = MagicMock(
                 side_effect=lambda: mock_cls.from_dict.call_args[0][0] if mock_cls.from_dict.call_args else {}
