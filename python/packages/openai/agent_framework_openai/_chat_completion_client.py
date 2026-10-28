@@ -669,25 +669,75 @@ class RawOpenAIChatCompletionClient(
                         async for chunk in completion_stream:
                             if len(chunk.choices) == 0 and chunk.usage is None:
                                 continue
-                            update = self._parse_response_update_from_openai(chunk)
-                            for content in update.contents:
-                                if content.type != "function_call":
+                            # Emit usage as a separate update if present.
+                            if chunk.usage:
+                                usage_update = ChatResponseUpdate(
+                                    created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                                    contents=[
+                                        Content.from_usage(
+                                            usage_details=self._parse_usage_from_openai(chunk.usage),
+                                            merge_mode="replace",
+                                            raw_representation=chunk,
+                                        )
+                                    ],
+                                    role="assistant",
+                                    model=chunk.model,
+                                    additional_properties=self._get_metadata_from_streaming_chat_response(chunk),
+                                    finish_reason=None,
+                                    raw_representation=chunk,
+                                    response_id=chunk.id,
+                                    message_id=f"{chunk.id}-usage",
+                                )
+                                yield usage_update
+                            # Emit one update per choice to keep messages separate.
+                            for choice in chunk.choices:
+                                if choice.delta is None:
                                     continue
-                                choice_index = content.additional_properties.get("tool_call_choice_index")
-                                tool_index = content.additional_properties.get("tool_call_index")
-                                if not isinstance(choice_index, int) or not isinstance(tool_index, int):
-                                    continue
-                                index_key = (choice_index, tool_index)
-                                identity = tool_call_identities.get(index_key)
-                                if identity is None:
-                                    identity = (f"af-call-{uuid4().hex}", content.call_id or "")
-                                occurrence_id, provider_call_id = identity
-                                if content.call_id:
-                                    provider_call_id = content.call_id
-                                tool_call_identities[index_key] = (occurrence_id, provider_call_id)
-                                content.id = occurrence_id
-                                content.call_id = provider_call_id
-                            yield update
+                                choice_contents: list[Content] = []
+                                choice_contents.extend(self._parse_tool_calls_from_openai(choice))
+                                if text_content := self._parse_text_from_openai(choice):
+                                    choice_contents.append(text_content)
+                                if refusal_content := self._parse_refusal_from_openai(choice):
+                                    choice_contents.append(refusal_content)
+                                if reasoning_details := getattr(choice.delta, "reasoning_details", None):
+                                    choice_contents.append(
+                                        Content.from_text_reasoning(
+                                            protected_data=json.dumps(reasoning_details),
+                                            merge_mode="append",
+                                        )
+                                    )
+                                if self.response_parser is not None:
+                                    choice_contents = list(self.response_parser(choice.delta, choice_contents))
+                                choice_update = ChatResponseUpdate(
+                                    created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                                    contents=choice_contents,
+                                    role="assistant",
+                                    model=chunk.model,
+                                    additional_properties=self._get_metadata_from_streaming_chat_response(chunk),
+                                    finish_reason=choice.finish_reason if choice.finish_reason else None,
+                                    raw_representation=chunk,
+                                    response_id=chunk.id,
+                                    message_id=f"{chunk.id}-{choice.index}",
+                                )
+                                # Preserve tool call identity mapping as before.
+                                for content in choice_update.contents:
+                                    if content.type != "function_call":
+                                        continue
+                                    choice_index = content.additional_properties.get("tool_call_choice_index")
+                                    tool_index = content.additional_properties.get("tool_call_index")
+                                    if not isinstance(choice_index, int) or not isinstance(tool_index, int):
+                                        continue
+                                    index_key = (choice_index, tool_index)
+                                    identity = tool_call_identities.get(index_key)
+                                    if identity is None:
+                                        identity = (f"af-call-{uuid4().hex}", content.call_id or "")
+                                    occurrence_id, provider_call_id = identity
+                                    if content.call_id:
+                                        provider_call_id = content.call_id
+                                    tool_call_identities[index_key] = (occurrence_id, provider_call_id)
+                                    content.id = occurrence_id
+                                    content.call_id = provider_call_id
+                                yield choice_update
                 except BadRequestError as ex:
                     if ex.code == "content_filter":
                         raise OpenAIContentFilterException(
