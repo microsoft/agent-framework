@@ -20,7 +20,7 @@ See the [Bedrock sample](../../samples/02-agents/providers/amazon/bedrock_chat_c
 
 ### Knowledge Base Examples
 
-For Amazon Bedrock managed Knowledge Base retrieval, see:
+For Amazon Bedrock managed Knowledge Base retrieval, use `BedrockKnowledgeBaseProvider`. Its `mode` selects `"inject"` (inject KB context automatically), `"tool"` (expose a KB search tool the agent calls on demand), or `"both"` (default). See:
 
-- [`bedrock_kb_tool.py`](../../samples/02-agents/providers/amazon/bedrock_kb_tool.py) — `BedrockKnowledgeBaseTool` as a `FunctionTool` the agent calls on demand.
-- [`bedrock_kb_context_provider.py`](../../samples/02-agents/providers/amazon/bedrock_kb_context_provider.py) — `BedrockKnowledgeBaseProvider` as a `ContextProvider` that injects KB context automatically.
+- [`bedrock_kb_tool.py`](../../samples/02-agents/providers/amazon/bedrock_kb_tool.py) — `BedrockKnowledgeBaseProvider(mode="tool")`: the agent searches the KB on demand.
+- [`bedrock_kb_context_provider.py`](../../samples/02-agents/providers/amazon/bedrock_kb_context_provider.py) — `BedrockKnowledgeBaseProvider(mode="inject")`: KB context is injected automatically.

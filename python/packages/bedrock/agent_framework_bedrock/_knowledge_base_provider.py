@@ -91,17 +91,22 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         """Create a Bedrock Knowledge Base context provider.
 
         Region and credentials are resolved the same way as ``BedrockChatClient`` and the
-        embedding client — from these arguments, then the ``BEDROCK_*`` environment
-        variables, then an optional .env file — so this provider and a configured
-        ``BedrockChatClient()`` target the same region/credentials by default.
+        embedding client: explicit arguments first, then the ``.env`` file (when
+        ``env_file_path`` is given), then the ``BEDROCK_*`` environment variables. A
+        resolved region takes precedence over a supplied ``boto3_session``'s default
+        region, so this provider and a configured ``BedrockChatClient()`` target the same
+        region/credentials by default.
 
         Args:
             knowledge_base_id: The Bedrock Knowledge Base ID.
             mode: How the KB is used — ``"inject"`` (context only), ``"tool"`` (search tool
                 only), or ``"both"`` (default).
-            region_name: AWS region name; falls back to ``BEDROCK_REGION`` then us-east-1.
+            region_name: AWS region name; falls back to ``BEDROCK_REGION``, then the
+                ``boto3_session`` region, then us-east-1.
             number_of_results: Maximum number of results to retrieve.
-            min_score: Minimum relevance score threshold for injected passages (inject mode).
+            min_score: Minimum relevance score for injected passages (inject mode). Applies only
+                to passages that carry a numeric score (standard Retrieve); agentic passages
+                expose no score and are not filtered.
             use_agentic_retrieval: Use AgenticRetrieveStream (query decomposition + managed
                 reranking) with fallback to standard Retrieve, on both the inject and tool paths.
             source_id: Identifier for this context source.
@@ -156,7 +161,8 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
     ) -> None:
         """Inject KB context and/or expose the KB search tool, per ``mode``.
 
-        Called automatically before each model invocation.
+        Called once per agent run (before the run's first model call), not before every
+        model invocation in the function-calling loop.
 
         Args:
             agent: The agent running this invocation.
@@ -221,7 +227,9 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         )
         items: list[Any] = []
         for p in passages:
-            if p.score < self.min_score:
+            # Agentic passages carry no numeric score (None); only scored (standard
+            # Retrieve) passages are subject to the threshold.
+            if p.score is not None and p.score < self.min_score:
                 continue
             media = _media_content(p)
             if media is not None:

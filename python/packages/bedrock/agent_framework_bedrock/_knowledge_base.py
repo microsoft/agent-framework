@@ -88,7 +88,10 @@ def _build_kb_client(
         env_file_path=env_file_path,
         env_file_encoding=env_file_encoding,
     )
-    resolved_region = settings.get("region") or DEFAULT_REGION
+    # Same precedence as BedrockChatClient: an explicit/configured region wins over a
+    # supplied session's default region, so chat and KB calls target the same region.
+    session_region = boto3_session.region_name if boto3_session is not None else None
+    resolved_region = settings.get("region") or session_region or DEFAULT_REGION
 
     if boto3_session is None:
         session_kwargs: dict[str, Any] = {}
@@ -103,7 +106,7 @@ def _build_kb_client(
 
     return boto3_session.client(
         "bedrock-agent-runtime",
-        region_name=boto3_session.region_name or resolved_region,
+        region_name=resolved_region,
         config=BotoConfig(user_agent_extra=f"{get_user_agent()} bedrock-kb"),
     )
 
@@ -176,12 +179,13 @@ class _KnowledgeBasePassage:
 
     Shared representation so the tool and the context provider extract content,
     source, and score in exactly one place. ``score`` is the numeric relevance
-    score standard ``Retrieve`` returns per chunk (agentic results have none).
+    score standard ``Retrieve`` returns per chunk, or ``None`` for agentic results,
+    whose API exposes no numeric score.
     """
 
     content: str
     source: str
-    score: float
+    score: float | None
 
 
 def _retrieve_standard_passages(
@@ -226,7 +230,7 @@ def _retrieve_agentic_passages(
 
     Agentic results use a different schema than standard ``Retrieve``: they expose
     ``content``/``metadata``/``sourceRetriever`` and carry no ``score`` or ``location``,
-    so the source URI comes from ``metadata._source_uri`` and ``score`` is ``0`` (managed
+    so the source URI comes from ``metadata._source_uri`` and ``score`` is ``None`` (managed
     reranking orders results without exposing a numeric score). ``generateResponse`` is
     disabled: callers want passages, not a service-generated answer.
     """
@@ -259,7 +263,7 @@ def _retrieve_agentic_passages(
                 _KnowledgeBasePassage(
                     content=r.get("content", {}).get("text", ""),
                     source=metadata.get("_source_uri", ""),
-                    score=0,
+                    score=None,
                 )
             )
     return passages
@@ -321,14 +325,17 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         """Create a Bedrock Knowledge Base tool.
 
         Region and credentials are resolved the same way as ``BedrockChatClient`` and
-        the embedding client — from these arguments, then the ``BEDROCK_*`` environment
-        variables (``BEDROCK_REGION``, ``BEDROCK_ACCESS_KEY``, ``BEDROCK_SECRET_KEY``,
-        ``BEDROCK_SESSION_TOKEN``), then an optional .env file — so a KB tool and a
-        configured ``BedrockChatClient()`` target the same region/credentials by default.
+        the embedding client: explicit arguments first, then the ``.env`` file (when
+        ``env_file_path`` is given), then the ``BEDROCK_*`` environment variables
+        (``BEDROCK_REGION``, ``BEDROCK_ACCESS_KEY``, ``BEDROCK_SECRET_KEY``,
+        ``BEDROCK_SESSION_TOKEN``). A resolved region takes precedence over a supplied
+        ``boto3_session``'s default region, so a KB tool and a configured
+        ``BedrockChatClient()`` target the same region/credentials by default.
 
         Args:
             knowledge_base_id: The Bedrock Knowledge Base ID.
-            region_name: AWS region name; falls back to ``BEDROCK_REGION`` then us-east-1.
+            region_name: AWS region name; falls back to ``BEDROCK_REGION``, then the
+                ``boto3_session`` region, then us-east-1.
             number_of_results: Maximum number of results to return.
             use_agentic_retrieval: Use AgenticRetrieveStream for query decomposition + reranking.
             client: Pre-configured bedrock-agent-runtime client. If given, it is used as-is.
@@ -402,6 +409,6 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         for i, p in enumerate(passages, 1):
             # Standard Retrieve results carry a numeric relevance score; agentic
             # (managed reranking) results do not, so only render it when present (> 0).
-            header = f"[{i}] (score: {p.score:.3f})" if p.score else f"[{i}]"
+            header = f"[{i}] (score: {p.score:.3f})" if p.score is not None else f"[{i}]"
             parts.append(f"{header} {p.content}\n    Source: {p.source}")
         return "\n\n".join(parts)

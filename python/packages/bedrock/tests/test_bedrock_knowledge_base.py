@@ -409,3 +409,64 @@ class TestBedrockKnowledgeBaseProvider:
         assert "Agentic passage" in joined
         client.agentic_retrieve_stream.assert_called_once()
         client.retrieve.assert_not_called()
+
+    def test_min_score_does_not_drop_unscored_agentic_passages(self):
+        # Agentic results expose no numeric score (None). A positive min_score -- as in the
+        # inject sample (min_score=0.3) -- must not filter them all out.
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = MagicMock()
+        client.agentic_retrieve_stream.return_value = {
+            "stream": [
+                {
+                    "result": {
+                        "results": [{"content": {"text": "Agentic passage"}, "metadata": {"_source_uri": "s3://b/a"}}]
+                    }
+                }
+            ]
+        }
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="inject", min_score=0.3, use_agentic_retrieval=True, client=client
+        )
+        joined = "\n".join(str(i) for i in provider._retrieve_context_items("compare a and b"))
+        assert "Agentic passage" in joined
+
+
+class TestBuildKbClientRegion:
+    """Region precedence matches BedrockChatClient: resolved setting > session region > default."""
+
+    def test_explicit_region_overrides_session_region(self, monkeypatch):
+        from agent_framework_bedrock._knowledge_base import _build_kb_client
+
+        monkeypatch.delenv("BEDROCK_REGION", raising=False)
+        session = MagicMock()
+        session.region_name = "eu-west-1"
+        _build_kb_client(
+            client=None,
+            boto3_session=session,
+            region="us-west-2",
+            access_key=None,
+            secret_key=None,
+            session_token=None,
+            env_file_path=None,
+            env_file_encoding=None,
+        )
+        assert session.client.call_args.kwargs["region_name"] == "us-west-2"
+
+    def test_session_region_used_when_no_region_configured(self, monkeypatch):
+        from agent_framework_bedrock._knowledge_base import _build_kb_client
+
+        monkeypatch.delenv("BEDROCK_REGION", raising=False)
+        session = MagicMock()
+        session.region_name = "eu-west-1"
+        _build_kb_client(
+            client=None,
+            boto3_session=session,
+            region=None,
+            access_key=None,
+            secret_key=None,
+            session_token=None,
+            env_file_path=None,
+            env_file_encoding=None,
+        )
+        assert session.client.call_args.kwargs["region_name"] == "eu-west-1"
