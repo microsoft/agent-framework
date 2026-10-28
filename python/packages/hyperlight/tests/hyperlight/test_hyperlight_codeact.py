@@ -3501,3 +3501,57 @@ def test_sandbox_survives_external_thread_holding_stale_reference(
         gc.collect()
 
     assert drop_violations == []
+
+
+def test_run_snapshot_does_not_repeat_unchanged_fides_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." not in caplog.text
+
+
+def test_run_snapshot_warns_when_fides_metadata_keys_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["confidentiality"] = "private"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert codeact.get_tools()[0] is annotated_tool
+
+
+def test_run_snapshot_warns_when_fides_metadata_value_changes(caplog: pytest.LogCaptureFixture) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+
+    caplog.clear()
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
