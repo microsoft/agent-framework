@@ -120,6 +120,108 @@ public sealed class AgentSessionStoreTests
             () => store.GetOrCreateSessionAsync(null!, new AgentSessionStoreKey("conversation-1")).AsTask());
     }
 
+    [Fact]
+    public async Task GetSessionAsync_SessionIdOverload_ForwardsKeyWithoutPartitionsAsync()
+    {
+        // Arrange
+        var storedSession = new TestAgentSession();
+        var agent = new Mock<AIAgent>().Object;
+        using var cts = new CancellationTokenSource();
+        var store = new Mock<AgentSessionStore>();
+        store.Setup(s => s.GetSessionAsync(agent, It.IsAny<AgentSessionStoreKey>(), cts.Token))
+            .ReturnsAsync(storedSession);
+
+        // Act
+        AgentSession? session = await store.Object.GetSessionAsync(agent, "conversation-1", cts.Token);
+
+        // Assert
+        Assert.Same(storedSession, session);
+        store.Verify(
+            s => s.GetSessionAsync(agent, It.Is<AgentSessionStoreKey>(k => IsUnpartitionedKey(k, "conversation-1")), cts.Token),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SaveSessionAsync_SessionIdOverload_ForwardsKeyWithoutPartitionsAsync()
+    {
+        // Arrange
+        var session = new TestAgentSession();
+        var agent = new Mock<AIAgent>().Object;
+        using var cts = new CancellationTokenSource();
+        var store = new Mock<AgentSessionStore>();
+        store.Setup(s => s.SaveSessionAsync(agent, It.IsAny<AgentSessionStoreKey>(), session, cts.Token))
+            .Returns(default(ValueTask));
+
+        // Act
+        await store.Object.SaveSessionAsync(agent, "conversation-1", session, cts.Token);
+
+        // Assert
+        store.Verify(
+            s => s.SaveSessionAsync(agent, It.Is<AgentSessionStoreKey>(k => IsUnpartitionedKey(k, "conversation-1")), session, cts.Token),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetOrCreateSessionAsync_SessionIdOverload_ForwardsKeyWithoutPartitionsAsync()
+    {
+        // Arrange
+        var storedSession = new TestAgentSession();
+        var agent = new Mock<AIAgent>().Object;
+        using var cts = new CancellationTokenSource();
+        var store = new Mock<AgentSessionStore>();
+        store.Setup(s => s.GetOrCreateSessionAsync(agent, It.IsAny<AgentSessionStoreKey>(), cts.Token))
+            .ReturnsAsync(storedSession);
+
+        // Act
+        AgentSession session = await store.Object.GetOrCreateSessionAsync(agent, "conversation-1", cts.Token);
+
+        // Assert
+        Assert.Same(storedSession, session);
+        store.Verify(
+            s => s.GetOrCreateSessionAsync(agent, It.Is<AgentSessionStoreKey>(k => IsUnpartitionedKey(k, "conversation-1")), cts.Token),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_SessionIdOverload_ForwardsKeyWithoutPartitionsAsync()
+    {
+        // Arrange
+        var agent = new Mock<AIAgent>().Object;
+        using var cts = new CancellationTokenSource();
+        var store = new Mock<AgentSessionStore>();
+        store.Setup(s => s.DeleteSessionAsync(agent, It.IsAny<AgentSessionStoreKey>(), cts.Token))
+            .Returns(default(ValueTask));
+
+        // Act
+        await store.Object.DeleteSessionAsync(agent, "conversation-1", cts.Token);
+
+        // Assert
+        store.Verify(
+            s => s.DeleteSessionAsync(agent, It.Is<AgentSessionStoreKey>(k => IsUnpartitionedKey(k, "conversation-1")), cts.Token),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SessionIdOverloads_InvalidSessionId_ThrowAsync(string? sessionId)
+    {
+        // Arrange
+        var store = new TestAgentSessionStore(session: null);
+        var agent = new Mock<AIAgent>().Object;
+        var session = new TestAgentSession();
+
+        // Act and assert
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => store.GetSessionAsync(agent, sessionId!).AsTask());
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => store.SaveSessionAsync(agent, sessionId!, session).AsTask());
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => store.GetOrCreateSessionAsync(agent, sessionId!).AsTask());
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => store.DeleteSessionAsync(agent, sessionId!).AsTask());
+    }
+
+    private static bool IsUnpartitionedKey(AgentSessionStoreKey key, string sessionId)
+        => string.Equals(key.SessionId, sessionId, StringComparison.Ordinal) && key.Partitions is null;
+
     private sealed class TestAgentSessionStore(AgentSession? session) : AgentSessionStore
     {
         public AgentSessionStoreKey? LastKey { get; private set; }
