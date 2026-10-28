@@ -25,16 +25,35 @@ def _version(content: str, manifest: str) -> str:
     return version
 
 
+def _workspace_manifests(repo_root: Path, ref: str) -> set[str]:
+    workspace = tomllib.loads(_git(repo_root, "show", f"{ref}:python/pyproject.toml"))["tool"]["uv"]["workspace"]
+    manifests = {"python/pyproject.toml"}
+    tracked = _git(repo_root, "ls-tree", "-r", "--name-only", "-z", ref, "--", "python/packages")
+    for manifest in filter(None, tracked.split("\0")):
+        relative = Path(manifest).relative_to("python")
+        if len(relative.parts) != 3 or relative.name != "pyproject.toml":
+            continue
+        project_path = relative.parent.as_posix()
+        if not any(fnmatch.fnmatchcase(project_path, pattern) for pattern in workspace["members"]):
+            continue
+        if any(fnmatch.fnmatchcase(project_path, pattern) for pattern in workspace.get("exclude", [])):
+            continue
+        manifests.add(manifest)
+    return manifests
+
+
 def changed_package_versions(repo_root: Path, base_ref: str) -> list[str]:
-    """Return new workspace manifests and those whose declared version differs from the base."""
+    """Return newly included workspace manifests and those with changed versions."""
     if not base_ref.strip():
         raise ValueError("An explicit PR or merge-group base commit is required")
     base_sha = _git(repo_root, "rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}").strip()
-    workspace = tomllib.loads(_git(repo_root, "show", "HEAD:python/pyproject.toml"))["tool"]["uv"]["workspace"]
+    base_manifests = _workspace_manifests(repo_root, base_sha)
+    head_manifests = _workspace_manifests(repo_root, "HEAD")
+    newly_included = head_manifests - base_manifests
     changed = _git(
         repo_root,
         "diff",
-        "--name-status",
+        "--name-only",
         "-z",
         "--no-renames",
         "--diff-filter=AM",
@@ -45,20 +64,11 @@ def changed_package_versions(repo_root: Path, base_ref: str) -> list[str]:
         "python/packages/*/pyproject.toml",
     )
     bumps: list[str] = []
-    entries = changed.split("\0")[:-1]
-    for status, manifest in zip(entries[::2], entries[1::2], strict=True):
-        if manifest != "python/pyproject.toml":
-            relative = Path(manifest).relative_to("python")
-            if len(relative.parts) != 3:
-                continue
-            project_path = relative.parent.as_posix()
-            if not any(fnmatch.fnmatchcase(project_path, pattern) for pattern in workspace["members"]):
-                continue
-            if any(fnmatch.fnmatchcase(project_path, pattern) for pattern in workspace.get("exclude", [])):
-                continue
+    candidates = (set(changed.split("\0")) & head_manifests) | newly_included
+    for manifest in sorted(candidates):
         current = _version(_git(repo_root, "show", f"HEAD:{manifest}"), manifest)
         # A downgrade also runs validation; it must not provide a way to bypass the gate.
-        if status == "A" or current != _version(_git(repo_root, "show", f"{base_sha}:{manifest}"), manifest):
+        if manifest in newly_included or current != _version(_git(repo_root, "show", f"{base_sha}:{manifest}"), manifest):
             bumps.append(manifest)
     return sorted(bumps)
 

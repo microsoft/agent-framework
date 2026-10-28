@@ -431,6 +431,7 @@ uv run poe validate-dependency-bounds-test -P core
 ```
 The `Dependency Bounds Validation` CI check runs this full matrix only when a PR or merge group adds a workspace package
 or changes an existing package's `project.version` (including the root package), or on manual workflow dispatch.
+Adding an existing package to workspace `members` or removing it from `exclude` also triggers the matrix.
 Other metadata and ordinary code edits do not run the matrix. The standalone Lab project is excluded. The check fails on detection or
 validation errors, has a 60-minute job timeout, and uploads the validator's JSON report. Requiring this check in repository
 rules enforces it at merge time. See [Dependency Scripts](scripts/dependencies/README.md) for the comparison and skip policy.

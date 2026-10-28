@@ -119,6 +119,40 @@ class VersionBumpTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "project.version"):
             changed_package_versions(self.root, self.base)
 
+    def test_existing_package_added_to_members_triggers(self) -> None:
+        manifest = self.root / "python/pyproject.toml"
+        config = manifest.read_text()
+        manifest.write_text(config.replace('members = ["packages/*"]', 'members = ["packages/core"]'))
+        self.commit()
+        base = self.git("rev-parse", "HEAD").strip()
+        for members in ('["packages/core", "packages/provider"]', '["packages/*"]'):
+            with self.subTest(members=members):
+                manifest.write_text(config.replace('members = ["packages/*"]', f"members = {members}"))
+                self.commit()
+                self.assertEqual(changed_package_versions(self.root, base), ["python/packages/provider/pyproject.toml"])
+
+    def test_existing_package_removed_from_exclusions_triggers(self) -> None:
+        manifest = self.root / "python/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace('["packages/lab"]', '["packages/lab", "packages/pro*"]'))
+        self.commit()
+        base = self.git("rev-parse", "HEAD").strip()
+        manifest.write_text(manifest.read_text().replace('["packages/lab", "packages/pro*"]', '["packages/lab"]'))
+        self.commit()
+        self.assertEqual(changed_package_versions(self.root, base), ["python/packages/provider/pyproject.toml"])
+
+    def test_removed_workspace_member_does_not_trigger(self) -> None:
+        manifest = self.root / "python/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace('members = ["packages/*"]', 'members = ["packages/core"]'))
+        self.commit()
+        self.assertEqual(changed_package_versions(self.root, self.base), [])
+
+    def test_newly_excluded_package_does_not_trigger_even_with_version_change(self) -> None:
+        manifest = self.root / "python/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace('["packages/lab"]', '["packages/lab", "packages/provider"]'))
+        self.write("python/packages/provider/pyproject.toml", '[project]\nversion = "1.1.0"\n')
+        self.commit()
+        self.assertEqual(changed_package_versions(self.root, self.base), [])
+
     def test_new_and_bumped_packages_are_both_reported(self) -> None:
         self.write("python/packages/new/pyproject.toml", '[project]\nversion = "1.0.0"\n')
         self.write("python/packages/core/pyproject.toml", '[project]\nversion = "1.1.0"\n')

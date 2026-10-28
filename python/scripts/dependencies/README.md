@@ -20,7 +20,8 @@ Run the commands below from the `python/` directory.
 - `detect_version_bumps.py`
   - Dependency-free CI selector requiring Python 3.11 or newer.
   - Compares committed `project.version` values against an explicit base commit for the root package and existing
-    workspace members, and detects newly added workspace package manifests.
+    workspace members, and compares workspace membership at both commits. Newly added package manifests and existing
+    packages newly included through `members` or `exclude` changes require validation, even without a version change.
   - Other metadata edits, deleted packages, and excluded standalone projects do not trigger it.
   - Treats any version value change, including a downgrade, as requiring validation.
   - Invalid base refs or malformed version metadata fail detection instead of silently skipping the gate.
