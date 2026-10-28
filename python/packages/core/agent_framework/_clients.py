@@ -12,6 +12,8 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from inspect import isawaitable
+from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -43,6 +45,11 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 
 if TYPE_CHECKING:
@@ -308,6 +315,32 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         self.compaction_strategy = compaction_strategy
         self.tokenizer = tokenizer
         super().__init__()
+
+    async def __aenter__(self) -> Self:
+        """Enter the client context without requiring it for ordinary requests."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        """Release resources owned by the client without suppressing exceptions."""
+        result = self.close()
+        if isawaitable(result):
+            await result
+
+    async def close(self) -> None:
+        """Release client-owned connections and credentials.
+
+        The default implementation does nothing. Resource-owning implementations
+        override this method and must leave caller-supplied resources open.
+        Context exit also accepts legacy synchronous ``close()`` overrides.
+        Clients remain usable without entering an async context; callers can use
+        ``await client.close()`` to release their resources explicitly.
+        """
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance to a dictionary.

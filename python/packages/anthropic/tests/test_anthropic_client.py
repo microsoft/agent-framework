@@ -17,6 +17,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FileHistoryProvider,
     FunctionInvocationLayer,
     FunctionTool,
     InlineSkill,
@@ -34,14 +35,19 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ContentError,
 )
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
     BetaMessage,
     BetaMessageDeltaUsage,
+    BetaRedactedThinkingBlock,
+    BetaServerToolUseBlock,
     BetaTextBlock,
     BetaToolUseBlock,
     BetaUsage,
+    BetaWebSearchResultBlock,
+    BetaWebSearchToolResultBlock,
 )
 from pydantic import BaseModel, Field
 
@@ -346,6 +352,106 @@ def test_prepare_message_for_anthropic_function_call(
     assert result["content"][0]["input"] == {"location": "San Francisco"}
 
 
+def test_prepare_message_for_anthropic_server_tool_call(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Hosted Anthropic calls must replay as server_tool_use blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="srvtoolu_123",
+                name="web_search",
+                arguments={"query": "Agent Framework"},
+                informational_only=True,
+                hosted=True,
+                additional_properties={
+                    "anthropic": {
+                        "server_tool_block": {
+                            "type": "server_tool_use",
+                            "caller": {"type": "direct"},
+                        }
+                    }
+                },
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result == {
+        "role": "assistant",
+        "content": [
+            {
+                "type": "server_tool_use",
+                "id": "srvtoolu_123",
+                "name": "web_search",
+                "input": {"query": "Agent Framework"},
+                "caller": {"type": "direct"},
+            }
+        ],
+    }
+
+
+def test_prepare_message_for_anthropic_legacy_server_tool_call_uses_id_prefix(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Legacy history can recover server_tool_use from Anthropic's reserved ID prefix."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="srvtoolu_legacy",
+                name="web_search",
+                arguments={"query": "Agent Framework"},
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [
+        {
+            "type": "server_tool_use",
+            "id": "srvtoolu_legacy",
+            "name": "web_search",
+            "input": {"query": "Agent Framework"},
+        }
+    ]
+
+
+def test_prepare_message_for_anthropic_does_not_infer_server_tool_from_hosted(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Provider-neutral hosted calls remain ordinary tool_use without Anthropic provenance."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="hosted-call",
+                name="external_hosted_tool",
+                arguments={"value": "test"},
+                informational_only=True,
+                hosted=True,
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [
+        {
+            "type": "tool_use",
+            "id": "hosted-call",
+            "name": "external_hosted_tool",
+            "input": {"value": "test"},
+        }
+    ]
+
+
 def test_prepare_message_for_anthropic_function_result(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -374,6 +480,20 @@ def test_prepare_message_for_anthropic_function_result(
     assert "Sunny" in tool_content[0]["text"]
     assert "72" in tool_content[0]["text"]
     assert result["content"][0]["is_error"] is False
+
+
+def test_prepare_message_for_anthropic_rejects_unrecoverable_legacy_server_tool_result(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Legacy server results without structured provider metadata must fail before the request."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[Content.from_function_result(call_id="srvtoolu_legacy", result="lost structured result")],
+    )
+
+    with pytest.raises(ContentError, match="provider metadata is missing"):
+        client._prepare_message_for_anthropic(message)
 
 
 def test_prepare_message_for_anthropic_preserves_redacted_error_status(
@@ -876,6 +996,151 @@ def test_prepare_messages_for_anthropic_splits_assistant_embedded_tool_results(
         ["tool_use"],
     ]
     assert result[1]["content"][0]["tool_use_id"] == "call_1"
+
+
+@pytest.mark.parametrize("reload_history", [False, True], ids=["in_memory", "reloaded"])
+def test_prepare_messages_preserves_parallel_server_tool_use(
+    mock_anthropic_client: MagicMock,
+    reload_history: bool,
+) -> None:
+    """A pending server tool remains server-owned while the local tool result is returned."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    server_call = MagicMock()
+    server_call.type = "server_tool_use"
+    server_call.id = "srvtoolu_search"
+    server_call.name = "web_search"
+    server_call.input = {"query": "Agent Framework"}
+    server_call.caller = None
+    local_call = MagicMock()
+    local_call.type = "tool_use"
+    local_call.id = "toolu_local"
+    local_call.name = "local_value"
+    local_call.input = {}
+
+    messages = [
+        Message(role="user", contents=["Run both tools"]),
+        Message(role="assistant", contents=client._parse_contents_from_anthropic([server_call, local_call])),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="toolu_local", result="local-ok")],
+        ),
+    ]
+    if reload_history:
+        messages = [Message.from_dict(message.to_dict()) for message in messages]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert [message["role"] for message in result] == ["user", "assistant", "user"]
+    assert [block["type"] for block in result[1]["content"]] == ["server_tool_use", "tool_use"]
+    assert result[1]["content"][0]["id"] == "srvtoolu_search"
+    assert result[2]["content"][0]["type"] == "tool_result"
+    assert result[2]["content"][0]["tool_use_id"] == "toolu_local"
+
+
+@pytest.mark.parametrize("reload_history", [False, True], ids=["in_memory", "reloaded"])
+def test_prepare_messages_preserves_reused_server_tool_call_ids(
+    mock_anthropic_client: MagicMock,
+    reload_history: bool,
+) -> None:
+    """A completed server call does not change a later occurrence that reuses its call ID."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    first_call = Content.from_function_call(
+        call_id="srvtoolu_search",
+        name="web_search",
+        arguments={"query": "first"},
+        informational_only=True,
+        hosted=True,
+        additional_properties={"anthropic": {"server_tool_block": {"type": "server_tool_use"}}},
+    )
+    first_result = Content.from_function_result(
+        call_id="srvtoolu_search",
+        result="first results",
+        additional_properties={
+            "anthropic": {
+                "server_tool_block": {
+                    "type": "web_search_tool_result",
+                    "content": [
+                        {
+                            "type": "web_search_result",
+                            "url": "https://example.com/first",
+                            "title": "First",
+                            "encrypted_content": "first-state",
+                        }
+                    ],
+                }
+            }
+        },
+    )
+    second_call = Content.from_function_call(
+        call_id="srvtoolu_search",
+        name="web_search",
+        arguments={"query": "second"},
+        informational_only=True,
+        hosted=True,
+        additional_properties={"anthropic": {"server_tool_block": {"type": "server_tool_use"}}},
+    )
+    messages = [
+        Message(role="user", contents=["Search once."]),
+        Message(role="assistant", contents=[first_call]),
+        Message(role="assistant", contents=[first_result, Content.from_text("First search done.")]),
+        Message(role="user", contents=["Search again."]),
+        Message(role="assistant", contents=[second_call]),
+    ]
+    if reload_history:
+        messages = [Message.from_dict(message.to_dict()) for message in messages]
+
+    result = client._prepare_messages_for_anthropic(messages)
+    blocks = [
+        block
+        for message in result
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] != "text"
+    ]
+
+    assert [(block["type"], block.get("id") or block.get("tool_use_id")) for block in blocks] == [
+        ("server_tool_use", "srvtoolu_search"),
+        ("web_search_tool_result", "srvtoolu_search"),
+        ("server_tool_use", "srvtoolu_search"),
+    ]
+    assert blocks[0]["input"] == {"query": "first"}
+    assert blocks[1]["content"][0]["encrypted_content"] == "first-state"
+    assert blocks[2]["input"] == {"query": "second"}
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        Content.from_code_interpreter_tool_call(call_id="code-call"),
+        Content.from_code_interpreter_tool_result(call_id="code-call"),
+        Content.from_shell_tool_result(call_id="shell-call"),
+        Content.from_mcp_server_tool_call(
+            call_id="mcp-call",
+            tool_name="search_docs",
+            server_name="docs",
+            arguments={},
+        ),
+        Content.from_function_result(call_id="srvtoolu_editor", result="editor output"),
+        Content.from_mcp_server_tool_result(call_id="mcp-call", output=[Content.from_text("mcp output")]),
+    ],
+    ids=["code_call", "code_result", "shell_result", "mcp_call", "native_function_result", "mcp_result"],
+)
+def test_pause_turn_replay_rejects_unsupported_native_tool_content(
+    mock_anthropic_client: MagicMock,
+    content: Content,
+) -> None:
+    """Automatic continuation must not silently drop native tool content."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    run_options: dict[str, Any] = {"messages": []}
+
+    appended = client._append_pause_turn_messages_for_anthropic(
+        run_options,
+        [Message(role="assistant", contents=[content])],
+        _AnthropicRequestState(),
+    )
+
+    assert appended is False
+    assert run_options["messages"] == []
 
 
 # Tool Conversion Tests
@@ -1691,6 +1956,7 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     assert response.model == "claude-3-5-sonnet-20241022"
     assert len(response.messages) == 1
     assert response.messages[0].role == "assistant"
+    assert response.messages[0].message_id == "msg_123"
     assert len(response.messages[0].contents) == 1
     assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "Hello there!"
@@ -1753,7 +2019,7 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     [
         ("end_turn", "stop"),
         ("stop_sequence", "stop"),
-        ("pause_turn", "stop"),
+        ("pause_turn", "pause_turn"),
         ("max_tokens", "length"),
         ("tool_use", "tool_calls"),
         ("refusal", "content_filter"),
@@ -1849,6 +2115,22 @@ def test_parse_contents_from_anthropic_text(mock_anthropic_client: MagicMock) ->
     assert result[0].text == "Hello!"
 
 
+def test_parse_contents_records_dropped_redacted_thinking(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Dropped native blocks remain visible to the pause-turn replay guard."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    request_state = _AnthropicRequestState()
+
+    result = client._parse_contents_from_anthropic(
+        [BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque")],
+        request_state,
+    )
+
+    assert result == []
+    assert request_state.dropped_content_types == {"redacted_thinking"}
+
+
 def test_parse_contents_from_anthropic_tool_use(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -1921,50 +2203,90 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     assert result[0].arguments == '"San Francisco"}'
 
 
-def test_parse_contents_server_tool_use_input_json_delta_ignored(
+def test_parse_contents_server_tool_use_input_json_delta_is_hosted_fragment(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Regression test: input_json_delta events are ignored after a server_tool_use block.
-
-    Server-managed tools have their execution handled server-side, so streaming
-    input_json_delta events must not produce Content.from_function_call(name='')
-    entries that would cause Anthropic API 400 errors on subsequent turns.
-    """
+    """Server-tool argument deltas remain hosted and survive finalization and persistence."""
     client = create_test_anthropic_client(mock_anthropic_client)
     request_state = _AnthropicRequestState()
 
-    # Simulate a server_tool_use event that establishes the hosted call type.
     server_tool_content = MagicMock()
     server_tool_content.type = "server_tool_use"
-    server_tool_content.id = "srvtool_abc"
+    server_tool_content.id = "srvtoolu_abc"
     server_tool_content.name = "web_search"
     server_tool_content.input = {}
 
-    result = client._parse_contents_from_anthropic([server_tool_content], request_state)
-    # server_tool_use falls through to informational-only function_call (not mcp_tool_use / code_execution)
-    assert len(result) == 1
-    assert result[0].type == "function_call"
-    assert result[0].informational_only is True
-    assert result[0].hosted is True
+    opening = client._parse_contents_from_anthropic([server_tool_content], request_state, streaming=True)
+    assert len(opening) == 1
+    assert opening[0].type == "function_call"
+    assert opening[0].informational_only is True
+    assert opening[0].hosted is True
+    assert opening[0].additional_properties == {"anthropic": {"server_tool_block": {"type": "server_tool_use"}}}
     assert request_state.active_call_content_type == "server_tool_use"
+    assert request_state.active_call_is_function_call is True
 
-    # input_json_delta events after server_tool_use must be silently ignored
-    delta_content = MagicMock()
-    delta_content.type = "input_json_delta"
-    delta_content.partial_json = '{"query": "latest news"}'
+    first_delta_content = MagicMock()
+    first_delta_content.type = "input_json_delta"
+    first_delta_content.partial_json = '{"query": "latest'
 
-    result = client._parse_contents_from_anthropic([delta_content], request_state)
-    assert result == [], "input_json_delta after server_tool_use should produce no content, but got: %r" % result
+    first_delta = client._parse_contents_from_anthropic([first_delta_content], request_state, streaming=True)
+    assert len(first_delta) == 1
+    assert first_delta[0].call_id == "srvtoolu_abc"
+    assert first_delta[0].informational_only is True
+    assert first_delta[0].hosted is True
+    assert first_delta[0].arguments == '{"query": "latest'
 
-    # A second delta must also be ignored
-    delta_content_2 = MagicMock()
-    delta_content_2.type = "input_json_delta"
-    delta_content_2.partial_json = '{"extra": true}'
+    second_delta_content = MagicMock()
+    second_delta_content.type = "input_json_delta"
+    second_delta_content.partial_json = ' news"}'
 
-    result = client._parse_contents_from_anthropic([delta_content_2], request_state)
-    assert result == [], (
-        "subsequent input_json_delta after server_tool_use should also be ignored, but got: %r" % result
-    )
+    second_delta = client._parse_contents_from_anthropic([second_delta_content], request_state, streaming=True)
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(role="assistant", contents=opening),
+        ChatResponseUpdate(contents=first_delta),
+        ChatResponseUpdate(contents=second_delta),
+    ])
+
+    assert len(response.messages[0].contents) == 1
+    finalized_call = response.messages[0].contents[0]
+    assert finalized_call.parse_arguments() == {"query": "latest news"}
+    assert finalized_call.informational_only is True
+    assert finalized_call.hosted is True
+
+    restored = Message.from_dict(response.messages[0].to_dict())
+    prepared = client._prepare_messages_for_anthropic([restored])
+    assert prepared[0]["content"] == [
+        {
+            "type": "server_tool_use",
+            "id": "srvtoolu_abc",
+            "name": "web_search",
+            "input": {"query": "latest news"},
+        }
+    ]
+
+
+def test_parse_contents_mcp_and_code_execution_input_json_delta_ignored(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """MCP and code-execution argument deltas do not become generic function calls."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    for block_type, name in (("mcp_tool_use", "search_docs"), ("server_tool_use", "code_execution")):
+        request_state = _AnthropicRequestState()
+        tool_content = MagicMock()
+        tool_content.type = block_type
+        tool_content.id = "call_abc"
+        tool_content.name = name
+        tool_content.server_name = "docs"
+        tool_content.input = {}
+        assert client._parse_contents_from_anthropic([tool_content], request_state, streaming=True)
+
+        delta_content = MagicMock()
+        delta_content.type = "input_json_delta"
+        delta_content.partial_json = '{"query": "latest news"}'
+
+        result = client._parse_contents_from_anthropic([delta_content], request_state, streaming=True)
+        assert result == [], f"input_json_delta after {block_type} {name} should produce no content: {result!r}"
 
 
 # Stream Processing Tests
@@ -2199,6 +2521,7 @@ def _tool_start_event(*, block_type: str, call_id: str, name: str, index: int = 
     event.content_block.id = call_id
     event.content_block.name = name
     event.content_block.input = {}
+    event.content_block.caller = None
     return event
 
 
@@ -2294,9 +2617,12 @@ def test_non_streaming_hosted_tool_pause_turn_is_not_invalidated(
 
     response = client._process_message(message, {})
 
-    assert response.finish_reason == "stop"
+    assert response.finish_reason == "pause_turn"
     assert response.messages[0].contents[0].type == "function_call"
     assert response.messages[0].contents[0].informational_only is True
+    restored = Message.from_dict(response.messages[0].to_dict())
+    prepared = client._prepare_messages_for_anthropic([restored])
+    assert prepared[0]["content"][0]["type"] == "server_tool_use"
 
 
 async def test_valid_streaming_local_tool_call_executes_and_continues(
@@ -2353,6 +2679,67 @@ async def test_valid_streaming_local_tool_call_executes_and_continues(
     assert request_count == 2
     assert any(content.type == "function_result" for update in updates for content in update.contents)
     assert response.text == "done"
+
+
+async def test_streaming_parallel_server_tool_use_replays_streamed_input(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A mixed streamed turn replays the pending server call with its complete input."""
+    executions = 0
+
+    @tool(name="local_value", approval_mode="never_require")
+    def local_value() -> str:
+        nonlocal executions
+        executions += 1
+        return "local-ok"
+
+    async def parallel_tool_events() -> Any:
+        yield _message_start_event("tool-response")
+        yield _tool_start_event(block_type="tool_use", call_id="toolu_local", name="local_value", index=0)
+        yield _content_block_stop_event(index=0)
+        yield _tool_start_event(block_type="server_tool_use", call_id="srvtoolu_search", name="web_search", index=1)
+        yield _argument_delta_event('{"query": "agent framework')
+        yield _argument_delta_event(' release"}')
+        yield _content_block_stop_event(index=1)
+        yield _message_delta_event("tool_use")
+        yield _message_stop_event()
+
+    async def final_events() -> Any:
+        yield _message_start_event("final-response")
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> Any:
+        requests.append(kwargs)
+        return parallel_tool_events() if len(requests) == 1 else final_events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response(
+        [Message(role="user", contents=["Call local_value and search the web."])],
+        options={"tools": [client.get_web_search_tool(), local_value], "max_tokens": 64},
+        stream=True,
+    )
+    _ = [update async for update in stream]
+    await stream.get_final_response()
+
+    assert executions == 1
+    assert len(requests) == 2
+    replayed_blocks = [
+        block
+        for message in requests[1]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] in ("tool_use", "server_tool_use", "tool_result")
+    ]
+    assert [(block["type"], block.get("id") or block.get("tool_use_id")) for block in replayed_blocks] == [
+        ("tool_use", "toolu_local"),
+        ("server_tool_use", "srvtoolu_search"),
+        ("tool_result", "toolu_local"),
+    ]
+    assert replayed_blocks[1]["input"] == {"query": "agent framework release"}
 
 
 @pytest.mark.parametrize(
@@ -2453,24 +2840,46 @@ async def test_streaming_cancellation_after_local_call_is_not_wrapped(
             pass
 
 
-async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
+async def test_streaming_hosted_tool_pause_turn_continues(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Hosted-only calls keep pause_turn behavior even when their name matches a local tool."""
+    """Streaming replays a paused hosted call with its finalized input."""
 
     @tool(name="local_tool", approval_mode="never_require")
     def local_tool(value: str) -> str:
         return value
 
-    async def events() -> Any:
+    async def paused_events() -> Any:
         yield _message_start_event("hosted-response")
         yield _tool_start_event(block_type="server_tool_use", call_id="hosted-call", name="local_tool")
+        yield _argument_delta_event('{"value":')
+        yield _argument_delta_event('"a"}')
         yield _content_block_stop_event()
         yield _message_delta_event("pause_turn")
         yield _message_stop_event()
 
+    async def final_events() -> Any:
+        yield _message_start_event("final-response")
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 0
+        text_start.content_block.type = "text"
+        text_start.content_block.text = "done"
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event()
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    requests: list[dict[str, Any]] = []
+    streams = [paused_events(), final_events()]
+
+    async def create(**kwargs: Any) -> Any:
+        requests.append(kwargs)
+        return streams[len(requests) - 1]
+
     client = create_test_anthropic_client(mock_anthropic_client)
-    mock_anthropic_client.beta.messages.create.return_value = events()
+    mock_anthropic_client.beta.messages.create.side_effect = create
     stream = client._inner_get_response(  # type: ignore[attr-defined]
         messages=[Message(role="user", contents=["run"])],
         options={"tools": [local_tool], "max_tokens": 64},
@@ -2481,10 +2890,32 @@ async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
     updates = [update async for update in stream]
     response = await stream.get_final_response()
 
-    hosted_calls = [content for update in updates for content in update.contents if content.type == "function_call"]
+    assert len(requests) == 2
+    assert [message["role"] for message in requests[1]["messages"]] == ["user", "assistant"]
+    assert requests[1]["messages"][1]["content"][0] == {
+        "type": "server_tool_use",
+        "id": "hosted-call",
+        "name": "local_tool",
+        "input": {"value": "a"},
+    }
+    assert all(
+        content.informational_only and content.hosted
+        for update in updates
+        for content in update.contents
+        if content.type == "function_call"
+    )
+    hosted_calls = [
+        content for message in response.messages for content in message.contents if content.type == "function_call"
+    ]
     assert len(hosted_calls) == 1
     assert hosted_calls[0].informational_only is True
+    assert hosted_calls[0].parse_arguments() == {"value": "a"}
     assert response.finish_reason == "stop"
+    assert response.messages[-1].text == "done"
+    restored = Message.from_dict(response.messages[0].to_dict())
+    prepared = client._prepare_messages_for_anthropic([restored])
+    assert prepared[0]["content"][0]["type"] == "server_tool_use"
+    assert prepared[0]["content"][0]["input"] == {"value": "a"}
 
 
 async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
@@ -2577,11 +3008,11 @@ async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
     assert primary_calls[0].parse_arguments() == {"command": "pwd"}
 
     hosted_calls = [content for content in hosted_contents if content.type == "function_call"]
-    assert len(hosted_calls) == 1
-    assert hosted_calls[0].name == "web_search"
-    assert hosted_calls[0].call_id == "shared-call"
-    assert hosted_calls[0].arguments == {}
-    assert hosted_calls[0].informational_only is True
+    assert [(content.name, content.call_id, content.arguments) for content in hosted_calls] == [
+        ("web_search", "shared-call", {}),
+        ("", "shared-call", '{"query":"framework"}'),
+    ]
+    assert all(content.informational_only and content.hosted for content in hosted_calls)
 
 
 async def test_concurrent_streams_keep_approval_requests_request_local(
@@ -2948,6 +3379,530 @@ def test_process_stream_event_message_start_without_role_reproduces_bug() -> Non
     assert has_function_call, "Expected bug: function_call leaked into tool message"
 
 
+async def test_agent_continues_anthropic_pause_turn() -> None:
+    """A paused server turn is replayed with the same tools until Anthropic completes it."""
+    requests: list[dict[str, Any]] = []
+    responses = [
+        BetaMessage(
+            id="msg_paused",
+            content=[BetaTextBlock(type="text", text="Still researching.")],
+            model="claude-test",
+            role="assistant",
+            stop_reason="pause_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=10, output_tokens=2),
+        ),
+        BetaMessage(
+            id="msg_finished",
+            content=[BetaTextBlock(type="text", text="Finished.")],
+            model="claude-test",
+            role="assistant",
+            stop_reason="end_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=12, output_tokens=3),
+        ),
+    ]
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return responses[len(requests) - 1]
+
+    transport = MagicMock()
+    transport.base_url = "https://example.invalid"
+    transport.beta.messages.create = create
+    client = AnthropicClient(anthropic_client=transport, model="claude-test")
+    agent = client.as_agent(
+        tools=[client.get_web_search_tool()],
+        default_options={"max_tokens": 64},
+    )
+
+    async with agent:
+        response = await agent.run("Research this topic.")
+
+    assert len(requests) == 2
+    assert requests[1]["tools"] == requests[0]["tools"]
+    assert [message["role"] for message in requests[1]["messages"]] == ["user", "assistant"]
+    assert requests[1]["messages"][1]["content"] == [{"type": "text", "text": "Still researching."}]
+    assert response.finish_reason == "stop"
+    assert [message.text for message in response.messages] == ["Still researching.", "Finished."]
+    assert response.usage_details == {
+        "input_token_count": 22,
+        "output_token_count": 5,
+    }
+
+
+async def test_streaming_pause_turn_preserves_message_boundaries_for_structured_output(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Paused text and the final structured answer remain separate provider messages."""
+
+    class StructuredPauseResult(BaseModel):
+        answer: str
+
+    async def turn_events(response_id: str, text: str, stop_reason: str) -> Any:
+        yield _message_start_event(response_id)
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 0
+        text_start.content_block.type = "text"
+        text_start.content_block.text = text
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event()
+        yield _message_delta_event(stop_reason)
+        yield _message_stop_event()
+
+    streams = [
+        turn_events("msg_paused", "Still researching.", "pause_turn"),
+        turn_events("msg_finished", '{"answer": "done"}', "end_turn"),
+    ]
+    mock_anthropic_client.beta.messages.create.side_effect = lambda **_: streams.pop(0)
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Research this topic."])],
+        options=ChatOptions[StructuredPauseResult](
+            max_tokens=64,
+            response_format=StructuredPauseResult,
+        ),
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert [message.message_id for message in response.messages] == ["msg_paused", "msg_finished"]
+    assert [message.text for message in response.messages] == [
+        "Still researching.",
+        '{"answer": "done"}',
+    ]
+    assert response.value == StructuredPauseResult(answer="done")
+
+
+async def test_streaming_pause_turn_separates_reused_server_tool_call_ids(
+    mock_anthropic_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reused call IDs in separate paused turns do not merge their arguments."""
+    monkeypatch.setattr("agent_framework_anthropic._chat_client._MAX_PAUSE_TURN_CONTINUATIONS", 1)
+
+    async def turn_events(response_id: str, query: str) -> Any:
+        yield _message_start_event(response_id)
+        yield _tool_start_event(
+            block_type="server_tool_use",
+            call_id="srvtoolu_reused",
+            name="web_search",
+        )
+        yield _argument_delta_event(f'{{"query": "{query}"}}')
+        yield _content_block_stop_event()
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    streams = [
+        turn_events("msg_first", "first query"),
+        turn_events("msg_second", "second query"),
+    ]
+    mock_anthropic_client.beta.messages.create.side_effect = lambda **_: streams.pop(0)
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Search twice."])],
+        options={"tools": [client.get_web_search_tool()], "max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert [message.message_id for message in response.messages] == ["msg_first", "msg_second"]
+    calls = [message.contents[0] for message in response.messages]
+    assert [call.call_id for call in calls] == ["srvtoolu_reused", "srvtoolu_reused"]
+    assert [call.parse_arguments() for call in calls] == [
+        {"query": "first query"},
+        {"query": "second query"},
+    ]
+
+
+async def test_non_streaming_code_execution_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Code-execution content returns pause_turn when native replay is unavailable."""
+    code_call = MagicMock()
+    code_call.type = "server_tool_use"
+    code_call.id = "srvtoolu_code"
+    code_call.name = "code_execution"
+    code_call.input = {"code": "print('done')"}
+    code_result_content = MagicMock()
+    code_result_content.stdout = "done"
+    code_result_content.stderr = None
+    code_result_content.content = []
+    code_result = MagicMock()
+    code_result.type = "code_execution_tool_result"
+    code_result.tool_use_id = "srvtoolu_code"
+    code_result.content = code_result_content
+    message = MagicMock(spec=BetaMessage)
+    message.id = "msg_code_pause"
+    message.model = "claude-test"
+    message.content = [code_call, code_result]
+    message.usage = BetaUsage(input_tokens=1, output_tokens=1)
+    message.stop_reason = "pause_turn"
+    mock_anthropic_client.beta.messages.create.return_value = message
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    response = await client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Run code."])],
+        options={"tools": [client.get_code_interpreter_tool()], "max_tokens": 64},
+    )
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert [content.type for content in response.messages[0].contents] == [
+        "code_interpreter_tool_call",
+        "code_interpreter_tool_result",
+    ]
+
+
+async def test_streaming_code_execution_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming code-execution pauses remain caller-visible without lossy replay."""
+
+    async def events() -> Any:
+        yield _message_start_event("msg_code_pause")
+        start = _tool_start_event(
+            block_type="server_tool_use",
+            call_id="srvtoolu_code",
+            name="code_execution",
+        )
+        start.content_block.input = {"code": "print('done')"}
+        yield start
+        yield _content_block_stop_event()
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Run code."])],
+        options={"tools": [client.get_code_interpreter_tool()], "max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.messages[0].message_id == "msg_code_pause"
+    assert response.messages[0].contents[0].type == "code_interpreter_tool_call"
+
+
+async def test_streaming_mcp_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streamed MCP arguments are not replayed until their deltas are preserved."""
+
+    async def events() -> Any:
+        yield _message_start_event("msg_mcp_pause")
+        start = _tool_start_event(
+            block_type="mcp_tool_use",
+            call_id="mcp_call",
+            name="search_docs",
+        )
+        start.content_block.server_name = "docs"
+        yield start
+        yield _argument_delta_event('{"query": "latest docs"}')
+        yield _content_block_stop_event()
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Search docs."])],
+        options={
+            "tools": [client.get_mcp_tool(name="docs", url="https://example.com/mcp")],
+            "max_tokens": 64,
+        },
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.messages[0].contents[0].type == "mcp_server_tool_call"
+    assert response.messages[0].contents[0].parse_arguments() == {}
+
+
+async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Dropped redacted reasoning prevents an incomplete continuation transcript."""
+    message = BetaMessage(
+        id="msg_redacted_pause",
+        content=[
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque"),
+            BetaTextBlock(type="text", text="Still working."),
+        ],
+        model="claude-test",
+        role="assistant",
+        stop_reason="pause_turn",
+        type="message",
+        usage=BetaUsage(input_tokens=1, output_tokens=1),
+    )
+    mock_anthropic_client.beta.messages.create.return_value = message
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    response = await client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Think carefully."])],
+        options={"max_tokens": 64},
+    )
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.text == "Still working."
+
+
+async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming also retains pause_turn when redacted reasoning was dropped."""
+
+    async def events() -> Any:
+        yield _message_start_event("msg_redacted_pause")
+        redacted_start = MagicMock()
+        redacted_start.type = "content_block_start"
+        redacted_start.index = 0
+        redacted_start.content_block = BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque")
+        yield redacted_start
+        yield _content_block_stop_event(index=0)
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 1
+        text_start.content_block.type = "text"
+        text_start.content_block.text = "Still working."
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event(index=1)
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    client = create_test_anthropic_client(mock_anthropic_client)
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["Think carefully."])],
+        options={"max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    _ = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert response.finish_reason == "pause_turn"
+    assert response.text == "Still working."
+
+
+async def test_anthropic_pause_turn_limit_preserves_finish_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bounded continuation returns pause_turn instead of reporting successful completion."""
+    monkeypatch.setattr("agent_framework_anthropic._chat_client._MAX_PAUSE_TURN_CONTINUATIONS", 1)
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return BetaMessage(
+            id=f"msg_paused_{len(requests)}",
+            content=[BetaTextBlock(type="text", text=f"Paused {len(requests)}.")],
+            model="claude-test",
+            role="assistant",
+            stop_reason="pause_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        )
+
+    transport = MagicMock()
+    transport.base_url = "https://example.invalid"
+    transport.beta.messages.create = create
+    client = AnthropicClient(anthropic_client=transport, model="claude-test")
+    agent = client.as_agent(
+        tools=[client.get_web_search_tool()],
+        default_options={"max_tokens": 64},
+    )
+
+    async with agent:
+        response = await agent.run("Research this topic.")
+
+    assert len(requests) == 2
+    assert response.finish_reason == "pause_turn"
+    assert [message.text for message in response.messages] == ["Paused 1.", "Paused 2."]
+
+
+@pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")
+async def test_agent_file_history_replays_server_tool_transcript_end_to_end(tmp_path: Path) -> None:
+    """Public agent APIs preserve a mixed server/local tool transcript through file history."""
+    first_requests: list[dict[str, Any]] = []
+    local_executions = 0
+
+    @tool(name="local_value", approval_mode="never_require")
+    def local_value() -> str:
+        nonlocal local_executions
+        local_executions += 1
+        return "local-ok"
+
+    first_responses = [
+        BetaMessage(
+            id="msg_mixed_tools",
+            content=[
+                BetaServerToolUseBlock(
+                    type="server_tool_use",
+                    id="srvtoolu_search",
+                    name="web_search",
+                    input={"query": "Microsoft Agent Framework"},
+                ),
+                BetaToolUseBlock(
+                    type="tool_use",
+                    id="toolu_local",
+                    name="local_value",
+                    input={},
+                ),
+            ],
+            model="claude-test",
+            role="assistant",
+            stop_reason="tool_use",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        ),
+        BetaMessage(
+            id="msg_server_result",
+            content=[
+                BetaWebSearchToolResultBlock(
+                    type="web_search_tool_result",
+                    tool_use_id="srvtoolu_search",
+                    content=[
+                        BetaWebSearchResultBlock(
+                            type="web_search_result",
+                            url="https://github.com/microsoft/agent-framework",
+                            title="Microsoft Agent Framework",
+                            encrypted_content="opaque-search-state",
+                            page_age=None,
+                        )
+                    ],
+                ),
+                BetaTextBlock(type="text", text="first turn complete"),
+            ],
+            model="claude-test",
+            role="assistant",
+            stop_reason="end_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        ),
+    ]
+
+    async def create_first_response(**kwargs: Any) -> BetaMessage:
+        first_requests.append(kwargs)
+        return first_responses[len(first_requests) - 1]
+
+    first_transport = MagicMock()
+    first_transport.base_url = "https://example.invalid"
+    first_transport.beta.messages.create = create_first_response
+    first_history = FileHistoryProvider(tmp_path)
+    first_client = AnthropicClient(anthropic_client=first_transport, model="claude-test")
+    first_agent = first_client.as_agent(
+        tools=[first_client.get_web_search_tool(), local_value],
+        context_providers=[first_history],
+        default_options={"max_tokens": 64},
+    )
+    session_id = "anthropic-server-tool-history"
+
+    async with first_agent:
+        first_response = await first_agent.run(
+            "Search for Agent Framework and call local_value.",
+            session=first_agent.create_session(session_id=session_id),
+        )
+
+    assert "first turn complete" in first_response.text
+    assert local_executions == 1
+    assert len(first_requests) == 2
+    continuation_messages = first_requests[1]["messages"]
+    assert [message["role"] for message in continuation_messages] == ["user", "assistant", "user"]
+    assert [block["type"] for block in continuation_messages[1]["content"]] == [
+        "server_tool_use",
+        "tool_use",
+    ]
+    assert continuation_messages[2]["content"][0]["tool_use_id"] == "toolu_local"
+
+    persisted = await first_history.get_messages(session_id)
+    persisted_types = [content.type for message in persisted for content in message.contents]
+    assert persisted_types.count("function_call") == 2
+    assert "function_result" in persisted_types
+
+    replay_requests: list[dict[str, Any]] = []
+
+    async def create_replay_response(**kwargs: Any) -> BetaMessage:
+        replay_requests.append(kwargs)
+        return BetaMessage(
+            id="msg_replay",
+            content=[BetaTextBlock(type="text", text="history replay complete")],
+            model="claude-test",
+            role="assistant",
+            stop_reason="end_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        )
+
+    replay_transport = MagicMock()
+    replay_transport.base_url = "https://example.invalid"
+    replay_transport.beta.messages.create = create_replay_response
+    replay_history = FileHistoryProvider(tmp_path)
+    replay_client = AnthropicClient(anthropic_client=replay_transport, model="claude-test")
+    replay_agent = replay_client.as_agent(
+        tools=[replay_client.get_web_search_tool(), local_value],
+        context_providers=[replay_history],
+        default_options={"max_tokens": 64},
+    )
+
+    async with replay_agent:
+        replay_response = await replay_agent.run(
+            "Use the prior result and reply briefly.",
+            session=replay_agent.create_session(session_id=session_id),
+        )
+
+    assert replay_response.text == "history replay complete"
+    assert local_executions == 1
+    assert len(replay_requests) == 1
+    replayed_messages = replay_requests[0]["messages"]
+    server_call_message = next(
+        message
+        for message in replayed_messages
+        if isinstance(message["content"], list)
+        and any(block["type"] == "server_tool_use" for block in message["content"])
+    )
+    server_result_message = next(
+        message
+        for message in replayed_messages
+        if isinstance(message["content"], list)
+        and any(block["type"] == "web_search_tool_result" for block in message["content"])
+    )
+    local_result_message = next(
+        message
+        for message in replayed_messages
+        if isinstance(message["content"], list) and any(block["type"] == "tool_result" for block in message["content"])
+    )
+
+    assert server_call_message["role"] == "assistant"
+    assert server_result_message["role"] == "assistant"
+    assert local_result_message["role"] == "user"
+    search_result = next(
+        block for block in server_result_message["content"] if block["type"] == "web_search_tool_result"
+    )
+    assert search_result["content"][0]["encrypted_content"] == "opaque-search-state"
+
+
 # Integration Tests
 
 
@@ -3049,6 +4004,61 @@ async def test_anthropic_client_integration_hosted_tools() -> None:
 
     assert response is not None
     assert response.text is not None
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")
+@skip_if_anthropic_integration_tests_disabled
+async def test_anthropic_client_integration_file_history_replays_web_search(tmp_path: Path) -> None:
+    """A fresh real-service agent can replay a persisted Anthropic web-search transcript."""
+    session_id = "anthropic-web-search-history-integration"
+    tools = [AnthropicClient.get_web_search_tool()]
+    first_history = FileHistoryProvider(tmp_path)
+    first_client = AnthropicClient()
+    first_agent = first_client.as_agent(
+        tools=tools,
+        context_providers=[first_history],
+        default_options={
+            "max_tokens": 512,
+            "tool_choice": {"mode": "required", "required_function_name": "web_search"},
+        },
+    )
+
+    async with first_agent:
+        first_response = await first_agent.run(
+            "Use web_search exactly once to find the official GitHub repository for Microsoft Agent Framework. "
+            "Return the repository URL.",
+            session=first_agent.create_session(session_id=session_id),
+        )
+
+    assert first_response.text
+    persisted = await first_history.get_messages(session_id)
+    server_blocks = [
+        content.additional_properties.get("anthropic", {}).get("server_tool_block", {})
+        for message in persisted
+        for content in message.contents
+        if content.type in {"function_call", "function_result"}
+    ]
+    assert any(block.get("type") == "server_tool_use" for block in server_blocks)
+    assert any(block.get("type") == "web_search_tool_result" for block in server_blocks)
+
+    replay_history = FileHistoryProvider(tmp_path)
+    replay_client = AnthropicClient()
+    replay_agent = replay_client.as_agent(
+        tools=tools,
+        context_providers=[replay_history],
+        default_options={"max_tokens": 128},
+    )
+
+    async with replay_agent:
+        replay_response = await replay_agent.run(
+            "Do not search again. From the prior result, reply with only the repository URL.",
+            session=replay_agent.create_session(session_id=session_id),
+            options={"tool_choice": "none"},
+        )
+
+    assert "github.com/microsoft/agent-framework" in replay_response.text.lower()
 
 
 @pytest.mark.flaky
@@ -3488,38 +4498,96 @@ def test_parse_contents_mcp_tool_result_object_content(
     assert result[0].type == "mcp_server_tool_result"
 
 
-def test_parse_contents_web_search_tool_result(
+@pytest.mark.parametrize(
+    ("block_type", "call_id", "block_content", "expected_content"),
+    [
+        (
+            "web_search_tool_result",
+            "srvtoolu_search",
+            [
+                BetaWebSearchResultBlock(
+                    type="web_search_result",
+                    url="https://example.com",
+                    title="Example",
+                    encrypted_content="opaque",
+                    page_age="today",
+                )
+            ],
+            [
+                {
+                    "encrypted_content": "opaque",
+                    "page_age": "today",
+                    "title": "Example",
+                    "type": "web_search_result",
+                    "url": "https://example.com",
+                }
+            ],
+        ),
+        (
+            "web_fetch_tool_result",
+            "srvtoolu_fetch",
+            {
+                "type": "web_fetch_result",
+                "url": "https://example.com",
+                "content": {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": "Example",
+                    },
+                },
+            },
+            {
+                "type": "web_fetch_result",
+                "url": "https://example.com",
+                "content": {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": "Example",
+                    },
+                },
+            },
+        ),
+    ],
+)
+def test_server_tool_result_survives_message_round_trip(
     mock_anthropic_client: MagicMock,
+    block_type: str,
+    call_id: str,
+    block_content: Any,
+    expected_content: Any,
 ) -> None:
-    """Test parsing web search tool result."""
+    """Server-tool results retain their native type and structured content after persistence."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    # Create mock web search tool result
     mock_block = MagicMock()
-    mock_block.type = "web_search_tool_result"
-    mock_block.tool_use_id = "call_789"
-    mock_block.content = "Search results"
+    mock_block.type = block_type
+    mock_block.tool_use_id = call_id
+    mock_block.content = block_content
+    mock_block.caller = {"type": "direct"}
 
-    result = client._parse_contents_from_anthropic([mock_block])
+    parsed = client._parse_contents_from_anthropic([mock_block])
+    restored = Message.from_dict(Message(role="assistant", contents=parsed).to_dict())
+    replay = client._prepare_message_groups_for_anthropic(restored)
 
-    assert len(result) == 1
-    assert result[0].type == "function_result"
-
-
-def test_parse_contents_web_fetch_tool_result(mock_anthropic_client: MagicMock) -> None:
-    """Test parsing web fetch tool result."""
-    client = create_test_anthropic_client(mock_anthropic_client)
-
-    # Create mock web fetch tool result
-    mock_block = MagicMock()
-    mock_block.type = "web_fetch_tool_result"
-    mock_block.tool_use_id = "call_101"
-    mock_block.content = "Fetched content"
-
-    result = client._parse_contents_from_anthropic([mock_block])
-
-    assert len(result) == 1
-    assert result[0].type == "function_result"
+    assert len(parsed) == 1
+    assert parsed[0].type == "function_result"
+    assert replay == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": block_type,
+                    "tool_use_id": call_id,
+                    "content": expected_content,
+                    "caller": {"type": "direct"},
+                }
+            ],
+        }
+    ]
 
 
 # MCP Tool Configuration Tests

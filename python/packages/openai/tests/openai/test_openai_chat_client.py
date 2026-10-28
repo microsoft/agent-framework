@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import copy
@@ -58,10 +60,13 @@ from openai.types.responses import (
     ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
+    ResponseFunctionToolCall,
     ResponseOutputItemDoneEvent,
+    ResponseOutputMessage,
     ResponseOutputTextAnnotationAddedEvent,
+    ResponseStreamEvent,
 )
-from openai.types.responses.response_reasoning_item import Summary
+from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
 )
@@ -81,7 +86,13 @@ from openai.types.responses.response_text_done_event import ResponseTextDoneEven
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
+from agent_framework_openai import (
+    OpenAIChatClient,
+    OpenAIChatCompletionClient,
+    OpenAIChatOptions,
+    RawOpenAIChatClient,
+    RawOpenAIChatCompletionClient,
+)
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
@@ -100,13 +111,45 @@ class OutputStruct(BaseModel):
     weather: str | None = None
 
 
+@pytest.mark.parametrize(
+    "client_type", [RawOpenAIChatClient, OpenAIChatClient, RawOpenAIChatCompletionClient, OpenAIChatCompletionClient]
+)
+@pytest.mark.parametrize("azure", [False, True])
+@pytest.mark.parametrize("injected", [False, True])
+async def test_openai_chat_client_context_ownership(client_type, azure: bool, injected: bool) -> None:
+    from azure.core.credentials_async import AsyncTokenCredential
+
+    sdk_client = AsyncOpenAI(api_key="test-key") if injected else None
+    credential = MagicMock(spec=AsyncTokenCredential)
+    credential.close = AsyncMock()
+    kwargs: dict[str, Any] = {"async_client": sdk_client} if injected else {}
+    if azure:
+        kwargs.update(azure_endpoint="https://test.openai.azure.com", credential=credential)
+    else:
+        kwargs["api_key"] = "test-key"
+
+    client = client_type(model="test-model", **kwargs)
+    with patch.object(client.client, "close", wraps=client.client.close) as close:
+        async with client as entered:
+            assert entered is client
+            close.assert_not_awaited()
+        await client.close()
+        assert close.await_count == (0 if injected else 1)
+    assert client.client.is_closed() is not injected
+    credential.close.assert_not_awaited()
+    assert "_owns_client" not in client.to_dict()
+    assert "_client_closed" not in client.to_dict()
+    if sdk_client is not None:
+        await sdk_client.close()
+
+
 class _FakeAsyncEventStream:
     def __init__(self, events: Sequence[object], headers: dict[str, str] | None = None) -> None:
         self._events = events
         self._iterator: Iterator[object] = iter(())
         self._headers = headers or {}
 
-    def __aiter__(self) -> "_FakeAsyncEventStream":
+    def __aiter__(self) -> _FakeAsyncEventStream:
         self._iterator = iter(self._events)
         return self
 
@@ -121,14 +164,14 @@ class _FakeAsyncEventStream:
     # ``.headers``. The chat client then ``async with``-s the parsed stream so the
     # underlying socket is closed deterministically. Mimic both interfaces here so
     # test mocks remain a single object.
-    def parse(self) -> "_FakeAsyncEventStream":
+    def parse(self) -> _FakeAsyncEventStream:
         return self
 
     @property
     def headers(self) -> dict[str, str]:
         return self._headers
 
-    async def __aenter__(self) -> "_FakeAsyncEventStream":
+    async def __aenter__(self) -> _FakeAsyncEventStream:
         return self
 
     async def __aexit__(
@@ -167,7 +210,7 @@ def _as_raw(mock_response: MagicMock, *, headers: dict[str, str] | None = None) 
 
 
 class _FakeAsyncEventStreamContext(_FakeAsyncEventStream):
-    async def __aenter__(self) -> "_FakeAsyncEventStreamContext":
+    async def __aenter__(self) -> _FakeAsyncEventStreamContext:
         return self
 
     async def __aexit__(
@@ -850,7 +893,7 @@ class _BareEventStream:
         self._items = list(items)
         self._iterator: Iterator[object] = iter(())
 
-    def __aiter__(self) -> "_BareEventStream":
+    def __aiter__(self) -> _BareEventStream:
         self._iterator = iter(self._items)
         return self
 
@@ -881,7 +924,7 @@ class _FakeTelemetryStreamWrapper:
     def __init__(self, stream_async_iter: Any) -> None:
         self.stream_async_iter: Any = stream_async_iter
 
-    def __aiter__(self) -> "_FakeTelemetryStreamWrapper":
+    def __aiter__(self) -> _FakeTelemetryStreamWrapper:
         self.stream_async_iter = self.stream_async_iter.__aiter__()
         return self
 
@@ -1746,6 +1789,168 @@ def test_streaming_text_done_events_replace_deltas(
     response = ChatResponse.from_updates(updates)
     expected_text = done_event.text if hasattr(done_event, "text") else done_event.refusal
     assert response.messages[0].contents[0].text == expected_text
+
+
+@pytest.mark.parametrize("refusal", [False, True])
+def test_streaming_text_snapshots_preserve_separate_output_messages(refusal: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    updates: list[ChatResponseUpdate] = []
+    for output_index, text in enumerate(("Checking the refund policy.", "The refund requires approval.")):
+        event_args: dict[str, Any] = {
+            "content_index": 0,
+            "item_id": f"message_{output_index}",
+            "output_index": output_index,
+            "sequence_number": output_index * 2,
+        }
+        events: tuple[ResponseStreamEvent, ...]
+        if refusal:
+            events = (
+                ResponseRefusalDeltaEvent(type="response.refusal.delta", delta=text, **event_args),
+                ResponseRefusalDoneEvent(type="response.refusal.done", refusal=text, **event_args),
+            )
+        else:
+            events = (
+                ResponseTextDeltaEvent(type="response.output_text.delta", delta=text, logprobs=[], **event_args),
+                ResponseTextDoneEvent(type="response.output_text.done", text=text, logprobs=[], **event_args),
+            )
+        updates.extend(client._parse_chunk_from_openai(event, {}, {}) for event in events)
+
+    response = ChatResponse.from_updates(updates)
+
+    assert [message.text for message in response.messages] == [
+        "Checking the refund policy.",
+        "The refund requires approval.",
+    ]
+
+
+def test_streaming_and_non_streaming_preserve_output_message_boundaries() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    first_message = ResponseOutputMessage.model_validate({
+        "type": "message",
+        "id": "message_0",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+            {
+                "type": "output_text",
+                "text": "Checking the refund policy.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    })
+    second_message = ResponseOutputMessage.model_validate({
+        "type": "message",
+        "id": "message_1",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+            {
+                "type": "output_text",
+                "text": "The refund requires approval.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    })
+    reasoning_item = ResponseReasoningItem.model_validate({
+        "type": "reasoning",
+        "id": "reasoning_0",
+        "content": [
+            {
+                "type": "reasoning_text",
+                "text": "The amount exceeds the automatic refund threshold.",
+            }
+        ],
+        "summary": [],
+        "status": "completed",
+    })
+    function_call = ResponseFunctionToolCall.model_validate({
+        "type": "function_call",
+        "id": "function_0",
+        "call_id": "call_0",
+        "name": "refund",
+        "arguments": '{"amount": 125}',
+        "status": "completed",
+    })
+    response = MagicMock(
+        output_parsed=None,
+        output=[first_message, reasoning_item, function_call, second_message],
+        metadata={},
+        usage=None,
+        id="response_0",
+        created_at=1_000_000_000,
+        model="test-model",
+        status="completed",
+        incomplete_details=None,
+        conversation=None,
+    )
+
+    non_streaming = client._parse_response_from_openai(response, options={"store": False})
+    streaming = client._finalize_response_updates([
+        client._parse_chunk_from_openai(
+            ResponseTextDoneEvent(
+                type="response.output_text.done",
+                content_index=0,
+                item_id="message_0",
+                output_index=0,
+                sequence_number=0,
+                text="Checking the refund policy.",
+                logprobs=[],
+            ),
+            {},
+            {},
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_text_reasoning(
+                    id="reasoning_0",
+                    text="The amount exceeds the automatic refund threshold.",
+                )
+            ],
+            role="assistant",
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    call_id="call_0",
+                    name="refund",
+                    arguments='{"amount": 125}',
+                )
+            ],
+            role="assistant",
+        ),
+        client._parse_chunk_from_openai(
+            ResponseTextDoneEvent(
+                type="response.output_text.done",
+                content_index=0,
+                item_id="message_1",
+                output_index=1,
+                sequence_number=1,
+                text="The refund requires approval.",
+                logprobs=[],
+            ),
+            {},
+            {},
+        ),
+    ])
+
+    expected = [
+        ("message_0", ["text", "text_reasoning", "function_call"], "Checking the refund policy."),
+        ("message_1", ["text"], "The refund requires approval."),
+    ]
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in non_streaming.messages
+    ] == expected
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in streaming.messages
+    ] == expected
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in ChatResponse.from_dict(non_streaming.to_dict()).messages
+    ] == expected
 
 
 def test_prepare_marked_refusal_text_uses_native_assistant_shape_and_input_text_fallback() -> None:
@@ -3693,6 +3898,53 @@ def test_streaming_parse_and_replay_preserves_all_real_assistant_logprobs() -> N
     assert text_content.text == "hello"
     assert text_content.additional_properties["logprobs"] == [first_logprob, second_logprob]
     assert replayed["logprobs"] == [first_logprob, second_logprob]
+
+
+def test_streaming_parse_and_replay_scopes_logprobs_to_output_messages() -> None:
+    """Streamed token logprobs remain attached to their provider output message."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    message_logprobs = [
+        [
+            {"token": "first", "bytes": [102], "logprob": -0.1, "top_logprobs": []},
+            {"token": " message", "bytes": [109], "logprob": -0.2, "top_logprobs": []},
+        ],
+        [
+            {"token": "second", "bytes": [115], "logprob": -0.3, "top_logprobs": []},
+            {"token": " message", "bytes": [109], "logprob": -0.4, "top_logprobs": []},
+        ],
+    ]
+    updates = [
+        client._parse_chunk_from_openai(
+            ResponseTextDeltaEvent(
+                type="response.output_text.delta",
+                content_index=0,
+                item_id=f"message_{message_index}",
+                output_index=message_index,
+                sequence_number=message_index * 2 + chunk_index,
+                logprobs=[logprob],  # type: ignore[list-item]
+                delta=cast(str, logprob["token"]),
+            ),
+            options={},
+            function_call_ids={},
+        )
+        for message_index, logprobs in enumerate(message_logprobs)
+        for chunk_index, logprob in enumerate(logprobs)
+    ]
+
+    response = client._finalize_response_updates(updates)
+    replayed = client._prepare_messages_for_openai(
+        response.messages,
+        request_uses_service_side_storage=False,
+    )
+
+    assert [(message.message_id, message.text) for message in response.messages] == [
+        ("message_0", "first message"),
+        ("message_1", "second message"),
+    ]
+    assert [
+        message.contents[0].additional_properties["openai"]["logprobs"] for message in response.messages
+    ] == message_logprobs
+    assert [message["content"][0]["logprobs"] for message in replayed] == message_logprobs
 
 
 def test_prepare_messages_for_openai_assistant_history_uses_output_text_with_annotations() -> None:
@@ -7373,11 +7625,9 @@ async def test_streaming_completed_annotations_do_not_share_state_between_reques
         responses = await asyncio.gather(get_response(), get_response())
 
     for response in responses:
-        assert len(response.messages) == 1
-        assert len(response.messages[0].contents) == 1
-        annotations = response.messages[0].contents[0].annotations
-        assert annotations is not None
-        assert len(annotations) == 4
+        assert len(response.messages) == 2
+        assert [len(message.contents) for message in response.messages] == [1, 1]
+        assert [len(message.contents[0].annotations or []) for message in response.messages] == [3, 1]
 
 
 def test_streaming_completed_text_without_annotations_emits_no_content() -> None:
@@ -7634,7 +7884,7 @@ async def test_streaming_azure_ai_search_output_enriches_mapped_agent_response()
         ),
     ]
 
-    async def _stream() -> AsyncGenerator[ChatResponseUpdate, None]:
+    async def _stream() -> AsyncGenerator[ChatResponseUpdate]:
         for update in updates:
             yield update
 
