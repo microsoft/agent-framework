@@ -2,12 +2,26 @@
 """Offline regression tests for the per-tool rate-limit sample."""
 
 import asyncio
+import importlib.util
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from per_tool_rate_limiting import PerToolRateLimitMiddleware, RatePolicy
+
+_SAMPLE = Path(__file__).resolve().parents[4] / "samples/02-agents/middleware/per_tool_rate_limiting.py"
+
+_SPEC = importlib.util.spec_from_file_location("_per_tool_rate_limiting_sample", _SAMPLE)
+assert _SPEC is not None and _SPEC.loader is not None
+
+_MODULE = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MODULE
+_SPEC.loader.exec_module(_MODULE)
+
+PerToolRateLimitMiddleware = _MODULE.PerToolRateLimitMiddleware
+RatePolicy = _MODULE.RatePolicy
 
 
 def context(name: str = "lookup") -> Any:
@@ -197,3 +211,44 @@ async def test_rejected_call_does_not_run_other_middleware_or_tool() -> None:
     rejected = await invoke()
     assert events == ["downstream", "tool"]
     assert "rate limited" in rejected
+
+
+def test_clock_sampled_only_after_acquiring_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A contending caller must sample time after acquiring the lock."""
+    import threading
+    import time
+
+    limiter = PerToolRateLimitMiddleware({"lookup": RatePolicy(1, 1.0)})
+
+    # Start with one available token at t=100.
+    assert limiter.admit("lookup", now=100)
+    assert limiter.admit("lookup", now=101)
+
+    clock_called = threading.Event()
+    result: list[bool] = []
+
+    def fake_monotonic() -> float:
+        clock_called.set()
+        return 102.0
+
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+
+    def attempt() -> None:
+        result.append(limiter.admit("lookup"))
+
+    with limiter._lock:
+        worker = threading.Thread(target=attempt)
+        worker.start()
+
+        # While the lock is held, the worker must not sample time.
+        assert not clock_called.wait(timeout=0.1)
+
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert result == [True]
+    assert clock_called.is_set()
+
+    # No second admission at the same timestamp.
+    assert not limiter.admit("lookup", now=102)

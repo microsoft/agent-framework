@@ -48,8 +48,8 @@ class PerToolRateLimitMiddleware(FunctionMiddleware):
         policy = self._policies.get(name)
         if policy is None:
             return True
-        timestamp = time.monotonic() if now is None else now
         with self._lock:
+            timestamp = time.monotonic() if now is None else now
             tokens, last = self._buckets.get(name, (float(policy.capacity), timestamp))
             elapsed = max(0.0, timestamp - last)
             tokens = min(float(policy.capacity), tokens + elapsed * policy.refill_per_second)
