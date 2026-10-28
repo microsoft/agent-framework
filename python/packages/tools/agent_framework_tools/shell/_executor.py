@@ -17,9 +17,10 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 
+from ._capture import _ProcessOutput  # pyright: ignore[reportPrivateUsage] - shared shell capture
 from ._killtree import kill_process_tree
 from ._resolve import is_powershell
-from ._truncate import truncate_head_tail as _truncate
+from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
 from ._types import ShellResult
 
 
@@ -38,7 +39,8 @@ async def run_stateless(
     workdir: str | None,
     env: Mapping[str, str] | None,
     timeout: float | None,
-    max_output_bytes: int,
+    max_stdout_bytes: int,
+    max_stderr_bytes: int,
 ) -> ShellResult:
     """Execute ``command`` via ``argv`` + ``-c``/``-Command`` + command.
 
@@ -50,8 +52,11 @@ async def run_stateless(
         env: Environment variables, or ``None`` to inherit the current
             process environment.
         timeout: Seconds before the process tree is killed; ``None`` disables.
-        max_output_bytes: Combined byte cap per stream before truncation.
+        max_stdout_bytes: Positive retained byte allowance for normal output.
+        max_stderr_bytes: Positive retained byte allowance for error output.
     """
+    _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
+    _validate_output_limit(max_stderr_bytes, name="max_stderr_bytes")
     # For PowerShell we prepend a UTF-8 encoding preamble so powershell.exe
     # on Windows (cp1252 by default) doesn't mojibake non-ASCII output.
     if is_powershell(argv):
@@ -69,20 +74,23 @@ async def run_stateless(
     )
 
     timed_out = False
+    output = _ProcessOutput(proc, max_stdout_bytes=max_stdout_bytes, max_stderr_bytes=max_stderr_bytes)
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        timed_out = True
-        await kill_process_tree(proc)
-        # Drain any queued output.
         try:
-            stdout_bytes, stderr_bytes = await proc.communicate()
-        except Exception:
-            stdout_bytes, stderr_bytes = b"", b""
+            await output.wait(timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            await kill_process_tree(proc)
+            await output.finish()
+        except BaseException:
+            await kill_process_tree(proc)
+            raise
+    finally:
+        await output.close()
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    stdout_str, stdout_truncated = _truncate(stdout_bytes or b"", max_output_bytes)
-    stderr_str, stderr_truncated = _truncate(stderr_bytes or b"", max_output_bytes)
+    stdout_str, stdout_truncated = output.stdout.format()
+    stderr_str, stderr_truncated = output.stderr.format()
 
     return ShellResult(
         stdout=stdout_str,

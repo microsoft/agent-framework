@@ -62,7 +62,14 @@ Defenses (in priority order):
   Windows, a timed-out persistent session is closed even if the interrupted
   command emits its completion marker. The next command starts a fresh shell;
   shell-local variables and working-directory changes from that session are lost.
-- **Output truncation** to 64 KiB (head + tail with marker).
+- **Bounded output capture** with independent `max_stdout_bytes` and
+  `max_stderr_bytes` settings, each defaulting to 64 KiB and requiring a positive
+  value. Beginning and end portions are retained while excess bytes
+  are discarded as the streams are read. Capture uses additional bounded
+  read/decoding buffers; truncation notices and UTF-8 replacement can make the
+  returned text larger than the data allowance. This is not a whole-process
+  memory limit. Container memory limits do not cover the agent's host-side
+  output buffers; enforce host resource limits separately.
 - **Audit hook** (`on_command=…`) for SIEM / append-only logs.
 - **Optional command-pattern filter** via `ShellPolicy(denylist=[...],
   allowlist=[...])`. **Empty by default.** This is a UX pre-filter, not a
@@ -94,6 +101,24 @@ shell = LocalShellTool(
 Expose this tool to the agent through `shell.as_function()` and handle its
 approval requests with human review. Calling `shell.run()` directly does not
 request approval.
+
+### Output limits
+
+Both `LocalShellTool` and `DockerShellTool` accept separate limits for normal
+output (`stdout`) and error output (`stderr`):
+
+```python
+from agent_framework.tools import DockerShellTool, LocalShellTool
+
+local_shell = LocalShellTool(max_stdout_bytes=16 * 1024, max_stderr_bytes=4 * 1024)
+docker_shell = DockerShellTool(max_stdout_bytes=16 * 1024, max_stderr_bytes=4 * 1024)
+```
+
+These settings limit retained output, not how much a command may produce.
+Persistent sessions keep the existing normal-output interruption threshold of
+four times `max_stdout_bytes`. Changing `max_stderr_bytes` does not change that
+threshold or introduce an error-output interruption rule. Stateless commands
+are not stopped solely because either output allowance is exceeded.
 
 ### Cross-OS
 
