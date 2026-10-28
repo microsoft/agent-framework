@@ -30,7 +30,7 @@ Before you begin, ensure you have the following prerequisites:
 To run the samples, navigate to the desired sample directory, e.g.
 
 ```powershell
-cd Agents_Step01_Running
+cd Agent_MCP_Server
 ```
 
 Set the following environment variables:
