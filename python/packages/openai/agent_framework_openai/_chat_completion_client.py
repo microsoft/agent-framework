@@ -1065,33 +1065,6 @@ class RawOpenAIChatCompletionClient(
             message_id=chunk.id,
         )
 
-    @override
-    def _finalize_response_updates(
-        self,
-        updates: Sequence[ChatResponseUpdate],
-        *,
-        response_format: Any | None = None,
-    ) -> ChatResponse[Any]:
-        """Finalize response updates into a single ChatResponse.
-
-        With ``n>1``, the provider interleaves the choices' deltas in one stream, so
-        the per-choice updates arrive as e.g. ``A1, B1, A2, B2`` even though ``A1``
-        and ``A2`` belong to the same assistant message. ``ChatResponse.from_updates``
-        starts a new message whenever the message id changes, so the updates are
-        first grouped by message id (stable, first-seen order) to aggregate each
-        choice into its own message, matching the non-streaming path. Streams where
-        every update shares one id (``n=1``) or any update has no id are left as-is.
-        """
-        message_ids = [update.message_id for update in updates]
-        if len(message_ids) > 1 and all(message_id is not None for message_id in message_ids):
-            first_seen_order = dict.fromkeys(message_ids)
-            if len(first_seen_order) > 1:
-                grouped: dict[str, list[ChatResponseUpdate]] = {message_id: [] for message_id in first_seen_order}
-                for update in updates:
-                    grouped[cast("str", update.message_id)].append(update)
-                updates = [update for message_id in first_seen_order for update in grouped[message_id]]
-        return super()._finalize_response_updates(updates, response_format=response_format)
-
     def _parse_usage_from_openai(self, usage: CompletionUsage) -> UsageDetails:
         details = UsageDetails(
             input_token_count=usage.prompt_tokens,

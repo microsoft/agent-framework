@@ -2964,6 +2964,106 @@ async def test_streaming_multiple_choices_preserve_message_boundaries(
     assert final_response.usage_details["total_token_count"] == 15
 
 
+async def test_public_client_streaming_multiple_choices_preserve_message_boundaries(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """The public client (function-invocation middleware included) must keep per-choice messages.
+
+    ``FunctionInvocationLayer`` re-aggregates the streamed updates with
+    ``ChatResponse.from_updates`` instead of the chat client's finalizer, so the
+    per-choice grouping must survive that outer aggregation too.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    common: dict[str, Any] = {"object": "chat.completion.chunk", "created": 1234567890, "model": "test-model"}
+    chunks = [
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [
+                {"index": 0, "delta": {"role": "assistant", "content": "A1"}, "finish_reason": None},
+                {"index": 1, "delta": {"role": "assistant", "content": "B1"}, "finish_reason": None},
+            ],
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [
+                {"index": 0, "delta": {"content": "A2"}, "finish_reason": None},
+                {"index": 1, "delta": {"content": "B2"}, "finish_reason": "stop"},
+            ],
+        }),
+    ]
+
+    async def create(**kwargs: Any) -> Any:
+        return _FakeAsyncStream(chunks)
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+        ).get_final_response()
+
+    assert [message.text for message in response.messages] == ["A1A2", "B1B2"]
+
+
+async def test_streaming_multiple_choices_keep_usage_in_arrival_order(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Response-level usage must follow chunk arrival order, not per-choice message grouping.
+
+    A provider may attach usage to a choice-1-only chunk before the final
+    usage-only chunk; the last usage snapshot in arrival order wins.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+    common: dict[str, Any] = {"object": "chat.completion.chunk", "created": 1234567890, "model": "test-model"}
+    chunks = [
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [
+                {"index": 0, "delta": {"role": "assistant", "content": "A1"}, "finish_reason": None},
+                {"index": 1, "delta": {"role": "assistant", "content": "B1"}, "finish_reason": None},
+            ],
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [
+                {
+                    "index": 1,
+                    "delta": {"content": "B2"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+        }),
+    ]
+
+    async def create(**kwargs: Any) -> Any:
+        return _FakeAsyncStream(chunks)
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response_stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], stream=True, options={}
+        )
+        assert isinstance(response_stream, ResponseStream)
+        final_response = await response_stream.get_final_response()
+
+    assert [message.text for message in final_response.messages] == ["A1", "B1B2"]
+    assert final_response.usage_details is not None
+    assert final_response.usage_details["total_token_count"] == 15
+
+
 def test_streaming_single_choice_message_id_matches_provider_chunk_id(
     openai_unit_test_env: dict[str, str],
 ) -> None:
