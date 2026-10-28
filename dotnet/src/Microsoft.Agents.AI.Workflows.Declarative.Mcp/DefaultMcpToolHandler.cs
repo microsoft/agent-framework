@@ -24,7 +24,6 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// <remarks>
 /// Every invocation creates and disposes a separate MCP client, including <c>tools/list</c>.
 /// Factory-created HTTP clients reuse factory-managed handlers without sharing MCP session state.
-/// Without a factory, each invocation owns a dedicated HTTP handler.
 /// Standalone GET streams for unsolicited server messages are disabled; request-scoped SSE responses remain supported.
 /// The handler owns no shared disposable resources. The host must await its invocations before disposing
 /// the application-owned factory infrastructure.
@@ -43,8 +42,8 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
 
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
-    private readonly IHttpClientFactory? _httpClientFactory;
-    private readonly string _httpClientName = string.Empty;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string _httpClientName;
 
     /// <summary>
     /// Gets or initializes the protocol version requested for every invocation.
@@ -59,18 +58,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// Use separately configured handlers for servers requiring different protocol policies.
     /// </remarks>
     public string? ProtocolVersion { get; init; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class.
-    /// </summary>
-    /// <remarks>
-    /// Each invocation owns its HTTP client and handler. Cookies and automatic redirects are disabled,
-    /// certificate revocation checking is enabled, and credential headers are pinned to the configured server origin.
-    /// Use the factory constructor for application-managed HTTP handler pooling and authentication.
-    /// </remarks>
-    public DefaultMcpToolHandler()
-    {
-    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class using an application-provided HTTP client factory.
@@ -202,32 +189,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
             EnableStandaloneGetStream = false
         };
 
-        HttpClient httpClient;
-        if (this._httpClientFactory is not null)
-        {
-            httpClient = this._httpClientFactory.CreateClient(this._httpClientName);
-        }
-        else
-        {
-            // Pin credential headers to the configured server origin as defense-in-depth. Forcing
-            // StreamableHttp (below) already removes the primary vector (a server-advertised cross-origin
-            // SSE message endpoint), and AllowAutoRedirect=false blocks auto-redirects. This handler is the
-            // backstop: it guarantees the Authorization token and other credentials never leave the pinned
-            // origin even if a future change re-enables AutoDetect or redirects, or the SDK constructs a
-            // request to a new URI (AdditionalHeaders are re-stamped by the transport, so HttpClient's own
-            // redirect header-stripping does not cover them).
-            // Caveat for future maintainers: the handler strips credentials on every cross-origin request.
-            // That is safe today because this handler carries auth via static request headers, not the
-            // SDK's built-in OAuth flow. If OAuth support is ever added here, requests to the authorization
-            // server (a different origin than the MCP resource server) legitimately carry credentials, so
-            // those auth-server origins would need to be allow-listed to avoid breaking the token exchange.
-            OriginPinningHandler pinningHandler = new(endpoint)
-            {
-                InnerHandler = CreateHttpMessageHandler()
-            };
-            httpClient = new HttpClient(pinningHandler);
-        }
-
+        HttpClient httpClient = this._httpClientFactory.CreateClient(this._httpClientName);
         HttpClientTransport? transport = null;
         try
         {
@@ -252,15 +214,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
             throw;
         }
     }
-
-    private static HttpClientHandler CreateHttpMessageHandler() =>
-        new()
-        {
-            // Keep cookies out of transport state and prevent credential-bearing redirects.
-            UseCookies = false,
-            AllowAutoRedirect = false,
-            CheckCertificateRevocationList = true
-        };
 
     internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable
     {

@@ -8,7 +8,6 @@
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedHttpHeaderValidation>true</InjectSharedHttpHeaderValidation>
-    <InjectSharedOriginPinning>true</InjectSharedOriginPinning>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>

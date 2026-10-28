@@ -29,12 +29,29 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     [Theory]
     [InlineData(null)]
     [InlineData("2025-11-25")]
-    public async Task ParameterlessHandler_SequentialInvocations_DisposeSeparateSessionsBeforeReturningAsync(string? protocolVersion)
+    public async Task Factory_LoopbackInvocations_ReuseHandlerAndDisposeSeparateSessionsBeforeReturningAsync(string? protocolVersion)
     {
         // Arrange
         ProtocolStub stub = new();
         await using LoopbackMcpServer server = new(stub);
-        DefaultMcpToolHandler handler = new() { ProtocolVersion = protocolVersion };
+        int primaryHandlersCreated = 0;
+        ServiceCollection services = new();
+        services.AddHttpClient("workflow-mcp")
+            .ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                Interlocked.Increment(ref primaryHandlersCreated);
+                return new HttpClientHandler
+                {
+                    UseCookies = false,
+                    AllowAutoRedirect = false,
+                    CheckCertificateRevocationList = true
+                };
+            });
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultMcpToolHandler handler = new(serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp")
+        {
+            ProtocolVersion = protocolVersion
+        };
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
 
         // Act
@@ -59,6 +76,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Assert.Equal(2, stub.Initializations);
         Assert.Equal(2, stub.Terminations);
         Assert.Equal(new[] { firstSession, secondSession }, server.TerminatedSessions);
+        Assert.Equal(1, primaryHandlersCreated);
     }
 
     [Theory]
@@ -182,15 +200,13 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Theory]
-    [InlineData("ftp://mcp.example/api", false)]
-    [InlineData("ftp://mcp.example/api", true)]
-    [InlineData("ws://mcp.example/api", false)]
-    [InlineData("ws://mcp.example/api", true)]
-    public async Task UnsupportedScheme_DoesNotAcquireHttpClientAsync(string serverUrl, bool useFactory)
+    [InlineData("ftp://mcp.example/api")]
+    [InlineData("ws://mcp.example/api")]
+    public async Task UnsupportedScheme_DoesNotAcquireHttpClientAsync(string serverUrl)
     {
         // Arrange
         Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
-        DefaultMcpToolHandler handler = useFactory ? new(factory.Object, "workflow-mcp") : new();
+        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
 
         // Act
         await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(

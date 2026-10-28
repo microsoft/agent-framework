@@ -27,10 +27,10 @@ commitments.
   or a custom handler with a documented session-lifetime contract when continuity is required.
 - Standalone MCP GET/SSE streams for unsolicited messages are disabled; request-scoped SSE tool responses remain
   supported. Use an explicitly scoped integration for background subscriptions.
-- Prefer `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
+- Construct `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
   configuration for HTTP handler reuse and rotation. Factory-created clients are disposed per invocation; the
-  factory remains application-owned. The parameterless non-DI fallback owns a dedicated HTTP handler per invocation.
-  Callback-based constructors and handler-level disposal are no longer supported.
+  factory remains application-owned. Configure the factory once with pooled handlers to avoid connection churn and
+  port exhaustion. Parameterless construction, callback-based constructors, and handler-level disposal are unsupported.
 - Leave `DefaultMcpToolHandler.ProtocolVersion` unset for SDK automatic negotiation. When a server's protocol is
   known, an explicit legacy version skips the discovery probe but still creates a fresh session per invocation.
   Selection restricts negotiation and incompatible versions fail. Configure separate handlers for differing server

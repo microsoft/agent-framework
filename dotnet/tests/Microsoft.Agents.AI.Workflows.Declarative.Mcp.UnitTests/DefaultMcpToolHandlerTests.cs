@@ -42,26 +42,19 @@ public sealed class DefaultMcpToolHandlerTests
     }
 
     [Theory]
-    [InlineData("\r", false, false)]
-    [InlineData("\n", false, false)]
-    [InlineData("\0", false, false)]
-    [InlineData("\r", true, false)]
-    [InlineData("\n", true, false)]
-    [InlineData("\0", true, false)]
-    [InlineData("\r", false, true)]
-    [InlineData("\n", false, true)]
-    [InlineData("\0", false, true)]
-    [InlineData("\r", true, true)]
-    [InlineData("\n", true, true)]
-    [InlineData("\0", true, true)]
+    [InlineData("\r", false)]
+    [InlineData("\n", false)]
+    [InlineData("\0", false)]
+    [InlineData("\r", true)]
+    [InlineData("\n", true)]
+    [InlineData("\0", true)]
     public async Task InvokeToolAsync_WithInvalidHeader_ShouldRejectBeforeClientCreationAsync(
         string invalidCharacter,
-        bool invalidName,
-        bool useFactory)
+        bool invalidName)
     {
         // Arrange
         Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
-        DefaultMcpToolHandler handler = useFactory ? new(factory.Object, "workflow-mcp") : new();
+        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
         Dictionary<string, string> headers = new()
         {
             [invalidName ? $"X-Test{invalidCharacter}" : "X-Test"] = invalidName ? "value" : $"value{invalidCharacter}"

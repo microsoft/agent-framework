@@ -66,13 +66,14 @@ Standalone GET/SSE streams for unsolicited server messages are disabled because
 this handler performs request-scoped tool operations, not background subscriptions.
 SSE responses to individual tool requests remain supported.
 
-Each handler-created HTTP client is disposed with its invocation. These clients
-can reuse factory-managed HTTP handlers through the
-`DefaultMcpToolHandler(IHttpClientFactory, string)` constructor. The second
+Each factory-created HTTP client is disposed with its invocation. Construct the
+handler with an application-owned `IHttpClientFactory` through
+`DefaultMcpToolHandler(IHttpClientFactory, string)`. The second
 argument is a stable named-client configuration, or `string.Empty` for the
 default configuration. Factory-created wrappers are owned by the invocation;
-the factory and its pooled handlers remain application-owned. Without a factory,
-the parameterless constructor creates a dedicated HTTP handler per invocation.
+the factory and its pooled handlers remain application-owned. There is no
+parameterless constructor or internally created HTTP pipeline. Configure handler
+reuse in the factory to avoid connection churn and port exhaustion.
 
 Configure the factory once in the application, not once per invocation. For
 example, with `Microsoft.Extensions.DependencyInjection`:
@@ -97,11 +98,11 @@ Do not store per-workflow credentials, cookies, or
 mutable origin policy in pooled handlers. Use a bounded set of configuration
 names, not workflow IDs, credentials, or arbitrary URLs. A finite factory handler
 lifetime lets subsequent invocations refresh connections without interrupting
-active calls. Streamable HTTP remains enforced for every client source.
+active calls. Streamable HTTP remains enforced.
 
 `ProtocolVersion` defaults to `null`, preserving the MCP SDK's automatic protocol
 discovery and legacy fallback. If the server's supported protocol is known, set
-the init-only property on either constructor:
+the init-only property when constructing the handler:
 
 ```csharp
 DefaultMcpToolHandler handler = new(httpClientFactory, "workflow-mcp")
@@ -126,8 +127,9 @@ Non-cancellation session and transport cleanup failures are reported through
 `System.Diagnostics.Trace` warnings and do not replace a tool result or its
 original error.
 
-The callback-based constructor and handler-level `DisposeAsync`/`IAsyncDisposable`
-contract have been removed. Migrate callback authentication to named factory
+Parameterless construction, the callback-based constructor, and handler-level
+`DisposeAsync`/`IAsyncDisposable` are not supported. Migrate default construction
+and callback authentication to application-owned named factory
 clients and origin-bound delegating handlers; every factory call must return a
 fresh HTTP client wrapper owned by the invocation, not a borrowed shared client.
 Remove handler `await using`/disposal calls and await active invocations in the host.

@@ -132,8 +132,9 @@ This revises the original workflow-lifetime ownership proposal. It does not
 establish that arbitrary MCP clients are interchangeable or safe to share across
 workflows. The default handler uses invocation-scoped clients; applications
 requiring cross-call session continuity supply an explicitly scoped integration.
-The public invocation contract remains unchanged. The callback constructor and
-handler-level disposal contract are removed in favor of a stateless handler.
+The public invocation contract remains unchanged. Parameterless construction,
+the callback constructor, and handler-level disposal are removed in favor of a
+stateless handler requiring an application-owned HTTP client factory.
 Review of these breaking changes and their migration guidance remains required.
 
 ### Security isolation remains a separate requirement
@@ -200,10 +201,12 @@ It is not supplied by retaining a workflow-lifetime connection.
 
 ### HTTP ownership and factory integration
 
-| Source of HTTP client | Use and disposal contract |
-|---|---|
-| Application-provided factory | Obtain an owned wrapper for the chosen client scope; dispose it after MCP cleanup; let the factory manage pooled handlers |
-| No factory | Preserve a parameterless non-DI path that creates and owns a client with documented transport defaults |
+Require an application-provided `IHttpClientFactory`. Obtain an owned wrapper
+for every invocation, dispose it after MCP cleanup, and let the factory manage
+pooled handlers. Do not retain a parameterless fallback that creates a dedicated
+HTTP handler per invocation: repeated connection teardown can exhaust ephemeral
+ports even when every wrapper is correctly disposed. Applications configure
+handler reuse and rotation once, including in non-web hosts.
 
 Owned wrappers must be disposed exactly once, including when initialization
 fails. MCP and transport cleanup must release owned HTTP resources even if
@@ -229,26 +232,25 @@ provide pooling.
 
 ### Transport policy
 
-Non-DI fallback clients retain explicit defaults: cookies disabled, automatic
-redirects disabled, certificate revocation checking, Streamable HTTP, and
-origin-bound credential handling. Factory defaults alone are not a substitute.
+Applications configure cookies disabled, automatic redirects disabled,
+certificate revocation checking, and origin-bound credential handling.
+Unconfigured factory defaults alone are not a substitute for transport policy.
 
 Disable the SDK's standalone GET/SSE stream for unsolicited server messages.
 Unattended tool invocations do not require a background subscription channel.
 This avoids opening and closing that channel for each legacy initialization;
-request-scoped SSE responses to tool calls remain supported. This policy applies
-to both factory-backed and non-DI calls and does not change session ownership.
+request-scoped SSE responses to tool calls remain supported. This policy does
+not change session ownership.
 
 The integration does not silently replace application factory clients'
 pipelines. Configure their primary handlers with cookies and automatic redirects
 disabled and certificate revocation checking enabled. Any credential-injecting
 handler must restrict credentials to the configured server origin. Streamable
-HTTP remains enforced regardless of the HTTP client's source.
+HTTP remains enforced.
 
-The fallback's `OriginPinningHandler` stores one origin and is owned by one
-invocation. Do not move this mutable policy into one pooled pipeline for
-unrelated origins. Factory handlers must instead use an appropriately bounded,
-stable configuration or validated request-specific policy. Origin checks must
+Do not store per-invocation origin-pinning state in a pooled pipeline for
+unrelated origins. Factory handlers must use an appropriately bounded, stable
+configuration or validated request-specific policy. Origin checks must
 account for every credential-injection step in outbound processing.
 
 Wrapper disposal must not disrupt other invocations sharing a factory-managed
@@ -319,9 +321,10 @@ only; no inventory cache or MCP client reuse is introduced by this change.
 
 ### Compatibility and explicitly stateful integrations
 
-Remove the `httpClientProvider` callback constructor and the internal
-`httpMessageHandlerFactory` callback seam. Applications migrate authentication
-to named `IHttpClientFactory` configurations and origin-bound delegating handlers.
+Remove parameterless construction, the `httpClientProvider` callback constructor,
+and the internal `httpMessageHandlerFactory` callback seam. Applications migrate
+default construction and authentication to named `IHttpClientFactory`
+configurations and origin-bound delegating handlers.
 Credentials that change per invocation must be resolved per request, not retained
 in pooled handlers. Tests use the same factory interface as applications.
 
@@ -474,9 +477,9 @@ wrapper, owns its separate MCP client and transport, and disposes the wrapper
 after MCP cleanup. The factory owns handler pooling and rotation; the MCP handler
 does not dispose the application factory or its shared handlers.
 
-The non-DI path creates and owns a dedicated HTTP handler and origin-policy
-handler for each invocation. Callback construction and handler-level disposal
-are removed. The host awaits its own invocations during shutdown. No
+There is no internally created HTTP client or handler pipeline. Parameterless
+and callback construction and handler-level disposal are removed. The host
+provides a factory and awaits its own invocations during shutdown. No
 handler-owned shared invoker, internal service provider, workflow-runtime
 ownership hooks, invocation registry, synchronization lock, HTTP-client cache, or lease-counting pool
 are introduced.
