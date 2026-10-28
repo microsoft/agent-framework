@@ -19,7 +19,7 @@ using Moq;
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 /// <summary>
-/// Tests discovery and content access for skills returned by <c>skills/list</c>.
+/// Tests listing MCP skills and accessing their content.
 /// </summary>
 public sealed partial class AgentMcpSkillsTests
 {
@@ -1784,6 +1784,9 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Equal("Checklist.", resource!.ToString());
     }
 
+    /// <summary>
+    /// Creates a server-listed skill with its name, description, and resources, including <c>SKILL.md</c>.
+    /// </summary>
     private static JsonObject Entry(string root = "skill://unit-converter/", string content = SkillContent) => new()
     {
         ["uri"] = root + "SKILL.md",
@@ -1801,13 +1804,22 @@ public sealed partial class AgentMcpSkillsTests
             Resource(root + "empty.txt")),
     };
 
+    /// <summary>
+    /// Creates a resource entry with the expected size and content hash for the URI's default test content.
+    /// </summary>
     private static JsonObject Resource(string uri) => uri.EndsWith("/assets/icon.bin", StringComparison.Ordinal)
         ? Resource(uri, new byte[] { 1, 2, 3, 4 })
         : Resource(uri, uri.EndsWith("/SKILL.md", StringComparison.Ordinal) ? SkillContent
             : uri.EndsWith("/empty.txt", StringComparison.Ordinal) ? "" : "Checklist.");
 
+    /// <summary>
+    /// Creates a resource entry with the supplied text's expected size and content hash.
+    /// </summary>
     private static JsonObject Resource(string uri, string text) => Resource(uri, Encoding.UTF8.GetBytes(text));
 
+    /// <summary>
+    /// Creates a resource entry with the supplied bytes' expected size and content hash.
+    /// </summary>
     [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Resource digests require lowercase hexadecimal characters.")]
     private static JsonObject Resource(string uri, byte[] bytes) => new()
     {
@@ -1816,21 +1828,32 @@ public sealed partial class AgentMcpSkillsTests
         ["size"] = bytes.Length,
     };
 
+    /// <summary>
+    /// Creates a skills/list response containing the supplied entries.
+    /// </summary>
     private static JsonObject ListResult(params JsonNode?[] entries) => new()
     {
         ["resultType"] = "complete",
         ["skills"] = new JsonArray(entries),
     };
 
+    /// <summary>
+    /// Creates a text response that can be reused from the cache.
+    /// </summary>
     private static ReadResourceResult Text(string uri, string text) => new()
     {
         Contents = [new TextResourceContents { Uri = uri, Text = text }],
+        TimeToLive = TimeSpan.FromMinutes(1),
     };
 
+    /// <summary>
+    /// Creates an in-memory server with test handlers for listing skills, reading resources, and optionally refreshing a skill.
+    /// </summary>
 #pragma warning disable MCPEXP002 // Custom extension methods require raw server request handlers.
     private static InMemoryMcpServer CreateServer(
         Func<JsonRpcRequest, CancellationToken, ValueTask<JsonNode?>> listHandler,
-        Func<string, CancellationToken, ValueTask<ReadResourceResult>>? readHandler = null) =>
+        Func<string, CancellationToken, ValueTask<ReadResourceResult>>? readHandler = null,
+        Func<JsonRpcRequest, CancellationToken, ValueTask<JsonNode?>>? getHandler = null) =>
         new(builder => builder.WithReadResourceHandler((request, token) =>
             readHandler is not null
                 ? readHandler(request.Params!.Uri, token)
@@ -1846,6 +1869,10 @@ public sealed partial class AgentMcpSkillsTests
                     },
                 };
                 options.RequestHandlers = [new() { Method = "skills/list", Handler = listHandler }];
+                if (getHandler is not null)
+                {
+                    options.RequestHandlers.Add(new() { Method = "skills/get", Handler = getHandler });
+                }
             });
 #pragma warning restore MCPEXP002
 }

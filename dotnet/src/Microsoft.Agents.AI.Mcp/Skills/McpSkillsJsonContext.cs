@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// JSON serialization context for <c>skills/list</c> results.
+/// Provides JSON conversion for skill-list and individual-skill responses.
 /// </summary>
 [JsonSourceGenerationOptions(
     JsonSerializerDefaults.Web,
@@ -15,6 +15,7 @@ namespace Microsoft.Agents.AI;
     AllowTrailingCommas = true,
     ReadCommentHandling = JsonCommentHandling.Skip)]
 [JsonSerializable(typeof(McpSkillsListResult))]
+[JsonSerializable(typeof(McpSkillsGetResult))]
 [JsonSerializable(typeof(McpSkillEntry))]
 [JsonSerializable(typeof(McpSkillFrontmatter))]
 [JsonSerializable(typeof(McpSkillResourceEntry))]
