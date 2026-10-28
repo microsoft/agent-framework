@@ -1336,6 +1336,43 @@ def test_prepare_tools_for_openai_strips_name_from_non_function_hosted_tool_dict
     assert "description" not in response_tools[1]
 
 
+def test_prepare_tools_for_openai_serializes_bing_custom_search_tool() -> None:
+    """Hosted Bing custom search tool contains nested models that must be JSON serializable."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryChatClient.get_bing_custom_search_tool(
+        connection_id="/subscriptions/x/connections/bing",
+        instance_name="inst",
+        market="zh-TW",
+    )
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    # Ensure nested Azure SDK models were converted and are JSON serializable
+    dumped = json.dumps(response_tools)
+    assert "bing_custom_search_preview" in dumped
+    assert "project_connection_id" in dumped
+    assert "inst" in dumped
+
+
+def test_prepare_tools_for_openai_serializes_code_interpreter_with_auto_param() -> None:
+    """Hosted code interpreter tool from factory must be JSON serializable."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryChatClient.get_code_interpreter_tool()
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    dumped = json.dumps(response_tools)
+    assert "code_interpreter" in dumped
+    assert "auto" in dumped
+
+
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_integration_tests_disabled
