@@ -8,7 +8,7 @@ This sample demonstrates using Valkey for persistent chat history with the Agent
 
 ## Prerequisites
 
-- Azure OpenAI endpoint and deployment
+- A Microsoft Foundry project with a deployed model
 - A running Valkey server (any version):
 
 ```bash
@@ -19,8 +19,8 @@ docker run -d --name valkey -p 6379:6379 valkey/valkey:latest
 
 | Variable | Description | Default |
 |---|---|---|
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint URL | (required) |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Model deployment name | `gpt-5.4-mini` |
+| `FOUNDRY_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint | (required) |
+| `FOUNDRY_MODEL` | Model deployment name | `gpt-5.4-mini` |
 | `VALKEY_CONNECTION` | Valkey connection string | `localhost:6379` |
 
 ## Running

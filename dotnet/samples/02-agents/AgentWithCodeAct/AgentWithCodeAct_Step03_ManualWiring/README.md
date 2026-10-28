@@ -9,8 +9,8 @@ lifetime, avoiding per-run snapshot/restore of the provider registry.
 
 | Variable                       | Description                                                                               |
 |--------------------------------|-------------------------------------------------------------------------------------------|
-| `AZURE_OPENAI_ENDPOINT`        | Azure OpenAI endpoint. Required.                                                          |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Azure OpenAI deployment. Defaults to `gpt-5.4-mini`.                                      |
+| `FOUNDRY_PROJECT_ENDPOINT`     | Microsoft Foundry project endpoint. Required.                                             |
+| `FOUNDRY_MODEL`                | Model deployment name. Defaults to `gpt-5.4-mini`.                                        |
 | `HYPERLIGHT_PYTHON_GUEST_PATH` | Absolute path to the Hyperlight Python guest module (`.wasm` or `.aot` file). Required.   |
 
 ## Run
