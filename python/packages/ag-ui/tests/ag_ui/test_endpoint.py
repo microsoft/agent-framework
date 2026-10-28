@@ -14170,3 +14170,83 @@ async def test_native_approval_replay_gap_preserves_canonical_history_once(appro
             if message.get("toolCallId", message.get("tool_call_id")) == "call_get_weather"
         ] == result
     assert executed_cities == (["Seattle"] if approved else [])
+
+
+async def test_input_checkpoint_preserves_unconsumed_interrupt_on_provider_failure():
+    """A failed ordinary turn cannot consume a stored confirmation prompt."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    interrupt = {"id": "confirm-one", "reason": "confirm_changes", "payload": {"steps": ["Review"]}}
+    prior = {"id": "prior", "role": "user", "content": "Draft a plan"}
+    await store.save(
+        scope="tenant-a",
+        thread_id="pending-thread",
+        snapshot=AGUIThreadSnapshot(messages=[prior], interrupt=[interrupt]),
+    )
+    agent = StubAgent()
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Partial")], role="assistant")
+            raise ResponseInvalidatedException("provider failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app, agent, path="/pending", snapshot_store=store, snapshot_scope_resolver=lambda request: "tenant-a"
+    )
+    received = {"id": "next", "role": "user", "content": "Explain the plan"}
+    response = TestClient(app).post(
+        "/pending", json={"threadId": "pending-thread", "runId": "failed", "messages": [prior, received]}
+    )
+    assert any(event["type"] == "RUN_ERROR" for event in _decode_sse_events(response))
+    saved = await store.get(scope="tenant-a", thread_id="pending-thread")
+    assert saved is not None
+    assert saved.messages == [prior, received]
+    assert saved.interrupt == [interrupt]
+
+
+@pytest.mark.parametrize("provider_fails", [False, True])
+async def test_input_checkpoint_follows_provider_thread_id(provider_fails: bool):
+    """The public fallback thread ID owns input, without a provisional orphan."""
+    from unittest.mock import AsyncMock
+
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    original_save = store.save
+    store.save = AsyncMock(wraps=original_save)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    agent = StubAgent()
+
+    def provider_run(*args: Any, **kwargs: Any) -> Any:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="Partial")],
+                role="assistant",
+                raw_representation=ChatResponseUpdate(conversation_id="provider-thread"),
+            )
+            if provider_fails:
+                raise ResponseInvalidatedException("provider failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = provider_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app, agent, path="/fallback", snapshot_store=store, snapshot_scope_resolver=lambda request: "tenant-a"
+    )
+    received = {"id": "input", "role": "user", "content": "Remember this"}
+    response = TestClient(app).post("/fallback", json={"messages": [received]})
+    events = _decode_sse_events(response)
+    assert next(event for event in events if event["type"] == "RUN_STARTED")["threadId"] == "provider-thread"
+    assert any(event["type"] == "RUN_ERROR" for event in events) == provider_fails
+    saved = await store.get(scope="tenant-a", thread_id="provider-thread")
+    assert saved is not None
+    assert saved.messages[0] == received
+    for call in store.save.call_args_list:
+        saved_id = call.kwargs["thread_id"]
+        if saved_id != "provider-thread":
+            assert await store.get(scope="tenant-a", thread_id=saved_id) is None

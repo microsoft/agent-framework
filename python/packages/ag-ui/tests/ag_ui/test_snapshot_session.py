@@ -367,3 +367,39 @@ class TestClearInterrupts:
     async def test_disabled_session_clear_is_a_noop(self) -> None:
         session = await ThreadSnapshotSession.open(store=None, scope=None, thread_id="t1")
         await session.clear_interrupts(interrupt_ids={"int-1"})
+
+
+@pytest.mark.parametrize("failed_operation", ["save", "delete"])
+async def test_migrate_thread_id_keeps_source_when_storage_fails(failed_operation: str) -> None:
+    """A migration failure keeps the recoverable source and does not publish the new ID."""
+    from unittest.mock import AsyncMock, patch
+
+    snapshot = AGUIThreadSnapshot(messages=[{"id": "input", "role": "user", "content": "Keep me"}])
+    store = await make_store_with("tenant", "provisional", snapshot)
+    session = await ThreadSnapshotSession.open(store=store, scope="tenant", thread_id="provisional")
+    with patch.object(store, failed_operation, AsyncMock(side_effect=OSError("storage unavailable"))):
+        with pytest.raises(OSError, match="storage unavailable"):
+            await session.migrate_thread_id("provider")
+    assert await store.get(scope="tenant", thread_id="provisional") == snapshot
+    events = [event async for event in session.hydrate_events(run_id="replay")]
+    assert events[0].thread_id == "provisional"
+    if failed_operation == "delete":
+        assert await store.get(scope="tenant", thread_id="provider") == snapshot
+
+
+async def test_migrate_thread_id_preserves_snapshot_and_scope() -> None:
+    """Migration moves the saved checkpoint without changing any of its payloads."""
+    snapshot = AGUIThreadSnapshot(
+        messages=[{"id": "input", "role": "user", "content": "Keep me"}],
+        state={"counter": 2},
+        interrupt=[{"id": "confirm", "reason": "confirm_changes"}],
+        session_state={"private": "continuation"},
+    )
+    store = await make_store_with("tenant", "provisional", snapshot)
+    await store.save(scope="other", thread_id="provisional", snapshot=snapshot)
+    session = await ThreadSnapshotSession.open(store=store, scope="tenant", thread_id="provisional")
+    await session.migrate_thread_id("provider")
+    await session.migrate_thread_id("provider")
+    assert await store.get(scope="tenant", thread_id="provider") == snapshot
+    assert await store.get(scope="tenant", thread_id="provisional") is None
+    assert await store.get(scope="other", thread_id="provisional") == snapshot

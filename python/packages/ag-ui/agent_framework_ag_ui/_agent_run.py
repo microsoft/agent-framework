@@ -3721,7 +3721,9 @@ async def _run_agent_stream(
         await save_thread_snapshot(
             persisted_messages=persisted_input,
             state=latest_state_snapshot,
-            interrupt=snapshot_interrupts(),
+            interrupt=merge_snapshot_interrupts(
+                remaining_stored_interrupts(retired_approval_interrupt_ids), flow.interrupts
+            ),
         )
 
     initial_state_snapshot = flow.current_state if state_schema and flow.current_state else None
@@ -3777,6 +3779,8 @@ async def _run_agent_stream(
                 # IDs remain authoritative for lifecycle correlation and thread-scoped persistence.
                 if not run_started_emitted:
                     if supplied_thread_id is None and conv_id:
+                        if not config.use_service_session:
+                            await snapshot_session.migrate_thread_id(conv_id)
                         thread_id = conv_id
                         snapshot_session.rebind_thread_id(thread_id)
                     if supplied_run_id is None and update.response_id:
