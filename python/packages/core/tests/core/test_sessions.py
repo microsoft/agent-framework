@@ -5,6 +5,7 @@ import json
 import math
 import threading
 import time
+import tracemalloc
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,7 @@ from agent_framework._sessions import (
     _run_identity_scope,
     _RunPersistenceGate,
     _suspend_run_persistence_gate,
+    filter_new_messages,
     is_local_history_conversation_id,
 )
 from agent_framework._telemetry import FeatureIndex
@@ -52,6 +54,51 @@ from .test_filesystem import COLLIDING_IDENTIFIERS
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
+
+
+def test_filter_new_messages_preserves_repeated_user_turn() -> None:
+    existing = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+    incoming = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+
+    assert filter_new_messages(existing, incoming) == incoming
+
+
+def test_filter_new_messages_preserves_repeated_user_after_unanswered_input() -> None:
+    previous_input = Message(role="user", contents=["yes"])
+    repeated_input = Message(role="user", contents=["yes"])
+    reply = Message(role="assistant", contents=["second reply"])
+
+    assert filter_new_messages([previous_input], [repeated_input]) == [repeated_input]
+    assert filter_new_messages([previous_input], [repeated_input, reply]) == [repeated_input, reply]
+
+    identified_input = Message(role="user", contents=["yes"], message_id="turn-1")
+    assert filter_new_messages([identified_input], [identified_input]) == []
+
+
+def test_filter_new_messages_aligns_partial_replay_with_repeated_content() -> None:
+    existing = [
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["first reply"]),
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["second reply"]),
+    ]
+    new_messages = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["third reply"])]
+    incoming = [*existing[-2:], *new_messages]
+
+    assert filter_new_messages(existing, incoming) == new_messages
+
+
+def test_filter_new_messages_keeps_tool_call_result_pairs_on_replay() -> None:
+    call = Message(
+        role="assistant", contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments="{}")]
+    )
+    result = Message(role="tool", contents=[Content.from_function_result(call_id="call-1", result="found")])
+    existing = [Message(role="user", contents=["lookup"]), call, result]
+    new_messages = [Message(role="user", contents=["lookup"]), Message(role="assistant", contents=["again"])]
+
+    assert filter_new_messages(existing, [*existing, *new_messages]) == new_messages
+    assert filter_new_messages(existing, [result, *new_messages]) == new_messages
+
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -627,7 +674,9 @@ class TestHistoryProviderBase:
                 contents=[
                     Content.from_code_interpreter_tool_call(
                         call_id="ci_123",
+                        # Final snapshot: authoritative full value.
                         inputs=[Content.from_text(text="import pandas as pd")],
+                        merge_mode="replace",
                         additional_properties={"sequence_number": 3},
                     )
                 ],
@@ -1624,6 +1673,23 @@ class TestInMemoryHistoryProvider:
         assert state["messages"][0].text == "yes"
         assert state["messages"][1].text == "yes"
 
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(self) -> None:
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])],
+            state=state,
+        )
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])],
+            state=state,
+        )
+
+        assert [message.text for message in state["messages"]] == ["yes", "first reply", "yes", "second reply"]
+
     async def test_save_messages_handles_replayed_transcript_with_duplicates(self) -> None:
         provider = InMemoryHistoryProvider()
         state: dict[str, Any] = {}
@@ -1916,6 +1982,95 @@ class TestFileHistoryProvider:
         with pytest.raises(ValueError, match="record 1.*truncated"):
             await provider.get_messages("broken")
 
+    async def test_msgpack_rejects_oversized_batch_without_mutating_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("oversized")
+        await provider.save_messages("oversized", [Message(role="user", contents=["hello"])])
+        saved_bytes = await asyncio.to_thread(session_file.read_bytes)
+
+        with pytest.raises(ValueError, match="exceeds the 256-byte MessagePack history record limit"):
+            await provider.save_messages(
+                "oversized",
+                [
+                    Message(role="assistant", contents=["fits"]),
+                    Message(role="assistant", contents=["x" * 256]),
+                ],
+            )
+
+        assert await asyncio.to_thread(session_file.read_bytes) == saved_bytes
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello"]
+
+        await provider.save_messages("oversized", [Message(role="assistant", contents=["fits"])])
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello", "fits"]
+
+    async def test_msgpack_rejects_record_that_grows_after_preflight_without_mutating_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class GrowingMessage(Message):
+            """Fits the record limit on the first to_dict() call and exceeds it afterwards."""
+
+            to_dict_calls = 0
+
+            def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+                GrowingMessage.to_dict_calls += 1
+                if GrowingMessage.to_dict_calls > 1:
+                    return Message(role="assistant", contents=["x" * 256]).to_dict()
+                return super().to_dict(exclude=exclude, exclude_none=exclude_none)
+
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("growing")
+        await provider.save_messages("growing", [Message(role="user", contents=["hello"])])
+        saved_bytes = await asyncio.to_thread(session_file.read_bytes)
+
+        # The first message is written before the grown record is found, so the rollback must remove it too.
+        with pytest.raises(ValueError, match="exceeds the 256-byte MessagePack history record limit"):
+            await provider.save_messages(
+                "growing",
+                [
+                    Message(role="assistant", contents=["fits"]),
+                    GrowingMessage(role="assistant", contents=["grows"]),
+                ],
+            )
+
+        assert GrowingMessage.to_dict_calls == 2
+        assert await asyncio.to_thread(session_file.read_bytes) == saved_bytes
+        assert [message.text for message in await provider.get_messages("growing")] == ["hello"]
+
+        await provider.save_messages("growing", [Message(role="assistant", contents=["fits"])])
+        assert [message.text for message in await provider.get_messages("growing")] == ["hello", "fits"]
+
+    async def test_msgpack_record_at_size_limit_round_trips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        message = Message(role="assistant", contents=["at the limit"])
+        record_length = len(msgspec.msgpack.encode(message.to_dict()))
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", record_length)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        await provider.save_messages("limit", [message])
+
+        assert [loaded.text for loaded in await provider.get_messages("limit")] == ["at the limit"]
+
+    async def test_msgpack_batch_save_memory_does_not_grow_with_batch_length(self, tmp_path: Path) -> None:
+        record_text_bytes = 1024 * 1024
+        batch = [Message(role="assistant", contents=[str(index) * record_text_bytes]) for index in range(16)]
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        tracemalloc.start()
+        try:
+            await provider.save_messages("large-batch", batch)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        # Holding every encoded record at once would need about 16 MiB; one record at a time stays near 1 MiB.
+        assert peak_bytes < 6 * record_text_bytes
+        assert len(await provider.get_messages("large-batch")) == len(batch)
+
     async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
         provider = FileHistoryProvider(tmp_path)
 
@@ -2110,6 +2265,22 @@ class TestFileHistoryProvider:
         assert len(loaded) == 2
         assert loaded[0].text == "yes"
         assert loaded[1].text == "yes"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+        )
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+        )
+
+        loaded = await provider.get_messages("s1")
+        assert [message.text for message in loaded] == ["yes", "first reply", "yes", "second reply"]
 
 
 # ---------------------------------------------------------------------------

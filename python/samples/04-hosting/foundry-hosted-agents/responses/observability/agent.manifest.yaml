@@ -18,7 +18,7 @@ template:
     - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
       value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
     - name: ENABLE_SENSITIVE_DATA
-      value: true
+      value: "false"
 resources:
   - kind: model
     id: gpt-4.1-mini

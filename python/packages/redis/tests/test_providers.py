@@ -5,14 +5,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from redis.asyncio import Redis
 
-from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework_redis._context_provider import _SCOPE_FIELDS, RedisContextProvider, _scope_token_field
 from agent_framework_redis._feature_usage import FeatureIndex
 from agent_framework_redis._history_provider import RedisHistoryProvider, _redis_result
 
@@ -34,6 +36,9 @@ async def test_empty_history_save_marks_redis_used(mock_redis_client: MagicMock)
 @pytest.fixture
 def mock_index() -> AsyncMock:
     idx = AsyncMock()
+    client = MagicMock()
+    client.aclose = AsyncMock()
+    idx.client = client
     idx.create = AsyncMock()
     idx.load = AsyncMock()
     idx.query = AsyncMock(return_value=[])
@@ -46,7 +51,7 @@ def patch_index_from_dict(mock_index: AsyncMock):
     with patch("agent_framework_redis._context_provider.AsyncSearchIndex") as mock_cls:
         mock_cls.from_dict = MagicMock(return_value=mock_index)
 
-        async def mock_from_existing(index_name: str, redis_url: str):  # noqa: ARG001
+        async def mock_from_existing(*args: Any, **kwargs: Any):  # noqa: ARG001
             mock_existing = AsyncMock()
             mock_existing.schema.to_dict = MagicMock(
                 side_effect=lambda: mock_cls.from_dict.call_args[0][0] if mock_cls.from_dict.call_args else {}
@@ -64,6 +69,7 @@ def mock_redis_client():
     client.llen = AsyncMock(return_value=0)
     client.ltrim = AsyncMock()
     client.delete = AsyncMock()
+    client.aclose = AsyncMock()
 
     mock_pipeline = AsyncMock()
     mock_pipeline.rpush = AsyncMock()
@@ -133,8 +139,11 @@ class TestRedisContextProviderSchema:
         provider = RedisContextProvider(source_id="ctx", user_id="u1")
         schema = provider.schema_dict
         field_names = [f["name"] for f in schema["fields"]]
-        for expected in ("role", "content", "conversation_id", "message_id", "application_id", "agent_id", "user_id"):
+        for expected in ("role", "content", "message_id"):
             assert expected in field_names
+        for scope_field in _SCOPE_FIELDS:
+            assert scope_field not in field_names
+            assert _scope_token_field(scope_field) in field_names
         assert schema["index"]["name"] == "context"
         assert schema["index"]["prefix"] == "context"
 
@@ -383,7 +392,7 @@ class TestRedisHistoryProviderInit:
         assert provider.store_inputs is False
 
     def test_no_redis_url_or_credential_raises(self):
-        with pytest.raises(ValueError, match="Either redis_url or credential_provider must be provided"):
+        with pytest.raises(ValueError, match="Either redis_client, redis_url, or credential_provider"):
             RedisHistoryProvider("mem")
 
     def test_both_url_and_credential_raises(self):
@@ -395,6 +404,46 @@ class TestRedisHistoryProviderInit:
                 credential_provider=mock_cred,
                 host="myhost",
             )
+
+    def test_borrowed_client_is_used_directly(self):
+        borrowed = Redis(decode_responses=True)
+
+        provider = RedisHistoryProvider("mem", redis_client=borrowed, application_id="test-app")
+
+        assert provider._redis_client is borrowed
+        assert provider._owns_client is False
+
+    @pytest.mark.parametrize(
+        "connection_kwargs",
+        [
+            {"redis_url": "redis://localhost:6379"},
+            {"credential_provider": MagicMock(), "host": "myhost"},
+        ],
+    )
+    def test_borrowed_client_rejects_other_connection_sources(self, connection_kwargs: dict[str, Any]):
+        borrowed = Redis(decode_responses=True)
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            RedisHistoryProvider(
+                "mem",
+                redis_client=borrowed,
+                application_id="test-app",
+                **connection_kwargs,
+            )
+
+    def test_borrowed_client_must_be_async_redis(self):
+        with pytest.raises(TypeError, match=r"redis\.asyncio\.Redis"):
+            RedisHistoryProvider(
+                "mem",
+                redis_client=cast(Any, MagicMock()),
+                application_id="test-app",
+            )
+
+    def test_borrowed_client_requires_decoded_responses(self):
+        borrowed = Redis(decode_responses=False)
+
+        with pytest.raises(ValueError, match="decode_responses=True"):
+            RedisHistoryProvider("mem", redis_client=borrowed, application_id="test-app")
 
     def test_credential_provider_without_host_raises(self):
         mock_cred = MagicMock()
@@ -422,6 +471,29 @@ class TestRedisHistoryProviderInit:
             decode_responses=True,
         )
         assert provider.redis_url is None
+
+
+class TestRedisHistoryProviderClose:
+    async def test_owned_client_is_closed(self, mock_redis_client: MagicMock):
+        with patch(
+            "agent_framework_redis._history_provider.redis.from_url",
+            return_value=mock_redis_client,
+        ):
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", application_id="test-app")
+
+        await provider.aclose()
+
+        mock_redis_client.aclose.assert_awaited_once()
+
+    async def test_borrowed_client_is_not_closed(self):
+        borrowed = Redis(decode_responses=True)
+        with patch.object(borrowed, "aclose", new_callable=AsyncMock) as close:
+            provider = RedisHistoryProvider("mem", redis_client=borrowed, application_id="test-app")
+
+            await provider.aclose()
+
+            close.assert_not_awaited()
+        await borrowed.aclose()
 
 
 class TestRedisHistoryProviderRedisKey:
@@ -628,7 +700,13 @@ class TestRedisResultHelper:
         async def _coro() -> int:
             return 7
 
-        assert await _redis_result(_coro()) == 7
+        # Annotated as the union redis-py actually declares (``int | Awaitable[int]``),
+        # which is the shape ``_redis_result`` exists to normalise. Handing it a bare
+        # coroutine is outside that contract: the single union parameter solves ``_T``
+        # from the non-awaitable arm alone, so mypy rejects the awaitable, exactly as
+        # the helper's own docstring says it only covers ``Awaitable[T] | T``.
+        pending: int | Awaitable[int] = _coro()
+        assert await _redis_result(pending) == 7
 
     async def test_passes_through_a_plain_result(self):
         assert await _redis_result(7) == 7
@@ -833,7 +911,7 @@ class TestRedisHistoryProviderDeduplication:
         assert pushed_msg_dict["contents"][0]["text"] == "how are you?"
 
     async def test_different_roles_same_text_not_deduplicated(self, mock_redis_client: MagicMock):
-        msg1 = Message(role="user", contents=["ping"])
+        msg1 = Message(role="user", contents=["ping"], message_id="original-ping")
 
         mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict())])
 
@@ -846,6 +924,26 @@ class TestRedisHistoryProviderDeduplication:
 
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
         assert pipeline.rpush.call_count == 1
+        pushed_msg_dict = json.loads(pipeline.rpush.call_args.args[1])
+        assert pushed_msg_dict["role"] == "assistant"
+
+    async def test_repeated_user_turn_is_not_deduplicated(self, mock_redis_client: MagicMock):
+        previous = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg.to_dict()) for msg in previous])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", application_id="test-app")
+
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+        )
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert [json.loads(call.args[1])["contents"][0]["text"] for call in pipeline.rpush.await_args_list] == [
+            "yes",
+            "second reply",
+        ]
 
     async def test_trimmed_messages_not_reappended(self, mock_redis_client: MagicMock):
         """Messages trimmed by max_messages should not be re-appended

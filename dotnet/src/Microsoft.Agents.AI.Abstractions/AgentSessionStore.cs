@@ -78,6 +78,21 @@ public abstract class AgentSessionStore
             ?? await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Deletes a stored agent session, if present.
+    /// </summary>
+    /// <param name="agent">The agent that owns this session.</param>
+    /// <param name="key">The key that identifies and partitions the session.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A task that represents the asynchronous delete operation.</returns>
+    /// <remarks>
+    /// Implementations delete the session and treat a missing session as a no-op.
+    /// </remarks>
+    public abstract ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Asks the store for an object of the specified type.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
     /// <param name="serviceKey">An optional key that identifies the requested service.</param>

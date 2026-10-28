@@ -49,7 +49,7 @@ from agent_framework_foundry._agent import (
     RawFoundryAgentChatClient,
     _FoundryAgentChatClient,
 )
-from agent_framework_foundry._chat_client import FoundryChatClient
+from agent_framework_foundry._chat_client import FoundryChatClient, RawFoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
@@ -72,6 +72,66 @@ _FOUNDRY_AZURE_AI_SEARCH_MODEL_ENV_VARS = (
 def test_raw_foundry_agent_chat_client_does_not_mark_openai_feature() -> None:
     assert RawOpenAIChatClient._FEATURE_USAGE_INDEX is OpenAIFeatureIndex.OPENAI
     assert RawFoundryAgentChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_AGENT
+
+
+@pytest.mark.parametrize(
+    "client_type", [RawFoundryChatClient, FoundryChatClient, RawFoundryAgentChatClient, _FoundryAgentChatClient]
+)
+@pytest.mark.parametrize("injected_project", [False, True])
+@pytest.mark.parametrize("timeout", [None, 60.0])
+async def test_foundry_chat_client_context_ownership(
+    client_type, injected_project: bool, timeout: float | None
+) -> None:
+    sdk_client = AsyncOpenAI(api_key="test-key")
+    project = MagicMock()
+    project.get_openai_client.return_value = sdk_client
+    project.close = AsyncMock()
+    credential = MagicMock()
+    kwargs: dict[str, Any] = (
+        {"agent_name": "test-agent"} if issubclass(client_type, RawFoundryAgentChatClient) else {"model": "test-model"}
+    )
+    module = "_agent" if "agent_name" in kwargs else "_chat_client"
+    with patch(f"agent_framework_foundry.{module}.AIProjectClient", return_value=project):
+        client = client_type(
+            project_endpoint="https://test.services.ai.azure.com/api/projects/test",
+            project_client=project if injected_project else None,
+            credential=credential,
+            timeout=timeout,
+            **kwargs,
+        )
+    with patch.object(client.client, "close", wraps=client.client.close) as close:
+        async with client as entered:
+            assert entered is client
+            assert not sdk_client.is_closed()
+        await client.close()
+        close.assert_awaited_once()
+    assert sdk_client.is_closed()
+    assert project.close.await_count == (0 if injected_project else 1)
+    credential.close.assert_not_called()
+
+
+@pytest.mark.parametrize("client_type", [RawFoundryChatClient, RawFoundryAgentChatClient])
+async def test_foundry_chat_client_closes_project_when_openai_close_fails(client_type) -> None:
+    sdk_client = MagicMock(spec=AsyncOpenAI)
+    sdk_client.close = AsyncMock(side_effect=RuntimeError("close failed"))
+    project = MagicMock()
+    project.get_openai_client.return_value = sdk_client
+    project.close = AsyncMock()
+    kwargs: dict[str, Any] = (
+        {"agent_name": "test-agent"} if issubclass(client_type, RawFoundryAgentChatClient) else {"model": "test-model"}
+    )
+    module = "_agent" if "agent_name" in kwargs else "_chat_client"
+    with patch(f"agent_framework_foundry.{module}.AIProjectClient", return_value=project):
+        client = client_type(
+            project_endpoint="https://test.services.ai.azure.com/api/projects/test",
+            credential=MagicMock(),
+            **kwargs,
+        )
+    with pytest.raises(RuntimeError, match="close failed"):
+        async with client:
+            pass
+    sdk_client.close.assert_awaited_once()
+    project.close.assert_awaited_once()
 
 
 def _get_foundry_azure_ai_search_model() -> str | None:
@@ -456,6 +516,77 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
     }
     # A single warning is emitted because the caller supplied tools that cannot be sent (#5130).
     assert sum("cannot be sent when an agent is specified" in record.message for record in caplog.records) == 1
+
+
+@pytest.mark.parametrize("allow_preview", [False, True], ids=["stable", "preview"])
+async def test_raw_foundry_agent_chat_client_warns_when_explicit_tool_control_is_ignored(
+    caplog: pytest.LogCaptureFixture,
+    allow_preview: bool,
+) -> None:
+    """Pre-provisioned agents own tool selection, so explicit request overrides are ignored visibly."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        allow_preview=allow_preview,
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={
+                "model": "gpt-4.1",
+                "tool_choice": "none",
+                "parallel_tool_calls": False,
+            },
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tool_choice": "none", "allow_multiple_tool_calls": False},
+        )
+
+    assert "tool_choice" not in result
+    assert "parallel_tool_calls" not in result
+    warning = next(record.message for record in caplog.records if "owns tool selection server-side" in record.message)
+    assert "tool_choice" in warning
+    assert "allow_multiple_tool_calls" in warning
+
+
+@pytest.mark.parametrize("allow_preview", [False, True], ids=["stable", "preview"])
+async def test_raw_foundry_agent_chat_client_does_not_warn_for_framework_default_tool_choice(
+    caplog: pytest.LogCaptureFixture,
+    allow_preview: bool,
+) -> None:
+    """The framework-generated auto mode must not be reported as caller intent."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        allow_preview=allow_preview,
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4.1", "tool_choice": "auto"},
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tool_choice": "auto"},
+        )
+
+    assert "tool_choice" not in result
+    assert not any("owns tool selection server-side" in record.message for record in caplog.records)
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_tools_when_allow_preview(
@@ -1223,6 +1354,8 @@ def test_foundry_agents_declare_hosted_agent_session_id_as_server_owned() -> Non
     assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgent.service_session_state_keys
     # FoundryAgent is the recommended production class, so it must inherit the same protection.
     assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in FoundryAgent.service_session_state_keys
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgentChatClient.service_session_state_keys
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in _FoundryAgentChatClient.service_session_state_keys
 
 
 async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_from_state() -> None:
@@ -1261,6 +1394,66 @@ async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_fr
         "runtime": "value",
         "agent_session_id": "agent-session-123",
     }
+
+
+@pytest.mark.parametrize("agent_type", [RawFoundryAgent, FoundryAgent, None])
+@pytest.mark.parametrize("parent_handle", [None, "parent-agent-session"])
+async def test_foundry_agent_tools_isolate_service_state_between_children(
+    agent_type: type[RawFoundryAgent] | None, parent_handle: str | None
+) -> None:
+    """Delegated Foundry calls retain application state without sharing service handles."""
+    project = MagicMock()
+    project.get_openai_client.return_value = MagicMock()
+    children = [
+        agent_type(project_client=project, agent_name=name)
+        if agent_type is not None
+        else Agent(client=_FoundryAgentChatClient(project_client=project, agent_name=name), name=name)
+        for name in ("first-child", "second-child")
+    ]
+    parent = AgentSession(service_session_id="parent-response")
+    parent.state["ordinary"] = "parent-value"
+    if parent_handle is not None:
+        parent.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
+    observed_options: list[dict[str, Any]] = []
+    updates: list[AgentResponseUpdate] = []
+
+    def respond(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        assert kwargs["stream"] is True
+        observed_options.append(dict(kwargs["options"]))
+        call_number = len(observed_options)
+
+        async def stream() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(text="done")],
+                conversation_id=f"child-response-{call_number}",
+                additional_properties={"agent_session_id": f"child-agent-session-{call_number}"},
+            )
+
+        return ResponseStream(stream(), finalizer=ChatResponse.from_updates)
+
+    with patch.object(RawFoundryAgentChatClient, "_inner_get_response", side_effect=respond):
+        for child in (children[0], children[1], children[0]):
+            delegated_tool = child.as_tool(propagate_session=True, stream_callback=updates.append)
+            result = await delegated_tool.invoke(
+                context=FunctionInvocationContext(
+                    function=delegated_tool,
+                    arguments={"task": "Run child"},
+                    session=parent,
+                    parent_service_session_state_keys={FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY},
+                )
+            )
+            assert result[0].text == "done"
+
+    assert len(observed_options) == 3
+    assert all("agent_session_id" not in options.get("extra_body", {}) for options in observed_options)
+    assert all(options.get("conversation_id") is None for options in observed_options)
+    assert len(updates) == 3
+    expected_state = {"ordinary": "parent-value"}
+    if parent_handle is not None:
+        expected_state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
+    assert parent.state == expected_state
+    assert parent.service_session_id == "parent-response"
 
 
 def test_foundry_agent_updates_session_from_response_ids() -> None:
@@ -2004,6 +2197,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+async def test_run_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming agent run surfaces an oauth_consent_request output item instead of an empty answer."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "gpt-5.4",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+        max_retries=0,
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        agent = FoundryAgent(project_client=project_client, agent_name="toolbox-agent")
+        response = await agent.run("List my repos")
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
 
 
 def test_client_model_not_set_from_openai_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:

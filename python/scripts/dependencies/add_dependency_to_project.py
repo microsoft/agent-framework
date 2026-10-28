@@ -16,9 +16,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomli
 from rich import print
 
+from scripts._toml import tomllib
 from scripts.task_runner import discover_projects, project_filter_matches
 
 
@@ -33,7 +33,7 @@ class WorkspacePackage:
 
 def _load_distribution_name(pyproject_file: Path) -> str:
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     return str(data.get("project", {}).get("name", "")).strip()
 
 
@@ -90,7 +90,6 @@ def main() -> None:
         "--package",
         dest="project",
         metavar="PACKAGE",
-        required=True,
         help="Workspace package selector, such as `core`.",
     )
     # Keep the old long flag as a silent alias while downstream automation
@@ -98,6 +97,8 @@ def main() -> None:
     parser.add_argument("--project", dest="project", help=argparse.SUPPRESS)
     parser.add_argument("-D", "--dependency", required=True, help="Dependency specifier to add.")
     args = parser.parse_args()
+    if args.project is None:
+        parser.error("the following arguments are required: -P/--package")
 
     workspace_root = Path(__file__).resolve().parents[2]
     package = _resolve_workspace_package(workspace_root, args.project)

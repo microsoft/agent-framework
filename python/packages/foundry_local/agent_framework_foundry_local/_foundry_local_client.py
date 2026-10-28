@@ -349,4 +349,5 @@ class FoundryLocalClient(
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
+        self._owns_client = True
         self.manager = manager

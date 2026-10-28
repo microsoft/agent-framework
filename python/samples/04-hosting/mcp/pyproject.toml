@@ -9,7 +9,7 @@ dependencies = [
     "agent-framework-hosting",
     "agent-framework-hosting-mcp",
     "azure-identity",
-    "mcp>=1.27.0,<2",
+    "mcp>=2.2.0,<3",
     "starlette>=0.40",
     "uvicorn>=0.30",
 ]

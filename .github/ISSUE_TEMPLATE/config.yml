@@ -1,4 +1,4 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
   - name: Documentation
     url: https://aka.ms/agent-framework
@@ -6,3 +6,6 @@ contact_links:
   - name: Discussions
     url: https://github.com/microsoft/agent-framework/discussions
     about: Ask questions about Agent Framework.
+  - name: Security Vulnerability
+    url: https://github.com/microsoft/agent-framework/security/policy
+    about: Report security vulnerabilities privately.

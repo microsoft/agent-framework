@@ -81,7 +81,11 @@ agent = OpenAIChatClient().as_agent(name="Assistant")
 state = AgentState(agent, session_store=FileSessionStore("storage/sessions"))
 session = await state.get_or_create_session("conversation-1")
 result = await (await state.get_target()).run("Hello", session=session)
+await state.set_session("conversation-1", session)
 ```
+
+`get_or_create_session(...)` returns a working copy. Save the updated session after
+each successful run so the next request with the same id retains its state.
 
 If a protocol mints a new continuation id on every response, store the session
 explicitly after `run(...)` returns. `run(...)` may update the session, so store

@@ -605,6 +605,140 @@ public sealed class PurviewWrapperTests : IDisposable
 
     #endregion
 
+    #region Blocked response envelope tests
+
+    [Fact]
+    public async Task ProcessChatContentAsync_WithBlockedResponse_PreservesControlMetadataAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+        var mockChatClient = new Mock<IChatClient>();
+        var createdAt = DateTimeOffset.UtcNow;
+        var innerResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, "Sensitive response"))
+        {
+            ResponseId = "resp-1",
+            ConversationId = "conv-1",
+            ModelId = "model-1",
+            CreatedAt = createdAt,
+            FinishReason = ChatFinishReason.Stop,
+            Usage = new UsageDetails { InputTokenCount = 3, OutputTokenCount = 5 },
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["custom"] = "value" },
+            RawRepresentation = new { ProviderPayload = "Sensitive response" }
+        };
+
+        mockChatClient.Setup(x => x.GetResponseAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<ChatOptions>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(innerResponse);
+
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<string>(),
+            Activity.UploadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((false, "user-123"));
+
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<string>(),
+            Activity.DownloadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((true, "user-123"));
+
+        // Act
+        var result = await this._wrapper.ProcessChatContentAsync(messages, null, mockChatClient.Object, CancellationToken.None);
+
+        // Assert - the call is still identifiable and resumable
+        Assert.Equal("resp-1", result.ResponseId);
+        Assert.Equal("conv-1", result.ConversationId);
+        Assert.Equal("model-1", result.ModelId);
+        Assert.Equal(createdAt, result.CreatedAt);
+        Assert.Equal(ChatFinishReason.Stop, result.FinishReason);
+        Assert.Equal(3, result.Usage?.InputTokenCount);
+        Assert.Equal("value", result.AdditionalProperties?["custom"]);
+
+        // Assert - only the messages were replaced, and the blocked payload is not handed back
+        Assert.Single(result.Messages);
+        Assert.Equal(ChatRole.System, result.Messages[0].Role);
+        Assert.Equal("Response blocked by policy", result.Messages[0].Text);
+        Assert.Null(result.RawRepresentation);
+    }
+
+    [Fact]
+    public async Task ProcessAgentContentAsync_WithBlockedResponse_PreservesControlMetadataAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+        var mockAgent = new Mock<AIAgent>();
+        var createdAt = DateTimeOffset.UtcNow;
+        var innerResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Sensitive response"))
+        {
+            ResponseId = "resp-1",
+            AgentId = "agent-1",
+            CreatedAt = createdAt,
+            FinishReason = ChatFinishReason.Stop,
+            Usage = new UsageDetails { InputTokenCount = 3, OutputTokenCount = 5 },
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["custom"] = "value" },
+            RawRepresentation = new { ProviderPayload = "Sensitive response" }
+        };
+
+        mockAgent.Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession>(),
+                ItExpr.IsAny<AgentRunOptions>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(innerResponse);
+
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<string>(),
+            Activity.UploadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((false, "user-123"));
+
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<string>(),
+            Activity.DownloadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((true, "user-123"));
+
+        // Act
+        var result = await this._wrapper.ProcessAgentContentAsync(messages, null, null, mockAgent.Object, CancellationToken.None);
+
+        // Assert - the run is still identifiable and resumable
+        Assert.Equal("resp-1", result.ResponseId);
+        Assert.Equal("agent-1", result.AgentId);
+        Assert.Equal(createdAt, result.CreatedAt);
+        Assert.Equal(ChatFinishReason.Stop, result.FinishReason);
+        Assert.Equal(3, result.Usage?.InputTokenCount);
+        Assert.Equal("value", result.AdditionalProperties?["custom"]);
+
+        // Assert - only the messages were replaced, and the blocked payload is not handed back
+        Assert.Single(result.Messages);
+        Assert.Equal(ChatRole.System, result.Messages[0].Role);
+        Assert.Equal("Response blocked by policy", result.Messages[0].Text);
+        Assert.Null(result.RawRepresentation);
+    }
+
+    #endregion
+
     public void Dispose()
     {
         this._wrapper.Dispose();

@@ -12,6 +12,15 @@ Specifically, it mirrors the [Agent SDK integration](https://github.com/openai/c
   of `ThreadItemConverter` to convert a ChatKit thread to a list of `Message`,
   useful for getting started quickly.
 
+Override the async `ThreadItemConverter.structured_input_to_input()` method to
+customize structured input context, such as formatting or redacting answers.
+Return a `Message`, a list of messages, or `None` to skip the item.
+
+Override the async `ThreadItemConverter.generated_image_to_input()` method to
+customize generated image context, such as resolving private image URLs.
+Return a `Message`, a list of messages, or `None` to skip the item.
+The default converter preserves data URI media types and leaves external URLs unchanged.
+
 ## Installation
 
 ```bash

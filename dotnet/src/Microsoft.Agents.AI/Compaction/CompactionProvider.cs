@@ -132,7 +132,8 @@ public sealed class CompactionProvider : AIContextProvider
 
         ChatClientAgentSession? chatClientSession = session.GetService<ChatClientAgentSession>();
         if (chatClientSession is not null &&
-            !string.IsNullOrWhiteSpace(chatClientSession.ConversationId))
+            !string.IsNullOrWhiteSpace(chatClientSession.ConversationId) &&
+            !string.Equals(chatClientSession.ConversationId, PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId, StringComparison.Ordinal))
         {
             logger.LogCompactionProviderSkipped("session managed by remote service");
             return context.AIContext;

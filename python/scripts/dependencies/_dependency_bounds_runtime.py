@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-# ruff: noqa: INP001
 
 """Shared runtime helpers for dependency-bound validation commands."""
 
@@ -11,28 +10,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import cast
 
-import tomli
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-_TOOL_REQUIREMENT_NAMES = {
-    "mypy",
-    "poethepoet",
-    "pyright",
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "pytest-retry",
-    "pytest-timeout",
-    "pytest-xdist",
-    "ruff",
-}
+from scripts._toml import tomllib
+from scripts.tool_requirements import load_requirements
 
 _ADDITIONAL_RUNTIME_REQUIREMENTS = (
     "graphviz",
     "opentelemetry-exporter-otlp-proto-grpc",
     "opentelemetry-exporter-otlp-proto-http",
 )
+_RUNTIME_TOOL_BUNDLES = ("quality", "typing")
 
 # Run pyright through the current interpreter so its import resolution matches the uv-created environment.
 _PYRIGHT_COMMAND = (
@@ -51,7 +40,7 @@ _DEPENDENCY_PYRIGHT_COMMAND = (
 def load_dependency_group_requirements(workspace_root: str, group_name: str) -> tuple[str, ...]:
     """Load string requirements from one root workspace dependency group."""
     pyproject_path = Path(workspace_root) / "pyproject.toml"
-    data = cast(dict[str, object], tomli.loads(pyproject_path.read_text()))
+    data = cast(dict[str, object], tomllib.loads(pyproject_path.read_text()))
     dependency_groups = cast(dict[str, object], data.get("dependency-groups", {}) or {})
     return _string_requirements(dependency_groups.get(group_name, []))
 
@@ -77,7 +66,7 @@ def load_workspace_package_configs(workspace_root: Path) -> dict[str, WorkspaceP
     packages: dict[str, WorkspacePackageConfig] = {}
     for pyproject_file in sorted((workspace_root / "packages").glob("*/pyproject.toml")):
         with pyproject_file.open("rb") as file:
-            config = cast(dict[str, object], tomli.load(file))
+            config = cast(dict[str, object], tomllib.load(file))
 
         project = cast(dict[str, object], config.get("project", {}) or {})
         package_name = str(project.get("name", "")).strip()
@@ -167,17 +156,19 @@ def resolve_internal_editables(
 @lru_cache(maxsize=8)
 def load_runtime_tool_requirements(workspace_root: str) -> list[str]:
     """Load shared tool requirements used by package test and typing tasks."""
-    # `uv run --isolated` starts from a clean environment, so the validator has to re-attach the
-    # shared tooling that package-level poe tasks expect to find.
-    runtime_requirements: list[str] = []
+    cross_version_requirements = list(load_dependency_group_requirements(workspace_root, "tool-runtime"))
     for requirement in load_dependency_group_requirements(workspace_root, "dev"):
         try:
-            parsed = Requirement(requirement)
+            parsed_requirement = Requirement(requirement)
         except InvalidRequirement:
             continue
-        if parsed.name.lower() in _TOOL_REQUIREMENT_NAMES:
-            runtime_requirements.append(requirement)
-    return runtime_requirements
+        if parsed_requirement.name.lower() != "uv":
+            cross_version_requirements.append(requirement)
+
+    return [
+        *cross_version_requirements,
+        *(requirement for bundle in _RUNTIME_TOOL_BUNDLES for requirement in load_requirements(bundle)),
+    ]
 
 
 def extend_command_with_runtime_tools(command: list[str], workspace_root: Path) -> None:
@@ -189,18 +180,16 @@ def extend_command_with_runtime_tools(command: list[str], workspace_root: Path) 
         command.extend(["--with", requirement])
 
 
-def extend_command_with_task(command: list[str], task_name: str, *, workspace_root: Path) -> None:
+def extend_command_with_task(command: list[str], task_name: str) -> None:
     """Append the command needed to execute one validation task."""
     if task_name == "pyright":
         command.extend(["python", "-c", _PYRIGHT_COMMAND])
         return
     if task_name == "dependency-pyright":
-        for requirement in load_dependency_group_requirements(str(workspace_root.resolve()), "test"):
-            command.extend(["--with", requirement])
         command.extend(["python", "-c", _DEPENDENCY_PYRIGHT_COMMAND])
         return
 
-    command.extend(["python", "-m", "poethepoet", task_name])
+    command.extend(["python", "-m", "poethepoet", "--executor", "simple", task_name])
 
 
 def next_zero_major_minor_boundary(version_text: str) -> str:

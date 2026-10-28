@@ -6,6 +6,11 @@ Please install this package via pip:
 pip install agent-framework-declarative
 ```
 
+The package currently advertises Python 3.10–3.13 support. Python 3.14 and
+3.15 can install the package, but Power Fx expressions are unavailable because
+the `powerfx` dependency requires a `pythonnet` build that does not support
+those Python versions.
+
 ## Release stage
 
 This package ships at two different stability levels:
@@ -39,6 +44,31 @@ owned client with the default cookie policy.
 Explicit `Cookie` request headers remain supported. Response `Set-Cookie` headers
 remain available in `HttpRequestResult.headers`; disabling persistence does not redact
 the response.
+
+## HTTP response body limits
+
+`DefaultHttpRequestHandler` limits response bodies to **10 MiB** by default.
+Configure a positive integer `max_response_body_bytes` on the handler when a host
+requires a different bound. The bound applies to received bytes and each decoded
+stage, including intermediate redirect and authentication responses. Responses
+above the bound raise `httpx.StreamError` before text conversion or workflow
+assignment, and their streams are closed without closing caller-owned clients.
+
+The handler restricts HTTPX's generated `Accept-Encoding` default to `gzip, deflate`
+and supports identity, gzip, and deflate
+responses, including up to four encoding stages. Unsupported encodings,
+incomplete encoded bodies, and trailing encoded data raise `httpx.DecodingError`.
+Empty encoded responses are validated unless the response is bodyless (HEAD,
+1xx, 204, 205, 304, or a successful CONNECT response). Deflate input is retained
+within the same bound until its wrapped or raw format can be validated.
+Explicit request `Accept-Encoding` headers and client values that differ from
+HTTPX's generated default are preserved but do not enable additional decoders.
+Caller-supplied response hooks and transports must not
+buffer response bodies before the handler applies its limit.
+
+HTTPX support is limited to the 0.27 and 0.28 series because the bounded
+intermediate-response cache and generated default-header integration depend
+on HTTPX internals. Compatibility tests cover HTTPX 0.27.0 and 0.28.1.
 
 ## MCP handler session lifetime
 

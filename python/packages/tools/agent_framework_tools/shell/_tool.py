@@ -19,7 +19,13 @@ from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
 from ._resolve import is_powershell, resolve_shell
 from ._session import ShellSession
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +317,7 @@ class LocalShellTool:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -321,6 +327,7 @@ class LocalShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )
 
     # ------------------------------------------------------------------ helpers

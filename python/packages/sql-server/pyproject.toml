@@ -3,8 +3,8 @@ name = "agent-framework-sql-server"
 description = "SQL Server native vector integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
-requires-python = ">=3.10,<3.15"
-version = "1.0.0a260923"
+requires-python = ">=3.10"
+version = "1.0.0a261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -19,11 +19,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "mssql-python>=1.15.0,<2",
+    "mssql-python>=1.16.0,<2",
 ]
 
 [tool.ruff]
@@ -60,5 +61,5 @@ cmd = 'pytest -m "not integration" --cov=agent_framework_sql_server --cov-report
 cmd = 'pytest -m integration tests'
 
 [build-system]
-requires = ["flit-core>=3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

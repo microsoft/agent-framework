@@ -508,6 +508,173 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
 
 # --- Declaration-only tool tests ---
 
+
+class _ResumeCapturingAgent(BaseAgent):
+    """Capture workflow resume inputs without function-loop normalization."""
+
+    def __init__(self, requests: list[Content]) -> None:
+        super().__init__(name="ResumeCapturingAgent")
+        self.requests = requests
+        self.received_messages: list[list[Message]] = []
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        assert isinstance(messages, list)
+        captured: list[Message] = []
+        for message in messages:
+            assert isinstance(message, Message)
+            captured.append(Message(role=message.role, contents=list(message.contents)))
+        self.received_messages.append(captured)
+        contents = self.requests if len(self.received_messages) == 1 and self.requests else [Content.from_text("done")]
+
+        async def _run() -> AgentResponse[Any]:
+            return AgentResponse(messages=[Message(role="assistant", contents=contents)])
+
+        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(role="assistant", contents=contents)
+
+        if stream:
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+        return _run()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("request_types", "expected_groups", "delivery"),
+    [
+        pytest.param(("host", "approval"), (("tool", 1), ("user", 1)), "batch", id="host-approval"),
+        pytest.param(("approval", "host"), (("user", 1), ("tool", 1)), "batch", id="approval-host"),
+        pytest.param(
+            ("host", "approval", "host"),
+            (("tool", 1), ("user", 1), ("tool", 1)),
+            "batch",
+            id="interleaved",
+        ),
+        pytest.param(
+            ("host", "host", "approval", "approval", "host"),
+            (("tool", 2), ("user", 2), ("tool", 1)),
+            "batch",
+            id="adjacent-groups",
+        ),
+        pytest.param(("approval", "host"), (("user", 1), ("tool", 1)), "partial", id="partial"),
+        pytest.param(
+            ("host", "approval", "host"),
+            (("tool", 1), ("user", 1), ("tool", 1)),
+            "checkpoint",
+            id="checkpoint",
+        ),
+    ],
+)
+async def test_agent_executor_resume_preserves_content_roles_and_request_order(
+    request_types: tuple[str, ...],
+    expected_groups: tuple[tuple[str, int], ...],
+    delivery: Literal["batch", "partial", "checkpoint"],
+    stream: bool,
+) -> None:
+    """Reverse-submitted mixed replies retain roles, adjacent grouping, and original request order."""
+    requests: list[Content] = []
+    for index, request_type in enumerate(request_types):
+        call = Content.from_function_call(call_id=f"call-{index}", name=request_type, id=f"request-{index}")
+        if request_type == "approval":
+            requests.append(Content.from_function_approval_request(id=f"request-{index}", function_call=call))
+        else:
+            call.user_input_request = True
+            requests.append(call)
+    original_requests = [request.to_dict() for request in requests]
+    agent = _ResumeCapturingAgent(requests)
+    storage = InMemoryCheckpointStorage() if delivery == "checkpoint" else None
+    workflow = WorkflowBuilder(start_executor=agent, checkpoint_storage=storage).build()
+
+    if stream:
+        pending = [event async for event in workflow.run("Run tools", stream=True) if event.type == "request_info"]
+    else:
+        pending = (await workflow.run("Run tools")).get_request_info_events()
+    assert [event.request_id for event in pending] == [request.id for request in requests]
+    assert len(agent.received_messages) == 1
+
+    replies: dict[str, Content] = {}
+    for event in pending:
+        if event.data.type == "function_approval_request":
+            reply = event.data.to_function_approval_response(approved=True)
+        else:
+            assert event.data.call_id is not None
+            reply = Content.from_function_result(call_id=event.data.call_id, result=f"result-{event.request_id}")
+            reply.id = event.data.id
+        replies[event.request_id] = reply
+    expected_contents = [reply.to_dict() for reply in replies.values()]
+    response_items = list(reversed(replies.items()))
+
+    resuming_agent = agent
+    if delivery != "batch":
+        first_id, first_reply = response_items.pop(0)
+        if stream:
+            partial = [event async for event in workflow.run(responses={first_id: first_reply}, stream=True)]
+            assert not any(event.type == "output" for event in partial)
+        else:
+            assert (await workflow.run(responses={first_id: first_reply})).get_outputs() == []
+        assert len(agent.received_messages) == 1
+
+    checkpoint_id: str | None = None
+    if storage is not None:
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        checkpoint = next(
+            checkpoint
+            for checkpoint in reversed(checkpoints)
+            if checkpoint.state.get("_executor_state", {}).get(agent.name, {}).get("pending_responses_to_agent")
+            and len(checkpoint.pending_request_info_events) == len(requests) - 1
+        )
+        checkpoint_id = checkpoint.checkpoint_id
+        resuming_agent = _ResumeCapturingAgent([])
+        workflow = WorkflowBuilder(
+            name=workflow.name,
+            start_executor=resuming_agent,
+            checkpoint_storage=storage,
+        ).build()
+
+    if stream:
+        resumed = [
+            event
+            async for event in workflow.run(responses=dict(response_items), checkpoint_id=checkpoint_id, stream=True)
+        ]
+        assert any(event.type == "output" and event.data.text == "done" for event in resumed)
+    else:
+        outputs = (await workflow.run(responses=dict(response_items), checkpoint_id=checkpoint_id)).get_outputs()
+        assert len(outputs) == 1
+        assert outputs[0].text == "done"
+    assert len(resuming_agent.received_messages) == (1 if storage is not None else 2)
+    messages = resuming_agent.received_messages[-1]
+    assert [(message.role, len(message.contents)) for message in messages] == list(expected_groups)
+    assert [content.to_dict() for message in messages for content in message.contents] == expected_contents
+    assert [reply.to_dict() for reply in replies.values()] == expected_contents
+    assert [request.to_dict() for request in requests] == original_requests
+
+
 declaration_only_tool = FunctionTool(
     name="client_side_tool",
     func=None,
@@ -637,6 +804,82 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
             yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
 
         self._iteration += 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("approved", [False, True])
+async def test_agent_executor_mixed_resume_executes_once_and_preserves_host_result(
+    approved: bool, stream: bool
+) -> None:
+    """The real function loop consumes mixed replies without executing or replaying a tool twice."""
+    executions: list[str] = []
+
+    def execute_approved_tool(query: str) -> str:
+        executions.append(query)
+        return "Approved tool result"
+
+    approval_tool = FunctionTool(
+        name="mock_tool_requiring_approval",
+        description="A tool that requires approval.",
+        func=execute_approved_tool,
+        approval_mode="always_require",
+    )
+    client = DeclarationOnlyMockChatClient(mixed_request=True)
+    agent = Agent(client=client, name="MixedApprovalAgent", tools=[approval_tool, declaration_only_tool])
+    workflow = WorkflowBuilder(start_executor=agent).build()
+    if stream:
+        pending = [event async for event in workflow.run("Run both tools", stream=True) if event.type == "request_info"]
+    else:
+        pending = (await workflow.run("Run both tools")).get_request_info_events()
+    approval_request = next(event for event in pending if event.data.type == "function_approval_request")
+    host_request = next(event for event in pending if event.data.type == "function_call")
+    assert executions == []
+    assert host_request.data.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.data.call_id, result={"answer": 42})
+    host_result.id = host_request.data.id
+    approval_response = approval_request.data.to_function_approval_response(approved=approved)
+    original_replies = [host_result.to_dict(), approval_response.to_dict()]
+
+    partial = await workflow.run(responses={host_request.request_id: host_result})
+    assert partial.get_outputs() == []
+    assert executions == []
+    assert len(client.received_messages) == 1
+
+    if stream:
+        updates = [
+            event.data
+            async for event in workflow.run(responses={approval_request.request_id: approval_response}, stream=True)
+            if event.type == "output"
+        ]
+        response = AgentResponse.from_updates(updates)
+    else:
+        [response] = (await workflow.run(responses={approval_request.request_id: approval_response})).get_outputs()
+    assert response.text == "Tool executed successfully."
+    assert executions == (["approved"] if approved else [])
+    assert len(client.received_messages) == 2
+    [approval_result] = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert approval_result.call_id == approval_request.data.function_call.call_id
+    assert all(message.role == "tool" for message in response.messages if approval_result in message.contents)
+
+    await workflow.run("Continue without another tool call")
+    assert executions == (["approved"] if approved else [])
+    for messages in client.received_messages[1:]:
+        results = [
+            (message.role, content.call_id, content.result)
+            for message in messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert results.count(("tool", host_result.call_id, host_result.result)) == 1
+        assert sum(call_id == approval_result.call_id for _, call_id, _ in results) == 1
+        assert not any(
+            content.type in ("function_approval_request", "function_approval_response")
+            for message in messages
+            for content in message.contents
+        )
+    assert [host_result.to_dict(), approval_response.to_dict()] == original_replies
 
 
 class ComputerUseMockChatClient(BaseChatClient[Any]):

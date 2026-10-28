@@ -4,7 +4,11 @@ from typing import Final
 
 __version__: Final[str]
 
-from ._agent_hooks import create_agent_hooks_middleware, create_agent_hooks_middleware_from_emitter
+from ._agent_hooks import (
+    create_agent_hooks_middleware,
+    create_agent_hooks_middleware_from_declaration,
+    create_agent_hooks_middleware_from_emitter,
+)
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
 from ._clients import (
     BaseChatClient,
@@ -243,7 +247,9 @@ from ._types import (
     UsageDetails,
     add_usage_details,
     detect_media_type_from_base64,
+    get_namespaced_value,
     map_chat_to_agent_update,
+    merge_additional_properties,
     merge_chat_options,
     normalize_messages,
     normalize_tools,
@@ -251,6 +257,7 @@ from ._types import (
     validate_chat_options,
     validate_tool_mode,
     validate_tools,
+    with_namespaced_value,
 )
 from ._vector_filters import Filter, FilterGroup, FilterGroupOperator, FilterOperator, Param
 from ._vectors import (
@@ -634,6 +641,7 @@ __all__ = [
     "background_tasks_running_message",
     "chat_middleware",
     "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_declaration",
     "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
@@ -651,6 +659,7 @@ __all__ = [
     "executor",
     "function_middleware",
     "get_agent_mode",
+    "get_namespaced_value",
     "get_run_context",
     "handler",
     "included_messages",
@@ -658,6 +667,7 @@ __all__ = [
     "keyword_check",
     "load_settings",
     "map_chat_to_agent_update",
+    "merge_additional_properties",
     "merge_chat_options",
     "normalize_function_invocation_configuration",
     "normalize_messages",
@@ -682,5 +692,6 @@ __all__ = [
     "validate_tools",
     "validate_workflow_graph",
     "vectorstoremodel",
+    "with_namespaced_value",
     "workflow",
 ]

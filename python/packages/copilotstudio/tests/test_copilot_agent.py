@@ -279,6 +279,7 @@ class TestCopilotStudioAgent:
             content = response.contents[0]
             assert content.type == "text"
             assert content.text == "Streaming response"
+            assert content.merge_mode == "append"
             response_count += 1
 
         assert response_count == 1

@@ -2,8 +2,11 @@
 
 """Unit tests for WorkflowState class."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from agent_framework_declarative._workflows import _state as state_module
 from agent_framework_declarative._workflows._state import WorkflowState
 
 
@@ -437,6 +440,70 @@ class TestWorkflowStateEvalSimple:
         assert state._eval_simple("Workflow.Inputs.name") == "test"
 
 
+class TestWorkflowStateEvalSimpleCallExtent:
+    """The fallback dispatcher must only claim a formula that is one whole call.
+
+    ``_eval_simple`` previously matched ``formula.startswith(f"{name}(")`` with
+    ``formula.endswith(")")``, so a call followed by any operator had the
+    remainder of the formula absorbed into its arguments.
+    """
+
+    def test_trailing_operator_is_not_absorbed_into_arguments(self):
+        """The formula is left unclaimed instead of yielding a corrupted fragment.
+
+        ``_eval_simple`` echoes a formula it cannot evaluate, and ``eval``
+        reaches it only after PowerFx has already had its turn.
+        """
+        state = WorkflowState()
+        formula = 'Concat("a") & Lower("B")'
+        assert state._eval_simple(formula) == formula
+
+    def test_not_with_trailing_operator_is_not_absorbed(self):
+        """The Not() special case is bounded the same way.
+
+        Previously the handler claimed this formula and returned a bool built
+        from the mis-parsed fragment ``false) & Upper("x"``.
+        """
+        state = WorkflowState()
+        formula = 'Not(false) & Upper("x")'
+        assert state._eval_simple(formula) == formula
+
+    def test_whole_not_call_still_dispatches(self):
+        """A complete Not() call keeps negating its argument."""
+        assert WorkflowState()._eval_simple("Not(false)") is True
+
+    def test_whole_call_still_dispatches(self):
+        """A complete call keeps resolving through CUSTOM_FUNCTIONS."""
+        state = WorkflowState()
+        assert state._eval_simple('Concat("a", "b")') == "ab"
+        assert state._eval_simple('Upper("ab")') == "AB"
+
+    def test_argument_less_call_still_dispatches(self):
+        """A zero-argument call is a call, not an unmatched formula.
+
+        ``Or()`` is false in PowerFx. Echoing the formula instead would hand a
+        truthy string back to a condition and invert it.
+        """
+        state = WorkflowState()
+        assert state._eval_simple("Or()") is False
+        assert state._eval_simple("And()") is True
+        assert state._eval_simple("Not()") is True
+
+    def test_commented_paren_does_not_truncate_the_call(self):
+        """A ``)`` inside a comment is text, so the call is still claimed.
+
+        What the argument heuristic then makes of the comment text is issue
+        #9072's business; the point here is that the formula is dispatched
+        rather than echoed back unevaluated.
+        """
+        formula = 'Upper("ab" /* ) */)'
+        assert WorkflowState()._eval_simple(formula) != formula
+
+    def test_trailing_comment_does_not_disqualify_the_call(self):
+        """A comment after the call is trivia, not a larger expression."""
+        assert WorkflowState()._eval_simple('Upper("ab") // done') == "AB"
+
+
 class TestWorkflowStateParseFunctionArgs:
     """Tests for _parse_function_args helper."""
 
@@ -552,6 +619,107 @@ class TestWorkflowStateGetEdgeCases:
         """Test get from unknown Workflow sub-namespace."""
         state = WorkflowState()
         assert state.get("Workflow.Unknown.path") is None
+
+
+class TestWorkflowStateMemberEvaluation:
+    """Member rules apply to the standalone evaluator's fallback paths."""
+
+    @pytest.fixture
+    def member_state(self) -> WorkflowState:
+        class Record:
+            _private = "private-marker"
+            __marker__ = "double-underscore-marker"
+
+            def __init__(self) -> None:
+                self.public_value = "public-marker"
+
+        state = WorkflowState()
+        state.set("Local.record", Record())
+        state.set("Local.bag", {"_private": "dictionary-marker"})
+        return state
+
+    @pytest.mark.parametrize("mode", ["absent", "error", "real"])
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("Local.record._private", None),
+            ("Local.record.__marker__", None),
+            ("Local.record.public_value", "public-marker"),
+            ("Local.bag._private", "dictionary-marker"),
+        ],
+    )
+    def test_fallback_member_access(
+        self,
+        member_state: WorkflowState,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        path: str,
+        expected: str | None,
+    ) -> None:
+        fallback = MagicMock(wraps=member_state._eval_simple)
+        monkeypatch.setattr(member_state, "_eval_simple", fallback)
+        if mode == "absent":
+            engine = None
+        elif mode == "error":
+            engine = MagicMock()
+            engine.eval.side_effect = ValueError("synthetic engine error")
+        else:
+            if state_module._powerfx_engine is None:
+                pytest.skip("PowerFx engine not available")
+            engine = MagicMock(wraps=state_module._powerfx_engine)
+        monkeypatch.setattr(state_module, "_powerfx_engine", engine)
+
+        assert member_state.eval(f"={path}") == expected
+        fallback.assert_called_once_with(path)
+        if engine is not None:
+            engine.eval.assert_called_once()
+
+    def test_real_engine_success_does_not_fall_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        if state_module._powerfx_engine is None:
+            pytest.skip("PowerFx engine not available")
+        state = WorkflowState()
+        state.set("Local.bag", {"_private": "dictionary-marker"})
+        fallback = MagicMock(side_effect=AssertionError("Unexpected fallback"))
+        monkeypatch.setattr(state, "_eval_simple", fallback)
+
+        assert state.eval("=Local.bag._private") == "dictionary-marker"
+        fallback.assert_not_called()
+
+    def test_recursive_expression_values(self, member_state: WorkflowState, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(state_module, "_powerfx_engine", None)
+        assert member_state.eval_if_expression({
+            "values": ["=Local.record._private", "=Local.record.public_value", "=Local.bag._private"]
+        }) == {"values": [None, "public-marker", "dictionary-marker"]}
+
+    def test_custom_namespace_preserves_unresolved_formula(
+        self, member_state: WorkflowState, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(state_module, "_powerfx_engine", None)
+        member_state.set("Custom.record", member_state.get("Local.record"))
+
+        assert member_state.eval("=Custom.record._private") == "Custom.record._private"
+        assert member_state.eval("=Custom.record.public_value") == "public-marker"
+
+    def test_append_does_not_mutate_rejected_member(self) -> None:
+        class Record:
+            def __init__(self) -> None:
+                self._items = ["original"]
+
+        state = WorkflowState()
+        record = Record()
+        state.set("Local.record", record)
+
+        with pytest.raises(TypeError):
+            state.append("Local.record._items", "new")
+        assert record._items == ["original"]
+
+        state.append("Local.bag._items", "new")
+        assert state.get("Local.bag._items") == ["new"]
+
+    def test_empty_dictionary_key_behavior_is_unchanged(self) -> None:
+        state = WorkflowState()
+        state.set("Local.bag", {"": "dictionary-marker"})
+        assert state.get("Local.bag.") == "dictionary-marker"
 
 
 class TestWorkflowStateConversationIdInit:

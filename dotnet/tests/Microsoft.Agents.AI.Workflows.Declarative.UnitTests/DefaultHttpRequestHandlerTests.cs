@@ -139,6 +139,30 @@ public sealed class DefaultHttpRequestHandlerTests
         await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
+    [Fact]
+    public async Task SendAsyncWithRejectedLoopbackDestinationDoesNotSendAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using RawHttpServer server = new();
+        await using DefaultHttpRequestHandler handler = new((requestInfo, _) =>
+        {
+            Assert.Equal(server.Url, requestInfo.Url);
+            return Task.FromException<HttpClient?>(
+                new ArgumentException("Loopback destinations are not allowed.", nameof(requestInfo)));
+        });
+        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Equal("requestInfo", exception.ParamName);
+        Assert.Contains("loopback", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(await server.TryReadRequestAsync());
+    }
+
     #endregion
 
     #region Send Behavior Tests
@@ -279,7 +303,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Act
         Exception? exception = await Record.ExceptionAsync(() => handler.SendAsync(request, cancellationToken));
-        string? rawRequest = await server.TryReadRequestAsync(TimeSpan.FromMilliseconds(500));
+        string? rawRequest = await server.TryReadRequestAsync();
 
         // Assert
         Assert.Null(rawRequest);
@@ -1037,6 +1061,46 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equal(1, providerCallCount);
     }
 
+    [Theory]
+    [InlineData(302, "GET", "https://secondary.example.test/next")]
+    [InlineData(307, "DELETE", "https://secondary.example.test/next")]
+    [InlineData(307, "GET", "https://api.example.test/next")]
+    public async Task SendAsyncRedirectThatChangesClientThrowsAsync(int redirectStatusCode, string method, string redirectUrl)
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<string> providerUrls = [];
+        using HttpResponseMessage redirectResponse = new((HttpStatusCode)redirectStatusCode)
+        {
+            Headers = { Location = new Uri(redirectUrl) },
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler ownedMessageHandler = new((_, _) => Task.FromResult(redirectResponse));
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK);
+        TestHttpMessageHandler providedMessageHandler = new((_, _) =>
+            Task.FromResult(okResponse));
+#pragma warning restore CA2025
+        using HttpClient providedClient = new(providedMessageHandler);
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(ownedMessageHandler, (info, _) =>
+        {
+            providerUrls.Add(info.Url);
+            return Task.FromResult(providerUrls.Count == 1 ? null : providedClient);
+        });
+#pragma warning restore CA2025
+        HttpRequestInfo request = new() { Method = method, Url = TestUrl };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("change the HTTP client", exception.Message, StringComparison.Ordinal);
+        Assert.Equal([TestUrl, redirectUrl], providerUrls);
+        Assert.Single(ownedMessageHandler.RequestMethods);
+        Assert.Empty(providedMessageHandler.RequestMethods);
+    }
+
     [Fact]
     public async Task SendAsyncInvokesProviderForRedirectDestinationAsync()
     {
@@ -1369,6 +1433,9 @@ public sealed class DefaultHttpRequestHandlerTests
         }
 
         public string Url { get; }
+
+        public Task<string?> TryReadRequestAsync() =>
+            this.TryReadRequestAsync(TimeSpan.FromMilliseconds(500));
 
         public async Task<string?> TryReadRequestAsync(TimeSpan timeout)
         {

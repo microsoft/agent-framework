@@ -19,12 +19,13 @@ namespace Microsoft.Agents.AI;
 internal sealed class BackgroundAgentRuntimeState
 {
     /// <summary>
-    /// Gets an object used to synchronize access to the runtime references held by this instance.
+    /// Gets an object used to synchronize access to task metadata and runtime references for this session.
     /// </summary>
     /// <remarks>
     /// Background task registration happens on the agent's tool-invocation path, while
     /// <see cref="BackgroundAgentsProvider.ReleaseSessionAsync"/> may be called concurrently by a host.
-    /// All mutations of the dictionaries below, and of <see cref="IsReleased"/>, must be performed under this lock
+    /// Access to the corresponding <see cref="BackgroundAgentState"/> and the dictionaries below, and mutations
+    /// of <see cref="IsReleased"/>, must be performed under this lock
     /// so that a task can never be registered into an already-released runtime.
     /// </remarks>
     [JsonIgnore]

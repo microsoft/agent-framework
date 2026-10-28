@@ -17,7 +17,7 @@ This is the **Foundry** variant. For the Azure OpenAI Responses API variant, see
 
 1. Set environment variables (or create a `.env` file in `python/`):
    ```bash
-   FOUNDRY_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com/
+   FOUNDRY_PROJECT_ENDPOINT=https://your-account.services.ai.azure.com/api/projects/your-project
    FOUNDRY_MODEL=gpt-4.1
    AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.services.ai.azure.com/
    ```

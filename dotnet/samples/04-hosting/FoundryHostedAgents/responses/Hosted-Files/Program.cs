@@ -20,7 +20,8 @@
 //
 // Required environment variables:
 //   FOUNDRY_PROJECT_ENDPOINT          - Foundry project endpoint
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-4o)
+//   FOUNDRY_MODEL (or AZURE_AI_MODEL_DEPLOYMENT_NAME)
+//                                     - Model deployment name (default: gpt-4o)
 //
 // Optional:
 //   AGENT_NAME                        - Agent name (default: hosted-files)
@@ -48,8 +49,8 @@ var endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOI
 // environment does not define the variable referenced from azure.yaml. An empty string is not
 // null, so a plain ?? chain would pass the blank straight through and fail deep inside the SDK.
 var deploymentName = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o");
 
 var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-files";

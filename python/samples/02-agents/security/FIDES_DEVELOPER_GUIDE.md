@@ -2,6 +2,23 @@
 
 **FIDES**  is a comprehensive security system for AI agents. This developer guide describes the deterministic prompt injection defense system implemented in the agent framework. The system provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
+> [!WARNING]
+> **Combining FIDES with CodeAct providers is currently unsupported**, including
+> [Monty](../../../packages/monty/README.md) and
+> [Hyperlight](../../../packages/hyperlight/README.md). FIDES's per-tool guarantees
+> apply to invocations routed through its function middleware. Host-tool calls
+> inside generated code bypass that middleware; nested calls and intermediate
+> code values do not receive its policy enforcement or label tracking. Checking
+> the outer `execute_code` invocation does not enforce the policies of individual
+> tools called inside it, and sandbox isolation does not supply FIDES enforcement.
+>
+> CodeAct logs a warning for recognized FIDES tool metadata, but this is diagnostic
+> only: execution is not blocked, and defaults can apply to unannotated tools.
+> No warning does not imply support or safety. Keep tools that require FIDES as
+> direct agent tools rather than CodeAct-managed tools, or disable CodeAct for
+> workflows requiring those guarantees. Host functions must independently enforce
+> authorization and destination restrictions.
+
 ## Context Provider Pattern with SecureAgentConfig!
 
 **`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. No security knowledge required from developers.

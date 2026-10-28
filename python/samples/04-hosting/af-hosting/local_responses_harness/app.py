@@ -55,7 +55,7 @@ Run
 
     uv sync
     az login
-    export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
+    export FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
     export FOUNDRY_MODEL=gpt-5-nano
     uv run hypercorn app:app --bind 0.0.0.0:8000
 

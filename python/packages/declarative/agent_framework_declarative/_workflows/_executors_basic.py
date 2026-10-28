@@ -6,6 +6,7 @@ These executors handle simple actions like SetValue, SendActivity, etc.
 Each action becomes a node in the workflow graph.
 """
 
+import math
 import uuid
 from collections.abc import Mapping
 from typing import Any, cast
@@ -52,7 +53,8 @@ class SetValueExecutor(DeclarativeActionExecutor):
         """Handle the SetValue action."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        path = self._action_def.get("path")
+        # The builder accepts 'variable' in place of 'path' for SetValue
+        path = self._action_def.get("path") or _get_variable_path(self._action_def)
         value = self._action_def.get("value")
 
         if path:
@@ -517,6 +519,9 @@ class ParseValueExecutor(DeclarativeActionExecutor):
                 try:
                     if "." in value:
                         return float(value)
+                    if "e" in value.lower():
+                        parsed_value = float(value)
+                        return parsed_value if math.isfinite(parsed_value) else 0
                     return int(value)
                 except ValueError:
                     return 0

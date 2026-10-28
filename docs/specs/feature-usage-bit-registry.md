@@ -158,7 +158,7 @@ only to approved first-party endpoints.
 | 56 | `openai` | OpenAI clients | `agent_framework_openai` |
 | 57 | `anthropic` | Anthropic clients | `agent_framework_anthropic` |
 | 58 | `bedrock` | AWS Bedrock clients | `agent_framework_bedrock` |
-| 59 | `gemini` | Gemini chat client | `agent_framework_gemini` |
+| 59 | `gemini` | Gemini chat and embedding clients | `agent_framework_gemini` |
 | 60 | `mistral` | Mistral embedding client | `agent_framework_mistral` |
 | 61 | `ollama` | Ollama clients | `agent_framework_ollama` |
 | 62 | `claude` | Claude Agent SDK agent | `agent_framework_claude` |
@@ -188,7 +188,8 @@ only to approved first-party endpoints.
 | 86 | `hosting.responses` | OpenAI Responses hosting converters | `agent_framework_hosting_responses.responses_to_run` |
 | 87 | `hosting.telegram` | Telegram hosting converters | `agent_framework_hosting_telegram.telegram_to_run` |
 | 88 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
-| 89–127 | _reserved_ | future packages | — |
+| 89 | `nvidia` | NVIDIA NIM embedding client | `agent_framework_nvidia.NvidiaEmbeddingClient` |
+| 90–127 | _reserved_ | future packages | — |
 
 ## Index table — .NET (`agent-framework-dotnet`, version 1)
 

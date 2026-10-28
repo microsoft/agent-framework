@@ -186,7 +186,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // point below: AsyncLocal writes made in this streaming iterator are reverted across yield
         // boundaries, so a single up-front assignment would be lost before the toolbox/MCP calls run.
         var platformCallId = context.PlatformContext?.CallId;
+        var toolboxRequestScope = this._toolboxService?.CreateRequestScope()
+            ?? FoundryToolboxService.RequestToolboxScope.CreateInactive();
+        await using var configuredToolboxRequestScope = toolboxRequestScope.ConfigureAwait(false);
         HostedCallContext.CallId = platformCallId;
+        HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
@@ -278,6 +282,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // Re-apply the call id: the EmitCreated/EmitInProgress yields above reverted the ambient
             // value, and the toolbox tools/list + consent egress below must carry it per request.
             HostedCallContext.CallId = platformCallId;
+            HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
             var toolboxResolution = await this.ResolveToolboxToolsAsync(
                 this._toolboxService,
@@ -343,7 +348,6 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             cancellationToken,
             context.Shutdown);
         var consentState = new RequestConsentState { CancellationSource = consentCts };
-        McpConsentContext.Current.Value = consentState;
 
         // 7. Run the agent and convert output
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
@@ -382,6 +386,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 // below revert the ambient AsyncLocal, but the MCP tools/call egress that happens
                 // inside MoveNextAsync must carry the platform call id on every request.
                 HostedCallContext.CallId = platformCallId;
+                HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
                 bool shutdownDetected = false;
                 McpConsentInfo? consentInfo = null;
@@ -391,9 +396,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 {
                     if (!pendingEvents.TryDequeue(out evt))
                     {
-                        if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                        // AsyncLocal assignments do not survive iterator yields. Bind the same
+                        // consent state on every advance without replacing the caller's context.
+                        var previousConsentState = McpConsentContext.Current.Value;
+                        try
                         {
-                            break;
+                            McpConsentContext.Current.Value = consentState;
+                            if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                            {
+                                break;
+                            }
+                        }
+                        finally
+                        {
+                            McpConsentContext.Current.Value = previousConsentState;
                         }
 
                         switch (enumerator.Current)
@@ -586,7 +602,16 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         }
         finally
         {
-            await enumerator.DisposeAsync().ConfigureAwait(false);
+            var previousConsentState = McpConsentContext.Current.Value;
+            try
+            {
+                McpConsentContext.Current.Value = consentState;
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                McpConsentContext.Current.Value = previousConsentState;
+            }
 
             // Only after the the agent ran when can check precisely if the session had been used to store messages in the backend for validation.
             if (CheckNotAllowedStoreUsage())
@@ -754,7 +779,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             return new(Tools: [], Consents: pendingConsents, Error: null);
         }
 
-        List<AITool> toolsToAdd = [.. toolboxService.Tools];
+        List<AITool> toolsToAdd = [.. toolboxService.Tools, .. toolboxService.GetCurrentRequestTools()];
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         List<McpConsentInfo>? markerConsents = null;
 

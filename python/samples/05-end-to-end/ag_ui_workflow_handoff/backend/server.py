@@ -315,6 +315,9 @@ def create_app() -> FastAPI:
         app=app,
         agent=demo_workflow,
         path="/handoff_demo",
+        # Local sample only. For production, remove (or set False) and provide
+        # authorization_scope_resolver backed by authenticated request context.
+        single_user=True,
     )
 
     @app.get("/healthz")

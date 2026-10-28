@@ -239,7 +239,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
 
             return [new ChatMessage(ChatRole.User, contextText)];
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {
@@ -292,7 +292,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
                 await collection.UpsertAsync(itemsToStore, cancellationToken).ConfigureAwait(false);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             if (this._logger?.IsEnabled(LogLevel.Error) is true)
             {

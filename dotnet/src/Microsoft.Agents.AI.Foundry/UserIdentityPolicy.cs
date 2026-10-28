@@ -3,6 +3,7 @@
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry;
 
@@ -33,6 +34,18 @@ internal sealed class UserIdentityPolicy : PipelinePolicy
     private static void Stamp(PipelineMessage message)
     {
         var identity = UserIdentityScope.Current;
+        if (identity is null)
+        {
+            return;
+        }
+
+        // Session state can be restored without using the binding API, so validate again at the
+        // final transport boundary before the value reaches the header collection.
+        HttpHeaderValidation.ValidateNoProhibitedCharacters(
+            identity,
+            "userIdentity",
+            "User identity must not contain NUL, carriage-return, or line-feed characters.");
+
         if (string.IsNullOrWhiteSpace(identity))
         {
             return;

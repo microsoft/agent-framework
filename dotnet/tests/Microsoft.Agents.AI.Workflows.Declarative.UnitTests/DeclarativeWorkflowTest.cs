@@ -13,8 +13,10 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.PowerFx.Types;
 using Moq;
+using Shared.UnitTests;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
@@ -158,19 +160,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                       id: env_boundary_workflow
                       actions:
 
-                        - kind: ConditionGroup
-                          id: environment_boundary_condition
-                          conditions:
-                            - id: environment_boundary_passed
-                              condition: =Env.AllowedConfig = "allowed-value"
-                              actions:
-                                - kind: SendActivity
-                                  id: environment_boundary_passed_activity
-                                  activity: allowed-configuration-available
-                          elseActions:
-                            - kind: SendActivity
-                              id: environment_boundary_failed_activity
-                              activity: allowed-configuration-missing
+                        - kind: SetVariable
+                          id: referenced_allowed_configuration
+                          variable: Local.Allowed
+                          value: =Env.AllowedConfig
 
                         - kind: SetVariable
                           id: referenced_hidden_configuration
@@ -212,8 +205,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             Assert.Equal("allowed-value", allowedValue.Value);
             Assert.IsType<BlankValue>(rootState.Get(HiddenName, VariableScopeNames.Environment));
             Assert.IsType<BlankValue>(rootState.Get(ProcessOnlyName, VariableScopeNames.Environment));
-            this.AssertMessage("allowed-configuration-available");
-            this.AssertNotMessage("allowed-configuration-missing");
+            Assert.Equal(SensitivityLevel.Sensitive, rootState.GetSensitivity(AllowedName, VariableScopeNames.Environment));
         }
         finally
         {
@@ -257,19 +249,15 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                       id: env_fallback_workflow
                       actions:
 
-                        - kind: ConditionGroup
-                          id: environment_fallback_condition
-                          conditions:
-                            - id: environment_fallback_passed
-                              condition: =Env.ProcessOnlyConfigForFallback = "process-only-value" && Env.ExplicitConfigWinsForFallback = "configuration-value"
-                              actions:
-                                - kind: SendActivity
-                                  id: environment_fallback_passed_activity
-                                  activity: process-environment-fallback-enabled
-                          elseActions:
-                            - kind: SendActivity
-                              id: environment_fallback_failed_activity
-                              activity: process-environment-fallback-failed
+                        - kind: SetVariable
+                          id: referenced_process_configuration
+                          variable: Local.ProcessOnly
+                          value: =Env.ProcessOnlyConfigForFallback
+
+                        - kind: SetVariable
+                          id: referenced_explicit_configuration
+                          variable: Local.Explicit
+                          value: =Env.ExplicitConfigWinsForFallback
 
                         - kind: SetVariable
                           id: referenced_hidden_process_environment
@@ -307,8 +295,8 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             StringValue explicitValue = Assert.IsType<StringValue>(rootState.Get(ExplicitName, VariableScopeNames.Environment));
             Assert.Equal(ExplicitConfigurationValue, explicitValue.Value);
             Assert.IsType<BlankValue>(rootState.Get(HiddenName, VariableScopeNames.Environment));
-            this.AssertMessage("process-environment-fallback-enabled");
-            this.AssertNotMessage("process-environment-fallback-failed");
+            Assert.Equal(SensitivityLevel.Sensitive, rootState.GetSensitivity(ProcessOnlyName, VariableScopeNames.Environment));
+            Assert.Equal(SensitivityLevel.Sensitive, rootState.GetSensitivity(ExplicitName, VariableScopeNames.Environment));
         }
         finally
         {
@@ -316,6 +304,57 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             Environment.SetEnvironmentVariable(ExplicitName, originalExplicitValue);
             Environment.SetEnvironmentVariable(HiddenName, originalHiddenValue);
         }
+    }
+
+    [Theory]
+    [InlineData("enabled")]
+    [InlineData("disabled")]
+    public async Task ConditionRejectsEnvironmentInputBeforeBranchActionsAsync(string setting)
+    {
+        // Arrange
+        using StringReader reader = new(
+            """
+            kind: Workflow
+            trigger:
+              kind: OnConversationStart
+              id: condition_validation
+              actions:
+                - kind: ConditionGroup
+                  id: select_branch
+                  conditions:
+                    - id: enabled_branch
+                      condition: =Left(Env.Setting, 2) = "en"
+                      actions:
+                        - kind: SendActivity
+                          id: enabled_activity
+                          activity: Enabled
+                  elseActions:
+                    - kind: SendActivity
+                      id: disabled_activity
+                      activity: Disabled
+            """);
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Setting"] = setting })
+            .Build();
+        DeclarativeWorkflowOptions options = new(CreateMockProvider("input").Object)
+        {
+            Configuration = configuration,
+            AllowedEnvironmentVariables = ["Setting"],
+        };
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(reader, options);
+
+        // Act
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "input");
+        WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
+
+        // Assert
+        ExecutorFailedEvent failure = Assert.Single(events.OfType<ExecutorFailedEvent>());
+        DeclarativeActionException exception = Assert.IsType<DeclarativeActionException>(failure.Data);
+        Assert.Contains("condition", exception.Message);
+        Assert.Empty(events.OfType<MessageActivityEvent>());
+        Assert.DoesNotContain(events.OfType<DeclarativeActionInvokedEvent>(),
+            e => string.Equals(e.ActionId, "enabled_activity", StringComparison.Ordinal) ||
+                 string.Equals(e.ActionId, "disabled_activity", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -487,6 +526,36 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.True(visitor.HasUnsupportedActions);
     }
 
+    [Fact]
+    public void UnsupportedActionLogsWarning()
+    {
+        SearchKnowledgeSources.Builder unsupportedAction = new() { Id = "action_bad" };
+        AdaptiveDialog.Builder dialogBuilder =
+            new()
+            {
+                BeginDialog =
+                    new OnActivity.Builder()
+                    {
+                        Id = "anything",
+                        Actions = [unsupportedAction]
+                    }
+            };
+        AdaptiveDialog dialog = dialogBuilder.Build();
+
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("1");
+        CapturingLoggerFactory loggerFactory = new();
+        DeclarativeWorkflowOptions options = new(mockAgentProvider.Object) { LoggerFactory = loggerFactory };
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), options, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
+
+        Assert.True(visitor.HasUnsupportedActions);
+        (LogLevel Level, string Message) warning = Assert.Single(loggerFactory.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains(nameof(SearchKnowledgeSources), warning.Message, StringComparison.Ordinal);
+        Assert.Contains("action_bad", warning.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("CaseInsensitive.yaml", "end_when_match")]
     [InlineData("ClearAllVariables.yaml", "clear_all")]
@@ -564,9 +633,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertMessage(string message) =>
         Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
-
-    private void AssertNotMessage(string message) =>
-        Assert.DoesNotContain(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
 
     private static WorkflowFormulaState GetRootState(Workflow workflow)
     {

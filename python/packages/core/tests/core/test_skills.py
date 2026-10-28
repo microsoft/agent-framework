@@ -4,13 +4,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import os
 import shutil
 from abc import ABC
-from collections.abc import Sequence
+from collections.abc import Callable, MutableSequence, Sequence
 from datetime import timedelta
+from functools import partial, wraps
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,12 +24,14 @@ from agent_framework import (
     CachingSkillsSource,
     ChatOptions,
     ChatResponse,
+    ChatResponseUpdate,
     ClassSkill,
     Content,
     DeduplicatingSkillsSource,
     FileSkill,
     FileSkillScript,
     FileSkillsSource,
+    FunctionTool,
     InlineSkill,
     InMemorySkillsSource,
     Message,
@@ -73,7 +78,7 @@ class _NamedMockAgent(MockAgent):
 
 def _make_source_context(agent_name: str = "test-agent") -> SkillsSourceContext:
     """Build a :class:`SkillsSourceContext` for exercising skill sources in tests."""
-    return SkillsSourceContext(agent=_NamedMockAgent(agent_name))  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+    return SkillsSourceContext(agent=_NamedMockAgent(agent_name))  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
 
 
 # Shared context for the common case where the agent/session are irrelevant.
@@ -1860,7 +1865,8 @@ class TestSymlinkDetection:
         assert "scripts/safe.py" in discovered
         assert "scripts/leak.py" not in discovered
 
-    async def test_run_rejects_script_replaced_with_symlink(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("context_aware", [False, True])
+    async def test_run_rejects_script_replaced_with_symlink(self, tmp_path: Path, context_aware: bool) -> None:
         """A script replaced after discovery must be revalidated before its runner is invoked."""
         skill_dir = _write_skill(tmp_path, "my-skill")
         script_path = skill_dir / "scripts" / "run.py"
@@ -1870,7 +1876,13 @@ class TestSymlinkDetection:
         outside_script.write_text("print('outside')", encoding="utf-8")
         runner_called = False
 
-        def runner(skill: Skill, script: SkillScript, args: dict[str, Any] | list[str] | None = None) -> None:
+        def runner(
+            skill: Skill,
+            script: SkillScript,
+            args: dict[str, Any] | list[str] | None = None,
+            *,
+            ctx: FunctionInvocationContext | None = None,
+        ) -> None:
             nonlocal runner_called
             runner_called = True
 
@@ -1882,7 +1894,10 @@ class TestSymlinkDetection:
         script_path.symlink_to(outside_script)
 
         with pytest.raises(ValueError, match="symbolic link or reparse point"):
-            await script.run(skill)
+            if context_aware:
+                await script.run(skill, context=_script_context())
+            else:
+                await script.run(skill)
         assert runner_called is False
 
     async def test_discover_skips_symlinked_skill_directory(self, tmp_path: Path) -> None:
@@ -2076,7 +2091,7 @@ class TestInlineSkill:
     def test_skill_is_abstract(self) -> None:
         """Skill base class cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            Skill()  # type: ignore[abstract]
+            Skill()  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     def test_inline_skill_is_skill(self) -> None:
         """InlineSkill is a subclass of Skill."""
@@ -4111,8 +4126,689 @@ class TestSkillScript:
         assert script._runner is None
 
 
+def _script_context(**runtime_kwargs: Any) -> FunctionInvocationContext:
+    """Build a ``run_skill_script`` invocation context carrying host runtime values."""
+    return _invocation_context(FunctionTool(name="run_skill_script", func=lambda: None), **runtime_kwargs)
+
+
+async def _run_through_provider(
+    script: SkillScript,
+    skill: InlineSkill | FileSkill,
+    args: Any = None,
+    *,
+    context: FunctionInvocationContext,
+) -> Any:
+    if script not in skill._scripts:
+        skill._scripts.append(script)
+    return await SkillsProvider(skill)._run_skill_script(
+        [skill], skill.frontmatter.name, script.name, args, context=context
+    )
+
+
+async def _run_with_context(
+    function: Any,
+    args: Any = None,
+    *,
+    context: FunctionInvocationContext | None = None,
+    argument_parser: SkillScriptArgumentParser | None = None,
+) -> Any:
+    """Run ``function`` as an inline script through the provider."""
+    script = InlineSkillScript(name="analyze", function=function, argument_parser=argument_parser)
+    skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+    return await _run_through_provider(script, skill, args, context=context or _script_context())
+
+
+def _context_callback(value: str, *, ctx: FunctionInvocationContext) -> Any:
+    return value, ctx, {}
+
+
+def _context_callback_with_kwargs(value: str, ctx: FunctionInvocationContext, **kwargs: Any) -> Any:
+    return value, ctx, kwargs
+
+
+async def _async_context_callback(value: str, *, ctx: FunctionInvocationContext) -> Any:
+    return _context_callback(value, ctx=ctx)
+
+
+async def _async_context_callback_with_kwargs(value: str, ctx: FunctionInvocationContext, **kwargs: Any) -> Any:
+    return _context_callback_with_kwargs(value, ctx, **kwargs)
+
+
+def _inline_context_skill(argument_parser: SkillScriptArgumentParser) -> Skill:
+    skill = InlineSkill(
+        frontmatter=SkillFrontmatter(name="s", description="d"), instructions="Body", argument_parser=argument_parser
+    )
+
+    @skill.script
+    def analyze(value: str, *, ctx: FunctionInvocationContext) -> Any:
+        return value, ctx
+
+    return skill
+
+
+class _ContextClassSkill(ClassSkill):
+    @property
+    def instructions(self) -> str:
+        return "Body"
+
+    @ClassSkill.script
+    def analyze(self, value: str, *, ctx: FunctionInvocationContext) -> Any:
+        return value, ctx
+
+
+class TestInlineSkillScriptContext:
+    """Opt-in runtime context injection for inline callbacks."""
+
+    @pytest.mark.parametrize(
+        ("callback", "model_extras"),
+        [
+            (_context_callback, {}),
+            (_async_context_callback, {}),
+            (_context_callback_with_kwargs, {"tenant_id": "model-tenant", "context": "model-context"}),
+            (_async_context_callback_with_kwargs, {"tenant_id": "model-tenant", "context": "model-context"}),
+        ],
+    )
+    async def test_injects_context_without_merging_host_values(
+        self, callback: Any, model_extras: dict[str, Any]
+    ) -> None:
+        runtime_kwargs = {
+            "tenant_id": "host-tenant",
+            "value": "host",
+            "ctx": "host-ctx",
+            "skill": "host-skill",
+            "args": "host-args",
+            "context": "host-context",
+        }
+        context = _script_context(**runtime_kwargs)
+        args = {"value": "model", **model_extras}
+
+        value, received_context, kwargs = await _run_with_context(callback, args, context=context)
+
+        assert value == "model"
+        assert received_context is context
+        assert kwargs == model_extras
+        assert args == {"value": "model", **model_extras}
+        assert context.kwargs == runtime_kwargs
+        assert context.result is None
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            FunctionInvocationContext,
+            FunctionInvocationContext | None,
+            "FunctionInvocationContext",
+            "FunctionInvocationContext | None",
+        ],
+    )
+    async def test_context_annotations_are_injected_and_hidden_from_schema(self, annotation: Any) -> None:
+        def callback(value: str, *, invocation: Any) -> Any:
+            return invocation
+
+        callback.__annotations__["invocation"] = annotation
+        context = _script_context()
+
+        schema = InlineSkillScript(name="analyze", function=callback).parameters_schema
+        assert schema is not None
+        assert set(schema["properties"]) == {"value"}
+        assert schema["required"] == ["value"]
+        assert await _run_with_context(callback, {"value": "model"}, context=context) is context
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            "FunctionInvocationContext",
+            "FunctionInvocationContext | None",
+        ],
+    )
+    async def test_context_only_callback_has_no_model_parameters(self, annotation: str) -> None:
+        def callback(ctx: FunctionInvocationContext) -> Any:
+            return ctx
+
+        callback.__annotations__["ctx"] = annotation
+        context = _script_context()
+
+        assert InlineSkillScript(name="analyze", function=callback).parameters_schema is None
+        assert await _run_with_context(callback, context=context) is context
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            list[FunctionInvocationContext],
+            Callable[..., FunctionInvocationContext],
+            Annotated[FunctionInvocationContext, "runtime"],
+            "list[FunctionInvocationContext]",
+            "Annotated[FunctionInvocationContext, 'runtime']",
+        ],
+    )
+    async def test_non_context_annotations_are_not_injected(self, annotation: Any) -> None:
+        def callback(value: Any) -> Any:
+            return value
+
+        callback.__annotations__["value"] = annotation
+
+        assert InlineSkillScript(name="analyze", function=callback)._context_parameter_name is None  # pyright: ignore[reportPrivateUsage]
+        assert await _run_with_context(callback, {"value": "model"}) == "model"
+
+    @pytest.mark.parametrize("use_parser", [False, True])
+    async def test_script_arguments_cannot_supply_context(self, use_parser: bool) -> None:
+        def callback(*, ctx: FunctionInvocationContext) -> None:
+            pytest.fail("Injected context must not be supplied as a script argument")
+
+        args = {"ctx": "model"}
+        with pytest.raises(ValueError, match="'ctx'.*reserved for runtime context injection"):
+            await _run_with_context(
+                callback,
+                {"raw": "value"} if use_parser else args,
+                argument_parser=(lambda _: args) if use_parser else None,
+            )
+
+    @pytest.mark.parametrize(
+        ("raw_args", "expected"),
+        [('{"value": "parsed"}', "parsed"), (["parsed"], "parsed"), ({"value": "parsed"}, "parsed"), (None, "default")],
+    )
+    async def test_argument_parser_runs_once_before_injection(self, raw_args: Any, expected: str) -> None:
+        parser_calls: list[Any] = []
+
+        def parser(args: Any) -> dict[str, Any] | None:
+            parser_calls.append(args)
+            return None if args is None else {"value": "parsed"}
+
+        def callback(value: str = "default", *, ctx: FunctionInvocationContext) -> str:
+            return value
+
+        assert await _run_with_context(callback, raw_args, argument_parser=parser) == expected
+        assert parser_calls == [raw_args]
+
+    @pytest.mark.parametrize("use_parser", [False, True])
+    async def test_context_injection_leaves_reused_arguments_unchanged(self, use_parser: bool) -> None:
+        def callback(value: str, *, ctx: FunctionInvocationContext) -> Any:
+            return value, ctx
+
+        args = {"value": "model"}
+        script = InlineSkillScript(
+            name="analyze", function=callback, argument_parser=(lambda _: args) if use_parser else None
+        )
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+
+        for tenant in ("first", "second"):
+            context = _script_context(tenant_id=tenant)
+            value, received_context = await script.run(skill, args, context=context)
+            assert value == "model"
+            assert received_context is context
+            assert args == {"value": "model"}
+
+    @pytest.mark.parametrize(
+        ("invalid_args", "message"), [("unparsed", "argument_parser"), (["array"], "requires keyword arguments")]
+    )
+    @pytest.mark.parametrize("use_parser", [False, True])
+    async def test_invalid_argument_shapes_are_rejected(
+        self, invalid_args: Any, message: str, use_parser: bool
+    ) -> None:
+        def callback(ctx: FunctionInvocationContext) -> None:
+            pytest.fail("Invalid arguments must not execute the script")
+
+        with pytest.raises(TypeError, match=message):
+            await _run_with_context(
+                callback,
+                None if use_parser else invalid_args,
+                argument_parser=(lambda _: invalid_args) if use_parser else None,
+            )
+
+    async def test_direct_run_keeps_existing_behavior(self) -> None:
+        def callback(ctx: FunctionInvocationContext | None = None, **kwargs: Any) -> Any:
+            return ctx, kwargs
+
+        script = InlineSkillScript(name="analyze", function=callback)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        context = _script_context()
+
+        assert await script.run(skill, {"value": "model"}, tenant_id="host") == (
+            None,
+            {"value": "model", "tenant_id": "host"},
+        )
+        received_context, kwargs = await script.run(skill, {"ctx": context}, tenant_id="host")
+        assert received_context is context
+        assert kwargs == {"tenant_id": "host"}
+
+    @pytest.mark.parametrize("value", [None, "customer information", False, 0, _script_context()])
+    @pytest.mark.parametrize("through_provider", [False, True])
+    async def test_forwarded_context_keyword_reaches_callback(self, value: Any, through_provider: bool) -> None:
+        class PlainScript(InlineSkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                return await super().run(skill, args, **kwargs)
+
+        script = PlainScript(name="analyze", function=lambda **kwargs: kwargs)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        if through_provider:
+            result = await _run_through_provider(script, skill, context=_script_context(context=value))
+        else:
+            result = await script.run(skill, context=value)
+        assert result == {"context": value}
+
+    async def test_forwarded_context_keyword_preserves_duplicate_argument_error(self) -> None:
+        class PlainScript(InlineSkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                return await super().run(skill, args, **kwargs)
+
+        script = PlainScript(name="analyze", function=lambda **kwargs: pytest.fail("Callback should not run"))
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with pytest.raises(TypeError, match="multiple values"):
+            await _run_through_provider(script, skill, {"context": "model"}, context=_script_context(context=None))
+
+    async def test_unannotated_context_name_does_not_opt_in(self) -> None:
+        def callback(ctx: str, **kwargs: Any) -> Any:
+            return ctx, kwargs
+
+        schema = InlineSkillScript(name="analyze", function=callback).parameters_schema
+        assert schema is not None
+        assert set(schema["properties"]) == {"ctx"}
+        assert await _run_with_context(callback, {"ctx": "model"}, context=_script_context(tenant_id="host")) == (
+            "model",
+            {"tenant_id": "host"},
+        )
+
+    @pytest.mark.parametrize("reject", [False, True])
+    async def test_annotated_callback_does_not_bypass_unannotated_run_override(self, reject: bool) -> None:
+        calls: list[str] = []
+        failure = RuntimeError("Rejected by the run override")
+        runtime_kwargs = {"tenant_id": "host"}
+
+        def callback(ctx: FunctionInvocationContext | None = None, **kwargs: Any) -> Any:
+            calls.append("callback")
+            assert ctx is None
+            return kwargs
+
+        class CustomScript(InlineSkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                calls.append("override")
+                if reject:
+                    raise failure
+                return await super().run(skill, args, **kwargs)
+
+        class InheritedScript(CustomScript):
+            pass
+
+        script = InheritedScript(name="analyze", function=callback)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        context = _script_context(**runtime_kwargs)
+        if reject:
+            with pytest.raises(RuntimeError) as caught:
+                await _run_through_provider(script, skill, context=context)
+            assert caught.value is failure
+            assert calls == ["override"]
+        else:
+            assert await _run_through_provider(script, skill, context=context) == runtime_kwargs
+            assert calls == ["override", "callback"]
+
+    @pytest.mark.parametrize("script_kind", ["inline", "file"])
+    async def test_subclass_without_run_override_inherits_context_injection(self, script_kind: str) -> None:
+        class CustomInline(InlineSkillScript):
+            pass
+
+        class CustomFile(FileSkillScript):
+            pass
+
+        def callback(ctx: FunctionInvocationContext) -> Any:
+            return ctx
+
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            return ctx
+
+        script = (
+            CustomInline(name="analyze", function=callback)
+            if script_kind == "inline"
+            else CustomFile(name="analyze", full_path=f"{_ABS}/run.py", runner=runner)
+        )
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=_ABS)
+        context = _script_context()
+        assert await _run_through_provider(script, skill, context=context) is context
+
+    @pytest.mark.parametrize("value", [None, "customer information", 0])
+    async def test_file_run_ignores_non_invocation_context_values(self, value: Any) -> None:
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            return ctx
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        assert await script.run(skill, context=value) is None
+
+    @pytest.mark.parametrize("script_type", [InlineSkillScript, FileSkillScript])
+    def test_builtin_run_context_is_optional_and_keyword_only(self, script_type: type[SkillScript]) -> None:
+        parameter = inspect.signature(script_type.run).parameters["context"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameter.default is not inspect.Parameter.empty
+        with pytest.raises(TypeError):
+            inspect.signature(script_type.run).bind(None, None, None, _script_context())
+
+    def test_invalid_context_signatures_fail_at_registration(self) -> None:
+        def positional(ctx: FunctionInvocationContext, /) -> None: ...
+
+        def varargs(*ctx: FunctionInvocationContext) -> None: ...
+
+        def kwargs(**ctx: FunctionInvocationContext) -> None: ...
+
+        def multiple(first: FunctionInvocationContext, *, second: FunctionInvocationContext) -> None: ...
+
+        for function in (positional, varargs, kwargs):
+            with pytest.raises(ValueError, match="must accept a keyword"):
+                InlineSkillScript(name="invalid", function=function)
+        with pytest.raises(ValueError, match="multiple FunctionInvocationContext"):
+            InlineSkillScript(name="invalid", function=multiple)
+
+    @pytest.mark.parametrize("is_async", [False, True])
+    @pytest.mark.parametrize("failure_type", [TypeError, RuntimeError, asyncio.CancelledError])
+    async def test_callback_failure_propagates_without_retry(
+        self, is_async: bool, failure_type: type[BaseException]
+    ) -> None:
+        calls: list[FunctionInvocationContext] = []
+        failure = failure_type("script failed")
+
+        def callback(ctx: FunctionInvocationContext) -> None:
+            calls.append(ctx)
+            raise failure
+
+        async def async_callback(ctx: FunctionInvocationContext) -> None:
+            callback(ctx)
+
+        context = _script_context()
+        with pytest.raises(failure_type) as caught:
+            await _run_with_context(async_callback if is_async else callback, context=context)
+        assert caught.value is failure
+        assert calls == [context]
+
+    async def test_concurrent_invocations_keep_context_separate(self) -> None:
+        both_running = asyncio.Event()
+        arrived: list[FunctionInvocationContext] = []
+
+        async def callback(ctx: FunctionInvocationContext) -> Any:
+            arrived.append(ctx)
+            if len(arrived) == 2:
+                both_running.set()
+            await asyncio.wait_for(both_running.wait(), timeout=5)
+            return ctx
+
+        script = InlineSkillScript(name="analyze", function=callback)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        contexts = [_script_context(tenant_id="first"), _script_context(tenant_id="second")]
+
+        results = await asyncio.gather(*(script.run(skill, context=context) for context in contexts))
+        assert results[0] is contexts[0]
+        assert results[1] is contexts[1]
+
+    @pytest.mark.parametrize(
+        "make_skill",
+        [
+            _inline_context_skill,
+            lambda parser: _ContextClassSkill(
+                frontmatter=SkillFrontmatter(name="s", description="d"), argument_parser=parser
+            ),
+        ],
+        ids=["inline", "class"],
+    )
+    async def test_decorated_scripts_inject_context_through_provider(self, make_skill: Any) -> None:
+        skill = make_skill(lambda args: {"value": args["input"]})
+        provider = SkillsProvider(skill)
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        context = _invocation_context(run_tool, value="host")
+
+        script = await skill.get_script("analyze")
+        assert script is not None
+        assert script.parameters_schema is not None
+        assert set(script.parameters_schema["properties"]) == {"value"}
+        content = await skill.get_content()
+        assert '"ctx"' not in content
+        assert '"value"' in content
+
+        value, received_context = await run_tool.func(
+            context, skill_name="s", script_name="analyze", args={"input": "model"}
+        )
+        assert value == "model"
+        assert received_context is context
+
+
 class TestSkillScriptRun:
     """Tests for SkillScript.run()."""
+
+    @pytest.mark.parametrize(
+        ("args", "result", "runtime_kwargs"),
+        [
+            (None, None, {}),
+            ({"value": 1}, object(), {"user_id": "host"}),
+            (["--value", "1"], {"completed": True}, {"user_id": "host"}),
+        ],
+    )
+    async def test_provider_delegates_to_unannotated_run(
+        self, args: dict[str, Any] | list[str] | None, result: Any, runtime_kwargs: dict[str, Any]
+    ) -> None:
+        calls: list[tuple[Skill, Any, dict[str, Any]]] = []
+
+        class PlainScript(SkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                calls.append((skill, args, kwargs))
+                return result
+
+        script = PlainScript(name="plain")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        context = _invocation_context(FunctionTool(name="run_skill_script", func=lambda: None), **runtime_kwargs)
+
+        assert await _run_through_provider(script, skill, args, context=context) is result
+        assert calls == [(skill, args, runtime_kwargs)]
+        assert calls[0][1] is args
+        assert context.kwargs == runtime_kwargs
+        assert context.result is None
+
+    @pytest.mark.parametrize("script_kind", ["inline", "file"])
+    async def test_provider_preserves_builtin_subclass_overrides(self, script_kind: str) -> None:
+        class CustomInline(InlineSkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                return "inline", args, kwargs
+
+        class CustomFile(FileSkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                return "file", args, kwargs
+
+        script = (
+            CustomInline(name="custom", function=lambda: pytest.fail("The run override must be used"))
+            if script_kind == "inline"
+            else CustomFile(name="custom", full_path=f"{_ABS}/test/run.py")
+        )
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        context = _invocation_context(FunctionTool(name="run_skill_script", func=lambda: None), user_id="host")
+
+        assert await _run_through_provider(script, skill, {"value": 1}, context=context) == (
+            script_kind,
+            {"value": 1},
+            {"user_id": "host"},
+        )
+
+    @pytest.mark.parametrize("script_kind", ["inline", "file"])
+    async def test_annotated_run_override_can_delegate_to_parent(self, script_kind: str) -> None:
+        class CustomInline(InlineSkillScript):
+            async def run(
+                self,
+                skill: Skill,
+                args: Any = None,
+                *,
+                context: FunctionInvocationContext | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                assert context is not None
+                assert kwargs == {}
+                return await super().run(skill, args, context=context)
+
+        class CustomFile(FileSkillScript):
+            async def run(
+                self,
+                skill: Skill,
+                args: Any = None,
+                *,
+                context: FunctionInvocationContext | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                assert context is not None
+                assert kwargs == {}
+                return await super().run(skill, args, context=context)
+
+        def callback(value: str, ctx: FunctionInvocationContext) -> Any:
+            return value, ctx
+
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            return args["value"], ctx
+
+        script = (
+            CustomInline(name="analyze", function=callback)
+            if script_kind == "inline"
+            else CustomFile(name="analyze", full_path=f"{_ABS}/run.py", runner=runner)
+        )
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=_ABS)
+        context = _script_context(context=None, value="host")
+        value, received_context = await _run_through_provider(script, skill, {"value": "model"}, context=context)
+        assert value == "model"
+        assert received_context is context
+
+    @pytest.mark.parametrize(
+        ("signature_kind", "message"),
+        [
+            ("args_slot", "must support run"),
+            ("missing_required", "must support run"),
+            ("positional_only", "must accept a keyword"),
+            ("varargs", "must accept a keyword"),
+            ("var_keyword", "must accept a keyword"),
+            ("multiple", "multiple FunctionInvocationContext"),
+        ],
+    )
+    async def test_invalid_run_context_signature_does_not_execute(self, signature_kind: str, message: str) -> None:
+        async def args_slot(
+            self: Any, skill: Skill, ctx: FunctionInvocationContext | None = None, **kwargs: Any
+        ) -> Any:
+            pytest.fail("An invalid run signature must not be called")
+
+        async def missing_required(
+            self: Any, skill: Skill, args: Any, extra: Any, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            pytest.fail("An invalid run signature must not be called")
+
+        async def positional_only(
+            self: Any, skill: Skill, args: Any = None, ctx: FunctionInvocationContext | None = None, /
+        ) -> Any:
+            pytest.fail("An invalid run signature must not be called")
+
+        async def varargs(self: Any, skill: Skill, args: Any = None, *ctx: FunctionInvocationContext) -> Any:
+            pytest.fail("An invalid run signature must not be called")
+
+        async def var_keyword(self: Any, skill: Skill, args: Any = None, **ctx: FunctionInvocationContext) -> Any:
+            pytest.fail("An invalid run signature must not be called")
+
+        async def multiple(
+            self: Any,
+            skill: Skill,
+            args: Any = None,
+            ctx: FunctionInvocationContext | None = None,
+            other: FunctionInvocationContext | None = None,
+        ) -> Any:
+            pytest.fail("An invalid run signature must not be called")
+
+        methods = {
+            "args_slot": args_slot,
+            "missing_required": missing_required,
+            "positional_only": positional_only,
+            "varargs": varargs,
+            "var_keyword": var_keyword,
+            "multiple": multiple,
+        }
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        script = type("InvalidScript", (SkillScript,), {"run": methods[signature_kind]})(name="invalid")
+        with pytest.raises(ValueError, match=message):
+            await _run_through_provider(script, skill, context=_script_context())
+
+    async def test_uninspectable_run_is_called_without_context(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class PlainScript(SkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                return kwargs
+
+        monkeypatch.setattr(PlainScript.run, "__signature__", object(), raising=False)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with caplog.at_level("DEBUG", logger="agent_framework._skills"):
+            result = await _run_through_provider(
+                PlainScript(name="plain"), skill, context=_script_context(tenant_id="host")
+            )
+        assert result == {"tenant_id": "host"}
+        assert "calling without context" in caplog.text
+
+    async def test_run_context_detected_when_other_annotations_are_unresolvable(self) -> None:
+        class ContextScript(SkillScript):
+            async def run(self, skill: Skill, args: Any = None, ctx: Any = None, **kwargs: Any) -> Any:
+                assert kwargs == {}
+                return ctx
+
+        ContextScript.run.__annotations__["ctx"] = "FunctionInvocationContext"
+        ContextScript.run.__annotations__["skill"] = "UndefinedSkillType"
+        script = ContextScript(name="analyze")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        context = _script_context(tenant_id="host")
+        assert await _run_through_provider(script, skill, context=context) is context
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            FunctionInvocationContext,
+            FunctionInvocationContext | None,
+            "FunctionInvocationContext",
+            "FunctionInvocationContext | None",
+        ],
+    )
+    async def test_provider_detects_run_context_by_annotation(self, annotation: Any) -> None:
+        class ContextScript(SkillScript):
+            async def run(self, skill: Skill, args: Any = None, ctx: Any = None, **kwargs: Any) -> Any:
+                assert kwargs == {}
+                return ctx
+
+        ContextScript.run.__annotations__["ctx"] = annotation
+        script = ContextScript(name="analyze")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        context = _script_context(ctx="application value", context=None)
+        assert await _run_through_provider(script, skill, context=context) is context
+
+    async def test_provider_uses_updated_run_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Script(SkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                return kwargs
+
+        script = Script(name="analyze")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        context = _script_context(tenant_id="host")
+        assert await _run_through_provider(script, skill, context=context) == {"tenant_id": "host"}
+
+        async def context_run(
+            self: Any, skill: Skill, args: Any = None, ctx: FunctionInvocationContext | None = None, **kwargs: Any
+        ) -> Any:
+            assert kwargs == {}
+            return ctx
+
+        monkeypatch.setattr(Script, "run", context_run)
+        assert await _run_through_provider(script, skill, context=context) is context
+
+    async def test_run_with_invocation_retains_file_validation(self, tmp_path: Path) -> None:
+        def runner(skill: FileSkill, script: FileSkillScript, args: Any = None) -> None:
+            pytest.fail("Invalid files must be rejected before calling the runner")
+
+        script = FileSkillScript(
+            name="missing.py", full_path=str(tmp_path / "missing.py"), skill_dir=str(tmp_path), runner=runner
+        )
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=str(tmp_path))
+        context = _invocation_context(FunctionTool(name="run_skill_script", func=lambda: None))
+
+        with pytest.raises(ValueError, match="not found"):
+            await script.run(skill, context=context)
 
     async def test_run_code_defined_sync(self) -> None:
         def greet(name: str = "world") -> str:
@@ -4336,6 +5032,357 @@ class TestSkillWithScripts:
 # ---------------------------------------------------------------------------
 # Runner tests
 # ---------------------------------------------------------------------------
+
+
+class TestFileSkillScriptContext:
+    """Optional context injection without changing the runner protocol."""
+
+    @pytest.mark.parametrize(
+        "runner_kind", ["sync", "async", "awaitable", "object", "async_object", "method", "partial", "decorated"]
+    )
+    @pytest.mark.parametrize("args", [None, {"ctx": "model", "tenant_id": "model"}, ["--tenant", "model"]])
+    async def test_runner_receives_original_context_and_arguments(self, runner_kind: str, args: Any) -> None:
+        calls: list[tuple[FileSkill, FileSkillScript, Any, FunctionInvocationContext | None]] = []
+        result = object()
+
+        def runner(
+            skill: FileSkill,
+            script: FileSkillScript,
+            args: Any = None,
+            *,
+            ctx: FunctionInvocationContext | None = None,
+            marker: str = "default",
+            **kwargs: Any,
+        ) -> Any:
+            assert kwargs == {}
+            assert marker == ("bound" if runner_kind == "partial" else "default")
+            calls.append((skill, script, args, ctx))
+            return result
+
+        async def async_runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            return runner(skill, script, args, ctx=ctx)
+
+        def awaitable_runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            return async_runner(skill, script, args, ctx=ctx)
+
+        class Runner:
+            def __call__(
+                self,
+                skill: FileSkill,
+                script: FileSkillScript,
+                args: Any = None,
+                *,
+                ctx: FunctionInvocationContext | None = None,
+            ) -> Any:
+                return runner(skill, script, args, ctx=ctx)
+
+        class AsyncRunner:
+            async def __call__(
+                self,
+                skill: FileSkill,
+                script: FileSkillScript,
+                args: Any = None,
+                *,
+                ctx: FunctionInvocationContext | None = None,
+            ) -> Any:
+                return runner(skill, script, args, ctx=ctx)
+
+        @wraps(runner)
+        def decorated(*args: Any, **kwargs: Any) -> Any:
+            return runner(*args, **kwargs)
+
+        runners: dict[str, SkillScriptRunner] = {
+            "sync": runner,
+            "async": async_runner,
+            "awaitable": awaitable_runner,
+            "object": Runner(),
+            "async_object": AsyncRunner(),
+            "method": Runner().__call__,
+            "partial": partial(runner, marker="bound"),
+            "decorated": decorated,
+        }
+        selected_runner = runners[runner_kind]
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=selected_runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        context = _script_context(tenant_id="host", skill="host", script="host", args="host", ctx="host")
+        arguments = {"skill_name": "s", "script_name": "run.py", "args": args}
+        context.arguments = arguments
+
+        direct_result = selected_runner(skill, script, args)
+        if inspect.isawaitable(direct_result):
+            direct_result = await direct_result
+        assert direct_result is result
+        assert await script.run(skill, args, ctx=context) is result
+        assert await script.run(skill, args, context=context) is result
+
+        assert len(calls) == 3
+        for owner, received_script, received_args, _ in calls:
+            assert owner is skill
+            assert received_script is script
+            assert received_args is args
+        assert [call[3] for call in calls[:2]] == [None, None]
+        assert calls[2][3] is context
+        assert context.arguments is arguments
+        assert context.result is None
+        assert script.parameters_schema == {"type": "array", "items": {"type": "string"}}
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            FunctionInvocationContext,
+            "FunctionInvocationContext | None",
+        ],
+    )
+    async def test_context_parameter_may_have_another_name_and_positional_default(self, annotation: Any) -> None:
+        def runner(skill: FileSkill, script: FileSkillScript, args: Any = None, invocation: Any = None) -> Any:
+            return invocation
+
+        runner.__annotations__["invocation"] = annotation
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        context = _script_context()
+        assert await script.run(skill) is None
+        assert await script.run(skill, context=context) is context
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            list[FunctionInvocationContext],
+            Callable[..., FunctionInvocationContext],
+            Annotated[FunctionInvocationContext, "runtime"],
+        ],
+    )
+    async def test_runner_non_context_annotations_are_not_injected(self, annotation: Any) -> None:
+        def runner(skill: FileSkill, script: FileSkillScript, args: Any = None, *, invocation: Any = None) -> Any:
+            return invocation
+
+        runner.__annotations__["invocation"] = annotation
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        assert await script.run(skill, context=_script_context()) is None
+
+    async def test_unannotated_runner_kwargs_do_not_opt_in(self) -> None:
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: str = "default", **kwargs: Any
+        ) -> Any:
+            return ctx, kwargs
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        assert await script.run(skill, context=_script_context(ctx="host")) == ("default", {})
+
+    async def test_uninspectable_runner_is_called_without_context(self, caplog: pytest.LogCaptureFixture) -> None:
+        class Runner:
+            @property
+            def __signature__(self) -> Any:
+                raise ValueError("Signature unavailable")
+
+            def __call__(self, skill: FileSkill, script: FileSkillScript, args: Any = None) -> Any:
+                return args
+
+        with caplog.at_level("DEBUG", logger="agent_framework._skills"):
+            script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=Runner())
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        args = ["input.txt"]
+        assert await script.run(skill, args, context=_script_context()) is args
+        assert "calling without context" in caplog.text
+
+    @pytest.mark.parametrize("reject", [False, True])
+    @pytest.mark.parametrize("application_context", [None, "customer information", _script_context()])
+    async def test_context_runner_does_not_bypass_subclass_run(self, reject: bool, application_context: Any) -> None:
+        calls: list[str] = []
+        failure = RuntimeError("Rejected by the run override")
+        runtime_kwargs = {"tenant_id": "host", "context": application_context}
+
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            calls.append("runner")
+            assert ctx is None
+            return args
+
+        class CustomScript(FileSkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                calls.append("override")
+                assert kwargs == runtime_kwargs
+                if reject:
+                    raise failure
+                return await super().run(skill, args, **kwargs)
+
+        script = CustomScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        args = ["input.txt"]
+        context = _script_context(**runtime_kwargs)
+        if reject:
+            with pytest.raises(RuntimeError) as caught:
+                await _run_through_provider(script, skill, args, context=context)
+            assert caught.value is failure
+            assert calls == ["override"]
+        else:
+            assert await _run_through_provider(script, skill, args, context=context) is args
+            assert calls == ["override", "runner"]
+
+    @pytest.mark.parametrize("failure_type", [TypeError, RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize("is_async", [False, True])
+    @pytest.mark.parametrize("context_aware", [False, True])
+    async def test_runner_failure_propagates_without_retry(
+        self, failure_type: type[BaseException], is_async: bool, context_aware: bool
+    ) -> None:
+        calls: list[FunctionInvocationContext | None] = []
+        failure = failure_type("Runner failed")
+
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> None:
+            calls.append(ctx)
+            raise failure
+
+        async def async_runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> None:
+            runner(skill, script, args, ctx=ctx)
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=async_runner if is_async else runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        context = _script_context()
+        with pytest.raises(failure_type) as caught:
+            if context_aware:
+                await script.run(skill, context=context)
+            else:
+                await script.run(skill)
+        assert caught.value is failure
+        assert calls == [context if context_aware else None]
+
+    @pytest.mark.parametrize(
+        ("invalid_case", "error_type", "message"),
+        [
+            ("skill", TypeError, "requires a FileSkill"),
+            ("runner", ValueError, "requires a runner"),
+            ("file", ValueError, "not found"),
+        ],
+    )
+    @pytest.mark.parametrize("context_aware", [False, True])
+    async def test_validation_precedes_runner(
+        self, tmp_path: Path, invalid_case: str, error_type: type[Exception], message: str, context_aware: bool
+    ) -> None:
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> None:
+            pytest.fail("Invalid execution must not call the runner")
+
+        script = FileSkillScript(
+            name="missing.py",
+            full_path=str(tmp_path / "missing.py"),
+            skill_dir=str(tmp_path),
+            runner=None if invalid_case == "runner" else runner,
+        )
+        skill: Skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=str(tmp_path)
+        )
+        if invalid_case == "skill":
+            skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="Body")
+        with pytest.raises(error_type, match=message):
+            if context_aware:
+                await script.run(skill, context=_script_context())
+            else:
+                await script.run(skill)
+
+    @pytest.mark.parametrize("context_aware", [False, True])
+    async def test_file_is_revalidated_on_every_run(self, tmp_path: Path, context_aware: bool) -> None:
+        calls: list[FunctionInvocationContext | None] = []
+
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> str:
+            calls.append(ctx)
+            return "executed"
+
+        script_path = tmp_path / "run.py"
+        script_path.write_text("# Script executed by the runner\n", encoding="utf-8")
+        script = FileSkillScript(name="run.py", full_path=str(script_path), skill_dir=str(tmp_path), runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=str(tmp_path))
+        context = _script_context()
+
+        if context_aware:
+            assert await script.run(skill, context=context) == "executed"
+        else:
+            assert await script.run(skill) == "executed"
+
+        script_path.unlink()
+        with pytest.raises(ValueError, match="not found"):
+            if context_aware:
+                await script.run(skill, context=context)
+            else:
+                await script.run(skill)
+
+        assert calls == [context if context_aware else None]
+
+    def test_invalid_context_signatures_fail_at_registration(self) -> None:
+        def required(skill: Any, script: Any, args: Any = None, *, ctx: FunctionInvocationContext) -> None: ...
+
+        def first(ctx: FunctionInvocationContext | None = None, script: Any = None, args: Any = None) -> None: ...
+
+        def second(skill: Any, ctx: FunctionInvocationContext | None = None, args: Any = None) -> None: ...
+
+        def third(skill: Any, script: Any, ctx: FunctionInvocationContext | None = None) -> None: ...
+
+        def positional(
+            skill: Any, script: Any, args: Any = None, ctx: FunctionInvocationContext | None = None, /
+        ) -> None: ...
+
+        def varargs(skill: Any, script: Any, args: Any = None, *ctx: FunctionInvocationContext) -> None: ...
+
+        def kwargs(skill: Any, script: Any, args: Any = None, **ctx: FunctionInvocationContext) -> None: ...
+
+        def multiple(
+            skill: Any,
+            script: Any,
+            args: Any = None,
+            *,
+            ctx: FunctionInvocationContext | None = None,
+            other: FunctionInvocationContext | None = None,
+        ) -> None: ...
+
+        cases: list[tuple[Any, str]] = [
+            (required, "must have a default"),
+            (first, "must not replace"),
+            (second, "must not replace"),
+            (third, "must not replace"),
+            (positional, "must accept a keyword"),
+            (varargs, "must accept a keyword"),
+            (kwargs, "must accept a keyword"),
+            (multiple, "multiple FunctionInvocationContext"),
+        ]
+        for runner, message in cases:
+            with pytest.raises(ValueError, match=message):
+                FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+
+    async def test_concurrent_invocations_keep_runner_context_separate(self) -> None:
+        arrived: list[FunctionInvocationContext | None] = []
+        both_running = asyncio.Event()
+
+        async def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            arrived.append(ctx)
+            if len(arrived) == 2:
+                both_running.set()
+            await asyncio.wait_for(both_running.wait(), timeout=5)
+            return ctx
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        contexts = [_script_context(tenant_id="first"), _script_context(tenant_id="second")]
+        results = await asyncio.gather(*(script.run(skill, context=context) for context in contexts))
+        assert results[0] is contexts[0]
+        assert results[1] is contexts[1]
+
+    def test_protocol_signature_is_unchanged(self) -> None:
+        assert list(inspect.signature(SkillScriptRunner.__call__).parameters) == ["self", "skill", "script", "args"]
 
 
 class TestSkillScriptRunnerProtocol:
@@ -4773,12 +5820,13 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         result = await provider._run_skill_script(
             _raw_skills(provider),
             "my-skill",
             "greet",
             args={"name": "Alice"},
-            runtime_kwargs={"user_id": "u42"},
+            context=_invocation_context(run_tool, user_id="u42"),
         )
         assert result == "Hello Alice (user=u42)"
 
@@ -4792,12 +5840,13 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         result = await provider._run_skill_script(
             _raw_skills(provider),
             "my-skill",
             "fetch",
             args={"url": "http://x"},
-            runtime_kwargs={"auth_token": "abc"},
+            context=_invocation_context(run_tool, auth_token="abc"),
         )
         assert result == "fetched http://x with token=abc"
 
@@ -4811,12 +5860,13 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         result = await provider._run_skill_script(
             _raw_skills(provider),
             "my-skill",
             "simple",
             args={"query": "test"},
-            runtime_kwargs={"user_id": "ignored"},
+            context=_invocation_context(run_tool, user_id="ignored"),
         )
         assert result == "result: test"
 
@@ -4830,14 +5880,140 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         with pytest.raises(TypeError):
             await provider._run_skill_script(
                 _raw_skills(provider),
                 "my-skill",
                 "process",
                 args={"mode": "llm-value"},
-                runtime_kwargs={"mode": "runtime-value"},
+                context=_invocation_context(run_tool, mode="runtime-value"),
             )
+
+    async def test_run_skill_script_forwards_original_context_to_override(self) -> None:
+        calls: list[tuple[Skill, Any, FunctionInvocationContext]] = []
+        result = object()
+
+        class ContextScript(SkillScript):
+            async def run(
+                self, skill: Skill, args: Any = None, invocation: FunctionInvocationContext | None = None, **kwargs: Any
+            ) -> Any:
+                assert invocation is not None
+                assert kwargs == {}
+                calls.append((skill, args, invocation))
+                return result
+
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(ContextScript(name="s1"))
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        args = {"value": "model", "context": "model-context"}
+        arguments = {"skill_name": "my-skill", "script_name": "s1", "args": args}
+        session = MockAgentSession()
+        tools: list[Any] = [run_tool]
+        context = FunctionInvocationContext(
+            function=run_tool,
+            arguments=arguments,
+            session=session,
+            tools=tools,
+            metadata={"marker": "outer-call"},
+            kwargs={"skill": "host-skill", "args": "host-args", "context": "host-context"},
+        )
+
+        assert await run_tool.func(context, **arguments) is result
+        assert len(calls) == 1
+        assert calls[0][0] is skill
+        assert calls[0][1] is args
+        assert calls[0][2] is context
+        assert context.function is run_tool
+        assert context.arguments is arguments
+        assert context.session is session
+        assert context.tools is tools
+        assert context.metadata == {"marker": "outer-call"}
+        assert context.kwargs == {"skill": "host-skill", "args": "host-args", "context": "host-context"}
+        assert context.result is None
+
+    @pytest.mark.parametrize("script_kind", ["kwargs", "context", "timeout", "context_kwargs"])
+    @pytest.mark.parametrize("application_context", [None, "customer information"])
+    async def test_run_skill_script_passes_runtime_kwargs_to_unannotated_overrides(
+        self, script_kind: str, application_context: str | None
+    ) -> None:
+        calls: list[tuple[Any, dict[str, Any]]] = []
+
+        class PlainScript(SkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                calls.append((args, kwargs))
+                return "plain"
+
+        class ApplicationContextScript(PlainScript):
+            async def run(self, skill: Skill, args: Any = None, context: str | None = "default", **kwargs: Any) -> Any:
+                return await super().run(skill, args, context=context, **kwargs)
+
+        class TimeoutScript(PlainScript):
+            async def run(self, skill: Skill, args: Any = None, timeout: int = 30, **kwargs: Any) -> Any:
+                assert timeout == 30
+                return await super().run(skill, args, **kwargs)
+
+        class ContextKwargsScript(PlainScript):
+            async def run(self, skill: Skill, args: Any = None, **context: Any) -> Any:
+                return await super().run(skill, args, **context)
+
+        helpers: dict[str, type[SkillScript]] = {
+            "kwargs": PlainScript,
+            "context": ApplicationContextScript,
+            "timeout": TimeoutScript,
+            "context_kwargs": ContextKwargsScript,
+        }
+        script = helpers[script_kind](name="s1")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(script)
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+
+        result = await provider._run_skill_script(
+            _raw_skills(provider),
+            "my-skill",
+            "s1",
+            args={"value": "model"},
+            context=_invocation_context(run_tool, user_id="host", context=application_context),
+        )
+
+        assert result == "plain"
+        assert calls == [({"value": "model"}, {"user_id": "host", "context": application_context})]
+
+    @pytest.mark.parametrize("context_override", [False, True])
+    @pytest.mark.parametrize("failure_type", [TypeError, RuntimeError, asyncio.CancelledError])
+    async def test_script_failure_propagates_once_through_context_dispatch(
+        self, context_override: bool, failure_type: type[BaseException], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        calls: list[str] = []
+        failure = failure_type("script failed")
+
+        class FailingScript(SkillScript):
+            async def run(
+                self, skill: Skill, args: Any = None, ctx: FunctionInvocationContext | None = None, **kwargs: Any
+            ) -> Any:
+                if context_override:
+                    calls.append("context")
+                else:
+                    calls.append("plain")
+                raise failure
+
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(FailingScript(name="boom"))
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+
+        with pytest.raises(failure_type) as caught:
+            await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="boom")
+
+        assert caught.value is failure
+        assert calls == ["context" if context_override else "plain"]
+        if failure_type is not asyncio.CancelledError:
+            assert "Error running script 'boom' in skill 'my-skill'" in caplog.text
 
     async def test_run_skill_script_error_on_missing_script(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
@@ -6685,7 +7861,7 @@ class TestSkillsSourceContext:
 
     async def test_context_exposes_agent_and_session(self) -> None:
         """SkillsSourceContext carries the agent and optional session."""
-        agent = _NamedMockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+        agent = _NamedMockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
         ctx = SkillsSourceContext(agent=agent)
         assert ctx.agent is agent
         assert ctx.session is None
@@ -7773,6 +8949,211 @@ class TestSkillsRuntimeKwargsProvenance:
             disable_run_skill_script_approval=True,
         )
         return Agent[ChatOptions[None]](client=client, context_providers=[provider])
+
+    @pytest.mark.parametrize(
+        "script_kind",
+        [
+            "inline",
+            "async_inline",
+            "context_inline",
+            "async_context_inline",
+            "file",
+            "async_file",
+            "context_file",
+            "async_context_file",
+            "custom",
+        ],
+    )
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("approval", [None, True, False], ids=["no-approval", "approved", "rejected"])
+    async def test_context_dispatch_preserves_execution_and_approval(
+        self,
+        chat_client_base: MockBaseChatClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        script_kind: str,
+        streaming: bool,
+        approval: bool | None,
+    ) -> None:
+        calls: list[tuple[Any, dict[str, Any]]] = []
+        contexts: list[FunctionInvocationContext] = []
+        model_calls: list[list[Message]] = []
+        original_get_response = chat_client_base._inner_get_response
+
+        def capture_model_call(*, messages: MutableSequence[Message], **kwargs: Any) -> Any:
+            model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+            return original_get_response(messages=messages, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_inner_get_response", capture_model_call)
+
+        def record(args: Any, kwargs: dict[str, Any]) -> str:
+            calls.append((args, kwargs))
+            return "script completed"
+
+        script_args: dict[str, Any] | list[str]
+        if script_kind in {"file", "async_file", "context_file", "async_context_file"}:
+            _write_skill(tmp_path, "test-skill", resources={"scripts/run.py": "# Executed by the runner\n"})
+
+            def runner(skill: FileSkill, script: FileSkillScript, args: Any = None) -> str:
+                assert skill.frontmatter.name == "test-skill"
+                assert script.name == "scripts/run.py"
+                return record(args, {})
+
+            async def async_runner(skill: FileSkill, script: FileSkillScript, args: Any = None) -> str:
+                return runner(skill, script, args)
+
+            def context_runner(
+                skill: FileSkill,
+                script: FileSkillScript,
+                args: Any = None,
+                *,
+                ctx: FunctionInvocationContext | None = None,
+            ) -> str:
+                assert ctx is not None
+                contexts.append(ctx)
+                assert skill.frontmatter.name == "test-skill"
+                assert script.name == "scripts/run.py"
+                return record(args, ctx.kwargs)
+
+            async def async_context_runner(
+                skill: FileSkill,
+                script: FileSkillScript,
+                args: Any = None,
+                *,
+                ctx: FunctionInvocationContext | None = None,
+            ) -> str:
+                return context_runner(skill, script, args, ctx=ctx)
+
+            runners: dict[str, SkillScriptRunner] = {
+                "file": runner,
+                "async_file": async_runner,
+                "context_file": context_runner,
+                "async_context_file": async_context_runner,
+            }
+            provider = SkillsProvider.from_paths(
+                tmp_path,
+                script_runner=runners[script_kind],
+                disable_run_skill_script_approval=approval is None,
+            )
+            script_name = "scripts/run.py"
+            script_args = ["--value", "1"]
+        else:
+            skill = InlineSkill(
+                frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body"
+            )
+            if script_kind == "custom":
+
+                class ContextScript(SkillScript):
+                    async def run(
+                        self,
+                        skill: Skill,
+                        args: Any = None,
+                        ctx: FunctionInvocationContext | None = None,
+                        **kwargs: Any,
+                    ) -> Any:
+                        assert ctx is not None
+                        assert kwargs == {}
+                        contexts.append(ctx)
+                        return record(args, ctx.kwargs)
+
+                skill._scripts.append(ContextScript(name="test-script"))
+            elif script_kind in {"context_inline", "async_context_inline"}:
+
+                def context_callback(value: int, ctx: FunctionInvocationContext, **kwargs: Any) -> str:
+                    contexts.append(ctx)
+                    assert kwargs == {}
+                    return record({"value": value}, ctx.kwargs)
+
+                async def async_context_callback(value: int, ctx: FunctionInvocationContext, **kwargs: Any) -> str:
+                    return context_callback(value, ctx, **kwargs)
+
+                skill.script(name="test-script")(
+                    async_context_callback if script_kind == "async_context_inline" else context_callback
+                )
+            else:
+
+                def callback(value: int, **kwargs: Any) -> str:
+                    return record({"value": value}, kwargs)
+
+                async def async_callback(value: int, **kwargs: Any) -> str:
+                    return callback(value, **kwargs)
+
+                skill.script(name="test-script")(async_callback if script_kind == "async_inline" else callback)
+            provider = SkillsProvider(skill, disable_run_skill_script_approval=approval is None)
+            script_name = "test-script"
+            script_args = {"value": 1}
+
+        arguments = {"skill_name": "test-skill", "script_name": script_name, "args": script_args}
+        function_call = Content.from_function_call(call_id="script-call", name="run_skill_script", arguments=arguments)
+        if streaming:
+            chat_client_base.streaming_responses = [
+                [ChatResponseUpdate(role="assistant", contents=[function_call])],
+                [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+            ]
+        else:
+            chat_client_base.run_responses = [
+                ChatResponse(messages=[Message(role="assistant", contents=[function_call])]),
+                ChatResponse(messages=[Message(role="assistant", contents=["done"])]),
+            ]
+        agent = Agent[ChatOptions[None]](client=chat_client_base, context_providers=[provider])
+        session = agent.create_session()
+
+        async def run(messages: Any) -> Any:
+            if not streaming:
+                return await agent.run(
+                    messages, session=session, function_invocation_kwargs={"tenant_id": "host-tenant"}
+                )
+            response_stream = agent.run(
+                messages, session=session, stream=True, function_invocation_kwargs={"tenant_id": "host-tenant"}
+            )
+            streamed_contents = [item async for update in response_stream for item in update.contents]
+            response = await response_stream.get_final_response()
+            final_contents = [item for message in response.messages for item in message.contents]
+            assert [item.type for item in streamed_contents] == [item.type for item in final_contents]
+            assert [
+                (item.call_id, str(item.result)) for item in streamed_contents if item.type == "function_result"
+            ] == [(item.call_id, str(item.result)) for item in final_contents if item.type == "function_result"]
+            return response
+
+        response = await run("Run the script")
+        if approval is not None:
+            assert calls == []
+            assert contexts == []
+            assert len(response.user_input_requests) == 1
+            assert chat_client_base.call_count == 1
+            response = await run(response.user_input_requests[0].to_function_approval_response(approval))
+
+        results = [item for message in response.messages for item in message.contents if item.type == "function_result"]
+        assert len(results) == 1
+        assert results[0].call_id == "script-call"
+        assert chat_client_base.call_count == 2
+        if approval is False:
+            assert calls == []
+            assert contexts == []
+            assert "script completed" not in str(results[0].result)
+        else:
+            expected_kwargs = (
+                {} if script_kind in {"file", "async_file"} else {"tenant_id": "host-tenant", "session": session}
+            )
+            assert calls == [(script_args, expected_kwargs)]
+            assert results[0].exception is None
+            assert "script completed" in str(results[0].result)
+            if script_kind in {
+                "custom",
+                "context_inline",
+                "async_context_inline",
+                "context_file",
+                "async_context_file",
+            }:
+                assert len(contexts) == 1
+                assert contexts[0].session is session
+                assert contexts[0].arguments == arguments
+                assert contexts[0].function.name == "run_skill_script"
+
+        model_contents = [item for message in model_calls[-1] for item in message.contents]
+        assert [item.call_id for item in model_contents if item.type == "function_call"] == ["script-call"]
+        assert [item.call_id for item in model_contents if item.type == "function_result"] == ["script-call"]
+        assert not any(item.type.startswith("function_approval_") for item in model_contents)
 
     async def test_resource_receives_host_runtime_kwargs(self, chat_client_base: MockBaseChatClient) -> None:
         """Host ``function_invocation_kwargs`` must reach a callable resource.

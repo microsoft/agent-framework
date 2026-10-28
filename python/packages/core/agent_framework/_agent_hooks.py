@@ -10,14 +10,17 @@ control contract as one coherent feature on the framework's native middleware se
 - ``pre_tool_call`` / ``post_tool_call`` ride the function seam.
 
 The public entry points are :func:`create_agent_hooks_middleware` (one agent-hooks
-session per run) and :func:`create_agent_hooks_middleware_from_emitter` (host-owned
-session). Both return a :class:`~agent_framework.MiddlewareBundle`: the three middleware
-implementations are deliberately private and travel as one indivisible unit, because
-installing only part of them would enforce only part of the control contract. Install
-exactly one bundle per agent, placed first in the middleware list: middleware listed
-before the bundle runs outside the enforcement boundary (outer position is outer trust)
-— e.g. a function middleware placed before the bundle can substitute a tool result that
-the tool seam never brackets; the final ``output`` point still guards whatever egresses.
+session per run), :func:`create_agent_hooks_middleware_from_emitter` (host-owned
+session) and :func:`create_agent_hooks_middleware_from_declaration` (one session per
+run, with the configuration and the interceptor bindings read from a host declaration
+document, spec section 7.7). All return a :class:`~agent_framework.MiddlewareBundle`: the
+three middleware implementations are deliberately private and travel as one indivisible
+unit, because installing only part of them would enforce only part of the control
+contract. Install exactly one bundle per agent, placed first in the middleware list:
+middleware listed before the bundle runs outside the enforcement boundary (outer position
+is outer trust) — e.g. a function middleware placed before the bundle can substitute a
+tool result that the tool seam never brackets; the final ``output`` point still guards
+whatever egresses.
 
 Enforcement semantics (``mode="enforce"``):
 
@@ -69,9 +72,8 @@ Enforcement semantics (``mode="enforce"``):
   outside the tool seam falls back to deferring both — fail-closed, matching the
   pre-ownership behavior.
 
-Streaming is supported **fail-closed by buffering** via
-:meth:`ResponseStream.buffered_and_gated`: the model/agent stream is fully consumed
-internally, middleware stream hooks are applied to the buffered content, the
+Streaming is supported **fail-closed by buffering**: the model/agent stream is fully
+consumed internally, middleware stream hooks are applied to the buffered content, the
 ``post_model_call`` / ``output`` verdict is applied to the finalized result, and only
 then are the (possibly transformed) updates released to the consumer. No partial content
 ever egresses ahead of a verdict (spec §12.1/§12.1a ``buffered_output: true``
@@ -102,8 +104,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -143,9 +146,13 @@ if TYPE_CHECKING:
     from agent_hooks import (
         AgentContextBuilder,
         ApprovalResolver,
+        BindingContext,
         CompositionConfig,
         EmitOutcome,
         EnforcementMode,
+        HostDeclaration,
+        HostRegistry,
+        HostSurface,
         IdentityProvider,
         InterceptionBlocked,
         InterceptionEmitter,
@@ -164,6 +171,22 @@ _SDK_MISSING_MESSAGE = (
     "The agent-hooks middleware requires the optional `agent-hooks-sdk` package. "
     "Please install it with `pip install agent-hooks-sdk`."
 )
+
+_DECLARATION_SDK_MISSING_MESSAGE = (
+    "Loading a host declaration requires `agent-hooks-sdk` 0.1.0b2 or later (the first release "
+    "that accepts the agent-hooks-declaration/1.0 document). Please upgrade it with "
+    "`pip install --upgrade agent-hooks-sdk`."
+)
+
+# The binding kind this framework registers when a factory receives ``interceptors``:
+# ``{"id": "egress", "kind": "agent_framework.interceptor", "config": {"name": "egress"}}``
+# binds the interceptor supplied under that name (``name`` defaults to the binding id).
+_DECLARATION_KIND = "agent_framework.interceptor"
+# The code surface a declaration is resolved against (spec section 7.7.4): every point, the
+# capabilities the conformance claim lists, and the ``terminate`` posture this module
+# implements at the tool seam.
+_DECLARATION_CAPABILITIES = ("model_calls", "tool_calls", "int64_json", "bigint_json", "host_declaration")
+_DECLARATION_POSTURE = "terminate"
 
 _TRIO_REQUIRED_MESSAGE = (
     "agent-hooks {seam} middleware was invoked without an active agent-hooks run. "
@@ -212,6 +235,21 @@ def _require_sdk() -> None:
         del AgentContextBuilder, EnforcementMode, InterceptionBlocked, InterceptionEmitter
 
 
+def _require_declaration_sdk() -> None:
+    """Like :func:`_require_sdk`, for the host-declaration loader (``agent-hooks-sdk`` 0.1.0b2+).
+
+    An installed SDK that predates the loader raises ``ImportError`` on these names; that case
+    gets an upgrade hint instead of a bare "cannot import name" message.
+    """
+    _require_sdk()
+    try:
+        from agent_hooks import HostDeclaration, HostRegistry, HostSurface
+    except ImportError as exc:
+        raise ImportError(_DECLARATION_SDK_MISSING_MESSAGE) from exc
+    else:
+        del HostDeclaration, HostRegistry, HostSurface
+
+
 # region Run state
 
 
@@ -228,6 +266,9 @@ class _AgentHooksConfig:
     record_sink: Callable[[InterceptionRecord], None] | None
     emitter: InterceptionEmitter | None
     builder: AgentContextBuilder | None
+    # Set by the host-declaration factory: every run loads a fresh emitter from this pair.
+    declaration: HostDeclaration | None = None
+    registry: HostRegistry | None = None
 
 
 @dataclass
@@ -826,42 +867,6 @@ class _OutputCodec:
 # region Enforcement helpers
 
 
-def _chat_updates_from_response(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
-    """Re-derive stream updates from a (transformed) assembled chat response."""
-    updates = [
-        ChatResponseUpdate(
-            contents=list(message.contents),
-            role=cast(Any, message.role),
-            author_name=message.author_name,
-            message_id=message.message_id,
-            response_id=response.response_id,
-            model=response.model,
-        )
-        for message in response.messages
-    ]
-    if not updates:
-        updates = [ChatResponseUpdate(role="assistant", response_id=response.response_id)]
-    updates[-1].finish_reason = response.finish_reason
-    return updates
-
-
-def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResponseUpdate]:
-    """Re-derive stream updates from a (transformed) assembled agent response."""
-    updates = [
-        AgentResponseUpdate(
-            contents=list(message.contents),
-            role=message.role,
-            author_name=message.author_name,
-            message_id=message.message_id,
-            response_id=response.response_id,
-        )
-        for message in response.messages
-    ]
-    if not updates:
-        updates = [AgentResponseUpdate(role="assistant", response_id=response.response_id)]
-    return updates
-
-
 def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
     """Normalize a tools value for projection; empty (with a warning) when it cannot be.
 
@@ -1073,17 +1078,23 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
             session_id=uuid.uuid4().hex,
             agent_name=str(agent_name) if agent_name else None,
         )
-        kwargs: dict[str, Any] = {
-            "resolver": config.resolver,
-            "timeout": config.timeout,
-            "composition": config.composition,
-            "identity_provider": config.identity_provider,
-        }
-        if config.mode is not None:
-            kwargs["mode"] = config.mode
-        emitter = InterceptionEmitter(**kwargs)
-        for name, interceptor in config.interceptors:
-            emitter.register(interceptor, name)
+        if config.declaration is not None and config.registry is not None:
+            # One session per run, configured by the declaration: the loader rebuilds the
+            # sealed emitter from the same document and registry the factory validated, so
+            # every run gets the same resolved declaration and a fresh session (spec 7.7.7).
+            emitter = InterceptionEmitter.from_declaration(config.declaration, config.registry)
+        else:
+            kwargs: dict[str, Any] = {
+                "resolver": config.resolver,
+                "timeout": config.timeout,
+                "composition": config.composition,
+                "identity_provider": config.identity_provider,
+            }
+            if config.mode is not None:
+                kwargs["mode"] = config.mode
+            emitter = InterceptionEmitter(**kwargs)
+            for name, interceptor in config.interceptors:
+                emitter.register(interceptor, name)
         if config.record_sink is not None:
             emitter.set_record_sink(config.record_sink)
         return _RunState(emitter=emitter, builder=builder, session_scoped=False, config=config)
@@ -1231,7 +1242,10 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                     f"got {type(inner).__name__}."
                 )
             context.result = self._gated_agent_stream(
-                state, cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", inner), gate_handle
+                context,
+                state,
+                cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", inner),
+                gate_handle,
             )
             # The gated stream now owns the shutdown emission.
             shutdown_reason = None
@@ -1255,6 +1269,7 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
 
     def _gated_agent_stream(
         self,
+        context: AgentContext,
         state: _RunState,
         inner: ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
         gate_handle: _RunPersistenceGate,
@@ -1262,18 +1277,19 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
         """Guard a streaming run with a fail-closed buffered gate.
 
         The run is fully consumed (with the run state and the persistence gate active),
-        middleware stream hooks are applied by the combinator before the verdict, the
+        middleware stream hooks are applied by the buffered enforcement helper before the verdict, the
         ``output`` verdict is applied to the finalized response, and deferred
-        persistence is released only after the verdict permits. The combinator owns the
+        persistence is released only after the verdict permits. The helper owns the
         no-divergence rule: a transformed output (or any applied stream hooks)
         re-derives the released updates from the verdicted response.
         """
 
-        async def _consume() -> tuple[Sequence[AgentResponseUpdate], AgentResponse[Any]]:
+        @contextlib.asynccontextmanager
+        async def _consumption_scope() -> AsyncGenerator[None]:
             run_token = _RUN_STATE.set(state)
             try:
                 with gate_handle:
-                    final = await inner.get_final_response()
+                    yield
             except asyncio.CancelledError:
                 await self._emit_shutdown(state, "cancelled")
                 raise
@@ -1290,40 +1306,32 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                 raise
             finally:
                 _RUN_STATE.reset(run_token)
-            return list(inner.updates), final
 
-        async def _gate(
-            _updates: list[AgentResponseUpdate], final: AgentResponse[Any]
-        ) -> tuple[AgentResponse[Any], bool]:
-            from agent_hooks import InterceptionBlocked
+        async def _transform(final: AgentResponse[Any]) -> AgentResponse[Any] | None:
+            if not isinstance(final, AgentResponse):
+                raise MiddlewareException(
+                    f"agent-hooks cannot guard a streamed run result of type {type(final).__name__}; "
+                    "the output interception point was not emitted."
+                )
+            transformed = await self._emit_output(state, final)
+            return final if transformed else None
 
-            try:
-                if not isinstance(final, AgentResponse):
-                    raise MiddlewareException(
-                        f"agent-hooks cannot guard a streamed run result of type {type(final).__name__}; "
-                        "the output interception point was not emitted."
-                    )
-                transformed = await self._emit_output(state, final)
-                await gate_handle.flush()
-                await self._emit_shutdown(state, "completed")
-                return final, transformed
-            except InterceptionBlocked:
-                gate_handle.drop()
-                await self._emit_shutdown(state, "error")
-                raise
-            except asyncio.CancelledError:
-                await self._emit_shutdown(state, "cancelled")
-                raise
-            except BaseException:
-                await self._emit_shutdown(state, "error")
-                raise
+        async def _release() -> None:
+            await gate_handle.flush()
+            await self._emit_shutdown(state, "completed")
 
-        return cast(
-            "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]",
-            cast(Any, ResponseStream).buffered_and_gated(
-                consume=_consume, gate=_gate, rederive=_agent_updates_from_response
-            ),
-        )
+        async def _release_error(exc: BaseException) -> None:
+            gate_handle.drop()
+            await self._emit_shutdown(state, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error")
+
+        context._stream_terminal_result_transforms.append(_transform)  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_to_updates = AgentResponse.to_updates  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_is_authoritative = True  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_hooks.append(_release)  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_error_hooks.append(_release_error)  # pyright: ignore[reportPrivateUsage]
+        context.stream_buffer_updates = True
+        context.stream_consumption_context_manager_factories.append(_consumption_scope)
+        return inner
 
 
 class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
@@ -1367,7 +1375,11 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
         result = context.result
         if isinstance(result, ResponseStream):
             context.result = self._gated_chat_stream(
-                state, model_id, cast("ResponseStream[ChatResponseUpdate, ChatResponse[Any]]", result), gate
+                context,
+                state,
+                model_id,
+                cast("ResponseStream[ChatResponseUpdate, ChatResponse[Any]]", result),
+                gate,
             )
         elif isinstance(result, ChatResponse):
             try:
@@ -1406,6 +1418,7 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
 
     def _gated_chat_stream(
         self,
+        context: ChatContext,
         state: _RunState,
         model_id: str,
         inner: ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
@@ -1417,39 +1430,38 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
         emitted, and nothing (updates or tool calls) is released beforehand. A deny
         raises before any update egresses, and per-service-call history persistence
         deferred by the run persistence gate is released only after the verdict
-        permits. The combinator owns the no-divergence rule: a transformed response
+        permits. The buffered enforcement helper owns the no-divergence rule: a transformed response
         (or any applied stream hooks) re-derives the released updates from it.
         """
 
-        async def _consume() -> tuple[Sequence[ChatResponseUpdate], ChatResponse[Any]]:
+        @contextlib.asynccontextmanager
+        async def _consumption_scope() -> AsyncGenerator[None]:
             with gate_handle:
-                response = await inner.get_final_response()
-            return list(inner.updates), response
+                yield
 
-        async def _gate(_updates: list[ChatResponseUpdate], final: ChatResponse[Any]) -> tuple[ChatResponse[Any], bool]:
-            from agent_hooks import InterceptionBlocked
-
+        async def _transform(final: ChatResponse[Any]) -> ChatResponse[Any] | None:
             if not isinstance(final, ChatResponse):
                 raise MiddlewareException(
                     f"agent-hooks cannot guard a streamed chat result of type {type(final).__name__}; "
                     "the post_model_call interception point was not emitted."
                 )
-            try:
-                changed = await self._emit_post_model_call(state, model_id, final)
-            except InterceptionBlocked:
-                # §6.1: the deferred per-service-call persistence for the denied
-                # response is dropped, never executed.
-                gate_handle.drop()
-                raise
-            await gate_handle.flush()
-            return final, changed
+            changed = await self._emit_post_model_call(state, model_id, final)
+            return final if changed else None
 
-        return cast(
-            "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-            cast(Any, ResponseStream).buffered_and_gated(
-                consume=_consume, gate=_gate, rederive=_chat_updates_from_response
-            ),
-        )
+        async def _release() -> None:
+            await gate_handle.flush()
+
+        def _release_error(_: BaseException) -> None:
+            gate_handle.drop()
+
+        context._stream_terminal_result_transforms.append(_transform)  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_to_updates = ChatResponse.to_updates  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_is_authoritative = True  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_hooks.append(_release)  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_error_hooks.append(_release_error)  # pyright: ignore[reportPrivateUsage]
+        context.stream_buffer_updates = True
+        context.stream_consumption_context_manager_factories.append(_consumption_scope)
+        return inner
 
 
 class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddleware):
@@ -1730,6 +1742,212 @@ def create_agent_hooks_middleware_from_emitter(
         record_sink=None,
         emitter=emitter,
         builder=builder,
+    )
+    return _build_bundle(config)
+
+
+def _host_surface() -> HostSurface:
+    from agent_hooks import HostSurface
+
+    return HostSurface.from_capabilities(_DECLARATION_CAPABILITIES, tool_seam_host_error=_DECLARATION_POSTURE)
+
+
+def _host_registry() -> HostRegistry:
+    """A fresh registry over this framework's surface (the declaration factory builds one per call)."""
+    from agent_hooks import HostRegistry
+
+    return HostRegistry(_host_surface())
+
+
+def _interceptor_kind_resolver(interceptors: Mapping[str, Interceptor]) -> Callable[[Any, BindingContext], Interceptor]:
+    """The resolver behind the ``agent_framework.interceptor`` kind.
+
+    ``config`` is ``{}`` or ``{"name": "<key>"}``; the key defaults to the binding id. Anything
+    else refuses the binding (``declaration_error:binding_rejected``). Messages name the binding
+    id (the loader prints ids itself) but never echo the config, as spec section 7.7.5 requires.
+    """
+
+    def resolve(config: Any, binding: BindingContext) -> Interceptor:
+        if not isinstance(config, Mapping):
+            raise ValueError(f"binding {binding.id!r}: config must be an object with an optional 'name' member")
+        members = cast("Mapping[str, Any]", config)  # a JSON object: string keys
+        if set(members) - {"name"}:
+            raise ValueError(f"binding {binding.id!r}: config accepts only the 'name' member")
+        name: Any = members.get("name", binding.id)
+        if not isinstance(name, str):
+            raise ValueError(f"binding {binding.id!r}: config.name must be a string")
+        try:
+            return interceptors[name]
+        except KeyError:
+            raise ValueError(f"binding {binding.id!r}: no interceptor was supplied under the name it binds") from None
+
+    return resolve
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+def create_agent_hooks_middleware_from_declaration(
+    declaration: HostDeclaration | Mapping[str, Any] | str | os.PathLike[str],
+    *,
+    interceptors: Mapping[str, Interceptor] | None = None,
+    configure_registry: Callable[[HostRegistry], object] | None = None,
+    record_sink: Callable[[InterceptionRecord], None] | None = None,
+) -> MiddlewareBundle:
+    """Build the agent-hooks middleware bundle from a host declaration.
+
+    A host declaration (spec section 7.7) is one JSON document that fixes the enforcement
+    configuration (mode, composition, identity provider, approval resolver and redactor,
+    timeouts, record bound), the declared surface and the interceptor bindings. The loader
+    validates it against this framework's code surface and the names registered in code, and
+    refuses anything the framework cannot honour before any emission. Enforcement semantics,
+    the one-session-per-run model and the composition-order requirements are those of
+    :func:`create_agent_hooks_middleware`; every record additionally carries the contract
+    version the emitter was built from (``declaration: "agent-hooks-declaration/1.0"``).
+
+    Bindings name a kind the host registered in code; a kind is a lookup key, never a module
+    or class the loader imports. Passing ``interceptors`` registers the framework's own kind,
+    ``agent_framework.interceptor``: a binding ``{"id": "egress", "kind":
+    "agent_framework.interceptor"}`` runs the interceptor supplied as ``interceptors["egress"]``
+    (``config: {"name": ...}`` picks a different key). Other kinds, custom identity providers,
+    approval resolvers and approval redactors are registered through ``configure_registry``.
+    Every call builds a fresh ``agent_hooks.HostRegistry`` over the surface this middleware
+    implements (all eight points; ``model_calls``, ``tool_calls``, ``int64_json``,
+    ``bigint_json`` and ``host_declaration``; posture ``tool_seam_host_error: terminate``;
+    buffered streaming), registers ``agent_framework.interceptor`` when ``interceptors`` is
+    given, hands the registry to ``configure_registry``, then validates the document against
+    it. The registry never leaves the factory and nothing caller-owned is touched, so a
+    refused document or a raising callback leaves nothing behind for the next call.
+
+    The emitter the loader builds is sealed, so each run loads a fresh one from the same
+    document and registry (kind resolvers run once at construction and once per run); the
+    interceptors bound through ``agent_framework.interceptor`` are the supplied instances and
+    stay shared across runs, exactly as with :func:`create_agent_hooks_middleware`. To scope
+    one declaration-built session across several runs instead, build the emitter yourself
+    with ``agent_hooks.InterceptionEmitter.from_declaration_path`` (or ``_json`` / ``_value``)
+    and pass it to :func:`create_agent_hooks_middleware_from_emitter`.
+
+    Note:
+        A document's ``configuration.posture.tool_seam_host_error`` must equal the posture the
+        code implements, and the spec default is ``continue``, so every document for this
+        framework has to write ``"posture": {"tool_seam_host_error": "terminate"}`` or the
+        loader refuses it with ``declaration_error:surface_unsupported``.
+
+    Args:
+        declaration: The document, in one of three forms. An ``agent_hooks.HostDeclaration``
+            (for example from ``agent_hooks.DeclarationBuilder``, or
+            ``agent_hooks.HostDeclaration.from_json(text)`` for JSON text you already hold) is
+            used as is. A mapping (any ``Mapping``; it is copied into a ``dict`` for the SDK and
+            its members must be JSON values) is the document as a value. A ``str`` or
+            ``os.PathLike`` is the path of the document file, read once through
+            ``agent_hooks.HostDeclaration.from_path`` (a regular UTF-8 file of at most 1 MiB; an
+            unreadable file is ``agent_hooks.DeclarationError`` with class ``unreadable``).
+            JSON text is not accepted directly: a string is always a path.
+
+    Keyword Args:
+        interceptors: Interceptors by name for the ``agent_framework.interceptor`` kind.
+            ``None`` leaves the kind unregistered, so a document that uses it is refused.
+        configure_registry: Called at most once, with the fresh ``agent_hooks.HostRegistry``
+            built for this call, to register the host's own binding kinds, identity providers,
+            approval resolvers and approval redactors (``registry.kind(...)``,
+            ``registry.identity_provider(...)``, ``registry.approval_resolver(...)``,
+            ``registry.approval_redactor(...)``) before the document is validated. A file that
+            cannot be read (class ``unreadable``) or a value that cannot be serialized (class
+            ``malformed``) is refused before the callback runs. ``None`` registers nothing of
+            the host's own. A callback that raises propagates as is; nothing is cached, so the
+            next call starts from a fresh registry.
+        record_sink: Optional callable receiving every interception record.
+
+    Returns:
+        The middleware bundle to pass (as one element) to ``Agent(middleware=...)``.
+
+    Raises:
+        ModuleNotFoundError: If the optional ``agent-hooks-sdk`` package is not installed.
+        ImportError: If the installed ``agent-hooks-sdk`` predates the host-declaration loader.
+        agent_hooks.DeclarationError: If the loader refuses the document (an unreadable file,
+            unsupported version, unknown member, a posture or surface the framework does not
+            implement, an unregistered name or kind, a binding its kind resolver rejects, and
+            so on).
+        ValueError: If ``configure_registry`` registers ``agent_framework.interceptor`` while
+            ``interceptors`` is also given, or registers any other name twice or under the
+            wrong grammar (the SDK's own registry checks, raised as they are); or if the
+            document declares no bindings, since an emitter with zero interceptors fails closed
+            on every emission (the same rule as :func:`create_agent_hooks_middleware`).
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Agent, create_agent_hooks_middleware_from_declaration
+
+            declaration = {
+                "declaration": "agent-hooks-declaration/1.0",
+                "configuration": {"posture": {"tool_seam_host_error": "terminate"}},
+                "bindings": [{"id": "egress", "kind": "agent_framework.interceptor"}],
+            }
+            agent = Agent(
+                client=client,
+                name="assistant",
+                middleware=[
+                    create_agent_hooks_middleware_from_declaration(declaration, interceptors={"egress": EgressGuard()})
+                ],
+            )
+
+        A host kind registered through ``configure_registry``: the document is read once from
+        the file and binds ``{"id": "guard", "kind": "acme.guard", "config": {...}}``. The
+        callback's return value is ignored, so a one-line lambda over the chaining registry
+        methods works:
+
+        .. code-block:: python
+
+            bundle = create_agent_hooks_middleware_from_declaration(
+                "policy/declaration.json",
+                configure_registry=lambda registry: registry.kind("acme.guard", acme_guard),
+            )
+    """
+    _require_declaration_sdk()
+    from agent_hooks import HostDeclaration, InterceptionEmitter
+
+    if isinstance(declaration, HostDeclaration):
+        document = declaration
+    elif isinstance(declaration, (str, os.PathLike)):
+        # A string is a path, never JSON text (``HostDeclaration.from_json`` is the text path).
+        document = HostDeclaration.from_path(declaration)
+    else:
+        # ``HostDeclaration.from_value`` serializes with ``json.dumps``, which takes a ``dict`` but no
+        # other ``Mapping`` (``MappingProxyType``, ``UserDict``). Anything that is not a mapping goes
+        # through as given, so the SDK's own refusal applies (``malformed``: the root is not an object).
+        value: Any = declaration
+        if isinstance(value, Mapping):
+            value = dict(cast("Mapping[str, Any]", value))
+        document = HostDeclaration.from_value(value)
+
+    # A registry for this call only: it is never handed back, so a refused document or a raising
+    # callback cannot poison a later call, and nothing caller-owned is mutated.
+    registry = _host_registry()
+    if interceptors is not None:
+        registry.kind(_DECLARATION_KIND, _interceptor_kind_resolver(dict(interceptors)))
+    if configure_registry is not None:
+        configure_registry(registry)
+    # Load once here so a refused document (every class of spec section 7.7.6, kind resolvers
+    # included) raises ``agent_hooks.DeclarationError`` at construction, before any run.
+    resolved = InterceptionEmitter.from_declaration(document, registry).declaration
+    if resolved is None or not resolved.bindings:
+        # The spec allows an empty-deny host that is written down; for an agent it means every
+        # run is denied at ``input``, so refuse it here like ``create_agent_hooks_middleware``.
+        raise ValueError(
+            "create_agent_hooks_middleware_from_declaration requires at least one binding in the "
+            "declaration (an emitter with zero interceptors fails closed on every emission)."
+        )
+    config = _AgentHooksConfig(
+        interceptors=(),
+        resolver=None,
+        mode=None,
+        composition=None,
+        identity_provider=None,
+        timeout=None,
+        record_sink=record_sink,
+        emitter=None,
+        builder=None,
+        declaration=document,
+        registry=registry,
     )
     return _build_bundle(config)
 

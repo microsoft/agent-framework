@@ -625,9 +625,7 @@ def _reject_unsupported_schema_constraints(
 ) -> None:
     unsupported_constraints = sorted(schema.keys() - supported_keys)
     if unsupported_constraints:
-        raise _UnsupportedToolSchema(
-            f"unsupported {location} schema constraints: {', '.join(unsupported_constraints)}"
-        )
+        raise _UnsupportedToolSchema(f"unsupported {location} schema constraints: {', '.join(unsupported_constraints)}")
 
 
 def _describe_value(value: Any) -> str:

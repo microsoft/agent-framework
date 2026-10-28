@@ -193,6 +193,27 @@ class TestScopedContentProcessor:
         assert all(entry.content is not None for entry in entries)
         assert not any(isinstance(entry.content, PurviewTextContent) and entry.content.data == "" for entry in entries)
 
+    async def test_map_messages_submits_annotations_for_evaluation(self, processor: ScopedContentProcessor) -> None:
+        """Test annotations on text content are submitted in addition to the text."""
+        from agent_framework import Content
+
+        content = Content.from_text(
+            "see sources",
+            annotations=[{"type": "citation", "title": "cited-title-111", "url": "https://example.com/cited"}],
+        )
+        messages = [Message(role="assistant", contents=[content])]
+
+        requests, _ = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        texts = [
+            entry.content.data
+            for r in requests
+            for entry in r.content_to_process.content_entries
+            if isinstance(entry.content, PurviewTextContent)
+        ]
+        assert "see sources" in texts
+        assert any("cited-title-111" in text for text in texts)
+
     async def test_map_messages_skips_empty_text_and_data(self, processor: ScopedContentProcessor) -> None:
         """Test _map_messages does not create requests for empty text or binary data."""
         from agent_framework import Content

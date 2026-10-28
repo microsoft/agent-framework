@@ -38,3 +38,10 @@ When the agent applies the `enable_file_hooks` default and the working directory
 defines hooks, `_warn_once_about_unloaded_file_hooks` logs a warning so the change in behavior
 is visible. It fires at most once per agent, and never when the caller set the option
 explicitly either way.
+
+## Delegated Agent Tools
+
+The Copilot SDK tool adapter passes the parent agent and client
+`service_session_state_keys` declarations through `FunctionInvocationContext`.
+This lets nested `as_tool(propagate_session=True)` calls share application state
+without inheriting or replacing provider-owned continuation state.

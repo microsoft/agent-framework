@@ -11,6 +11,7 @@ from typing_extensions import Never
 
 from agent_framework import (
     Executor,
+    FunctionExecutor,
     SubWorkflowRequestMessage,
     SubWorkflowResponseMessage,
     Workflow,
@@ -663,6 +664,80 @@ def _build_checkpoint_test_workflow(storage: InMemoryCheckpointStorage) -> Workf
     )
 
 
+@dataclass
+class SiblingCheckpointRequest:
+    """Request emitted by one branch of a checkpointed sub-workflow."""
+
+    field: str
+    data: dict[str, int]
+
+
+class SiblingCheckpointRequestExecutor(Executor):
+    """Add one response value to the shared result."""
+
+    def __init__(self, field: str) -> None:
+        super().__init__(id=f"ask_{field}")
+        self._field = field
+
+    @handler
+    async def ask(self, data: dict[str, int], ctx: WorkflowContext[dict[str, int]]) -> None:
+        await ctx.request_info(SiblingCheckpointRequest(field=self._field, data=data), int)
+
+    @response_handler
+    async def answer(
+        self,
+        request: SiblingCheckpointRequest,
+        response: int,
+        ctx: WorkflowContext[dict[str, int]],
+    ) -> None:
+        await ctx.send_message({**request.data, request.field: response})
+
+
+async def _fork_checkpoint_sibling_requests(
+    data: dict[str, int],
+    ctx: WorkflowContext[dict[str, int]],
+) -> None:
+    await ctx.send_message(data)
+
+
+async def _join_checkpoint_sibling_responses(
+    parts: list[dict[str, int]],
+    ctx: WorkflowContext[dict[str, int], dict[str, int]],
+) -> None:
+    await ctx.yield_output({key: value for part in parts for key, value in part.items()})
+
+
+async def _finish_checkpoint_sibling_responses(
+    data: dict[str, int],
+    ctx: WorkflowContext[dict[str, int], dict[str, int]],
+) -> None:
+    await ctx.yield_output(data)
+
+
+def _build_sibling_checkpoint_test_workflow() -> Workflow:
+    """Build a parent whose child fans out to two requests before a later request."""
+    fork = FunctionExecutor(_fork_checkpoint_sibling_requests, id="fork")
+    request_a = SiblingCheckpointRequestExecutor("a")
+    request_b = SiblingCheckpointRequestExecutor("b")
+    join = FunctionExecutor(_join_checkpoint_sibling_responses, id="join")
+    sub_workflow = (
+        WorkflowBuilder(start_executor=fork)
+        .add_fan_out_edges(fork, [request_a, request_b])
+        .add_fan_in_edges([request_a, request_b], join)
+        .build()
+    )
+
+    sub_workflow_executor = WorkflowExecutor(sub_workflow, id="sub_workflow", propagate_request=True)
+    request_c = SiblingCheckpointRequestExecutor("c")
+    finish = FunctionExecutor(_finish_checkpoint_sibling_responses, id="finish")
+    return (
+        WorkflowBuilder(start_executor=sub_workflow_executor)
+        .add_edge(sub_workflow_executor, request_c)
+        .add_edge(request_c, finish)
+        .build()
+    )
+
+
 async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     """Test that resuming a sub-workflow from checkpoint does not emit duplicate requests.
 
@@ -709,6 +784,67 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     # Key assertion: Only the second request should be received, not a duplicate of the first
     assert len(request_events) == 1
     assert request_events[0].data.prompt == "Second request"
+
+
+async def test_sub_workflow_checkpoint_restore_clears_answered_sibling_requests() -> None:
+    """Restoring and answering sibling requests must not retain either request."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_sibling_checkpoint_test_workflow()
+
+    result = await workflow.run({}, checkpoint_storage=storage)
+    pending = {event.request_id: event.data.field for event in result.get_request_info_events()}
+    assert sorted(pending.values()) == ["a", "b"]
+
+    responses = {request_id: {"a": 1, "b": 2}[field] for request_id, field in pending.items()}
+    checkpoint_id = await workflow.resolve_pause_checkpoint_id(responses, checkpoint_storage=storage)
+    workflow = _build_sibling_checkpoint_test_workflow()
+    result = await workflow.run(
+        checkpoint_id=checkpoint_id,
+        checkpoint_storage=storage,
+        responses=responses,
+    )
+
+    pending = {event.request_id: event.data.field for event in result.get_request_info_events()}
+    assert list(pending.values()) == ["c"]
+
+    responses = {request_id: 3 for request_id in pending}
+    checkpoint_id = await workflow.resolve_pause_checkpoint_id(responses, checkpoint_storage=storage)
+    workflow = _build_sibling_checkpoint_test_workflow()
+    result = await workflow.run(
+        checkpoint_id=checkpoint_id,
+        checkpoint_storage=storage,
+        responses=responses,
+    )
+
+    assert result.get_outputs() == [{"a": 1, "b": 2, "c": 3}]
+    assert result.get_request_info_events() == []
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_sub_workflow_checkpoint_restore_clears_cancelled_sibling_requests() -> None:
+    """Restoring and cancelling sibling requests must not retain either request."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_sibling_checkpoint_test_workflow()
+
+    result = await workflow.run({}, checkpoint_storage=storage)
+    pending = {event.request_id: event.data.field for event in result.get_request_info_events()}
+    assert sorted(pending.values()) == ["a", "b"]
+
+    checkpoint_id = await workflow.resolve_pause_checkpoint_id(pending, checkpoint_storage=storage)
+    workflow = _build_sibling_checkpoint_test_workflow()
+    result = await workflow.cancel_pending_requests(
+        pending,
+        checkpoint_id=checkpoint_id,
+        checkpoint_storage=storage,
+    )
+
+    assert result.get_request_info_events() == []
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert await workflow._runner_context.get_pending_request_info_events() == {}  # pyright: ignore[reportPrivateUsage]
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    latest_checkpoint = max(checkpoints, key=lambda checkpoint: checkpoint.timestamp)
+    assert latest_checkpoint.pending_request_info_events == {}
 
 
 async def test_sub_workflow_checkpoint_restore_preserves_sub_workflow_state() -> None:

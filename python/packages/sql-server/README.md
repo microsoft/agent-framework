@@ -11,22 +11,18 @@ columns, with exact, database-side similarity search. This alpha package exports
 pip install agent-framework-sql-server --pre
 ```
 
-Requires Python 3.10–3.14 and a vector-enabled database: SQL Server 2025
+Requires Python 3.10 or later and a vector-enabled database: SQL Server 2025
 (17.x), Azure SQL Database, Azure SQL Managed Instance on the SQL Server 2025
 or Always-up-to-date update policy, or SQL database in Microsoft Fabric.
 Older SQL Server releases do not support `VECTOR`/`VECTOR_DISTANCE`.
 
-The package uses Microsoft's [`mssql-python` 1.15+ driver](https://pypi.org/project/mssql-python/).
+The package uses Microsoft's [`mssql-python` 1.16+ driver](https://pypi.org/project/mssql-python/).
 It installs its `mssql-python-odbc` binary companion automatically; no external
 ODBC Driver 18 or driver manager is required. Published wheels cover CPython
-3.10–3.14 on Windows x64, Linux x64/ARM64, and **macOS 15+**
+3.10–3.15 on Windows x64, Linux x64/ARM64, and **macOS 15+**
 Intel/Apple Silicon; Windows ARM64 wheels start at Python 3.11. macOS 14 is
 listed in the driver's support documentation, but the published macOS wheels
 are tagged `macosx_15_0_universal2` and there is no source distribution.
-Python 3.15 has no published wheel yet: this package caps `requires-python`
-below 3.15, and the repository's non-blocking 3.15 CI lane excludes it.
-The workspace lockfile likewise limits Python below 3.15 while this package
-remains a member; the experimental 3.15 lane excludes it before resolving.
 Follow the [driver's installation instructions](https://learn.microsoft.com/sql/connect/python/mssql-python/installation)
 for system libraries on Linux and OpenSSL on macOS.
 

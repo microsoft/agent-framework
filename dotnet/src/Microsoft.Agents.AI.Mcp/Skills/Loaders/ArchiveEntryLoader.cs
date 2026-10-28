@@ -26,6 +26,8 @@ namespace Microsoft.Agents.AI;
 /// inside an archive are surfaced as readable resources only; they are never discovered as
 /// executable scripts. Supplied SHA-256 digests are verified before extraction; archives without
 /// a digest remain supported.
+/// Archive members resolving to the same file keep the first file; later colliding members are
+/// skipped with a warning.
 /// </remarks>
 internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDisposable
 {
@@ -146,7 +148,7 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             try
             {
                 Directory.Delete(directory, recursive: true);
-                LogArchiveSkillPruned(this._logger, name, SanitizePathForLog(directory));
+                LogArchiveSkillPruned(this._logger, name, AgentMcpSkillArchiveExtractor.SanitizePathForLog(directory));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -240,7 +242,8 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
                 format,
                 skillDirectory,
                 this._options?.ArchiveMaxFileCount,
-                this._options?.ArchiveMaxUncompressedSizeBytes);
+                this._options?.ArchiveMaxUncompressedSizeBytes,
+                logger: this._logger);
         }
         catch (Exception ex)
         {
@@ -252,7 +255,7 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             return [];
         }
 
-        LogArchiveExtracted(this._logger, entry.Name!, SanitizePathForLog(skillDirectory));
+        LogArchiveExtracted(this._logger, entry.Name!, AgentMcpSkillArchiveExtractor.SanitizePathForLog(skillDirectory));
 
         return [skillDirectory];
     }
@@ -391,25 +394,6 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             string trimmed = value.Trim().Trim('.');
             return trimmed.Length > 0;
         }
-    }
-
-    /// <summary>
-    /// Replaces control characters in a file-system path with <c>?</c> so the path is safe to include
-    /// in log messages without risking terminal-escape injection.
-    /// </summary>
-    private static string SanitizePathForLog(string path)
-    {
-        char[]? chars = null;
-        for (int i = 0; i < path.Length; i++)
-        {
-            if (char.IsControl(path[i]))
-            {
-                chars ??= path.ToCharArray();
-                chars[i] = '?';
-            }
-        }
-
-        return chars is null ? path : new string(chars);
     }
 
     /// <summary>

@@ -24,7 +24,7 @@ _sessions: dict[str | tuple[str, str], AgentSession] = {}
 # Create the agent
 client = FoundryChatClient(
     project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    model=os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
     credential=DefaultAzureCredential(),
 )
 

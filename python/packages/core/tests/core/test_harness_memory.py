@@ -27,6 +27,7 @@ from agent_framework import (
     MemoryTopicRecord,
     Message,
 )
+from agent_framework import _filesystem as filesystem_module
 
 from .test_filesystem import COLLIDING_IDENTIFIERS
 
@@ -132,6 +133,60 @@ def test_memory_topic_record_round_trips_through_dict_and_markdown() -> None:
     assert record.to_dict() == raw_record
     assert reparsed_record == record
     assert "MemoryTopicRecord(" in repr(record)
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Updated: the release date changed.",
+        "Sessions: keep the troubleshooting context.",
+        "The plan was Updated: yesterday and Sessions: remain useful.",
+        "Prefers concise answers.",
+        "## Summary is part of the stored text.",
+    ],
+)
+def test_memory_file_store_preserves_metadata_like_summary_text(tmp_path: Path, summary: str) -> None:
+    """Summary text must not replace metadata when a topic is reloaded from disk."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    record = MemoryTopicRecord(
+        topic="preferences",
+        summary=summary,
+        memories=["Updated: the milestone moved.", "Sessions: retain previous notes."],
+        updated_at="2026-04-21T10:05:00+00:00",
+        session_ids=["session-1", "session-2"],
+    )
+
+    assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record
+    store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic=record.slug) == record
+    assert store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == [record]
+    entries = store.rebuild_index(session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=200, line_length=150)
+    assert entries == [MemoryIndexEntry.from_topic_record(record)]
+
+
+@pytest.mark.parametrize("summary_line", ["Updated: the release date changed.", "Sessions: keep previous notes."])
+def test_memory_topic_record_preserves_multiline_summary_metadata_text(summary_line: str) -> None:
+    """Metadata labels inside a multiline summary remain content in that section."""
+    markdown = (
+        "# preferences\n\n"
+        "Updated: 2026-04-21T10:05:00+00:00\n"
+        "Sessions: session-1, session-2\n\n"
+        "## Summary\n\n"
+        f"Keep the release notes.\n{summary_line}\n\n"
+        "## Memories\n\n"
+        "- Updated: the milestone moved.\n"
+        "- Sessions: retain previous notes.\n"
+    )
+
+    record = MemoryTopicRecord.from_markdown(markdown)
+
+    assert record.summary == f"Keep the release notes. {summary_line}"
+    assert record.updated_at == "2026-04-21T10:05:00+00:00"
+    assert record.session_ids == ["session-1", "session-2"]
+    assert record.memories == ["Updated: the milestone moved.", "Sessions: retain previous notes."]
 
 
 async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_path) -> None:
@@ -766,8 +821,6 @@ def test_memory_topic_record_round_trips_when_text_contains_section_markers() ->
 
 async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(tmp_path, monkeypatch) -> None:
     """If ``os.replace`` fails mid-write, the previous topic file must remain intact."""
-    from agent_framework._harness import _memory as memory_module
-
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
@@ -780,12 +833,12 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
     )
     store.write_topic(session, original, source_id=DEFAULT_MEMORY_SOURCE_ID)
 
-    real_replace = memory_module.os.replace
+    real_replace = filesystem_module.os.replace
 
     def _boom(*args: object, **kwargs: object) -> None:
         raise OSError("simulated disk-full")
 
-    monkeypatch.setattr(memory_module.os, "replace", _boom)
+    monkeypatch.setattr(filesystem_module.os, "replace", _boom)
     with pytest.raises(OSError, match="simulated disk-full"):
         store.write_topic(
             session,
@@ -799,12 +852,12 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
             source_id=DEFAULT_MEMORY_SOURCE_ID,
         )
 
-    monkeypatch.setattr(memory_module.os, "replace", real_replace)
+    monkeypatch.setattr(filesystem_module.os, "replace", real_replace)
     surviving = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
     assert surviving.summary == "Prefers concise answers."
     # Temp file should not be left behind.
     topics_dir = surviving_dir = tmp_path
-    leftover = [path for path in topics_dir.rglob("*.tmp.*")]
+    leftover = [path for path in topics_dir.rglob(".maf-state-*.tmp")]
     assert leftover == []
     del surviving_dir
 

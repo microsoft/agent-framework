@@ -6,7 +6,9 @@ Redis-based storage for agent threads and context.
 
 - **`RedisHistoryProvider`** - Persistent chat history provider using scoped Redis keys. Scoped mode requires an
   application ID and non-empty session ID, and can additionally isolate tenants and agents. Use explicit legacy mode
-  only while deliberately migrating historical keys; scoped mode never accesses them automatically.
+  only while deliberately migrating historical keys; scoped mode never accesses them automatically. It can construct
+  an owned client from a URL or credential provider, or borrow a standalone async Redis client configured with
+  `decode_responses=True`; borrowed clients remain caller-owned.
 - **`RedisContextProvider`** - Context provider with Redis-backed retrieval
 - **`RedisSettings`** - TypedDict connection settings for vector stores, resolved with core `load_settings` from
   explicit URL overrides, an optional .env file, or `REDIS_URL`. URLs use `SecretString` to mask credentials.

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -15,7 +17,8 @@ from agent_framework import (
     handler,
 )
 from agent_framework_hosting import WorkflowState
-from mcp import types
+from mcp import Client, MCPError, types
+from mcp.server import Server, ServerRequestContext
 from pytest import raises
 
 from agent_framework_hosting_mcp import WorkflowMCPTool
@@ -50,15 +53,15 @@ async def test_workflow_tool_derives_object_schema_and_runs_workflow() -> None:
         name="repeat_text",
     )
 
-    definition = (await tool.list_tools())[0]
+    definition = (await tool.list_tools()).tools[0]
     result = await tool.call_tool("repeat_text", {"text": "go", "repeat": 2})
 
     assert definition.description == "Repeat text a requested number of times."
-    assert definition.inputSchema["type"] == "object"
-    assert definition.inputSchema["properties"]["text"]["type"] == "string"
-    assert definition.inputSchema["properties"]["repeat"]["type"] == "integer"
-    assert set(definition.inputSchema["required"]) == {"text", "repeat"}
-    assert result == [types.TextContent(type="text", text="gogo")]
+    assert definition.input_schema["type"] == "object"
+    assert definition.input_schema["properties"]["text"]["type"] == "string"
+    assert definition.input_schema["properties"]["repeat"]["type"] == "integer"
+    assert set(definition.input_schema["required"]) == {"text", "repeat"}
+    assert result.content == [types.TextContent(type="text", text="gogo")]
 
 
 async def test_workflow_tool_wraps_primitive_input() -> None:
@@ -69,16 +72,16 @@ async def test_workflow_tool_wraps_primitive_input() -> None:
     workflow = WorkflowBuilder(start_executor=uppercase, name="uppercase", output_from=[uppercase]).build()
     tool: WorkflowMCPTool[Any] = WorkflowMCPTool(workflow, argument_name="text")
 
-    definition = (await tool.list_tools())[0]
+    definition = (await tool.list_tools()).tools[0]
     result = await tool.call_tool("uppercase", {"text": "hello"})
 
-    assert definition.inputSchema == {
+    assert definition.input_schema == {
         "type": "object",
         "properties": {"text": {"type": "string"}},
         "required": ["text"],
         "additionalProperties": False,
     }
-    assert result == [types.TextContent(type="text", text="HELLO")]
+    assert result.content == [types.TextContent(type="text", text="HELLO")]
 
 
 async def test_workflow_tool_serializes_structured_output_as_json_text() -> None:
@@ -91,7 +94,7 @@ async def test_workflow_tool_serializes_structured_output_as_json_text() -> None
 
     result = await tool.call_tool("structured", {"input": "hello"})
 
-    assert result == [types.TextContent(type="text", text='{"value":"hello"}')]
+    assert result.content == [types.TextContent(type="text", text='{"value":"hello"}')]
 
 
 def test_workflow_tool_rejects_unhandled_external_input_requests() -> None:
@@ -129,3 +132,65 @@ def test_workflow_tool_rejects_multiple_start_input_types() -> None:
 
     with raises(ValueError, match="exactly one"):
         tool._tool_for_workflow(workflow)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_workflow_tool_rejects_unknown_tool_name() -> None:
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(create_workflow(), name="repeat_text")
+
+    with raises(MCPError, match="Unknown MCP tool") as exc_info:
+        await tool.call_tool("unknown", {"text": "go", "repeat": 2})
+
+    assert exc_info.value.code == types.INVALID_PARAMS
+
+
+async def test_workflow_tool_rejects_invalid_input() -> None:
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(create_workflow(), name="repeat_text")
+
+    with raises(MCPError) as exc_info:
+        await tool.call_tool("repeat_text", {"text": "go"})
+
+    assert exc_info.value.code == types.INVALID_PARAMS
+
+
+async def test_workflow_tool_propagates_execution_failure() -> None:
+    workflow = create_workflow()
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(workflow, name="repeat_text")
+
+    with (
+        patch.object(workflow, "run", AsyncMock(side_effect=RuntimeError("workflow execution failed"))),
+        raises(RuntimeError, match="workflow execution failed"),
+    ):
+        await tool.call_tool("repeat_text", {"text": "go", "repeat": 2})
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_version"),
+    [
+        ("auto", "2026-07-28"),
+        ("legacy", "2025-11-25"),
+    ],
+)
+async def test_workflow_tool_serves_both_protocol_eras(mode: str, expected_version: str) -> None:
+    workflow_tool: WorkflowMCPTool[Any] = WorkflowMCPTool(create_workflow(), name="repeat_text")
+
+    async def list_tools(
+        _ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
+        return await workflow_tool.list_tools()
+
+    async def call_tool(
+        _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
+        return await workflow_tool.call_tool(params.name, params.arguments or {})
+
+    server = Server("test-server", on_list_tools=list_tools, on_call_tool=call_tool)
+
+    async with Client(server, mode=mode) as mcp_client:
+        tools = await mcp_client.list_tools()
+        result = await mcp_client.call_tool("repeat_text", {"text": "go", "repeat": 2})
+
+        assert mcp_client.protocol_version == expected_version
+        assert [tool.name for tool in tools.tools] == ["repeat_text"]
+        assert result.result_type == "complete"
+        assert not result.is_error
+        assert result.content == [types.TextContent(type="text", text="gogo")]

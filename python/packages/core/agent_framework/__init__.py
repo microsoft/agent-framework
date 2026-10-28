@@ -42,7 +42,11 @@ from .exceptions import (
 )
 
 _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
-    "._agent_hooks": ("create_agent_hooks_middleware", "create_agent_hooks_middleware_from_emitter"),
+    "._agent_hooks": (
+        "create_agent_hooks_middleware",
+        "create_agent_hooks_middleware_from_declaration",
+        "create_agent_hooks_middleware_from_emitter",
+    ),
     "._agents": ("Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"),
     "._clients": (
         "BaseChatClient",
@@ -277,12 +281,15 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "UsageDetails",
         "add_usage_details",
         "detect_media_type_from_base64",
+        "get_namespaced_value",
         "map_chat_to_agent_update",
+        "merge_additional_properties",
         "merge_chat_options",
         "normalize_messages",
         "normalize_tools",
         "prepend_instructions_to_messages",
         "validate_chat_options",
+        "with_namespaced_value",
         "validate_tool_mode",
         "validate_tools",
     ),
@@ -679,6 +686,7 @@ __all__ = [
     "background_tasks_running_message",
     "chat_middleware",
     "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_declaration",
     "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
@@ -696,6 +704,7 @@ __all__ = [
     "executor",
     "function_middleware",
     "get_agent_mode",
+    "get_namespaced_value",
     "get_run_context",
     "handler",
     "included_messages",
@@ -703,6 +712,7 @@ __all__ = [
     "keyword_check",
     "load_settings",
     "map_chat_to_agent_update",
+    "merge_additional_properties",
     "merge_chat_options",
     "normalize_function_invocation_configuration",
     "normalize_messages",
@@ -727,6 +737,7 @@ __all__ = [
     "validate_tools",
     "validate_workflow_graph",
     "vectorstoremodel",
+    "with_namespaced_value",
     "workflow",
 ]
 

@@ -8,7 +8,6 @@ from types import TracebackType
 from typing import Any, ClassVar, Literal, NoReturn, cast, overload
 from uuid import uuid4
 
-import httpx2
 from agent_framework import (
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
@@ -58,23 +57,6 @@ from ._tool_calls import compile_tool_call_plan
 
 _TYPESAFE_DEFAULT_BASE_URL = "https://api.typesafe.ai"
 _TYPESAFE_SYSTEM_ONE_PATH = "/v1/systemone"
-
-
-class _ApiKeyTransport(httpx2.AsyncBaseTransport):
-    """Restore bearer authentication after the TypeSafe SDK prepares redacted wire headers."""
-
-    def __init__(self, api_key: str) -> None:
-        self._api_key = api_key
-        self._transport = httpx2.AsyncHTTPTransport()
-
-    @override
-    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        request.headers["Authorization"] = f"Bearer {self._api_key}"
-        return await self._transport.handle_async_request(request)
-
-    @override
-    async def aclose(self) -> None:
-        await self._transport.aclose()
 
 
 class TypeSafeSettings(TypedDict, total=False):
@@ -180,13 +162,11 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             self.base_url = settings.get("base_url") or _TYPESAFE_DEFAULT_BASE_URL
             self._service_url = f"{self.base_url.rstrip('/')}{_TYPESAFE_SYSTEM_ONE_PATH}"
             api_key_secret = cast(SecretString, settings.get("api_key"))
-            api_key_value = api_key_secret.get_secret_value()
             self.client = AsyncTypeSafeClient(
-                api_key=api_key_value,
+                api_key=api_key_secret.get_secret_value(),
                 model=self.model,
                 base_url=self.base_url,
                 headers={"User-Agent": get_user_agent()},
-                transport=_ApiKeyTransport(api_key_value),
             )
         super().__init__(
             compaction_strategy=compaction_strategy,

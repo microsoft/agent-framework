@@ -1,7 +1,7 @@
 name: agent-framework-steerable-long-running-agent
 description: >
-  A hosted agent that demonstrates steerable multi-turn conversations for a plain (non-workflow)
-  agent using the Responses protocol.
+  A long-running Responses agent with background polling. Steering is temporarily gated until
+  a patched AgentServer SDK is published and verified.
 metadata:
   tags:
     - Agent Framework
@@ -9,8 +9,7 @@ metadata:
     - Azure AI AgentServer
     - Responses Protocol
     - Streaming
-    - Steering
-    - Multi-turn
+    - Background
 template:
   name: agent-framework-steerable-long-running-agent
   kind: hosted

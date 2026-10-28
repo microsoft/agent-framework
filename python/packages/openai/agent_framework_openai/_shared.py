@@ -7,10 +7,11 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
+from agent_framework import get_namespaced_value
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from agent_framework.exceptions import SettingNotFoundError
-from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, HttpxBinaryResponseContent
+from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, HttpxBinaryResponseContent, Omit
 from openai.types import Completion
 from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
 AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # ruff:ignore[hardcoded-password-string] # nosec B105
 _SUPPRESSED_AZURE_API_KEY = "<missing API key>"
+_OPENAI_METADATA_HEADERS = ("OpenAI-Organization", "OpenAI-Project")
 
 
 RESPONSE_TYPE = Union[
@@ -54,6 +56,59 @@ AzureTokenProvider = Callable[[], str | Awaitable[str]]
 
 
 PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
+OPENAI_ADDITIONAL_PROPS_NAMESPACE = "openai"
+_MISSING = object()
+
+
+MP3_MEDIA_TYPES = frozenset({"audio/mp3", "audio/mpeg", "audio/x-mpeg", "audio/mpeg3", "audio/x-mpeg-3"})
+
+
+def _get_openai_metadata(  # pyright: ignore[reportUnusedFunction]
+    additional_properties: Mapping[str, Any] | None,
+    key: str,
+    *legacy_keys: str,
+    default: Any = None,
+) -> Any:
+    """Read OpenAI metadata from its namespace, then legacy flat keys."""
+    value = get_namespaced_value(additional_properties, OPENAI_ADDITIONAL_PROPS_NAMESPACE, key, _MISSING)
+    if value is not _MISSING:
+        return value
+    for legacy_key in legacy_keys:
+        if additional_properties and legacy_key in additional_properties:
+            return additional_properties[legacy_key]
+    return default
+
+
+def _openai_additional_properties(  # pyright: ignore[reportUnusedFunction]
+    values: Mapping[str, Any],
+    *,
+    legacy: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build namespaced OpenAI metadata with optional legacy compatibility keys."""
+    return {
+        OPENAI_ADDITIONAL_PROPS_NAMESPACE: dict(values),
+        **dict(legacy or {}),
+    }
+
+
+def _is_mp3_media_type(  # pyright: ignore[reportUnusedFunction]
+    media_type: str | None,
+) -> bool:
+    """Check whether an audio media type names MP3 audio.
+
+    The media type is stripped of parameters and case-folded before it is compared against
+    the registered MP3 aliases, so that sibling MPEG subtypes such as ``audio/mpegurl`` or
+    ``audio/mpeg4-generic`` are not mistaken for MP3.
+
+    Args:
+        media_type: The media type of the audio content, if any.
+
+    Returns:
+        True if the media type is an alias of MP3 audio, False otherwise.
+    """
+    if not media_type:
+        return False
+    return media_type.partition(";")[0].strip().lower() in MP3_MEDIA_TYPES
 
 
 def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
@@ -63,10 +118,16 @@ def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
 
     GPT-5.6 and later models accept an explicit cache breakpoint on supported content
     blocks; users opt in per part via
-    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    ``Content.additional_properties["core"]["prompt_cache_breakpoint"]``.
+    The legacy top-level key remains readable.
     """
     props = content.additional_properties
-    breakpoint_value = props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None
+    breakpoint_value = get_namespaced_value(
+        props,
+        "core",
+        PROMPT_CACHE_BREAKPOINT_KEY,
+        props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None,
+    )
     if isinstance(breakpoint_value, Mapping):
         part[PROMPT_CACHE_BREAKPOINT_KEY] = dict(cast("Mapping[str, Any]", breakpoint_value))
     return part
@@ -168,6 +229,26 @@ def _join_env_names(env_names: Sequence[str]) -> str:
     return ", ".join(f"'{env_name}'" for env_name in env_names)
 
 
+def _prepare_azure_openai_default_headers(
+    headers: Mapping[str, str],
+    *,
+    suppress_authorization: bool,
+) -> dict[str, str | Omit]:
+    """Prevent OpenAI SDK defaults from crossing into Azure routes."""
+    azure_headers: dict[str, str | Omit] = dict(headers)
+    controlled_headers = (
+        (*_OPENAI_METADATA_HEADERS, "Authorization") if suppress_authorization else _OPENAI_METADATA_HEADERS
+    )
+    for header in controlled_headers:
+        normalized_header = header.lower()
+        explicit_value: str | None = None
+        for candidate in list(azure_headers):
+            if candidate.lower() == normalized_header:
+                explicit_value = cast(str, azure_headers.pop(candidate))
+        azure_headers[header] = explicit_value if explicit_value is not None else Omit()
+    return azure_headers
+
+
 def load_openai_service_settings(
     *,
     model: str | None,
@@ -253,10 +334,14 @@ def load_openai_service_settings(
         api_key=api_key_str,
         endpoint=endpoint,
         base_url=base_url,
-        api_version=api_version or default_azure_api_version,
+        api_version=api_version,
         env_file_path=env_file_path,
         env_file_encoding=env_file_encoding,
     )
+    # Apply the client default only after load_settings: an explicit value passed to it always
+    # wins, so passing the default there would hide AZURE_OPENAI_API_VERSION and the .env file.
+    if not azure_settings.get("api_version"):
+        azure_settings["api_version"] = default_azure_api_version
     if model is not None:
         azure_settings[azure_model_fields[0]] = model
     client_args = {}
@@ -287,7 +372,6 @@ def load_openai_service_settings(
         )
     if client:
         return azure_settings, client, True  # type: ignore[return-value]
-    client_args["default_headers"] = merged_headers
     client_args["http_client"] = create_feature_usage_http_client()
     if endpoint := azure_settings.get("endpoint"):
         if responses_mode:
@@ -319,7 +403,14 @@ def load_openai_service_settings(
     # sent as-is.  responses_mode is excluded because the Responses API path
     # (/responses) is not rewritten by the Azure SDK.
     resolved_base_url = client_args.get("base_url", "")
-    if not responses_mode and resolved_base_url and resolved_base_url.rstrip("/").endswith("/openai/v1"):
+    use_openai_v1_bridge = (
+        not responses_mode and resolved_base_url and resolved_base_url.rstrip("/").endswith("/openai/v1")
+    )
+    client_args["default_headers"] = _prepare_azure_openai_default_headers(
+        merged_headers,
+        suppress_authorization=not use_openai_v1_bridge and "azure_ad_token_provider" not in client_args,
+    )
+    if use_openai_v1_bridge:
         openai_args: dict[str, Any] = {
             "base_url": resolved_base_url,
             "default_headers": client_args.get("default_headers"),

@@ -1,76 +1,92 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "agent-framework-core",
+#     "agent-framework-foundry",
+#     "agent-framework-foundry-hosting",
+#     "azure-ai-agentserver-core>=2.1.0,<3",
+#     "azure-identity",
+#     "python-dotenv",
+# ]
+# ///
+
 # Copyright (c) Microsoft. All rights reserved.
+
+"""Expose only explicitly uploaded session files with request-owned SDK resources."""
+
+from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import AsyncExitStack
+from types import TracebackType
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, FoundryToolbox, ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from agent_framework.foundry import FoundryChatClient, FoundryToolbox
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.core import AgentConfig, get_request_context
+from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
+from file_access import list_uploaded_files, read_uploaded_file
 
 
-@tool(description="Get the current working directory.", approval_mode="never_require")
-def get_cwd() -> str:
-    """Get the current working directory."""
-    try:
-        return os.getcwd()
-    except Exception as e:
-        return f"Error getting current working directory: {e}"
+@tool(description="List regular files uploaded to this session's sample_files folder.", approval_mode="never_require")
+def list_files() -> list[str]:
+    """List this sandbox's uploads without accepting an arbitrary directory."""
+    return list_uploaded_files()
 
 
-@tool(description="List files in a directory.", approval_mode="never_require")
-def list_files(directory: str) -> list[str]:
-    """List files in a directory."""
-    try:
-        return os.listdir(directory)
-    except Exception as e:
-        return [f"Error listing files in {directory}: {e}"]
+@tool(
+    description="Read one named UTF-8 file uploaded to this session's sample_files folder.",
+    approval_mode="never_require",
+)
+def read_file(filename: str) -> str:
+    """Read a bounded upload, rejecting paths, symlinks and non-regular files."""
+    return read_uploaded_file(filename)
 
 
-@tool(description="Read the contents of a file.", approval_mode="never_require")
-def read_file(file_path: str) -> str:
-    """Read the contents of a file."""
-    try:
-        with open(file_path) as f:
-            return f.read()
-    except Exception as e:
-        return f"Error reading file {file_path}: {e}"
+def create_agent() -> Agent:
+    """Create the client and Toolbox as request-owned resources."""
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    credential = (
+        ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
+        if AgentConfig.from_env().is_hosted
+        else AzureCliCredential()
+    )
 
+    class RequestClient(FoundryChatClient):
+        async def __aenter__(self) -> RequestClient:
+            return self
 
-async def main():
-    credential = DefaultAzureCredential()
+        async def __aexit__(
+            self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+        ) -> None:
+            async with AsyncExitStack() as cleanup:
+                cleanup.push_async_callback(credential.close)
+                cleanup.push_async_callback(self.project_client.close)
+                cleanup.push_async_callback(self.client.close)
 
-    # FoundryToolbox resolves the toolbox endpoint from the environment
-    # (TOOLBOX_ENDPOINT, or FOUNDRY_PROJECT_ENDPOINT + TOOLBOX_NAME), authenticates
-    # every request with the credential, and transparently forwards the platform
-    # per-request call-id to the toolbox. The hosting server enters the agent, which
-    # connects the toolbox on first use and closes it at shutdown.
     toolbox = FoundryToolbox(credential)
-
-    # Create the chat client
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=credential,
-    )
-
-    agent = Agent(
-        client=client,
-        instructions=(
-            "You are a friendly assistant. Keep your answers brief. "
-            "Make sure all mathematical calculations are performed using the code interpreter "
-            "instead of mental arithmetic."
+    return Agent(
+        client=RequestClient(
+            project_endpoint=endpoint,
+            model=model,
+            credential=credential,
+            default_headers=get_request_context().platform_headers(),
         ),
-        tools=[get_cwd, list_files, read_file, toolbox],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
+        instructions=(
+            "Use list_files and read_file only for explicitly uploaded files in sample_files. "
+            "Pass a single filename, never a directory or absolute path. "
+            "Use the code interpreter for calculations on the returned text."
+        ),
+        tools=[list_files, read_file, toolbox],
     )
-    server = ResponsesHostServer(agent)
+
+
+async def main() -> None:
+    load_dotenv()
+    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
     await server.run_async()
 
 

@@ -11,4 +11,4 @@ environment_variables:
   - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
     value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
   - name: ENABLE_SENSITIVE_DATA
-    value: true
+    value: "false"

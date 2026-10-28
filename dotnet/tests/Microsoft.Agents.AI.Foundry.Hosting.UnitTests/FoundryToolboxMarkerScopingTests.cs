@@ -59,6 +59,7 @@ public class FoundryToolboxMarkerScopingTests
                     Consents: [new McpConsentInfo(name, $"{name}.tool", $"https://consent.example/{name}")])));
 
         // Act: request A references marker-a and hits consent.
+        HostedCallContext.CallId = "request-a";
         var resolutionA = await service.GetToolboxToolsAsync("marker-a", version: null, CancellationToken.None);
 
         // Assert: the consent is returned to THIS caller, with no tools.
@@ -74,6 +75,7 @@ public class FoundryToolboxMarkerScopingTests
         Assert.Empty(service.Tools);
 
         // Act: a different request references marker-b. Its consent must not accumulate globally.
+        HostedCallContext.CallId = "request-b";
         var resolutionB = await service.GetToolboxToolsAsync("marker-b", version: null, CancellationToken.None);
 
         // Assert: still request-scoped, still no global mutation.
@@ -101,6 +103,7 @@ public class FoundryToolboxMarkerScopingTests
                         Consents: [new McpConsentInfo(name, $"{name}.tool", $"https://consent.example/{name}")])));
 
         // Act: request A references marker-a and resolves its tool.
+        HostedCallContext.CallId = "request-a";
         var resolutionA = await service.GetToolboxToolsAsync("marker-a", version: null, CancellationToken.None);
 
         // Assert: the tool is returned to THIS caller only.

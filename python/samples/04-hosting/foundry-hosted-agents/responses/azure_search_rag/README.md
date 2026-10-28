@@ -14,6 +14,23 @@ The agent uses `FoundryChatClient` from the Agent Framework to create a Response
 
 See [main.py](main.py) for the full implementation.
 
+`create_agent` allocates a fresh Search provider, credential and model client for
+each request. The sample's context-managed client explicitly enters/closes the
+provider and closes its own SDK transports and credential, including failed
+entry and cancellation; `Agent` does not automatically enter every provider.
+`history_source="agent_server"` owns conversation history and disables inner
+model storage. Only first-party Foundry model calls receive the platform call
+ID; it is not forwarded to Search as an authorization substitute.
+
+The configured index is **intentionally shared, read-only public Contoso sample
+documentation**. It contains no user-private or sandbox-private data. A private
+multi-tenant index requires trusted per-request ACL filtering or separately
+authorized index routing before retrieval; do not rely on caller options,
+prompt instructions, or a new Python provider instance to isolate documents.
+The index name and endpoint here come from operator configuration, not request
+input. Provisioning an index, Search RBAC and live retrieval require separate
+resources and are not covered by offline checks.
+
 ### Agent Hosting
 
 The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.

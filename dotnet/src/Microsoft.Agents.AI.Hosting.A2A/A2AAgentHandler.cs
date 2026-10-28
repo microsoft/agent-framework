@@ -70,7 +70,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
     public async Task CancelAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
         var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, context.ContextId);
-        await taskUpdater.CancelAsync(cancellationToken).ConfigureAwait(false);
+        await taskUpdater.CancelAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -144,6 +144,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         var updates = this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
 
+        bool executionFailed = false;
         try
         {
             if (returnTask)
@@ -153,7 +154,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
                 {
                     // The server is configured through AgentRunMode to return a task, but the non-streaming client request has
                     // ReturnImmediately disabled, so collect all updates and return a completed task.
-                    await AggregateTaskUpdatesAsync(updates, taskUpdater, eventQueue, cancellationToken).ConfigureAwait(false);
+                    await AggregateTaskUpdatesAsync(updates, taskUpdater, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -169,9 +170,14 @@ internal sealed class A2AAgentHandler : IAgentHandler
                 await StreamMessageUpdatesAsync(contextId, updates, eventQueue, cancellationToken).ConfigureAwait(false);
             }
         }
+        catch (Exception)
+        {
+            executionFailed = true;
+            throw;
+        }
         finally
         {
-            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+            await this.SaveSessionAsync(contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
         }
     }
 
@@ -185,6 +191,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         var options = CreateRunOptions(context);
 
         AgentResponse response;
+        bool executionFailed = false;
         try
         {
             response = await this._hostAgent.RunAsync(
@@ -195,17 +202,19 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
         catch (OperationCanceledException)
         {
+            executionFailed = true;
             throw;
         }
         catch (Exception)
         {
+            executionFailed = true;
             var failUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
-            await failUpdater.FailAsync(message: null, CancellationToken.None).ConfigureAwait(false);
+            await failUpdater.FailAsync(message: null, cancellationToken: CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         finally
         {
-            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+            await this.SaveSessionAsync(contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
         }
 
         if (response.ContinuationToken is null)
@@ -213,7 +222,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
             // Complete the task with an artifact containing the response.
             var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
             await taskUpdater.AddArtifactAsync(response.Messages.ToParts(), cancellationToken: cancellationToken).ConfigureAwait(false);
-            await taskUpdater.CompleteAsync(message: null, cancellationToken).ConfigureAwait(false);
+            await taskUpdater.CompleteAsync(message: null, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -224,7 +233,21 @@ internal sealed class A2AAgentHandler : IAgentHandler
                 ? CreateMessageFromResponse(contextId, response)
                 : null;
 
-            await taskUpdater.StartWorkAsync(progressMessage, cancellationToken).ConfigureAwait(false);
+            await taskUpdater.StartWorkAsync(progressMessage, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task SaveSessionAsync(string contextId, AgentSession session, bool suppressFailure)
+    {
+        try
+        {
+            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+        }
+#pragma warning disable CA1031, RCS1075 // Preserve the exception already propagating from agent execution.
+        catch (Exception) when (suppressFailure)
+#pragma warning restore CA1031, RCS1075
+        {
+            // Best-effort persistence must not replace the agent run failure.
         }
     }
 
@@ -295,7 +318,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         var artifactWriter = new ArtifactStreamWriter(updater);
 
         // Emit the task in the Submitted state.
-        await updater.SubmitAsync(cancellationToken).ConfigureAwait(false);
+        await updater.SubmitAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -316,14 +339,14 @@ internal sealed class A2AAgentHandler : IAgentHandler
         {
             await artifactWriter.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
 
-            await updater.CancelAsync(CancellationToken.None).ConfigureAwait(false);
+            await updater.CancelAsync(cancellationToken: CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (Exception)
         {
             await artifactWriter.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
 
-            await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), CancellationToken.None).ConfigureAwait(false);
+            await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), cancellationToken: CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }
@@ -340,18 +363,17 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// If emitting the result fails after the task has been submitted, the task is transitioned to
     /// <c>Canceled</c>/<c>Failed</c> so it is never left in a non-terminal state.
     /// </remarks>
-    private static async Task AggregateTaskUpdatesAsync(IAsyncEnumerable<AgentResponseUpdate> updates, TaskUpdater updater, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    private static async Task AggregateTaskUpdatesAsync(IAsyncEnumerable<AgentResponseUpdate> updates, TaskUpdater updater, CancellationToken cancellationToken)
     {
         AgentResponse response = await updates.ToAgentResponseAsync(cancellationToken).ConfigureAwait(false);
 
-        await updater.SubmitAsync(cancellationToken).ConfigureAwait(false);
+        await updater.SubmitAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
         try
         {
             if (response.Messages.ToParts() is { Count: > 0 } parts)
             {
-                await eventQueue.AddArtifactAsync(
-                    updater,
+                await updater.AddArtifactAsync(
                     parts,
                     metadata: response.AdditionalProperties?.ToA2AMetadata(),
                     cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -361,12 +383,12 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await updater.CancelAsync(CancellationToken.None).ConfigureAwait(false);
+            await updater.CancelAsync(cancellationToken: CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (Exception)
         {
-            await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), CancellationToken.None).ConfigureAwait(false);
+            await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), cancellationToken: CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }

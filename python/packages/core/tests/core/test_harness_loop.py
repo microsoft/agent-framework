@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any
 
@@ -1565,6 +1566,54 @@ async def test_turn_scoped_after_run_fires_once_per_loop_streaming() -> None:
     assert client.call_count == 3
     assert turn_scoped.after_calls == 1
     assert run_scoped.after_calls == 3
+
+
+@pytest.mark.parametrize("stop_mode", ["full_consumption", "early_close", "cancellation"])
+async def test_streaming_loop_releases_active_inner_stream(stop_mode: str) -> None:
+    cleanup_calls = 0
+    block_second_update = asyncio.Event()
+
+    class CleanupRecordingClient(RecordingChatClient):
+        def _stream(
+            self, messages: Sequence[Message], conversation_id: str | None = None
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _gen() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                if stop_mode == "cancellation":
+                    await block_second_update.wait()
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+
+            async def _cleanup() -> None:
+                nonlocal cleanup_calls
+                cleanup_calls += 1
+
+            return ResponseStream(
+                _gen(),
+                finalizer=ChatResponse.from_updates,
+                cleanup_hooks=[_cleanup],
+            )
+
+    agent = Agent(
+        client=CleanupRecordingClient(),
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=1)],
+    )
+
+    stream = agent.run("start", stream=True)
+    if stop_mode == "early_close":
+        await anext(stream)
+        await stream.close()
+    elif stop_mode == "cancellation":
+        await anext(stream)
+        next_update = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        next_update.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await next_update
+    else:
+        _ = [update async for update in stream]
+        await stream.get_final_response()
+
+    assert cleanup_calls == 1
 
 
 async def test_turn_scoped_after_run_fires_normally_without_loop() -> None:

@@ -43,5 +43,14 @@ public sealed class AIAgentHostOptions
     /// Gets or sets a value indicating whether incoming messages are automatically forwarded before new messages generated
     /// by the agent during its turn.
     /// </summary>
+    /// <remarks>
+    /// Answers received through the workflow's tool-approval response handler are forwarded only after the agent
+    /// returns their completed function calls and results, regardless of this setting. The forwarded answers use
+    /// those completed calls rather than caller-supplied tool details and precede the results, so other agents can
+    /// match approval requests already forwarded in the conversation without executing the calls again.
+    /// Agents handling these answers must return the matching <see cref="FunctionCallContent"/> and
+    /// <see cref="FunctionResultContent"/>; otherwise the host reports an error instead of forwarding an
+    /// uncompleted approval answer.
+    /// </remarks>
     public bool ForwardIncomingMessages { get; set; } = true;
 }

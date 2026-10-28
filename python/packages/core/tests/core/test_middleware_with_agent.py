@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import logging
 import threading
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, cast
@@ -26,6 +27,7 @@ from agent_framework import (
     MiddlewareFailure,
     MiddlewareTermination,
     MiddlewareType,
+    ResponseStream,
     SupportsChatGetResponse,
     agent_middleware,
     chat_middleware,
@@ -384,6 +386,115 @@ class TestChatAgentStreamingMiddleware:
 
         # Verify flags: [non-streaming, streaming]
         assert streaming_flags == [False, True]
+
+    async def test_result_gate_without_buffer_logs_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on an unbuffered streamed run logs a fail-open warning."""
+
+        class ResultGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                if context.stream:
+                    context.stream_result_gates_after.append(lambda result: None)
+                await call_next()
+
+        agent = Agent(client=client, middleware=[ResultGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in agent.run([Message(role="user", contents=["test message"])], stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
+    async def test_result_gate_with_buffer_logs_no_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on a buffered streamed run blocks as documented, so no warning."""
+
+        class BufferedResultGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                if context.stream:
+                    context.stream_buffer_updates = True
+                    context.stream_result_gates_after.append(lambda result: None)
+                await call_next()
+
+        agent = Agent(client=client, middleware=[BufferedResultGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            updates = [
+                update async for update in agent.run([Message(role="user", contents=["test message"])], stream=True)
+            ]
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
+        assert updates
+
+    async def test_result_gate_attached_directly_to_stream_logs_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A gate a middleware attaches straight to the final stream is detected too."""
+
+        class DirectGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                if isinstance(context.result, ResponseStream):
+                    context.result.with_result_gate(lambda result: None)
+
+        agent = Agent(client=client, middleware=[DirectGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in agent.run([Message(role="user", contents=["test message"])], stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
+    async def test_direct_stream_gate_with_direct_buffer_logs_no_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Buffering enabled directly on the stream satisfies the gates, so no warning."""
+
+        class DirectBufferedGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                if isinstance(context.result, ResponseStream):
+                    context.result.with_result_gate(lambda result: None)
+                    context.result.buffer_updates()
+
+        agent = Agent(client=client, middleware=[DirectBufferedGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            updates = [
+                update async for update in agent.run([Message(role="user", contents=["test message"])], stream=True)
+            ]
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
+        assert updates
+
+    async def test_no_result_gate_logs_no_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A plain streamed run without gates stays quiet."""
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in agent.run([Message(role="user", contents=["test message"])], stream=True):
+                pass
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
 
 
 class TestChatAgentMultipleMiddlewareOrdering:
@@ -1772,14 +1883,15 @@ class TestChatAgentSessionBehavior:
         second_after = thread_states[3]
         assert second_after["before_next"] is False
         assert second_after["messages_count"] == 1  # Input messages unchanged
-        assert second_after["thread_count"] == 3  # Previous history (2) + current input (1)
+        assert second_after["thread_count"] == 4  # Both runs persist their input and response.
         assert second_after["messages_text"] == ["second message"]
-        # Thread should contain: first input + first response + second input
-        assert "first message" in second_after["thread_messages_text"]
-        assert "second message" in second_after["thread_messages_text"]
-        # "test response" should only appear once since the duplicate was correctly filtered
-        response_count = sum(1 for text in second_after["thread_messages_text"] if "test response" in text)
-        assert response_count == 1
+        # Repeated response text remains attached to each run, in conversation order.
+        assert second_after["thread_messages_text"] == [
+            "first message",
+            "test response",
+            "second message",
+            "test response",
+        ]
 
 
 class TestChatAgentChatMiddleware:

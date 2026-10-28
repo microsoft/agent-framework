@@ -50,6 +50,15 @@ public static class FunctionInvocationDelegatingAgentBuilderExtensions
     /// The inner agent or the pipeline wrapping it must include a <see cref="FunctionInvokingChatClient"/>. If one does not exist,
     /// the <see cref="AIAgent"/> added to the pipline by this method will throw an exception when it is invoked.
     /// </para>
+    /// <para>
+    /// <b>Important:</b> these callbacks apply to tools registered on the agent, including tools passed to a
+    /// <see cref="ChatClientAgent"/> constructor or <c>AsAIAgent</c>, tools configured through
+    /// <see cref="ChatClientAgentOptions.ChatOptions"/>, and tools supplied for an individual run. These tools are
+    /// provided to the function-calling client through <see cref="ChatOptions.Tools"/>. Functions placed directly on
+    /// <see cref="FunctionInvokingChatClient.AdditionalTools"/> are invoked without going through this callback
+    /// pipeline. Do not rely on these callbacks to enforce checks, such as authorization or any other checks, for
+    /// functions that are registered via <see cref="FunctionInvokingChatClient.AdditionalTools"/>.
+    /// </para>
     /// </remarks>
     public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> callback)
     {

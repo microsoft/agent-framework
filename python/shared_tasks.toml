@@ -1,17 +1,13 @@
 [tool.poe.tasks.syntax]
 help = "Run Ruff formatting and Ruff checks for this package."
-sequence = ["fmt", "lint"]
+sequence = ["syntax-format", "syntax-check"]
 
-[tool.poe.tasks.fmt]
-help = "DEPRECATED: Use `syntax --format` instead."
+[tool.poe.tasks.syntax-format]
+help = "Run Ruff formatting for this package."
 cmd = "ruff format"
 
-[tool.poe.tasks.format]
-help = "DEPRECATED: Use `syntax --format` instead."
-ref = "fmt"
-
-[tool.poe.tasks.lint]
-help = "DEPRECATED: Use `syntax --check` instead."
+[tool.poe.tasks.syntax-check]
+help = "Run Ruff checks for this package."
 cmd = "ruff check"
 
 [tool.poe.tasks.pyright]

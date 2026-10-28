@@ -291,6 +291,181 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
 
     #region FilterForwardableMessages tests
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Test_AgentHostExecutor_ForwardsCompletedCallRatherThanSubstitutedAnswerAsync(
+        bool forwardIncomingMessages, bool streaming)
+    {
+        // Arrange
+        ToolApprovalRequestContent request = new("request-id", new FunctionCallContent("call-id", "originalTool"));
+        ToolApprovalResponseContent answer = new(
+            request.RequestId, true,
+            new FunctionCallContent("substituted-call", "substitutedTool", new Dictionary<string, object?> { ["value"] = "untrusted" }))
+        {
+            Reason = "Approved",
+        };
+        List<ChatMessage> agentMessages = [new(ChatRole.Assistant, [request])];
+        TestRunContext testContext = new();
+        MixedContentAgent agent = new(agentMessages, TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new()
+        {
+            ForwardIncomingMessages = forwardIncomingMessages,
+            EmitAgentUpdateEvents = streaming,
+        });
+        testContext.ConfigureExecutor(executor);
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+        ExternalRequest pendingRequest = Assert.Single(testContext.ExternalRequests);
+        testContext.QueuedMessages.Clear();
+        agentMessages.Clear();
+        FunctionCallContent completedCall = new("call-id", "originalTool", new Dictionary<string, object?> { ["value"] = "trusted" })
+        {
+            InformationalOnly = true,
+        };
+        agentMessages.Add(new(ChatRole.Assistant, [completedCall]));
+        agentMessages.Add(new(ChatRole.Tool, [new FunctionResultContent("call-id", "Completed")]));
+        agentMessages.Add(new(ChatRole.Assistant, "Done"));
+
+        // Act
+        await executor.Router.RouteMessageAsync(pendingRequest.CreateResponse(answer), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        List<ChatMessage> forwardedMessages = testContext.QueuedMessages[executor.Id]
+            .Select(e => e.Message)
+            .OfType<List<ChatMessage>>()
+            .SelectMany(list => list)
+            .ToList();
+        var forwardedAnswer = Assert.Single(forwardedMessages.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>());
+        var forwardedCall = Assert.IsType<FunctionCallContent>(forwardedAnswer.ToolCall);
+        Assert.Equal("call-id", forwardedCall.CallId);
+        Assert.Equal("originalTool", forwardedCall.Name);
+        Assert.Equal("trusted", forwardedCall.Arguments!["value"]);
+        Assert.False(forwardedCall.InformationalOnly);
+        Assert.NotSame(completedCall, forwardedCall);
+        Assert.NotSame(answer, forwardedAnswer);
+        Assert.True(forwardedAnswer.Approved);
+        Assert.Equal("Approved", forwardedAnswer.Reason);
+        Assert.True(completedCall.InformationalOnly);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Test_AgentHostExecutor_ForwardsExternalApprovalAnswerBeforeResultAsync(
+        bool forwardIncomingMessages, bool streaming)
+    {
+        // Arrange
+        ToolApprovalRequestContent request = new("request-id", new FunctionCallContent("call-id", "tool"));
+        ToolApprovalResponseContent answer = request.CreateResponse(approved: false, reason: "Denied");
+        List<ChatMessage> agentMessages = [new(ChatRole.Assistant, [request])];
+        TestRunContext testContext = new();
+        MixedContentAgent agent = new(agentMessages, TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new()
+        {
+            ForwardIncomingMessages = forwardIncomingMessages,
+            EmitAgentUpdateEvents = streaming,
+        });
+        testContext.ConfigureExecutor(executor);
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+        ExternalRequest pendingRequest = Assert.Single(testContext.ExternalRequests);
+        testContext.QueuedMessages.Clear();
+        agentMessages.Clear();
+        agentMessages.Add(new(ChatRole.Assistant, [new FunctionCallContent("call-id", "tool") { InformationalOnly = true }]));
+        agentMessages.Add(new(ChatRole.Tool, [new FunctionResultContent("call-id", "Rejected")]));
+        agentMessages.Add(new(ChatRole.Assistant, "Done"));
+        agent.BeforeResponse = () =>
+        {
+            var alreadyForwarded = testContext.QueuedMessages.Values.SelectMany(envelopes => envelopes)
+                .Select(e => e.Message).OfType<List<ChatMessage>>().SelectMany(m => m).ToList();
+            Assert.DoesNotContain(alreadyForwarded.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
+            Assert.Equal(forwardIncomingMessages, alreadyForwarded.Any(m => m.Text == "new question"));
+        };
+
+        // Act
+        await executor.Router.RouteMessageAsync(
+            new List<ChatMessage> { new(ChatRole.User, "new question") },
+            testContext.BindWorkflowContext(executor.Id));
+        await executor.Router.RouteMessageAsync(pendingRequest.CreateResponse(answer), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        List<ChatMessage> forwardedMessages = testContext.QueuedMessages[executor.Id]
+            .Select(e => e.Message)
+            .OfType<List<ChatMessage>>()
+            .SelectMany(list => list)
+            .ToList();
+        ToolApprovalResponseContent forwardedAnswer = Assert.Single(forwardedMessages.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>());
+        Assert.NotSame(answer, forwardedAnswer);
+        Assert.Equal(answer.RequestId, forwardedAnswer.RequestId);
+        Assert.Equal(answer.Approved, forwardedAnswer.Approved);
+        Assert.Equal("Denied", forwardedAnswer.Reason);
+        Assert.True(forwardedMessages.FindIndex(m => m.Contents.Contains(forwardedAnswer))
+            < forwardedMessages.FindIndex(m => m.Contents.OfType<FunctionResultContent>().Any()));
+        Assert.Equal(forwardIncomingMessages, forwardedMessages.Any(m => m.Text == "new question"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Test_AgentHostExecutor_IncompleteApprovalOutput_IsNotForwardedAsync(bool missingResult)
+    {
+        // Arrange
+        ToolApprovalRequestContent request = new("request-id", new FunctionCallContent("call-id", "tool"));
+        List<ChatMessage> agentMessages = [new(ChatRole.Assistant, [request])];
+        TestRunContext testContext = new();
+        MixedContentAgent agent = new(agentMessages, TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new() { ForwardIncomingMessages = false });
+        testContext.ConfigureExecutor(executor);
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+        ExternalRequest pendingRequest = Assert.Single(testContext.ExternalRequests);
+        testContext.QueuedMessages.Clear();
+        agentMessages.Clear();
+        agentMessages.Add(missingResult
+            ? new(ChatRole.Assistant, [new FunctionCallContent("call-id", "tool")])
+            : new(ChatRole.Tool, [new FunctionResultContent("call-id", "Completed")]));
+        var answer = request.CreateResponse(approved: true);
+
+        // Act
+        var callResult = await executor.Router.RouteMessageAsync(pendingRequest.CreateResponse(answer), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        var exception = Assert.IsType<InvalidOperationException>(callResult!.Exception);
+        Assert.Contains("did not return a function call and result", exception.Message);
+        Assert.DoesNotContain(
+            testContext.QueuedMessages.Values.SelectMany(envelopes => envelopes).Select(e => e.Message).OfType<List<ChatMessage>>()
+                .SelectMany(messages => messages).SelectMany(m => m.Contents),
+            c => c is ToolApprovalResponseContent);
+    }
+
+    [Fact]
+    public async Task Test_AgentHostExecutor_DoesNotRebroadcastIncomingApprovalAnswersAsync()
+    {
+        // Arrange
+        ToolApprovalRequestContent request = new("request-id", new FunctionCallContent("call-id", "tool"));
+        ChatMessage incomingAnswer = new(ChatRole.User, [request.CreateResponse(approved: false)]);
+        TestRunContext testContext = new();
+        MixedContentAgent agent = new([new(ChatRole.Assistant, "Reply")], TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new() { ForwardIncomingMessages = false });
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.Router.RouteMessageAsync(
+            new List<ChatMessage> { incomingAnswer },
+            testContext.BindWorkflowContext(executor.Id));
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        List<ChatMessage> forwardedMessages = testContext.QueuedMessages[executor.Id]
+            .Select(e => e.Message)
+            .OfType<List<ChatMessage>>()
+            .SelectMany(list => list)
+            .ToList();
+        Assert.Equal("Reply", Assert.Single(forwardedMessages).Text);
+    }
+
     /// <summary>
     /// An agent that returns response messages containing a mix of content types,
     /// including non-portable server-side artifacts like TextReasoningContent and
@@ -298,6 +473,8 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
     /// </summary>
     private sealed class MixedContentAgent(List<ChatMessage> responseMessages, string? id = null, string? name = null) : AIAgent
     {
+        public Action? BeforeResponse { get; set; }
+
         protected override string? IdCore => id;
         public override string? Name => name;
 
@@ -311,10 +488,14 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
             => default;
 
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AgentResponse(responseMessages.ToList()) { AgentId = this.Id });
+        {
+            this.BeforeResponse?.Invoke();
+            return Task.FromResult(new AgentResponse(responseMessages.ToList()) { AgentId = this.Id });
+        }
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            this.BeforeResponse?.Invoke();
             foreach (ChatMessage msg in responseMessages)
             {
                 foreach (AIContent content in msg.Contents)
