@@ -51,7 +51,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// If fetched resource content has a different size or content hash than its manifest entry,
 /// the skill that owns that resource is queued for refresh.
-/// The resource read returns previously verified cached content if available, without extending its TTL;
+/// The resource read returns previously verified cached content if available and caches it indefinitely for that skill object;
 /// otherwise, it throws. Other resource-read and validation errors propagate without queuing a skill refresh.
 /// </para>
 /// <para>

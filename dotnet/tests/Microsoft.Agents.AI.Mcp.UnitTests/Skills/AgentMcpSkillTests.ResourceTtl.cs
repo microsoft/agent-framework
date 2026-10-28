@@ -356,7 +356,7 @@ public sealed partial class AgentMcpSkillTests
     [InlineData(false, false, -1L)]
     [InlineData(true, true, -1L)]
     [InlineData(false, true, -1L)]
-    public async Task ReadResource_ExpiredTtl_ReturnsCachedContentOnMismatchAndRetriesAsync(bool instructions, bool sizeMismatch, long? ttl)
+    public async Task ReadResource_ExpiredTtl_ReturnsCachedContentOnMismatchWithoutRetryingAsync(bool instructions, bool sizeMismatch, long? ttl)
     {
         // Arrange
         var clock = new ResourceTimeProvider();
@@ -365,10 +365,10 @@ public sealed partial class AgentMcpSkillTests
         int reads = 0;
         await using var server = CreateServer((uri, _) =>
         {
-            ReadResourceResult result = Text(uri, ++reads is 2 or 3 ? changed : original);
+            ReadResourceResult result = Text(uri, ++reads == 2 ? changed : original);
             result.TimeToLive = reads == 1
                 ? ttl is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null
-                : TimeSpan.FromMinutes(reads is 2 or 3 ? 10 : 1);
+                : TimeSpan.FromMinutes(10);
             return ValueTask.FromResult(result);
         });
         await using var client = await server.CreateClientAsync();
@@ -385,7 +385,7 @@ public sealed partial class AgentMcpSkillTests
         await ReadSnapshotAsync(skill, instructions);
 
         // Assert
-        Assert.Equal(3, reads);
+        Assert.Equal(2, reads);
         logger.Verify(
             l => l.Log(
                 LogLevel.Warning,
@@ -394,14 +394,15 @@ public sealed partial class AgentMcpSkillTests
                     && state.ToString()!.Contains(sizeMismatch ? "byte size" : "SHA-256 digest")),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Exactly(2));
+            Times.Once);
 
         // Act
+        clock.Advance(TimeSpan.FromMinutes(20));
         await ReadSnapshotAsync(skill, instructions);
         await ReadSnapshotAsync(skill, instructions);
 
         // Assert
-        Assert.Equal(4, reads);
+        Assert.Equal(2, reads);
     }
 
     [Theory]
@@ -433,7 +434,7 @@ public sealed partial class AgentMcpSkillTests
         Assert.Equal(2, reads);
         var retried = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
         Assert.Equal(bytes, Assert.IsType<DataContent>(await retried.ReadAsync()).Data.ToArray());
-        Assert.Equal(3, reads);
+        Assert.Equal(2, reads);
     }
 
     [Fact]

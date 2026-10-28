@@ -29,8 +29,10 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Each resource is cached until its time to live (TTL) expires, then fetched again.
-/// A size or content hash mismatch queues a skill refresh and returns previously verified content if available,
-/// without extending its TTL. Without cached content, the read throws. Other errors propagate.
+/// If a resource's size or content hash has changed, a skill refresh is queued.
+/// Previously verified content, if available, is returned and cached indefinitely for this skill object
+/// to avoid unnecessary requests for a resource that no longer matches its manifest.
+/// If no verified content is cached when a mismatch occurs, the read throws. Other errors propagate.
 /// </para>
 /// <para>
 /// A refresh creates a new skill object with the server's updated resource list.
@@ -168,7 +170,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     }
 
     /// <summary>
-    /// Fetches and validates resource content, returning the previous entry on a size or content hash mismatch when available.
+    /// Fetches and validates resource content, returning previously verified content on a size or content hash mismatch when available.
     /// </summary>
     private async ValueTask<McpCacheEntry<ResourceContents>> FetchResourceContentAsync(McpSkillResourceEntry resource, McpCacheEntry<ResourceContents>? cached, CancellationToken cancellationToken)
     {
@@ -189,14 +191,15 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             LogResourceIntegrityMismatch(this._logger, resource.Uri, this.Uri, mismatch);
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Without previously verified content, there is no safe fallback.
             if (cached is null)
             {
                 throw new InvalidOperationException($"Resource '{resource.Uri}' has a {mismatch} that differs from the resource manifest.");
             }
 
-            // Stale content still matches the held manifest. Keep its original lifetime.
-            return cached;
+            // When the resource's size or digest changes, the cached content becomes stale but still matches this skill's held manifest.
+            // A skill refresh is queued, so keep the cached content indefinitely to avoid fetching the changed resource again.
+            // A refresh creates a new skill object with the updated manifest and a separate resource cache.
+            return new(cached.Value, McpCacheLifetime.Infinite);
         }
 
         // Only the skill's SKILL.md must have frontmatter matching the listed name and description.

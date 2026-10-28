@@ -293,7 +293,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Same(original[1], refreshed[1]);
         Assert.Single(methods, method => method == "skills/list");
         Assert.Single(methods, method => method == "skills/get");
-        Assert.Equal(cached ? 3 : 2, methods.FindAll(method => method == "resources/read").Count);
+        Assert.Equal(2, methods.FindAll(method => method == "resources/read").Count);
         if (instructions)
         {
             Assert.Equal(updatedContent, await refreshed[0].GetContentAsync());
@@ -312,6 +312,7 @@ public sealed partial class AgentMcpSkillsTests
             await Assert.ThrowsAsync<InvalidOperationException>(() => ReadSkillContentAsync(original[0], instructions));
         }
 
+        Assert.Equal(cached ? 3 : 4, methods.FindAll(method => method == "resources/read").Count);
         Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
@@ -587,6 +588,7 @@ public sealed partial class AgentMcpSkillsTests
         // Arrange
         const string UpdatedContent = SkillContent + "\nUpdated.";
         int gets = 0;
+        int reads = 0;
         var client = CreateTtlClient((request, _) =>
         {
             if (request.Method == "skills/list")
@@ -596,6 +598,7 @@ public sealed partial class AgentMcpSkillsTests
 
             if (request.Method == "resources/read")
             {
+                reads++;
                 return Task.FromResult(ResourceReadResult(SkillUri, 1000, UpdatedContent));
             }
 
@@ -628,11 +631,14 @@ public sealed partial class AgentMcpSkillsTests
 
         // Act & Assert
         await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
+        Assert.Equal(2, reads);
         IList<AgentSkill> refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         Assert.NotSame(original, refreshed);
         Assert.NotSame(original[0], Assert.Single(refreshed));
         Assert.Single(original);
         Assert.Equal(UpdatedContent, await refreshed[0].GetContentAsync());
+        Assert.Equal(3, reads);
         Assert.Equal(2, gets);
         Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
