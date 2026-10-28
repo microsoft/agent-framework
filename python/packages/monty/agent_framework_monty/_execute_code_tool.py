@@ -313,6 +313,11 @@ class MontyExecuteCodeTool(FunctionTool):
         """Add Monty-side tools to this execute_code surface."""
         new_tools = _collect_tools(tools)
         self._managed_tools = _collect_tools(self._managed_tools, new_tools)
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in self._managed_tools)
+        ]
         _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
         self._refresh_approval_mode()
 
@@ -326,11 +331,17 @@ class MontyExecuteCodeTool(FunctionTool):
         if len(remaining_tools) == len(self._managed_tools):
             raise KeyError(f"No managed tool named {name!r} is registered.")
         self._managed_tools = remaining_tools
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in remaining_tools)
+        ]
         self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed Monty tools."""
         self._managed_tools = []
+        self._fides_warned_metadata.clear()
         self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -384,9 +395,11 @@ class MontyExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
+        tools = self.get_tools()
+        _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
         return MontyExecuteCodeTool(
             _fides_warned_metadata=self._fides_warned_metadata,
-            tools=self.get_tools(),
+            tools=tools,
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
