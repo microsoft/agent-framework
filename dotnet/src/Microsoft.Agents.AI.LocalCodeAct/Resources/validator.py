@@ -116,10 +116,15 @@ _SAFE_DUNDER_ATTRS: frozenset[str] = frozenset(
 
 _BLOCKED_CAPABILITY_ATTRS: frozenset[str] = frozenset(
     {
+        "Popen",
+        "_UnixSubprocessTransport",
+        "_WindowsSubprocessTransport",
         "__builtins__",
         "_eval_type",
         "_evaluate",
+        "_make_subprocess_transport",
         "_sys",
+        "_winapi",
         "ag_frame",
         "builtins",
         "connect_accepted_socket",
@@ -172,6 +177,7 @@ _BLOCKED_RUNTIME_TRAVERSAL_ATTRS: frozenset[str] = frozenset({"format", "format_
 _OS_ROOT_CHAIN: tuple[str, ...] = ("os",)
 _OS_PATH_CHAIN: tuple[str, ...] = ("os", "path")
 _OS_ENVIRON_CHAIN: tuple[str, ...] = ("os", "environ")
+_OS_FORBIDDEN_CHAIN: tuple[str, ...] = ("<forbidden OS-derived value>",)
 
 # Allowed builtin function names that generated code may call.
 # Note: getattr/setattr/hasattr/delattr are NOT included because they can bypass
@@ -389,6 +395,7 @@ class _CodeValidator(ast.NodeVisitor):
         self._allowed_os_attrs = allowed_os_attrs if allowed_os_attrs is not None else ALLOWED_OS_ATTRS
         self._os_aliases: dict[str, set[tuple[str, ...]]] = {"os": {_OS_ROOT_CHAIN}}
         self._os_containers: dict[str, set[tuple[str, ...]]] = {}
+        self._collecting_provenance = False
         self._shadowed_os_value_builtins: set[str] = set()
 
     def validate(self, code: str) -> None:
@@ -402,12 +409,67 @@ class _CodeValidator(ast.NodeVisitor):
         self._os_aliases = {"os": {_OS_ROOT_CHAIN}}
         self._os_containers = {}
         self._shadowed_os_value_builtins = self._find_shadowed_os_value_builtins(tree)
+        self._collect_os_provenance(tree)
         self.visit(tree)
 
         if self._errors:
             raise CodeValidationError(
                 "Generated code violates allow-list policy:\n" + "\n".join(f"- {err}" for err in self._errors)
             )
+
+    def _collect_os_provenance(self, tree: ast.AST) -> None:
+        """Collect finite, conservative provenance before checking any uses."""
+        nodes = list(ast.walk(tree))
+        producers: list[ast.AST] = []
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "os" or alias.name.startswith("os."):
+                        chain = tuple(alias.name.split(".")) if alias.asname else _OS_ROOT_CHAIN
+                        self._remember_os_alias(alias.asname or "os", chain)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                for alias in node.names:
+                    if node.module == "os" or node.module.startswith("os."):
+                        chain = (*tuple(node.module.split(".")), alias.name)
+                        self._remember_os_alias(alias.asname or alias.name, chain)
+                    elif alias.name in {"os", "_os"}:
+                        self._remember_os_alias(alias.asname or alias.name, _OS_ROOT_CHAIN)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.For, ast.AsyncFor)):
+                producers.append(node)
+
+        names = {node.id for node in nodes if isinstance(node, ast.Name)} | self._os_aliases.keys()
+        chain_count = 2 + len(self._allowed_os_attrs)  # Root, forbidden, and configured top-level members.
+        if "path" in self._allowed_os_attrs:
+            chain_count += len(ALLOWED_OS_PATH_ATTRS)
+        if "environ" in self._allowed_os_attrs:
+            chain_count += len(ALLOWED_OS_ENVIRON_ATTRS)
+
+        # Each changing sweep adds a direct or contained name/chain fact.
+        max_facts = 2 * len(names) * chain_count
+        previous_fact_count = -1
+        self._collecting_provenance = True
+        try:
+            for _ in range(max_facts + 1):
+                fact_count = sum(
+                    len(chains)
+                    for mapping in (self._os_aliases, self._os_containers)
+                    for chains in mapping.values()
+                )
+                if fact_count == previous_fact_count:
+                    return
+                previous_fact_count = fact_count
+                for node in producers:
+                    if isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            self._track_os_provenance(target, node.value)
+                    elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                        self._track_os_provenance(node.target, node.value)
+                    elif isinstance(node, (ast.For, ast.AsyncFor)):
+                        self._track_os_iteration_target(node.target, node.iter)
+        finally:
+            self._collecting_provenance = False
+
+        raise CodeValidationError("Generated code is not allowed: OS provenance analysis exceeded its finite bound")
 
     def visit(self, node: ast.AST) -> Any:
         """Visit a node and check if its type is allowed."""
@@ -426,16 +488,8 @@ class _CodeValidator(ast.NodeVisitor):
             elif module_name not in self._allowed_imports:
                 self._errors.append(f"Import of '{alias_node.name}' is not allowed (not in allow-list)")
 
-            if alias_node.name == "os":
-                self._remember_os_alias(alias_node.asname or "os", _OS_ROOT_CHAIN)
-            elif alias_node.name.startswith("os."):
-                chain = tuple(alias_node.name.split("."))
-                if chain != _OS_PATH_CHAIN:
-                    self._errors.append(f"Import of '{alias_node.name}' is not allowed")
-                elif alias_node.asname is not None:
-                    self._remember_os_alias(alias_node.asname, chain)
-                else:
-                    self._remember_os_alias("os", _OS_ROOT_CHAIN)
+            if alias_node.name.startswith("os.") and alias_node.name != "os.path":
+                self._errors.append(f"Import of '{alias_node.name}' is not allowed")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -454,19 +508,14 @@ class _CodeValidator(ast.NodeVisitor):
             self._errors.append(f"Import from '{node.module}' is not allowed (not in allow-list)")
         elif module_name == "os":
             for alias_node in node.names:
-                chain = (*tuple(node.module.split(".")), alias_node.name)
                 if node.module != "os" or alias_node.name not in self._allowed_os_attrs:
                     self._errors.append(f"Import from 'os' of '{alias_node.name}' is not allowed")
-                else:
-                    self._remember_os_alias(alias_node.asname or alias_node.name, chain)
         else:
             for alias_node in node.names:
                 if alias_node.name.startswith("__") and alias_node.name.endswith("__"):
                     self._errors.append(
                         f"Import from '{node.module}' of reflective attribute '{alias_node.name}' is not allowed"
                     )
-                elif alias_node.name in {"os", "_os"}:
-                    self._remember_os_alias(alias_node.asname or alias_node.name, _OS_ROOT_CHAIN)
                 elif alias_node.name in _BLOCKED_CAPABILITY_ATTRS:
                     self._errors.append(
                         f"Import from '{node.module}' of capability '{alias_node.name}' is not allowed"
@@ -570,7 +619,10 @@ class _CodeValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _remember_os_alias(self, name: str, chain: tuple[str, ...]) -> None:
-        self._os_aliases.setdefault(name, set()).add(chain)
+        self._os_aliases.setdefault(name, set()).add(self._normalize_os_chain(chain))
+
+    def _normalize_os_chain(self, chain: tuple[str, ...]) -> tuple[str, ...]:
+        return chain if self._is_allowed_os_chain(chain) else _OS_FORBIDDEN_CHAIN
 
     def _remember_os_chains(
         self,
@@ -582,15 +634,19 @@ class _CodeValidator(ast.NodeVisitor):
             target = target.value
 
         if isinstance(target, ast.Name):
+            if not self._collecting_provenance:
+                return
             if direct:
-                self._os_aliases.setdefault(target.id, set()).update(direct)
+                self._os_aliases.setdefault(target.id, set()).update(self._normalize_os_chain(chain) for chain in direct)
             if contained:
-                self._os_containers.setdefault(target.id, set()).update(contained)
+                self._os_containers.setdefault(target.id, set()).update(
+                    self._normalize_os_chain(chain) for chain in contained
+                )
         elif isinstance(target, (ast.Tuple, ast.List)):
             possible = direct | contained
             for target_item in target.elts:
                 self._remember_os_chains(target_item, possible, set())
-        elif direct or contained:
+        elif not self._collecting_provenance and (direct or contained):
             self._errors.append("Storing an OS-derived value on an object is not allowed")
 
     def _track_os_provenance(self, target: ast.AST, value: ast.AST) -> None:
@@ -660,9 +716,10 @@ class _CodeValidator(ast.NodeVisitor):
 
         if isinstance(node, ast.Attribute):
             direct, _ = self._get_os_provenance(node.value)
-            if not direct and node.attr in {"os", "_os"}:
-                return ({_OS_ROOT_CHAIN}, set())
-            return ({(*chain, node.attr) for chain in direct}, set())
+            chains = {(*chain, node.attr) for chain in direct}
+            if node.attr in {"os", "_os"}:
+                chains.add(_OS_ROOT_CHAIN)
+            return chains, set()
 
         if isinstance(node, ast.Subscript):
             direct, contained = self._get_os_provenance(node.value)
