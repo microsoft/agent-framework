@@ -53,7 +53,7 @@ public static class ServiceDefaultsExtensions
         });
 
         builder.Services.AddOpenTelemetry()
-            .ConfigureResource(resource => resource.AddAttributes([new("microsoft.foundry", "True")]))
+            .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]))
             .WithMetrics(metrics =>
             {
                 metrics.AddAspNetCoreInstrumentation()

@@ -70,7 +70,7 @@ carry a documented feature-usage token.
   User-Agent contribution, including the feature token.
 
 OpenTelemetry providers configured through `configure_otel_providers()` share a
-resource containing `"microsoft.foundry": "True"` (a string) by default. This
+resource containing `"microsoft.agent-framework": "True"` (a string) by default. This
 resource attribute applies to logs, traces, and metrics, including other
 instrumentation using those providers. Existing environment and explicit resource
 attribute overrides retain their precedence. If you configure providers yourself,

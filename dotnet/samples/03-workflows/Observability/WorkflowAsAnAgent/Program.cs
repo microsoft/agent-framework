@@ -55,7 +55,7 @@ public static class Program
         var resourceBuilder = ResourceBuilder
             .CreateDefault()
             .AddService("WorkflowSample")
-            .AddAttributes([new("microsoft.foundry", "True")]);
+            .AddAttributes([new("microsoft.agent-framework", "True")]);
 
         var traceProviderBuilder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)

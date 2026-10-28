@@ -21,7 +21,7 @@ var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("AP
 // This will output the telemetry data to the console.
 string sourceName = Guid.NewGuid().ToString("N");
 var tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
-    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.foundry", "True")]))
+    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]))
     .AddSource(sourceName)
     .AddConsoleExporter();
 if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))

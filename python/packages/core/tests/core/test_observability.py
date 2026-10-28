@@ -1478,29 +1478,35 @@ def test_get_exporters_from_env_env_only_headers_unaffected_by_origin_guard(monk
 # region Test create_resource
 
 
-def test_create_resource_includes_foundry_attribute(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Resources include the Foundry marker as a string, not a boolean."""
+def test_create_resource_includes_agent_framework_attribute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resources include the Agent Framework marker as a string, not a boolean."""
     from agent_framework.observability import create_resource
 
     monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
 
     resource = create_resource()
 
-    assert resource.attributes["microsoft.foundry"] == "True"
+    assert resource.attributes["microsoft.agent-framework"] == "True"
+    assert "microsoft.foundry" not in resource.attributes
 
 
-def test_create_resource_foundry_attribute_preserves_override_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_resource_agent_framework_attribute_preserves_override_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The default marker follows existing environment and explicit attribute precedence."""
     from agent_framework.observability import create_resource
 
-    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "microsoft.foundry=environment")
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "microsoft.agent-framework=environment")
 
-    assert create_resource().attributes["microsoft.foundry"] == "environment"
-    assert create_resource(attributes={"microsoft.foundry": "explicit"}).attributes["microsoft.foundry"] == "explicit"
+    assert create_resource().attributes["microsoft.agent-framework"] == "environment"
     assert (
-        create_resource(attributes={"microsoft.foundry": "explicit"}, **{"microsoft.foundry": "keyword"}).attributes[
-            "microsoft.foundry"
-        ]
+        create_resource(attributes={"microsoft.agent-framework": "explicit"}).attributes["microsoft.agent-framework"]
+        == "explicit"
+    )
+    assert (
+        create_resource(
+            attributes={"microsoft.agent-framework": "explicit"}, **{"microsoft.agent-framework": "keyword"}
+        ).attributes["microsoft.agent-framework"]
         == "keyword"
     )
 
@@ -4445,7 +4451,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
 # region Test _configure_providers
 
 
-def test_configure_providers_share_foundry_resource() -> None:
+def test_configure_providers_share_agent_framework_resource() -> None:
     """Exported logs, spans, and metrics carry the same marked resource."""
     from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader, MetricExporter
@@ -4490,7 +4496,7 @@ def test_configure_providers_share_foundry_resource() -> None:
         ]
         for resource in resources:
             assert resource is resources[0]
-            assert resource.attributes["microsoft.foundry"] == "True"
+            assert resource.attributes["microsoft.agent-framework"] == "True"
             assert resource.attributes["service.name"] == "foundry-test"
             assert resource.attributes["deployment.environment"] == "test"
     finally:

@@ -19,7 +19,7 @@ var telemetryEnabled = !string.IsNullOrWhiteSpace(otlpEndpoint);
 // HarnessConsole.RunAgentAsync, and streaming spans/metrics to stdout corrupts that UI.
 var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(ServiceName, serviceVersion: "1.0.0")
-    .AddAttributes([new("microsoft.foundry", "True")]);
+    .AddAttributes([new("microsoft.agent-framework", "True")]);
 using var tracerProvider = telemetryEnabled
     ? Sdk.CreateTracerProviderBuilder()
         .SetResourceBuilder(resourceBuilder)

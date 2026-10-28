@@ -34,7 +34,7 @@ var resourceBuilder = ResourceBuilder.CreateDefault()
     {
         ["service.instance.id"] = Environment.MachineName,
         ["deployment.environment"] = "development",
-        ["microsoft.foundry"] = "True"
+        ["microsoft.agent-framework"] = "True"
     });
 
 // Setup tracing with resource

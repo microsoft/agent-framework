@@ -17,7 +17,7 @@ string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "
 // Create TracerProvider with console exporter.
 string sourceName = Guid.NewGuid().ToString("N");
 TracerProviderBuilder tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
-    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.foundry", "True")]))
+    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]))
     .AddSource(sourceName)
     .AddConsoleExporter();
 if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))

@@ -72,7 +72,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredentia
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
 builder.Services.AddOpenTelemetry()
-    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.foundry", "True")]));
+    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]));
 
 var app = builder.Build();
 app.MapFoundryResponses();
