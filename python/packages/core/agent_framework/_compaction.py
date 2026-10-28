@@ -20,7 +20,7 @@ from typing import (
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._types import APPROVAL_REJECTION_RESULT_KEY, ChatResponse, Content, Message
+from ._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY, ChatResponse, Content, Message
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
@@ -1554,7 +1554,9 @@ class UnloadSkillsCompactionStrategy:
     This strategy targets complete tool-call groups containing only
     ``load_skill`` and ``read_skill_resource`` calls. The latest completed
     ``unload_skill`` request selects one skill by name, or all skills when its
-    ``skill_name`` argument is omitted or blank.
+    ``skill_name`` argument is omitted or blank. Skill identity comes from
+    successful load/resource result provenance, not the original model arguments.
+    Groups without that provenance are retained.
 
     Use this as the wrapped strategy of :class:`AgentTriggeredCompactionStrategy`.
     The wrapper obtains the specialized ``unload_skill`` tool through
@@ -1679,14 +1681,17 @@ class UnloadSkillsCompactionStrategy:
             return None
         calls = tool_calls
 
-        completed_call_identities = {id(call) for call, _ in _function_call_result_pairs(included_messages)}
-        if any(id(call) not in completed_call_identities for call in calls):
-            return None
-
+        results_by_call_identity = {id(call): result for call, result in _function_call_result_pairs(included_messages)}
         skill_names: set[str] = set()
         for call in calls:
-            arguments = call.parse_arguments() or {}
-            skill_name = arguments.get("skill_name")
+            result = results_by_call_identity.get(id(call))
+            if (
+                result is None
+                or result.exception is not None
+                or result.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is True
+            ):
+                return None
+            skill_name = result.additional_properties.get(SKILL_CONTEXT_NAME_KEY)
             if not isinstance(skill_name, str) or not skill_name.strip():
                 return None
             skill_names.add(skill_name.strip().casefold())

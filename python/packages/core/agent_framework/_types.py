@@ -460,6 +460,7 @@ _MERGEABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "code_interpreter_tool_result",
 })
 APPROVAL_REJECTION_RESULT_KEY = "_approval_rejection_result"
+SKILL_CONTEXT_NAME_KEY = "_skill_context_name"
 
 _CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
 

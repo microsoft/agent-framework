@@ -35,6 +35,8 @@ from agent_framework import (
     FunctionTool,
     GeneratedEmbeddings,
     HistoryProvider,
+    InlineSkill,
+    InlineSkillResource,
     InMemoryHistoryProvider,
     InMemoryStore,
     Message,
@@ -43,6 +45,8 @@ from agent_framework import (
     ResponseStream,
     ServiceSessionId,
     SessionContext,
+    SkillFrontmatter,
+    SkillsProvider,
     SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
@@ -59,6 +63,7 @@ from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_ag
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY
+from agent_framework._types import SKILL_CONTEXT_NAME_KEY
 from agent_framework.exceptions import (
     AgentInvalidRequestException,
     ChatClientInvalidResponseException,
@@ -3621,7 +3626,13 @@ async def test_unload_skills_uses_middleware_rewritten_selection(
         ),
         Message(
             role="tool",
-            contents=[Content.from_function_result(call_id="load-pdf", result="pdf instructions")],
+            contents=[
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
+                )
+            ],
         ),
         Message(
             role="assistant",
@@ -3635,7 +3646,13 @@ async def test_unload_skills_uses_middleware_rewritten_selection(
         ),
         Message(
             role="tool",
-            contents=[Content.from_function_result(call_id="load-excel", result="excel instructions")],
+            contents=[
+                Content.from_function_result(
+                    call_id="load-excel",
+                    result="excel instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "excel"},
+                )
+            ],
         ),
         Message(role="user", contents=["unload the selected skill"]),
     ]
@@ -3646,6 +3663,111 @@ async def test_unload_skills_uses_middleware_rewritten_selection(
     assert result.text == "done"
     assert ("load_skill", {"skill_name": "pdf"}) in captured_calls[1]
     assert ("load_skill", {"skill_name": "excel"}) not in captured_calls[1]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("tool_name", ["load_skill", "read_skill_resource"])
+@pytest.mark.parametrize("unload_name", ["pdf", "excel"])
+@pytest.mark.parametrize("rewrite_load", [False, True])
+async def test_unload_skills_uses_effective_loaded_skill_identity(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+    tool_name: str,
+    unload_name: str,
+    rewrite_load: bool,
+) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    provider = SkillsProvider(
+        [
+            InlineSkill(
+                frontmatter=SkillFrontmatter(name=skill_name, description=f"{skill_name} skill"),
+                instructions=f"{skill_name} instructions",
+                resources=[
+                    InlineSkillResource(name=f"{skill_name}-reference", content=f"{skill_name} resource content")
+                ],
+            )
+            for skill_name in ("pdf", "excel")
+        ],
+        disable_load_skill_approval=True,
+        disable_read_skill_resource_approval=True,
+    )
+
+    class RewriteLoadedSkillMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            if context.function.name == tool_name:
+                assert isinstance(context.arguments, dict)
+                context.arguments = {**context.arguments, "skill_name": "EXCEL"}
+                if tool_name == "read_skill_resource":
+                    context.arguments["resource_name"] = "excel-reference"
+            await call_next()
+
+    original_arguments = {"skill_name": "pdf"}
+    if tool_name == "read_skill_resource":
+        original_arguments["resource_name"] = "pdf-reference"
+    load_call = Content.from_function_call(call_id="load-1", name=tool_name, arguments=original_arguments)
+    unload_call = Content.from_function_call(
+        call_id="unload-1",
+        name=strategy.tool.name,
+        arguments={"skill_name": unload_name},
+    )
+    chat_client_base.function_invocation_configuration["max_iterations"] = 4
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[load_call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[unload_call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[load_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[unload_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    model_inputs: list[list[Message]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        model_inputs.append([Message.from_dict(message.to_dict()) for message in messages])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[strategy.tool],
+        context_providers=[provider],
+        middleware=[RewriteLoadedSkillMiddleware()] if rewrite_load else [],
+        compaction_strategy=strategy,
+        default_options=ChatOptions(store=False),
+    )
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            response_stream = agent.run("Read a skill, then unload the selected skill.", stream=True)
+            async for _ in response_stream:
+                pass
+            result = await response_stream.get_final_response()
+        else:
+            result = await agent.run("Read a skill, then unload the selected skill.")
+
+    assert result.messages[-1].text == "done"
+    assert len(model_inputs) == 3
+    loaded_contents = [content for message in model_inputs[1] for content in message.contents]
+    captured_load = next(content for content in loaded_contents if content.type == "function_call")
+    captured_result = next(content for content in loaded_contents if content.type == "function_result")
+    assert captured_load.parse_arguments() == original_arguments
+    assert captured_result.exception is None
+    effective_name = "excel" if rewrite_load else "pdf"
+    assert captured_result.additional_properties[SKILL_CONTEXT_NAME_KEY] == effective_name
+    assert (
+        f"{effective_name} instructions" in captured_result.result
+        or f"{effective_name} resource content" in captured_result.result
+    )
+    final_contents = [content for message in model_inputs[2] for content in message.contents]
+    retained_load = any(content.call_id == "load-1" for content in final_contents)
+    assert retained_load is (unload_name != effective_name)
+    assert any(content.type == "function_call" and content.call_id == "unload-1" for content in final_contents)
+    assert any(content.type == "function_result" and content.call_id == "unload-1" for content in final_contents)
 
 
 async def test_chat_agent_uses_client_compaction_defaults_when_agent_unset(chat_client_base: Any) -> None:

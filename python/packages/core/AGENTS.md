@@ -186,7 +186,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`UnloadSkillsCompactionStrategy`** - Intended as an inner agent-triggered strategy. It supplies an
   `unload_skill` trigger-tool factory that `AgentTriggeredCompactionStrategy` adopts automatically, then removes
   complete `load_skill` and `read_skill_resource` groups for one named skill, or all skills when no name is
-  supplied. Mixed tool groups and `run_skill_script` results remain intact.
+  supplied. Loaded skill identity comes from successful result provenance recorded by `SkillsProvider` after
+  resolving the effective invocation, not the original model arguments. Groups with missing/invalid provenance,
+  unresolved calls, mixed tools, or `run_skill_script` results remain intact.
 
 ### Middleware (`_middleware.py`)
 

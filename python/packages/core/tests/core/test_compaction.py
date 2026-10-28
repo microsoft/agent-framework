@@ -49,7 +49,7 @@ from agent_framework._compaction import (
     extend_compaction_messages,
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
-from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY
+from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY
 
 
 def _assistant_function_call(call_id: str) -> Message:
@@ -142,6 +142,19 @@ def _skill_unload_result(call_id: str, skill_names: list[str]) -> Message:
                         additional_properties={_SKILL_UNLOAD_SELECTION_KEY: skill_names},
                     )
                 ],
+            )
+        ],
+    )
+
+
+def _skill_context_result(call_id: str, skill_name: str, result: str) -> Message:
+    return Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id=call_id,
+                result=result,
+                additional_properties={SKILL_CONTEXT_NAME_KEY: skill_name},
             )
         ],
     )
@@ -1315,9 +1328,9 @@ async def test_unload_skills_compaction_removes_named_skill_only() -> None:
     messages = [
         Message(role="user", contents=["work"]),
         _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
-        _tool_result("load-pdf", "pdf instructions"),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
         _assistant_named_function_call("load-excel", "load_skill", {"skill_name": "excel"}),
-        _tool_result("load-excel", "excel instructions"),
+        _skill_context_result("load-excel", "excel", "excel instructions"),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
         _skill_unload_result("unload-pdf", ["pdf"]),
     ]
@@ -1337,11 +1350,11 @@ async def test_unload_skills_compaction_removes_multiple_named_skills() -> None:
     strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
     messages = [
         _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
-        _tool_result("load-pdf", "pdf instructions"),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
         _assistant_named_function_call("load-excel", "load_skill", {"skill_name": "excel"}),
-        _tool_result("load-excel", "excel instructions"),
+        _skill_context_result("load-excel", "excel", "excel instructions"),
         _assistant_named_function_call("load-word", "load_skill", {"skill_name": "word"}),
-        _tool_result("load-word", "word instructions"),
+        _skill_context_result("load-word", "word", "word instructions"),
         _assistant_named_function_call(
             "unload-selected",
             strategy.tool.name,
@@ -1386,13 +1399,13 @@ async def test_unload_skills_compaction_empty_name_removes_all_skill_context() -
     strategy = AgentTriggeredCompactionStrategy(skill_strategy)
     messages = [
         _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
-        _tool_result("load-pdf", "pdf instructions"),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
         _assistant_named_function_call(
             "resource-excel",
             "read_skill_resource",
             {"skill_name": "excel", "resource_name": "reference"},
         ),
-        _tool_result("resource-excel", "excel reference"),
+        _skill_context_result("resource-excel", "excel", "excel reference"),
         _assistant_named_function_call("unload-all", strategy.tool.name, {"skill_name": "   "}),
         _skill_unload_result("unload-all", []),
     ]
@@ -1427,7 +1440,11 @@ async def test_unload_skills_compaction_preserves_script_results_and_mixed_group
         Message(
             role="tool",
             contents=[
-                Content.from_function_result(call_id="load-pdf", result="pdf instructions"),
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
+                ),
                 Content.from_function_result(call_id="search", result="search result"),
             ],
         ),
@@ -1461,7 +1478,7 @@ async def test_unload_skills_compaction_preserves_group_with_hosted_tool_call() 
                 Content.from_shell_tool_call(call_id="shell-1", commands=["echo hi"]),
             ],
         ),
-        _tool_result("load-pdf", "pdf instructions"),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
         _skill_unload_result("unload-pdf", ["pdf"]),
     ]
@@ -1493,7 +1510,11 @@ async def test_unload_skills_compaction_preserves_group_with_search_tool_call() 
         Message(
             role="tool",
             contents=[
-                Content.from_function_result(call_id="load-pdf", result="pdf instructions"),
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
+                ),
                 Content.from_search_tool_result(
                     call_id="search-1",
                     tool_name="web_search",
@@ -1538,6 +1559,7 @@ async def test_unload_skills_compaction_preserves_reused_id_group_with_unresolve
                     id="load-pdf",
                     call_id="shared",
                     result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
                 )
             ],
         ),
@@ -1549,6 +1571,43 @@ async def test_unload_skills_compaction_preserves_reused_id_group_with_unresolve
 
     assert changed is False
     assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+@pytest.mark.parametrize(
+    ("properties", "exception"),
+    [
+        ({}, None),
+        ({SKILL_CONTEXT_NAME_KEY: ""}, None),
+        ({SKILL_CONTEXT_NAME_KEY: 123}, None),
+        ({SKILL_CONTEXT_NAME_KEY: "pdf"}, "Load failed."),
+        ({SKILL_CONTEXT_NAME_KEY: "pdf", APPROVAL_REJECTION_RESULT_KEY: True}, None),
+    ],
+)
+async def test_unload_skills_preserves_groups_without_successful_provenance(
+    properties: dict[str, Any],
+    exception: str | None,
+) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    exception=exception,
+                    additional_properties=properties,
+                )
+            ],
+        ),
+        _assistant_named_function_call("unload-all", strategy.tool.name),
+        _skill_unload_result("unload-all", []),
+    ]
+
+    assert await strategy(messages) is False
+    assert included_messages(messages) == messages
 
 
 async def test_selective_tool_call_strategy_excludes_older_tool_groups() -> None:
