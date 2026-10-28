@@ -260,6 +260,6 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             return default;
         }
 
-        return this.Source.QueueStateUpdateAsync(key, sensitivity, WorkflowFormulaState.GetSensitivityScopeName(scopeName), cancellationToken);
+        return WorkflowFormulaState.QueueSensitivityUpdateAsync(this.Source, key, scopeName, sensitivity, delete: false, cancellationToken);
     }
 }

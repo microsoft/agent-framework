@@ -30,6 +30,8 @@ internal sealed class WorkflowFormulaState
         ];
 
     private const string SensitivityScopePrefix = "__Microsoft_Agents_AI_Workflows_Declarative_Sensitivity:";
+    internal const string LocalOwnershipScopeName = "__Microsoft_Agents_AI_Workflows_Declarative_Ownership:Local";
+    private const int LocalOwnershipVersion = 1;
 
     private readonly Dictionary<string, WorkflowScope> _scopes;
     private readonly FrozenSet<string> _restorableEnvironmentVariables;
@@ -201,6 +203,13 @@ internal sealed class WorkflowFormulaState
         string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
         HashSet<string> declarativeKeys = await context.ReadStateKeysAsync(sensitivityScope, cancellationToken).ConfigureAwait(false);
         legacyKeys.IntersectWith(declarativeKeys);
+        foreach (string key in legacyKeys.ToArray())
+        {
+            if (await HasCanonicalLocalOwnershipAsync(context, key, cancellationToken).ConfigureAwait(false))
+            {
+                legacyKeys.Remove(key);
+            }
+        }
         if (legacyKeys.Count == 0)
         {
             return legacyKeys;
@@ -229,8 +238,48 @@ internal sealed class WorkflowFormulaState
         foreach (var entry in entries)
         {
             await context.QueueStateUpdateAsync(entry.Key, entry.Value, VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(entry.Key, entry.Sensitivity, sensitivityScope, cancellationToken).ConfigureAwait(false);
+            await QueueSensitivityUpdateAsync(context, entry.Key, VariableScopeNames.Local, entry.Sensitivity, delete: false, cancellationToken).ConfigureAwait(false);
             await context.QueueStateUpdateAsync<object>(entry.Key, null, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    internal static async ValueTask<bool> HasCanonicalLocalOwnershipAsync(IWorkflowContext context, string key, CancellationToken cancellationToken)
+    {
+        PortableValue? ownership = await context.ReadStateAsync<PortableValue>(key, LocalOwnershipScopeName, cancellationToken).ConfigureAwait(false);
+        if (ownership is null)
+        {
+            return false;
+        }
+        if (ownership.As<int>() != LocalOwnershipVersion)
+        {
+            throw new DeclarativeActionException("Unsupported declarative state ownership version.");
+        }
+        return true;
+    }
+
+    internal static async ValueTask QueueSensitivityUpdateAsync(
+        IWorkflowContext context, string key, string scopeName, SensitivityLevel sensitivity, bool delete, CancellationToken cancellationToken)
+    {
+        string sensitivityScope = GetSensitivityScopeName(scopeName);
+        if (delete)
+        {
+            await context.QueueStateUpdateAsync<object>(key, null, sensitivityScope, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await context.QueueStateUpdateAsync(key, sensitivity, sensitivityScope, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (string.Equals(scopeName, VariableScopeNames.Local, StringComparison.Ordinal))
+        {
+            if (delete)
+            {
+                await context.QueueStateUpdateAsync<object>(key, null, LocalOwnershipScopeName, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await context.QueueStateUpdateAsync(key, LocalOwnershipVersion, LocalOwnershipScopeName, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -278,7 +327,7 @@ internal sealed class WorkflowFormulaState
 
         void Bind(string scopeName, string? targetScope = null)
         {
-            targetScope = GetScopeName(targetScope ?? scopeName);
+            targetScope ??= GetScopeName(scopeName);
             RecordValue scopeRecord = this.GetScope(scopeName).ToRecord();
             this.Engine.DeleteFormula(targetScope);
             this.Engine.UpdateVariable(targetScope, scopeRecord);

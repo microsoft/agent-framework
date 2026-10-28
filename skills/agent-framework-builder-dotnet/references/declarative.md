@@ -38,17 +38,25 @@ the same approval, evaluation, and telemetry policy used for code-first agents a
 `Local` and `Topic` address the same declarative workflow state. On restore, legacy `Topic` entries identified by
 declarative sensitivity metadata migrate to `Local` before post-load hooks or resumed actions run. Only migrated
 entries are removed from `Topic`; unmarked entries, including code-first state, remain untouched.
-Checkpoints containing an identified declarative key in both physical scopes are rejected because assignment order
-is unavailable. Reconcile those entries explicitly or start a fresh session before resuming. Legacy entries without
-declarative metadata require explicit reconciliation rather than automatic migration.
+Older checkpoints containing an identified declarative key in both physical scopes without canonical ownership
+metadata are rejected because assignment order is unavailable. Reconcile those entries explicitly or start a fresh
+session before resuming. Legacy entries without declarative metadata require explicit reconciliation rather than
+automatic migration.
 
 For code-first executors using the declarative sensitivity helpers without a formula-state restoration callback,
 reads fall back to the requested metadata-marked legacy entry without modifying it. Writes use `Local` and remove
 only that entry from `Topic`; unrelated legacy entries are not migrated by these point operations.
 Ad hoc expression evaluation also reads legacy entries without persisting migration, so parallel expression readers
 do not queue competing updates. Persisted migration still runs in registered formula-state restoration callbacks.
-Canonical writes reject a same-key unmarked code-first `Topic` entry before changing state. Reconcile such collisions
-explicitly. A plain sensitivity-helper null update deletes both the canonical value and its sensitivity metadata.
+New canonical assignments and migrated entries persist separate, versioned ownership metadata. This identifies
+their sensitivity metadata as belonging to `Local`, not to a same-key raw code-first `Topic` entry. Concurrent
+code-first `Topic` and canonical `Local` assignments can therefore coexist; reads and restoration preserve the
+unrelated raw `Topic` value. Preserve these private metadata scopes together with values in custom checkpoint stores.
+Without recorded canonical ownership, writes still reject a visible same-key unmarked code-first `Topic` entry
+before changing state; reconcile such collisions explicitly.
+
+A plain sensitivity-helper null update deletes the canonical value, sensitivity metadata, and ownership metadata.
+A wrapped declarative clear retains a blank value with its sensitivity and ownership metadata.
 
 ## Learn more
 

@@ -239,15 +239,8 @@ public static class IWorkflowContextExtensions
         await context.QueueStateUpdateAsync(key, value.Value, plainScopeName, cancellationToken).ConfigureAwait(false);
         if (ShouldPersistSensitivity(plainScopeName))
         {
-            string sensitivityScope = WorkflowFormulaState.GetSensitivityScopeName(plainScopeName);
-            if (value.Value is null)
-            {
-                await context.QueueStateUpdateAsync<object>(key, null, sensitivityScope, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                await context.QueueStateUpdateAsync(key, value.Sensitivity, sensitivityScope, cancellationToken).ConfigureAwait(false);
-            }
+            await WorkflowFormulaState.QueueSensitivityUpdateAsync(context, key, plainScopeName, value.Sensitivity,
+                delete: value.Value is null, cancellationToken).ConfigureAwait(false);
         }
         if (legacyEntry)
         {
@@ -355,14 +348,15 @@ public static class IWorkflowContextExtensions
             return false;
         }
 
-        HashSet<string> legacyKeys = await context.ReadStateKeysAsync(VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
-        if (!legacyKeys.Contains(key))
+        PortableValue? legacyValue = await context.ReadStateAsync<PortableValue>(key, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+        if (legacyValue is null || await WorkflowFormulaState.HasCanonicalLocalOwnershipAsync(context, key, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
 
-        HashSet<string> declarativeKeys = await context.ReadStateKeysAsync(WorkflowFormulaState.GetSensitivityScopeName(scopeName), cancellationToken).ConfigureAwait(false);
-        if (!declarativeKeys.Contains(key))
+        PortableValue? sensitivity = await context.ReadStateAsync<PortableValue>(
+            key, WorkflowFormulaState.GetSensitivityScopeName(scopeName), cancellationToken).ConfigureAwait(false);
+        if (sensitivity is null)
         {
             if (forWrite)
             {
@@ -371,8 +365,8 @@ public static class IWorkflowContextExtensions
             return false;
         }
 
-        HashSet<string> localKeys = await context.ReadStateKeysAsync(scopeName, cancellationToken).ConfigureAwait(false);
-        if (localKeys.Contains(key))
+        PortableValue? localValue = await context.ReadStateAsync<PortableValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        if (localValue is not null)
         {
             throw new DeclarativeActionException("Cannot access state with conflicting Local and Topic scope entries.");
         }

@@ -3,8 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -859,6 +861,256 @@ public class WorkflowFormulaStateTests
         Assert.Empty(sensitivities);
     }
 
+    [Theory]
+    [InlineData(false, false, SensitivityLevel.None)]
+    [InlineData(false, false, SensitivityLevel.Sensitive)]
+    [InlineData(false, true, SensitivityLevel.None)]
+    [InlineData(false, true, SensitivityLevel.Sensitive)]
+    [InlineData(true, false, SensitivityLevel.None)]
+    [InlineData(true, false, SensitivityLevel.Sensitive)]
+    [InlineData(true, true, SensitivityLevel.None)]
+    [InlineData(true, true, SensitivityLevel.Sensitive)]
+    public async Task CanonicalOwnership_MixedFanOutWritesSurviveFreshRestoreAsync(bool offThread, bool wrapped, SensitivityLevel sensitivity)
+    {
+        // Arrange
+        IWorkflowContext? writerContext = null;
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        Workflow workflow = CreateWorkflow(state);
+        Dictionary<CheckpointInfo, JsonElement> stored = [];
+        Mock<ICheckpointStore<JsonElement>> store = new();
+        store.Setup(s => s.CreateCheckpointAsync(It.IsAny<string>(), It.IsAny<JsonElement>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, JsonElement value, CheckpointInfo? _) =>
+            {
+                CheckpointInfo info = new(sessionId, Guid.NewGuid().ToString("N"));
+                stored.Add(info, value);
+                return info;
+            });
+        store.Setup(s => s.RetrieveCheckpointAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo>()))
+            .ReturnsAsync((string _, CheckpointInfo info) => stored[info]);
+        store.Setup(s => s.RetrieveIndexAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, CheckpointInfo? _) =>
+                stored.Keys.Where(info => string.Equals(info.SessionId, sessionId, StringComparison.Ordinal)).ToArray().AsEnumerable());
+        CheckpointManager checkpoints = CheckpointManager.CreateJson(store.Object, DeclarativeWorkflowJsonOptions.Default);
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        CheckpointInfo? checkpoint = null;
+
+        // Act
+        await using (StreamingRun run = await environment.RunStreamingAsync(workflow, 1))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } saved })
+                {
+                    checkpoint = saved;
+                }
+            }
+        }
+
+        // Assert
+        Assert.NotNull(checkpoint);
+        Assert.NotNull(writerContext);
+        await AssertValuesAsync(writerContext);
+        WorkflowFormulaState restoredState = new(RecalcEngineFactory.Create());
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(CreateWorkflow(restoredState), checkpoint);
+        Assert.Equal("canonical", restoredState.Get("TestValue").ToObject());
+        Assert.Equal(sensitivity, restoredState.GetSensitivity("TestValue"));
+        Assert.NotNull(writerContext);
+        await AssertValuesAsync(writerContext);
+
+        Workflow CreateWorkflow(WorkflowFormulaState formulaState)
+        {
+            StateExecutor source = new("source", (_, _) => default);
+            StateExecutor raw = new("raw", async (context, cancellationToken) =>
+                await context.QueueStateUpdateAsync("TestValue", "native", VariableScopeNames.Topic, cancellationToken));
+            StateExecutor canonical = new("canonical", async (context, cancellationToken) =>
+            {
+                writerContext = context;
+                IWorkflowContext target = wrapped ? new DeclarativeWorkflowContext(context, formulaState) : context;
+                await target.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<object?>("canonical", sensitivity), VariableScopeNames.Topic, cancellationToken);
+            }, formulaState, (context, _) =>
+            {
+                writerContext = context;
+                return default;
+            });
+            return new WorkflowBuilder(source).AddEdge(source, raw).AddEdge(source, canonical).Build();
+        }
+
+        async Task AssertValuesAsync(IWorkflowContext context)
+        {
+            Assert.Equal("native", await context.ReadStateAsync<string>("TestValue", VariableScopeNames.Topic));
+            foreach (string? scope in new string?[] { null, VariableScopeNames.Local, VariableScopeNames.Topic })
+            {
+                EvaluationResult<string?> result = await context.ReadStateWithSensitivityAsync<string>("TestValue", scope);
+                Assert.Equal("canonical", result.Value);
+                Assert.Equal(sensitivity, result.Sensitivity);
+            }
+            EvaluationResult<string?> evaluated = await context.EvaluateValueWithSensitivityAsync<string>("Topic.TestValue");
+            Assert.Equal("canonical", evaluated.Value);
+            Assert.Equal(sensitivity, evaluated.Sensitivity);
+        }
+    }
+
+    [Theory]
+    [InlineData(SensitivityLevel.None)]
+    [InlineData(SensitivityLevel.Sensitive)]
+    public async Task CanonicalOwnership_MigrationDoesNotClaimLaterRawTopicReuseAsync(SensitivityLevel sensitivity)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Topic, "TestValue")] = new("legacy"),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = new()
+        {
+            [(WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), "TestValue")] = sensitivity,
+        };
+        IWorkflowContext context = CreateStateContext(values, sensitivities).Object;
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        await state.RestoreCheckpointAsync(context, CancellationToken.None);
+        values[(VariableScopeNames.Topic, "TestValue")] = new("native");
+
+        // Act
+        await state.RestoreCheckpointAsync(context, CancellationToken.None);
+        EvaluationResult<string?> result = await context.ReadStateWithSensitivityAsync<string>("TestValue");
+
+        // Assert
+        Assert.Equal("legacy", result.Value);
+        Assert.Equal(sensitivity, result.Sensitivity);
+        Assert.Equal("legacy", state.Get("TestValue").ToObject());
+        Assert.Equal(sensitivity, state.GetSensitivity("TestValue"));
+        Assert.Equal("native", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
+    }
+
+    [Theory]
+    [InlineData(false, SensitivityLevel.None)]
+    [InlineData(false, SensitivityLevel.Sensitive)]
+    [InlineData(true, SensitivityLevel.None)]
+    [InlineData(true, SensitivityLevel.Sensitive)]
+    public async Task CanonicalOwnership_UpdatesAndClearsPreserveRawTopicStateAsync(bool wrapped, SensitivityLevel sensitivity)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = [];
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = [];
+        IWorkflowContext source = CreateStateContext(values, sensitivities).Object;
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        IWorkflowContext context = wrapped ? new DeclarativeWorkflowContext(source, state) : source;
+        await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+            new EvaluationResult<object?>("initial", sensitivity), VariableScopeNames.Local);
+        values[(VariableScopeNames.Topic, "TestValue")] = new("native");
+
+        // Act
+        await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+            new EvaluationResult<object?>("updated", sensitivity), VariableScopeNames.Topic);
+        EvaluationResult<string?> updated = await source.ReadStateWithSensitivityAsync<string>("TestValue");
+        await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+            new EvaluationResult<object?>(null, sensitivity), VariableScopeNames.Local);
+        await state.RestoreSnapshotAsync(source, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("updated", updated.Value);
+        Assert.Equal(sensitivity, updated.Sensitivity);
+        Assert.Equal("native", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
+        Assert.IsType<BlankValue>(state.Get("TestValue"));
+        if (wrapped)
+        {
+            Assert.Equal(sensitivity, state.GetSensitivity("TestValue"));
+        }
+        else
+        {
+            EvaluationResult<string?> cleared = await source.ReadStateWithSensitivityAsync<string>("TestValue");
+            Assert.Null(cleared.Value);
+            Assert.Equal(SensitivityLevel.None, cleared.Sensitivity);
+            Assert.Empty(sensitivities);
+            await Assert.ThrowsAsync<DeclarativeActionException>(async () =>
+                await source.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<object?>("replacement", sensitivity)));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CanonicalOwnership_PointOperationsUseBoundedKeyLookupsAsync(bool wrapped)
+    {
+        // Arrange
+        const int Assignments = 32;
+        Dictionary<(string? Scope, string Key), PortableValue> values = [];
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = [];
+        Mock<IWorkflowContext> source = CreateStateContext(values, sensitivities);
+        IWorkflowContext context = wrapped ? new DeclarativeWorkflowContext(source.Object, new(RecalcEngineFactory.Create())) : source.Object;
+
+        // Act
+        for (int i = 0; i < Assignments; ++i)
+        {
+            string key = $"Value{i}";
+            await context.QueueStateUpdateWithSensitivityAsync(key,
+                new EvaluationResult<object?>("value", SensitivityLevel.None), VariableScopeNames.Local);
+            EvaluationResult<string?> result = await source.Object.ReadStateWithSensitivityAsync<string>(key, VariableScopeNames.Topic);
+            Assert.Equal("value", result.Value);
+        }
+
+        // Assert
+        source.Verify(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        source.Verify(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.AtMost(Assignments * 8));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CanonicalOwnership_UnsupportedVersionsDoNotDisambiguateStateAsync(bool restore, bool overwrite)
+    {
+        // Arrange
+        Dictionary<(string? Scope, string Key), PortableValue> values = new()
+        {
+            [(VariableScopeNames.Local, "TestValue")] = new("canonical"),
+            [(VariableScopeNames.Topic, "TestValue")] = new("native"),
+            [(WorkflowFormulaState.LocalOwnershipScopeName, "TestValue")] = new(2),
+        };
+        Dictionary<(string? Scope, string Key), SensitivityLevel> sensitivities = new()
+        {
+            [(WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), "TestValue")] = SensitivityLevel.None,
+        };
+        IWorkflowContext context = CreateStateContext(values, sensitivities).Object;
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+
+        // Act
+        DeclarativeActionException error = await Assert.ThrowsAsync<DeclarativeActionException>(async () =>
+        {
+            if (restore)
+            {
+                if (overwrite)
+                {
+                    await state.RestoreCheckpointAsync(context, CancellationToken.None);
+                }
+                else
+                {
+                    await state.RestoreSnapshotAsync(context, CancellationToken.None);
+                }
+            }
+            else if (overwrite)
+            {
+                await context.QueueStateUpdateWithSensitivityAsync("TestValue",
+                    new EvaluationResult<object?>("replacement", SensitivityLevel.Sensitive));
+            }
+            else
+            {
+                await context.ReadStateWithSensitivityAsync<string>("TestValue");
+            }
+        });
+
+        // Assert
+        Assert.Contains("Unsupported declarative state ownership version", error.Message);
+        Assert.Equal("canonical", values[(VariableScopeNames.Local, "TestValue")].As<string>());
+        Assert.Equal("native", values[(VariableScopeNames.Topic, "TestValue")].As<string>());
+        Assert.Equal(2, values[(WorkflowFormulaState.LocalOwnershipScopeName, "TestValue")].As<int>());
+        Assert.Equal(SensitivityLevel.None, Assert.Single(sensitivities).Value);
+    }
+
     private static async ValueTask SeedLegacyStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         await context.QueueStateUpdateAsync("TestValue", "legacy", VariableScopeNames.Topic, cancellationToken);
@@ -918,10 +1170,13 @@ public class WorkflowFormulaStateTests
             })
             .Returns(default(ValueTask));
         source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<UnassignedValue>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback((string key, UnassignedValue _, string? scope, CancellationToken _) => values.Remove((scope, key)))
+            .Callback((string key, UnassignedValue value, string? scope, CancellationToken _) => values[(scope, key)] = new(value))
             .Returns(default(ValueTask));
         source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<SensitivityLevel>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((string key, SensitivityLevel value, string? scope, CancellationToken _) => sensitivities[(scope, key)] = value)
+            .Returns(default(ValueTask));
+        source.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((string key, int value, string? scope, CancellationToken _) => values[(scope, key)] = new(value))
             .Returns(default(ValueTask));
         source.Setup(c => c.QueueClearScopeAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((string? scope, CancellationToken _) =>
@@ -936,7 +1191,8 @@ public class WorkflowFormulaStateTests
             .ReturnsAsync((string? scope, CancellationToken _) => values.Keys.Concat(sensitivities.Keys)
                 .Where(k => string.Equals(k.Scope, scope, StringComparison.Ordinal)).Select(k => k.Key).ToHashSet());
         source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string key, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value) ? value : null);
+            .ReturnsAsync((string key, string? scope, CancellationToken _) => values.TryGetValue((scope, key), out PortableValue? value)
+                ? value : sensitivities.TryGetValue((scope, key), out SensitivityLevel sensitivity) ? new PortableValue(sensitivity) : null);
         source.Setup(c => c.ReadStateAsync<SensitivityLevel>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string key, string? scope, CancellationToken _) => sensitivities.TryGetValue((scope, key), out SensitivityLevel sensitivity) ? sensitivity : SensitivityLevel.None);
         source.Setup(c => c.ReadStateAsync<string>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))

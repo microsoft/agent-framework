@@ -119,6 +119,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         JsonNode? value = stateData[localKey];
         Assert.True(stateData.Remove(localKey));
         stateData.Add(localKey.Replace("|@Local|", "|@Topic|"), value);
+        Assert.True(stateData.Remove(localKey.Replace("|@Local|", $"|@{WorkflowFormulaState.LocalOwnershipScopeName}|")));
         stored[legacy] = JsonSerializer.SerializeToElement(node);
         return (BuildWorkflow(), checkpoints, legacy);
 

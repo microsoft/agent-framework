@@ -143,7 +143,7 @@ public sealed class IWorkflowContextExtensionsTests
         state.Set("TestValue", FormulaValue.New("old-value"));
         state.Bind();
         Mock<IWorkflowContext> source = new();
-        source.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), VariableScopeNames.Topic, default)).ReturnsAsync((PortableValue?)null);
         DeclarativeWorkflowContext context = new(source.Object, state);
 
         // Act
@@ -163,7 +163,7 @@ public sealed class IWorkflowContextExtensionsTests
         state.Bind();
 
         Mock<IWorkflowContext> source = new(MockBehavior.Loose);
-        source.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), VariableScopeNames.Topic, default)).ReturnsAsync((PortableValue?)null);
         source
             .Setup(c => c.ReadStateAsync<object>(SystemScope.Names.LastMessageText, VariableScopeNames.System, default))
             .Returns(new ValueTask<object?>("secret-value"));
@@ -183,7 +183,7 @@ public sealed class IWorkflowContextExtensionsTests
     {
         // Arrange
         Mock<IWorkflowContext> context = new(MockBehavior.Loose);
-        context.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        context.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), VariableScopeNames.Topic, default)).ReturnsAsync((PortableValue?)null);
         context
             .Setup(c => c.ReadStateAsync<object>("TestValue", VariableScopeNames.Local, default))
             .Returns(new ValueTask<object?>("secret-value"));
@@ -204,12 +204,15 @@ public sealed class IWorkflowContextExtensionsTests
     {
         // Arrange
         Mock<IWorkflowContext> context = new(MockBehavior.Strict);
-        context.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        context.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), VariableScopeNames.Topic, default)).ReturnsAsync((PortableValue?)null);
         context
             .Setup(c => c.QueueStateUpdateAsync("TestValue", "secret-value", VariableScopeNames.Local, default))
             .Returns(default(ValueTask));
         context
             .Setup(c => c.QueueStateUpdateAsync("TestValue", SensitivityLevel.Sensitive, WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), default))
+            .Returns(default(ValueTask));
+        context
+            .Setup(c => c.QueueStateUpdateAsync("TestValue", It.IsAny<int>(), WorkflowFormulaState.LocalOwnershipScopeName, default))
             .Returns(default(ValueTask));
 
         // Act
@@ -234,7 +237,7 @@ public sealed class IWorkflowContextExtensionsTests
             SensitivityLevel.Sensitive);
         state.Bind();
         Mock<IWorkflowContext> source = new();
-        source.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        source.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), VariableScopeNames.Topic, default)).ReturnsAsync((PortableValue?)null);
         DeclarativeWorkflowContext context = new(source.Object, state);
 
         // Act
@@ -257,7 +260,7 @@ public sealed class IWorkflowContextExtensionsTests
     {
         // Arrange
         Mock<IWorkflowContext> context = new(MockBehavior.Loose);
-        context.Setup(c => c.ReadStateKeysAsync(VariableScopeNames.Topic, default)).ReturnsAsync([]);
+        context.Setup(c => c.ReadStateAsync<PortableValue>(It.IsAny<string>(), VariableScopeNames.Topic, default)).ReturnsAsync((PortableValue?)null);
         context
             .Setup(c => c.ReadStateAsync<PortableValue>("TestValue", VariableScopeNames.Local, default))
             .Returns(new ValueTask<PortableValue?>(new PortableValue("42")));
