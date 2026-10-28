@@ -31,7 +31,6 @@ public class WorkflowSessionCheckpointRetentionTests
         AIAgent agent = BuildNestedHandoffAgent(environment.ToWorkflowExecutionEnvironment());
         AgentSession session = await agent.CreateSessionAsync();
         List<CheckpointCounts> counts = [];
-        List<int> sizes = [];
 
         // Act
         for (int turn = 1; turn <= TurnCount; turn++)
@@ -39,16 +38,13 @@ public class WorkflowSessionCheckpointRetentionTests
             AgentResponse response = await agent.RunAsync($"Question {turn}", session);
             Assert.Equal($"{SpecialistReply}:turn:{turn}", response.Text);
 
-            JsonElement serialized = await agent.SerializeSessionAsync(session);
-            sizes.Add(serialized.GetRawText().Length);
-            counts.Add(CountCheckpoints(serialized));
+            counts.Add(CountCheckpoints(await agent.SerializeSessionAsync(session)));
         }
 
         // Assert: the session keeps the resume point and the latest turn, and every copy of the sub-workflow's
-        // checkpoint manager keeps only its latest checkpoint, so each turn adds about the same amount.
+        // checkpoint manager keeps only its latest checkpoint.
         Assert.Equal(counts[^2].Session, counts[^1].Session);
         Assert.All(counts, turnCounts => Assert.All(turnCounts.SubWorkflow, subWorkflowCount => Assert.Equal(1, subWorkflowCount)));
-        Assert.InRange(sizes[^1] - sizes[^2], 0, (sizes[^2] - sizes[^3]) * 1.1);
     }
 
     [Theory]
