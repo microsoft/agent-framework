@@ -1570,7 +1570,7 @@ def test_capture_written_files_bounds_reads_and_charges_actual_bytes(
     readers: list[MagicMock] = []
 
     @contextmanager
-    def growing_reader(fd: int, mode: str, *, closefd: bool) -> Generator[MagicMock, None, None]:
+    def growing_reader(fd: int, mode: str, *, closefd: bool) -> Generator[MagicMock]:
         if not readers:
             artifact.write_bytes(b"g" * grown_size)
         with original_fdopen(fd, mode, closefd=closefd) as handle:
