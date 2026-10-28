@@ -130,6 +130,10 @@ internal sealed class McpCache<TKey, TValue>
 /// </summary>
 internal sealed class McpCacheLifetime
 {
+    private McpCacheLifetime()
+    {
+    }
+
     /// <summary>
     /// Initializes a new instance of the <see cref="McpCacheLifetime"/> class.
     /// </summary>
@@ -138,6 +142,11 @@ internal sealed class McpCacheLifetime
         this.ReceivedTimestamp = receivedTimestamp;
         this.TimeToLive = timeToLive;
     }
+
+    /// <summary>
+    /// Gets a lifetime that never expires.
+    /// </summary>
+    public static McpCacheLifetime Infinite { get; } = new();
 
     /// <summary>
     /// Gets the timestamp when the response arrived.
@@ -154,7 +163,7 @@ internal sealed class McpCacheLifetime
     /// </summary>
     public bool IsFresh(TimeProvider timeProvider)
     {
-        return this.TimeToLive > timeProvider.GetElapsedTime(this.ReceivedTimestamp);
+        return ReferenceEquals(this, Infinite) || this.TimeToLive > timeProvider.GetElapsedTime(this.ReceivedTimestamp);
     }
 }
 

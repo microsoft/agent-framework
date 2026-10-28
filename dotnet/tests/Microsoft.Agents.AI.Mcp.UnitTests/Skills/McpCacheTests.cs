@@ -12,6 +12,58 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// </summary>
 public sealed class McpCacheTests
 {
+    [Fact]
+    public void LifetimeIsFresh_InfiniteLifetime_DoesNotExpire()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+
+        // Act
+        clock.Advance(TimeSpan.MaxValue);
+
+        // Assert
+        Assert.True(McpCacheLifetime.Infinite.IsFresh(clock));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetOrRefreshAsync_InfiniteLifetime_RefreshesOnlyWhenRequestedOrClearedAsync(bool needsRefresh)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        var cache = new McpCache<string, string>(clock, StringComparer.Ordinal);
+        var original = new McpCacheEntry<string>("original", McpCacheLifetime.Infinite);
+        await cache.GetOrRefreshAsync("resource", (_, _) => ValueTask.FromResult(original), CancellationToken.None);
+        clock.Advance(TimeSpan.MaxValue);
+        int refreshes = 0;
+
+        // Act
+        string value = await cache.GetOrRefreshAsync("resource", (previous, _) =>
+        {
+            Assert.Same(original, previous);
+            refreshes++;
+            return ValueTask.FromResult(new McpCacheEntry<string>("replacement", McpCacheLifetime.Infinite));
+        }, CancellationToken.None, needsRefresh: _ => needsRefresh);
+
+        // Assert
+        Assert.Equal(needsRefresh ? "replacement" : "original", value);
+        Assert.Equal(needsRefresh ? 1 : 0, refreshes);
+
+        // Act
+        cache.Clear();
+        string reloaded = await cache.GetOrRefreshAsync("resource", (previous, _) =>
+        {
+            Assert.Null(previous);
+            refreshes++;
+            return ValueTask.FromResult(new McpCacheEntry<string>("reloaded", McpCacheLifetime.Infinite));
+        }, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("reloaded", reloaded);
+        Assert.Equal(needsRefresh ? 2 : 1, refreshes);
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(0)]

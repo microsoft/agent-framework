@@ -162,11 +162,15 @@ public sealed partial class AgentMcpSkillTests
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    public async Task ReadResource_ConcurrentMismatches_ReturnCachedContentWithoutRenewingTtlAsync(bool instructions, bool sizeMismatch)
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    public async Task ReadResource_ConcurrentMismatches_ReuseOnlyPreviouslyVerifiedContentAsync(bool instructions, bool sizeMismatch, bool cached)
     {
         // Arrange
         var clock = new ResourceTimeProvider();
@@ -177,41 +181,110 @@ public sealed partial class AgentMcpSkillTests
         int reads = 0;
         var client = CreateResourceClient(async (uri, token) =>
         {
-            if (Interlocked.Increment(ref reads) == 2)
+            int read = Interlocked.Increment(ref reads);
+            if (read == (cached ? 2 : 1))
             {
                 await release.Task.WaitAsync(token);
             }
 
-            return ResourceResponse(uri, mismatching ? changed : original, reads == 1 ? 1000 : 2000);
+            return ResourceResponse(uri, mismatching ? changed : original, read == 1 ? 1000 : 2000);
         });
         var skill = CreateSkill(client.Object, timeProvider: clock);
-        await ReadSnapshotAsync(skill, instructions);
-        clock.Advance(TimeSpan.FromSeconds(1));
+        if (cached)
+        {
+            await ReadSnapshotAsync(skill, instructions);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
         mismatching = true;
 
         // Act
-        Task[] pending = Enumerable.Range(0, 8).Select(_ => ReadSnapshotAsync(skill, instructions)).ToArray();
+        Task[] pending = Enumerable.Range(0, 8).Select(_ => ReadAsync()).ToArray();
         release.SetResult();
         await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
 
         // Assert
-        Assert.Equal(9, reads);
+        Assert.Equal(cached ? 2 : 8, reads);
 
         // Act
         mismatching = false;
-        await ReadSnapshotAsync(skill, instructions);
-        clock.Advance(TimeSpan.FromMilliseconds(1999));
+        clock.Advance(TimeSpan.FromMinutes(20));
         await ReadSnapshotAsync(skill, instructions);
 
         // Assert
-        Assert.Equal(10, reads);
+        Assert.Equal(cached ? 2 : 9, reads);
+
+        async Task ReadAsync()
+        {
+            if (cached)
+            {
+                await ReadSnapshotAsync(skill, instructions);
+            }
+            else
+            {
+                var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => ReadSnapshotAsync(skill, instructions));
+                Assert.Contains(sizeMismatch ? "byte size" : "SHA-256 digest", failure.Message);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReadResource_IntegrityFailure_DoesNotBlockOtherResourcesAsync(bool instructions)
+    {
+        // Arrange
+        string failedUri = instructions ? SkillUri : SkillRootUri + "references/checklist.md";
+        int reads = 0;
+        var client = CreateResourceClient((uri, _) =>
+        {
+            reads++;
+            return Task.FromResult(ResourceResponse(uri, uri == failedUri ? "Changed." : uri == SkillUri ? SkillContent : "Checklist."));
+        });
+        var skill = CreateSkill(client.Object);
 
         // Act
-        clock.Advance(TimeSpan.FromMilliseconds(1));
-        await ReadSnapshotAsync(skill, instructions);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ReadSnapshotAsync(skill, instructions));
+        await ReadSnapshotAsync(skill, !instructions);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ReadSnapshotAsync(skill, instructions));
+        await ReadSnapshotAsync(skill, !instructions);
 
         // Assert
-        Assert.Equal(11, reads);
+        Assert.Equal(3, reads);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task ReadResource_AfterIntegrityMismatch_HonorsCancellationAsync(bool instructions, bool cached)
+    {
+        // Arrange
+        var clock = new ResourceTimeProvider();
+        string original = instructions ? SkillContent : "Checklist.";
+        int reads = 0;
+        var client = CreateResourceClient((uri, _) =>
+            Task.FromResult(ResourceResponse(uri, ++reads == 1 && cached ? original : original + "Changed.")));
+        var skill = CreateSkill(client.Object, timeProvider: clock);
+        if (cached)
+        {
+            await ReadSnapshotAsync(skill, instructions);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await ReadSnapshotAsync(skill, instructions);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ReadSnapshotAsync(skill, instructions));
+        }
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ReadSnapshotAsync(skill, instructions, cts.Token));
+        Assert.Equal(cts.Token, error.CancellationToken);
+        Assert.Equal(cached ? 2 : 1, reads);
     }
 
     [Theory]
