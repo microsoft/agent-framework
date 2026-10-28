@@ -463,7 +463,7 @@ CHECKER_COMMANDS = {
 
 
 def _resolve_checkers(extra_args: list[str]) -> tuple[list[str], list[str]]:
-    """Split a ``--checker NAME`` selector (repeatable) from pass-through args.
+    """Split repeatable ``--checker NAME`` or ``--checker=NAME`` selectors from pass-through args.
 
     With no explicit ``--checker``, all gating checkers (mypy, pyrefly, ty, zuban,
     pyright) run. A single checker can be isolated via e.g. ``--checker pyright``.
@@ -476,6 +476,10 @@ def _resolve_checkers(extra_args: list[str]) -> tuple[list[str], list[str]]:
         if argument == "--checker" and index + 1 < len(extra_args):
             checkers.append(extra_args[index + 1])
             index += 2
+            continue
+        if argument.startswith("--checker="):
+            checkers.append(argument.partition("=")[2])
+            index += 1
             continue
         passthrough.append(argument)
         index += 1

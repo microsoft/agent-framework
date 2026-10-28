@@ -139,6 +139,8 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Test workspace checker selection
+        run: uv run --locked --group tool-runtime python -m unittest discover -s scripts/tests -p test_workspace_checker_selection.py
       - name: Run tests/samples type checkers (mypy, pyrefly, ty)
         run: uv run --locked --group tool-runtime python -m scripts.workspace_poe_tasks ci-test-typing
 
