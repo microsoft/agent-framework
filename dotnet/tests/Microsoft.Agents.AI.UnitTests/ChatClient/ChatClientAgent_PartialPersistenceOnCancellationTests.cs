@@ -346,6 +346,108 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_FlagEnabled_PerServiceCallPersistence_ApprovedToolThenCancellation_NextTurnDoesNotSettleCallAgainAsync()
+    {
+        // Arrange
+        int executions = 0;
+        var tool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => { executions++; return "Sunny"; }, "GetWeather"));
+        using CancellationTokenSource cts = new();
+        var chatClient = new ScriptedStreamingChatClient(
+            cts,
+            new StreamingCall([new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather")]) { MessageId = "m1" }]),
+            new StreamingCall([TextUpdate("It is sun", "m2")], CallEnd.CallerCancels),
+            new StreamingCall([TextUpdate("You're welcome", "m3")]));
+        ChatClientAgent agent = new(chatClient, options: new()
+        {
+            ChatOptions = new() { Tools = [tool] },
+            RequirePerServiceCallChatHistoryPersistence = true,
+            PersistPartialMessagesOnCancellation = true,
+        });
+        var session = await agent.CreateSessionAsync();
+
+        var approvalRequest = Assert.Single(await RunAndCollectApprovalRequestsAsync(agent, session, new ChatMessage(ChatRole.User, "What's the weather?")));
+
+        // Act
+        await RunUntilCancelledAsync(agent, session, new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(approved: true)]), cts.Token);
+        await RunToCompletionAsync(agent, session, new ChatMessage(ChatRole.User, "Thanks"));
+
+        // Assert
+        Assert.Equal(1, executions);
+        AssertSingleResultPerCall(GetHistory(agent, session), "call1");
+        AssertSingleResultPerCall(chatClient.Requests[2], "call1");
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_FlagEnabled_PerServiceCallPersistence_ApprovedToolThenCancellationInLaterServiceCall_NextTurnDoesNotSettleCallAgainAsync()
+    {
+        // Arrange
+        int executions = 0;
+        var weatherTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => { executions++; return "Sunny"; }, "GetWeather"));
+        var timeTool = AIFunctionFactory.Create(() => "12:00", "GetTime");
+        using CancellationTokenSource cts = new();
+        var chatClient = new ScriptedStreamingChatClient(
+            cts,
+            new StreamingCall([new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather")]) { MessageId = "m1" }]),
+            new StreamingCall([new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call2", "GetTime")]) { MessageId = "m2" }]),
+            new StreamingCall([TextUpdate("It is sun", "m3")], CallEnd.CallerCancels),
+            new StreamingCall([TextUpdate("You're welcome", "m4")]));
+        ChatClientAgent agent = new(chatClient, options: new()
+        {
+            ChatOptions = new() { Tools = [weatherTool, timeTool] },
+            RequirePerServiceCallChatHistoryPersistence = true,
+            PersistPartialMessagesOnCancellation = true,
+        });
+        var session = await agent.CreateSessionAsync();
+
+        var approvalRequest = Assert.Single(await RunAndCollectApprovalRequestsAsync(agent, session, new ChatMessage(ChatRole.User, "What's the weather and the time?")));
+
+        // Act
+        await RunUntilCancelledAsync(agent, session, new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(approved: true)]), cts.Token);
+        await RunToCompletionAsync(agent, session, new ChatMessage(ChatRole.User, "Thanks"));
+
+        // Assert
+        Assert.Equal(1, executions);
+        AssertSingleResultPerCall(GetHistory(agent, session), "call1", "call2");
+        AssertSingleResultPerCall(chatClient.Requests[3], "call1", "call2");
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_FlagEnabled_PerServiceCallPersistence_AutoApprovedToolThenCancellation_NextTurnDoesNotExecuteAgainAsync()
+    {
+        // Arrange
+        int bookExecutions = 0;
+        int weatherExecutions = 0;
+        var bookTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => { bookExecutions++; return "Booked"; }, "BookTrip"));
+        var weatherTool = AIFunctionFactory.Create(() => { weatherExecutions++; return "Sunny"; }, "GetWeather");
+        using CancellationTokenSource cts = new();
+        var chatClient = new ScriptedStreamingChatClient(
+            cts,
+            new StreamingCall([new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call1", "BookTrip"), new FunctionCallContent("call2", "GetWeather")]) { MessageId = "m1" }]),
+            new StreamingCall([TextUpdate("Your trip is bo", "m2")], CallEnd.CallerCancels),
+            new StreamingCall([TextUpdate("You're welcome", "m3")]));
+        ChatClientAgent agent = new(chatClient, options: new()
+        {
+            ChatOptions = new() { Tools = [bookTool, weatherTool] },
+            RequirePerServiceCallChatHistoryPersistence = true,
+            PersistPartialMessagesOnCancellation = true,
+        });
+        var session = await agent.CreateSessionAsync();
+
+        var approvalRequest = Assert.Single(await RunAndCollectApprovalRequestsAsync(agent, session, new ChatMessage(ChatRole.User, "Book a trip and check the weather")));
+        Assert.Equal("call1", approvalRequest.ToolCall.CallId);
+
+        // Act
+        await RunUntilCancelledAsync(agent, session, new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(approved: true)]), cts.Token);
+        await RunToCompletionAsync(agent, session, new ChatMessage(ChatRole.User, "Thanks"));
+
+        // Assert
+        Assert.Equal(1, bookExecutions);
+        Assert.Equal(1, weatherExecutions);
+        AssertSingleResultPerCall(GetHistory(agent, session), "call1", "call2");
+        AssertSingleResultPerCall(chatClient.Requests[2], "call1", "call2");
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_FlagEnabled_NextRunIncludesPersistedPartialInteractionAsync()
     {
         // Arrange
@@ -406,6 +508,41 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
         }
 
         return (historyAfterCancellation, GetHistory(agent, session));
+    }
+
+    private static async Task<List<ToolApprovalRequestContent>> RunAndCollectApprovalRequestsAsync(ChatClientAgent agent, AgentSession session, ChatMessage message)
+    {
+        List<ToolApprovalRequestContent> requests = [];
+        await foreach (var update in agent.RunStreamingAsync([message], session))
+        {
+            requests.AddRange(update.Contents.OfType<ToolApprovalRequestContent>());
+        }
+
+        return requests;
+    }
+
+    private static async Task RunUntilCancelledAsync(ChatClientAgent agent, AgentSession session, ChatMessage message, CancellationToken cancellationToken) =>
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in agent.RunStreamingAsync([message], session, cancellationToken: cancellationToken))
+            {
+            }
+        });
+
+    private static async Task RunToCompletionAsync(ChatClientAgent agent, AgentSession session, ChatMessage message)
+    {
+        await foreach (var _ in agent.RunStreamingAsync([message], session))
+        {
+        }
+    }
+
+    private static void AssertSingleResultPerCall(IEnumerable<ChatMessage> messages, params string[] callIds)
+    {
+        var resultCallIds = messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>().Select(r => r.CallId).ToList();
+        foreach (var callId in callIds)
+        {
+            Assert.Single(resultCallIds, id => string.Equals(id, callId, StringComparison.Ordinal));
+        }
     }
 
     private static async Task<List<AgentResponseUpdate>> ConsumeUntilCancelledAsync(ChatClientAgent agent, AgentSession session, AgentRunOptions? options, CancellationToken cancellationToken)

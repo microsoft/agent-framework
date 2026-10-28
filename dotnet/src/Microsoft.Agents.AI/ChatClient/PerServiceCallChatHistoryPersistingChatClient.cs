@@ -195,7 +195,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
             {
                 serviceErrorOccurred = true;
-                await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options).ConfigureAwait(false);
+                await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
                 throw;
             }
             catch (Exception ex)
@@ -237,7 +237,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
                 catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
                 {
                     serviceErrorOccurred = true;
-                    await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options).ConfigureAwait(false);
+                    await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
                     throw;
                 }
                 catch (Exception ex)

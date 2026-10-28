@@ -160,6 +160,42 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
     }
 
     /// <summary>
+    /// Removes from the stored auto-approved function calls those whose call already has a result in the chat history,
+    /// keeping the calls that are still unfinished.
+    /// </summary>
+    /// <remarks>
+    /// The stored calls are normally cleared only when a run completes, so that a failed run injects them again on the
+    /// next run. When a cancelled streaming run still persists its partial interaction (see
+    /// <see cref="ChatClientAgentOptions.PersistPartialMessagesOnCancellation"/>), the results of the injected calls
+    /// are stored even though the run did not complete. Those calls must then be removed: with per-service-call
+    /// persistence the next run does not see the stored history before <see cref="FunctionInvokingChatClient"/>, so a
+    /// leftover call would be injected as approved and executed a second time.
+    /// </remarks>
+    /// <param name="session">The session holding the stored auto-approved function calls.</param>
+    /// <param name="settledCallIds">The call ids whose results have been persisted.</param>
+    internal static void RemoveSettledAutoApprovals(AgentSession session, HashSet<string> settledCallIds)
+    {
+        if (!session.StateBag.TryGetValue(
+            StateBagKey,
+            out List<ToolApprovalRequestContent>? pendingRequests,
+            AgentJsonUtilities.DefaultOptions)
+            || pendingRequests is not { Count: > 0 }
+            || pendingRequests.RemoveAll(request => settledCallIds.Contains(request.ToolCall.CallId)) == 0)
+        {
+            return;
+        }
+
+        if (pendingRequests.Count > 0)
+        {
+            session.StateBag.SetValue(StateBagKey, pendingRequests, AgentJsonUtilities.DefaultOptions);
+        }
+        else
+        {
+            session.StateBag.TryRemoveValue(StateBagKey);
+        }
+    }
+
+    /// <summary>
     /// Attempts to get the current <see cref="AgentSession"/> from the ambient run context. When no run
     /// context or session is available, logs a warning (once per instance) and returns <see langword="false"/>
     /// so the caller can pass the request through without applying bypassing.

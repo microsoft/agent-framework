@@ -1020,12 +1020,23 @@ public sealed partial class ChatClientAgent : AIAgent
     /// The notification is best effort: it uses <see cref="CancellationToken.None"/> because the caller's token is already
     /// cancelled, and any failure is logged and swallowed so that the original <see cref="OperationCanceledException"/>
     /// is not masked. This method is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/>.
+    /// When the notification succeeds, the tool approval state kept in the session for calls whose results are now in the
+    /// chat history is consumed, as it would be at the end of a completed run, while the state of unfinished calls is kept.
     /// </remarks>
+    /// <param name="session">The session of the cancelled run.</param>
+    /// <param name="requestMessages">The request messages to persist.</param>
+    /// <param name="responseUpdates">The response updates received before the cancellation.</param>
+    /// <param name="chatOptions">The chat options of the cancelled run.</param>
+    /// <param name="historyMessages">
+    /// The messages known to be stored in the chat history, including <paramref name="requestMessages"/>, used to find
+    /// the tool calls that are settled. When <see langword="null"/>, only <paramref name="requestMessages"/> are used.
+    /// </param>
     internal async Task NotifyProvidersOfPartialMessagesOnCancellationAsync(
         ChatClientAgentSession session,
         IEnumerable<ChatMessage> requestMessages,
         IEnumerable<ChatResponseUpdate> responseUpdates,
-        ChatOptions? chatOptions)
+        ChatOptions? chatOptions,
+        IEnumerable<ChatMessage>? historyMessages = null)
     {
         try
         {
@@ -1033,11 +1044,37 @@ public sealed partial class ChatClientAgent : AIAgent
             var partialResponseMessages = CreatePartialResponseMessages(requestMessagesList, responseUpdates);
 
             await this.NotifyProvidersOfNewMessagesAsync(session, requestMessagesList, partialResponseMessages, chatOptions, CancellationToken.None).ConfigureAwait(false);
+
+            RemoveSettledToolApprovalState(session, (historyMessages ?? requestMessagesList).Concat(partialResponseMessages));
         }
         catch (Exception notifyException)
         {
             this._logger.LogAgentChatClientPartialMessagesNotificationFailed(this.Id, this.GetLoggingAgentName(), notifyException);
         }
+    }
+
+    /// <summary>
+    /// Removes the tool approval state kept in the session for the tool calls whose results are contained in the
+    /// specified messages, which must all be stored in the chat history.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ApprovalResponseBindingChatClient"/> and <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// keep their state when a streaming run does not complete, so that it can be retried. Once the results of those calls
+    /// are persisted, the state must be consumed, otherwise the next run would settle or execute the same calls again.
+    /// </remarks>
+    private static void RemoveSettledToolApprovalState(ChatClientAgentSession session, IEnumerable<ChatMessage> persistedMessages)
+    {
+        HashSet<string> settledCallIds = new(
+            persistedMessages.SelectMany(message => message.Contents).OfType<ToolResultContent>().Select(result => result.CallId),
+            StringComparer.Ordinal);
+
+        if (settledCallIds.Count == 0)
+        {
+            return;
+        }
+
+        ApprovalResponseBindingChatClient.RemoveSettledPendingApprovalRequests(session, settledCallIds);
+        ApprovalNotRequiredFunctionBypassingChatClient.RemoveSettledAutoApprovals(session, settledCallIds);
     }
 
     /// <summary>
