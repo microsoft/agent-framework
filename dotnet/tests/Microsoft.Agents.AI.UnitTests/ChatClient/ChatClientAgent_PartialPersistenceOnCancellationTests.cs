@@ -333,6 +333,19 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_FlagEnabled_PerServiceCallPersistence_ContinuationTokenReceived_DoesNotDuplicateHistoryOnResumeAsync()
+    {
+        // Arrange & Act
+        var (historyAfterCancellation, history) = await CancelAndResumePerServiceCallRunAsync(persistPartialMessagesOnCancellation: true);
+        var (_, baselineHistory) = await CancelAndResumePerServiceCallRunAsync(persistPartialMessagesOnCancellation: false);
+
+        // Assert
+        Assert.Empty(historyAfterCancellation);
+        Assert.DoesNotContain(history, IsMarkedAsPartial);
+        Assert.Equal(baselineHistory.Select(m => (m.Role, m.Text)), history.Select(m => (m.Role, m.Text)));
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_FlagEnabled_NextRunIncludesPersistedPartialInteractionAsync()
     {
         // Arrange
@@ -367,6 +380,32 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
         Assert.Equal(ChatRole.Assistant, history[3].Role);
         Assert.Equal("It is sun", history[3].Text);
         Assert.True(IsMarkedAsPartial(history[3]));
+    }
+
+    private static async Task<(List<ChatMessage> HistoryAfterCancellation, List<ChatMessage> History)> CancelAndResumePerServiceCallRunAsync(bool persistPartialMessagesOnCancellation)
+    {
+        using CancellationTokenSource cts = new();
+        var chatClient = new ScriptedStreamingChatClient(
+            cts,
+            new StreamingCall([new ChatResponseUpdate(ChatRole.Assistant, "partial") { MessageId = "m1", ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) }], CallEnd.CallerCancels),
+            new StreamingCall([TextUpdate(" rest", "m1")]));
+        ChatClientAgent agent = new(chatClient, options: new()
+        {
+            RequirePerServiceCallChatHistoryPersistence = true,
+            PersistPartialMessagesOnCancellation = persistPartialMessagesOnCancellation,
+        });
+        var session = await agent.CreateSessionAsync();
+
+        var received = await ConsumeUntilCancelledAsync(agent, session, null, cts.Token);
+        var historyAfterCancellation = GetHistory(agent, session);
+
+        var continuationToken = Assert.Single(received).ContinuationToken;
+        Assert.NotNull(continuationToken);
+        await foreach (var _ in agent.RunStreamingAsync(session, options: new AgentRunOptions { ContinuationToken = continuationToken }))
+        {
+        }
+
+        return (historyAfterCancellation, GetHistory(agent, session));
     }
 
     private static async Task<List<AgentResponseUpdate>> ConsumeUntilCancelledAsync(ChatClientAgent agent, AgentSession session, AgentRunOptions? options, CancellationToken cancellationToken)

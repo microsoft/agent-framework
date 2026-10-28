@@ -184,6 +184,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
 
         bool loopExitedNormally = false;
         bool serviceErrorOccurred = false;
+        bool continuationTokenReceived = false;
         try
         {
             bool hasUpdates;
@@ -191,7 +192,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             {
                 hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
             }
-            catch (Exception ex) when (!skipSimulation && !isServiceManaged && agent.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken))
+            catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
             {
                 serviceErrorOccurred = true;
                 await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options).ConfigureAwait(false);
@@ -208,6 +209,12 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             {
                 var update = enumerator.Current;
                 responseUpdates.Add(update.Clone());
+
+                // Track continuation tokens on the original update, because ChatResponseUpdate.Clone() does not copy them.
+                if (update.ContinuationToken is not null)
+                {
+                    continuationTokenReceived = true;
+                }
 
                 // If the service returned a real ConversationId on any update, remember that.
                 // Otherwise stamp our sentinel so FICC treats this as service-managed —
@@ -227,7 +234,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
                 {
                     hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
                 }
-                catch (Exception ex) when (!skipSimulation && !isServiceManaged && agent.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken))
+                catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
                 {
                     serviceErrorOccurred = true;
                     await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options).ConfigureAwait(false);
@@ -293,6 +300,26 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             session.ConversationId = LocalHistoryConversationId;
         }
     }
+
+    /// <summary>
+    /// Determines whether providers should be notified of the partial messages of the current service call
+    /// after a cancellation, instead of being notified of a failure.
+    /// </summary>
+    /// <remarks>
+    /// This method is evaluated in exception filters, so it must not have side effects.
+    /// Callers pass <paramref name="skipPartialMessages"/> as <see langword="true"/> when chat history is not simulated by this
+    /// decorator (service-managed history, continuation or background runs) or when any received update carried a continuation
+    /// token. In the latter case, the caller can resume the run with the received token, and the resumed run persists the
+    /// request and the updates received so far, so persisting them here would duplicate them in the chat history.
+    /// </remarks>
+    private static bool ShouldNotifyProvidersOfPartialMessages(
+        ChatClientAgent agent,
+        Exception ex,
+        AgentRunOptions? runOptions,
+        bool skipPartialMessages,
+        CancellationToken cancellationToken) =>
+        !skipPartialMessages
+        && agent.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken);
 
     /// <summary>
     /// Notifies <see cref="ChatHistoryProvider"/>s of the input messages only (no response
