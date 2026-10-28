@@ -145,6 +145,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var (agent, session) = GetRequiredAgentAndSession();
+        var runOptions = AIAgent.CurrentRunContext?.RunOptions;
         options = StripLocalHistoryConversationId(options);
 
         bool isServiceManaged = !string.IsNullOrEmpty(options?.ConversationId);
@@ -190,6 +191,12 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             {
                 hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
             }
+            catch (Exception ex) when (!skipSimulation && !isServiceManaged && agent.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken))
+            {
+                serviceErrorOccurred = true;
+                await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options).ConfigureAwait(false);
+                throw;
+            }
             catch (Exception ex)
             {
                 serviceErrorOccurred = true;
@@ -219,6 +226,12 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
                 try
                 {
                     hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!skipSimulation && !isServiceManaged && agent.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken))
+                {
+                    serviceErrorOccurred = true;
+                    await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options).ConfigureAwait(false);
+                    throw;
                 }
                 catch (Exception ex)
                 {

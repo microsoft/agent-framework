@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -56,6 +58,17 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed partial class ChatClientAgent : AIAgent
 {
+    /// <summary>
+    /// The key of the <see cref="ChatMessage.AdditionalProperties"/> entry that marks a response message persisted
+    /// from a streaming run that was cancelled before completion.
+    /// </summary>
+    /// <remarks>
+    /// This marker is only added when <see cref="ChatClientAgentOptions.PersistPartialMessagesOnCancellation"/> or
+    /// <see cref="ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation"/> is enabled. Its value is <see langword="true"/>.
+    /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public const string PartialResponseMarkerKey = "agent_framework.partial_response";
+
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly HashSet<string> _aiContextProviderStateKeys;
     private readonly AIAgentMetadata _agentMetadata;
@@ -369,6 +382,11 @@ public sealed partial class ChatClientAgent : AIAgent
                 // Ensure we start the streaming request
                 hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
             }
+            catch (Exception ex) when (this.ShouldNotifyProvidersOfPartialMessagesAtEndOfRun(ex, safeSession, chatOptions, options, continuationToken, responseUpdates, cancellationToken))
+            {
+                await this.NotifyProvidersOfPartialMessagesOnCancellationAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), responseUpdates, chatOptions).ConfigureAwait(false);
+                throw;
+            }
             catch (Exception ex)
             {
                 await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
@@ -398,6 +416,11 @@ public sealed partial class ChatClientAgent : AIAgent
                     // null session) after each yield, so we must re-establish it for the decorator.
                     EnsureRunContextHasSession(safeSession);
                     hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex) when (this.ShouldNotifyProvidersOfPartialMessagesAtEndOfRun(ex, safeSession, chatOptions, options, continuationToken, responseUpdates, cancellationToken))
+                {
+                    await this.NotifyProvidersOfPartialMessagesOnCancellationAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), responseUpdates, chatOptions).ConfigureAwait(false);
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -940,6 +963,142 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         return this.NotifyProvidersOfFailureAsync(session, ex, requestMessages, chatOptions, cancellationToken);
+    }
+
+    /// <summary>
+    /// Determines whether providers should be notified of the partial messages of a cancelled streaming run at the end of the run,
+    /// instead of being notified of a failure.
+    /// </summary>
+    /// <remarks>
+    /// This method is evaluated in an exception filter, so it must not have side effects.
+    /// It returns <see langword="false"/> when per-service-call persistence is active (the
+    /// <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles the notification), when chat history is
+    /// managed by the service, or when the run involves continuation tokens or background responses.
+    /// </remarks>
+    private bool ShouldNotifyProvidersOfPartialMessagesAtEndOfRun(
+        Exception ex,
+        ChatClientAgentSession session,
+        ChatOptions? chatOptions,
+        AgentRunOptions? runOptions,
+        ChatClientAgentContinuationToken? continuationToken,
+        List<ChatResponseUpdate> responseUpdates,
+        CancellationToken cancellationToken) =>
+        !this.RequiresPerServiceCallChatHistoryPersistence
+        && continuationToken is null
+        && chatOptions?.AllowBackgroundResponses is not true
+        && string.IsNullOrWhiteSpace(chatOptions?.ConversationId)
+        && string.IsNullOrWhiteSpace(session.ConversationId)
+        && !responseUpdates.Any(update => !string.IsNullOrWhiteSpace(update.ConversationId))
+        && this.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken);
+
+    /// <summary>
+    /// Determines whether providers should be notified of the partial messages received before a cancellation.
+    /// </summary>
+    /// <remarks>
+    /// Returns <see langword="true"/> only when <paramref name="ex"/> is an <see cref="OperationCanceledException"/> caused by
+    /// the caller's <paramref name="cancellationToken"/>, and partial persistence on cancellation is enabled either per run via
+    /// <see cref="ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation"/> or at agent level via
+    /// <see cref="ChatClientAgentOptions.PersistPartialMessagesOnCancellation"/>.
+    /// This method is evaluated in exception filters, so it must not have side effects.
+    /// It is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/>.
+    /// </remarks>
+    internal bool ShouldNotifyProvidersOfPartialMessagesOnCancellation(Exception ex, AgentRunOptions? runOptions, CancellationToken cancellationToken) =>
+        ex is OperationCanceledException
+        && cancellationToken.IsCancellationRequested
+        && ((runOptions as ChatClientAgentRunOptions)?.PersistPartialMessagesOnCancellation
+            ?? this._agentOptions?.PersistPartialMessagesOnCancellation
+            ?? false);
+
+    /// <summary>
+    /// Notifies the <see cref="ChatHistoryProvider"/> and all <see cref="AIContextProviders"/> of the request messages and the
+    /// sanitized partial response of a cancelled streaming run, through the same channel used for successfully completed messages.
+    /// </summary>
+    /// <remarks>
+    /// The notification is best effort: it uses <see cref="CancellationToken.None"/> because the caller's token is already
+    /// cancelled, and any failure is logged and swallowed so that the original <see cref="OperationCanceledException"/>
+    /// is not masked. This method is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/>.
+    /// </remarks>
+    internal async Task NotifyProvidersOfPartialMessagesOnCancellationAsync(
+        ChatClientAgentSession session,
+        IEnumerable<ChatMessage> requestMessages,
+        IEnumerable<ChatResponseUpdate> responseUpdates,
+        ChatOptions? chatOptions)
+    {
+        try
+        {
+            var requestMessagesList = requestMessages as IReadOnlyCollection<ChatMessage> ?? requestMessages.ToList();
+            var partialResponseMessages = CreatePartialResponseMessages(requestMessagesList, responseUpdates);
+
+            await this.NotifyProvidersOfNewMessagesAsync(session, requestMessagesList, partialResponseMessages, chatOptions, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception notifyException)
+        {
+            this._logger.LogAgentChatClientPartialMessagesNotificationFailed(this.Id, this.GetLoggingAgentName(), notifyException);
+        }
+    }
+
+    /// <summary>
+    /// Builds the response messages to persist for a cancelled streaming run from the updates received so far.
+    /// </summary>
+    /// <remarks>
+    /// Incomplete content is removed so that the stored history remains valid for the next service call:
+    /// tool calls without a matching tool result in the partial response, tool results without a matching tool call,
+    /// pending input requests (for example, <see cref="ToolApprovalRequestContent"/>), and empty text.
+    /// Messages left without content are dropped, and every remaining message is marked with
+    /// <see cref="PartialResponseMarkerKey"/>.
+    /// </remarks>
+    internal static List<ChatMessage> CreatePartialResponseMessages(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatResponseUpdate> responseUpdates)
+    {
+        IList<ChatMessage> responseMessages = responseUpdates.ToChatResponse().Messages;
+
+        HashSet<string> toolCallIds = new(StringComparer.Ordinal);
+        HashSet<string> toolResultIds = new(StringComparer.Ordinal);
+
+        foreach (var content in requestMessages.SelectMany(m => m.Contents))
+        {
+            if (content is ToolCallContent toolCall)
+            {
+                toolCallIds.Add(toolCall.CallId);
+            }
+        }
+
+        foreach (var content in responseMessages.SelectMany(m => m.Contents))
+        {
+            switch (content)
+            {
+                case ToolCallContent toolCall:
+                    toolCallIds.Add(toolCall.CallId);
+                    break;
+                case ToolResultContent toolResult:
+                    toolResultIds.Add(toolResult.CallId);
+                    break;
+            }
+        }
+
+        List<ChatMessage> partialMessages = [];
+        foreach (var message in responseMessages)
+        {
+            List<AIContent> contents = message.Contents.Where(content => content switch
+            {
+                ToolCallContent toolCall => toolResultIds.Contains(toolCall.CallId),
+                ToolResultContent toolResult => toolCallIds.Contains(toolResult.CallId),
+                InputRequestContent => false,
+                TextContent text => !string.IsNullOrEmpty(text.Text),
+                _ => true,
+            }).ToList();
+
+            if (contents.Count == 0)
+            {
+                continue;
+            }
+
+            message.Contents = contents;
+            message.AdditionalProperties ??= new();
+            message.AdditionalProperties[PartialResponseMarkerKey] = true;
+            partialMessages.Add(message);
+        }
+
+        return partialMessages;
     }
 
     /// <summary>

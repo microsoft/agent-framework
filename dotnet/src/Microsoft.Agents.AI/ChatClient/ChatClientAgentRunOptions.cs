@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -35,6 +37,7 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
     {
         this.ChatOptions = options.ChatOptions?.Clone();
         this.ChatClientFactory = options.ChatClientFactory;
+        this.PersistPartialMessagesOnCancellation = options.PersistPartialMessagesOnCancellation;
     }
 
     /// <summary>
@@ -61,6 +64,15 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
     /// chat client will be used without modification.
     /// </value>
     public Func<IChatClient, IChatClient>? ChatClientFactory { get; set; }
+
+    /// <summary>
+    /// Gets or sets a per-run override for <see cref="ChatClientAgentOptions.PersistPartialMessagesOnCancellation"/>.
+    /// </summary>
+    /// <value>
+    /// <see langword="null"/> (default) to use the agent-level setting; otherwise the value to use for this run only.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool? PersistPartialMessagesOnCancellation { get; set; }
 
     /// <inheritdoc/>
     public override AgentRunOptions Clone() => new ChatClientAgentRunOptions(this);
