@@ -10,18 +10,20 @@ import {
   Code,
   ChevronDown,
   ChevronRight,
-  Music,
   Check,
   X,
   Clock,
 } from "lucide-react";
 import type { MessageContent } from "@/types/openai";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
+import { AudioMessagePreview } from "@/components/ui/audio-message-preview";
+import { useDevUIStore } from "@/stores/devuiStore";
 
 interface ContentRendererProps {
   content: MessageContent;
   className?: string;
   isStreaming?: boolean;
+  autoPlayAudio?: boolean;
 }
 
 // Text content renderer
@@ -134,18 +136,70 @@ function useBase64ToBlobUrl(data: string | undefined, mimeType: string): string 
   return blobUrl;
 }
 
+function audioMimeTypeFromFilename(filename?: string): string | undefined {
+  const lowerFilename = filename?.toLowerCase() || "";
+  if (lowerFilename.endsWith(".wav")) return "audio/wav";
+  if (lowerFilename.endsWith(".mp3")) return "audio/mpeg";
+  if (lowerFilename.endsWith(".m4a")) return "audio/mp4";
+  if (lowerFilename.endsWith(".ogg")) return "audio/ogg";
+  if (lowerFilename.endsWith(".flac")) return "audio/flac";
+  if (lowerFilename.endsWith(".aac")) return "audio/aac";
+  return undefined;
+}
+
+function fileDataSourceUrl(fileData: string | undefined, mimeType: string | undefined): string | undefined {
+  if (!fileData) {
+    return undefined;
+  }
+  return fileData.startsWith("data:") ? fileData : `data:${mimeType || "application/octet-stream"};base64,${fileData}`;
+}
+
+function isAudioFilename(filename?: string): boolean {
+  return Boolean(filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/));
+}
+
+function AudioFileRenderer({
+  sourceUrl,
+  filename,
+  className,
+  autoPlay,
+}: {
+  sourceUrl: string;
+  filename?: string;
+  className?: string;
+  autoPlay?: boolean;
+}) {
+  return (
+    <AudioMessagePreview
+      audio={{ blobUrl: sourceUrl }}
+      label={filename || "Audio file"}
+      minWidth={360}
+      align="start"
+      downloadFilename={filename || "audio"}
+      className={`my-2 ${className || ""}`}
+      autoPlay={autoPlay}
+    />
+  );
+}
+
 // File content renderer (handles both input and output files)
-function FileContentRenderer({ content, className }: ContentRendererProps) {
+function FileContentRenderer({ content, className, autoPlayAudio }: ContentRendererProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const autoPlayAgentAudio = useDevUIStore((state) => state.audioInput.autoPlayAgentAudio);
 
   // Determine file properties (must be before hooks for conditional logic)
   const isFileContent = content.type === "input_file" || content.type === "output_file";
   const fileUrl = isFileContent ? (content.file_url || content.file_data) : undefined;
   const filename = isFileContent ? (content.filename || "file") : undefined;
+  const mimeType = content.type === "output_file" ? content.mime_type : audioMimeTypeFromFilename(filename);
 
   // Determine file type from filename or data URI
   const isPdf = filename?.toLowerCase().endsWith(".pdf") || fileUrl?.includes("application/pdf");
-  const isAudio = filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/);
+  const isAudioFile = Boolean(
+    isAudioFilename(filename) ||
+      mimeType?.startsWith("audio/") ||
+      fileUrl?.startsWith("data:audio/")
+  );
 
   // Convert base64 to blob URL for PDFs (better browser compatibility)
   // Use file_data (raw base64) if available, otherwise try file_url
@@ -223,18 +277,15 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
   }
 
   // For audio files
-  if (isAudio && fileUrl) {
+  if (isAudioFile && fileUrl) {
+    const sourceUrl = fileDataSourceUrl(content.file_data, mimeType) || fileUrl;
     return (
-      <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
-        <div className="flex items-center gap-2 mb-2">
-          <Music className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">{filename}</span>
-        </div>
-        <audio controls className="w-full">
-          <source src={fileUrl} />
-          Your browser does not support audio playback.
-        </audio>
-      </div>
+      <AudioFileRenderer
+        sourceUrl={sourceUrl}
+        filename={filename}
+        className={className}
+        autoPlay={content.type === "output_file" && Boolean(autoPlayAudio && autoPlayAgentAudio)}
+      />
     );
   }
 
@@ -258,6 +309,18 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function AudioContentRenderer({ content, className }: ContentRendererProps) {
+  if (content.type !== "input_audio") return null;
+  const { data, format } = content.input_audio;
+  const mimeType = format === "mp3" ? "audio/mpeg" : "audio/wav";
+  const audioUrl = data.startsWith("data:") ? data : `data:${mimeType};base64,${data}`;
+  const label = `Voice message (${format.toUpperCase()})`;
+
+  return (
+    <AudioFileRenderer sourceUrl={audioUrl} filename={label} className={className} />
   );
 }
 
@@ -373,7 +436,7 @@ function FunctionApprovalRequestRenderer({ content, className }: ContentRenderer
 }
 
 // Main content renderer that delegates to specific renderers
-export function OpenAIContentRenderer({ content, className, isStreaming }: ContentRendererProps) {
+export function OpenAIContentRenderer({ content, className, isStreaming, autoPlayAudio }: ContentRendererProps) {
   switch (content.type) {
     case "text":
     case "input_text":
@@ -385,7 +448,9 @@ export function OpenAIContentRenderer({ content, className, isStreaming }: Conte
       return <ImageContentRenderer content={content} className={className} />;
     case "input_file":
     case "output_file":
-      return <FileContentRenderer content={content} className={className} />;
+      return <FileContentRenderer content={content} className={className} autoPlayAudio={autoPlayAudio} />;
+    case "input_audio":
+      return <AudioContentRenderer content={content} className={className} />;
     case "output_data":
       return <DataContentRenderer content={content} className={className} />;
     case "function_approval_request":

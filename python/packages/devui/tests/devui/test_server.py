@@ -3,19 +3,23 @@
 """Focused tests for server functionality."""
 
 import asyncio
+import base64
 import inspect
+import io
 import json
 import logging
 import sys
 import tempfile
+import warnings
+import wave
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from agent_framework import AgentResponseUpdate, Content
-from conftest import MockAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+from agent_framework import Agent, AgentResponseUpdate, ChatResponseUpdate, Content
+from conftest import MockAgent, MockBaseChatClient  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient
 
 import agent_framework_devui
@@ -153,6 +157,104 @@ async def test_stream_execution_emits_one_failed_terminal_event_with_partial_out
     assert failed_response["status"] == "failed"
     assert failed_response["error"]["message"] == "failed after output"
     assert failed_response["output"][0]["content"][0]["text"] == "Partial output"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_audio_transport_and_history_endpoints(stream):
+    """Audio reaches the model unchanged and the history API retains its existing message schema."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(b"\x01\x00" * 160)
+    audio_bytes = buffer.getvalue()
+    audio_data = base64.b64encode(audio_bytes).decode()
+    client = MockBaseChatClient()
+    client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_data(data=audio_bytes, media_type="audio/wav")],
+                role="assistant",
+            )
+        ]
+    ]
+    server = DevServer(auth_enabled=False, ui_enabled=False)
+    server.register_entities([Agent(client, name="audio-round-trip")])
+
+    with TestClient(server.get_app(), base_url="http://127.0.0.1") as http:
+        entity_id = http.get("/v1/entities").json()["entities"][0]["id"]
+        conversation_id = http.post("/v1/conversations", json={"metadata": {"agent_id": entity_id}}).json()["id"]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            response = http.post(
+                "/v1/responses",
+                json={
+                    "metadata": {"entity_id": entity_id},
+                    "conversation": conversation_id,
+                    "stream": stream,
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_audio",
+                                    "input_audio": {"data": audio_data, "format": "wav"},
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+        assert response.status_code == 200, response.text
+        if stream:
+            events = [
+                json.loads(line.removeprefix("data: "))
+                for line in response.text.splitlines()
+                if line.startswith("data: ") and line != "data: [DONE]"
+            ]
+            result = next(event["response"] for event in events if event["type"] == "response.completed")
+            added = next(
+                event["item"]
+                for event in events
+                if event["type"] == "response.output_item.added" and event["item"]["type"] == "output_file"
+            )
+            assert added["file_url"] == f"data:audio/wav;base64,{audio_data}"
+        else:
+            result = response.json()
+        output = next(item for item in result["output"] if item["type"] == "output_file")
+        assert output["file_url"] == f"data:audio/wav;base64,{audio_data}"
+        assert not output.get("file_data")
+        created = http.post(
+            f"/v1/conversations/{conversation_id}/items",
+            json={
+                "items": [
+                    {
+                        "role": role,
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {"data": audio_data, "format": "wav"},
+                            }
+                        ],
+                    }
+                    for role in ["user", "assistant"]
+                ],
+            },
+        )
+        assert created.status_code == 200, created.text
+        assert all(item["content"][0]["type"] == "input_file" for item in created.json()["data"])
+        history = http.get(f"/v1/conversations/{conversation_id}/items").json()["data"]
+        assert all(isinstance(item["id"], str) for item in history)
+        audio_parts = [part for item in history for part in item.get("content", []) if part["type"] == "input_file"]
+        assert len(audio_parts) == 2
+        assert all(part["file_url"] == f"data:audio/wav;base64,{audio_data}" for part in audio_parts)
+
+    model_audio = next(
+        part for message in client.received_messages[0] for part in message.contents if part.media_type == "audio/wav"
+    )
+    assert model_audio.type == "data"
+    assert model_audio.uri == f"data:audio/wav;base64,{audio_data}"
 
 
 def test_configuration():

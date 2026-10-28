@@ -196,6 +196,26 @@ response2 = client.responses.create(
 
 **How it works:** DevUI automatically retrieves the conversation's message history from the stored thread and passes it to the agent. You don't need to manually manage message history - just provide the same `conversation` ID for follow-up requests.
 
+### Voice Input and Audio Responses
+
+DevUI chat supports microphone input in browsers that allow recording from `localhost` or HTTPS pages. Use the
+microphone button to start recording, then stop to preview or cancel. You can also hold the microphone button to
+record and release it to attach the recording. Recordings are converted to mono WAV, with defaults of 16 kHz,
+60 seconds, and 10 MB. The recording bar shows elapsed time and animated live microphone levels.
+
+DevUI sends the audio to the selected agent without transcribing it. The selected agent or model must be able to work
+with audio. Uploaded files keep the existing attachment behavior and original format, including multiple audio
+files such as WAV, MP3, M4A, and OGG. Support for those formats depends on the selected agent.
+
+Recordings and agent audio share a waveform player with play/pause, seeking, and duration. Agent audio includes a
+download action. Audio returned by the conversation-history API or a resumed response uses the same controls.
+Playback uses the browser's audio element and does not depend on waveform decoding or downloading remote audio first.
+
+Settings > General > Audio options groups capture limits, sample rate, preview, and browser processing hints under
+Input. Auto-stop on silence optionally attaches click-to-record audio after a quiet pause and does not interrupt
+push-to-talk. Output provides optional agent-audio autoplay, which is disabled by default and remains subject to
+browser restrictions. Restored responses do not autoplay.
+
 ### OpenAI Proxy Mode
 
 DevUI provides an **OpenAI Proxy** feature for testing OpenAI models directly through the interface without creating custom agents. Enable via Settings → OpenAI Proxy tab.

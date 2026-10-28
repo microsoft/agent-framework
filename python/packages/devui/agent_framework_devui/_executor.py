@@ -11,6 +11,7 @@ from typing import Any, cast
 
 from agent_framework import Content, SupportsAgentRun, Workflow
 
+from ._audio import input_audio_to_content
 from ._conversations import ConversationStore, InMemoryConversationStore
 from ._discovery import EntityDiscovery
 from ._mapper import MessageMapper
@@ -750,6 +751,12 @@ class AgentFrameworkExecutor:
                                                 additional_properties=file_properties,
                                             )
                                         )
+
+                                elif content_type == "input_audio":
+                                    try:
+                                        contents.append(input_audio_to_content(content_dict))
+                                    except ValueError as exc:
+                                        raise InputConversionError(str(exc)) from exc
 
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response with server-side validation

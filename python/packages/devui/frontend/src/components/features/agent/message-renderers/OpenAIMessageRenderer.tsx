@@ -33,6 +33,7 @@ export function OpenAIMessageRenderer({
             content={content}
             className={index > 0 ? "mt-2" : ""}
             isStreaming={isStreaming}
+            autoPlayAudio={content.type === "output_file" && content.auto_play}
           />
         ))}
 
