@@ -22,7 +22,9 @@ from stale_issue_pr_ping import (
     find_last_team_comment,
     get_maintainers,
     main,
+    mark_waiting,
     ping,
+    should_mark_waiting,
     should_ping,
 )
 
@@ -59,6 +61,7 @@ def _make_issue(
     comments: list[MagicMock] | None = None,
     pull_request: bool = False,
     number: int = 42,
+    updated_at: datetime = NOW,
 ) -> MagicMock:
     issue = MagicMock()
     issue.user = MagicMock()
@@ -70,6 +73,7 @@ def _make_issue(
     issue.labels = [_make_label(n) for n in labels]
     issue.comments = comment_count
     issue.pull_request = MagicMock() if pull_request else None
+    issue.updated_at = updated_at
     if comments is not None:
         issue.get_comments.return_value = comments
     return issue
@@ -130,57 +134,89 @@ class TestAuthorRepliedAfter:
 
 
 # ---------------------------------------------------------------------------
+# should_mark_waiting
+# ---------------------------------------------------------------------------
+
+class TestShouldMarkWaiting:
+    def test_mark_when_latest_comment_is_from_maintainer(self):
+        comments = [
+            _make_comment("external", NOW - timedelta(days=2)),
+            _make_comment("alice", NOW - timedelta(days=1)),
+        ]
+        issue = _make_issue(labels=[], comments=comments, comment_count=2)
+
+        assert should_mark_waiting(issue, TEAM) is True
+
+    def test_skip_maintainer_author(self):
+        issue = _make_issue(
+            author="alice",
+            labels=[],
+            comments=[_make_comment("bob", NOW)],
+        )
+
+        assert should_mark_waiting(issue, TEAM) is False
+        issue.get_comments.assert_not_called()
+
+    def test_skip_already_waiting_item(self):
+        issue = _make_issue(
+            comments=[_make_comment("alice", NOW)],
+        )
+
+        assert should_mark_waiting(issue, TEAM) is False
+        issue.get_comments.assert_not_called()
+
+    def test_skip_item_without_comments(self):
+        issue = _make_issue(labels=[], comment_count=0)
+
+        assert should_mark_waiting(issue, TEAM) is False
+        issue.get_comments.assert_not_called()
+
+    def test_skip_when_latest_comment_is_not_from_maintainer(self):
+        comments = [
+            _make_comment("alice", NOW - timedelta(days=2)),
+            _make_comment("external", NOW - timedelta(days=1)),
+        ]
+        issue = _make_issue(labels=[], comments=comments, comment_count=2)
+
+        assert should_mark_waiting(issue, TEAM) is False
+
+
+# ---------------------------------------------------------------------------
 # should_ping
 # ---------------------------------------------------------------------------
 
 class TestShouldPing:
-    def test_should_ping_stale_issue(self):
-        team_comment = _make_comment("alice", NOW - timedelta(days=5))
-        issue = _make_issue(comments=[team_comment], comment_count=1)
+    def test_skip_recently_updated_issue(self):
+        issue = _make_issue(updated_at=NOW - timedelta(days=3))
+        assert should_ping(issue, TEAM, 4, NOW) is False
+
+    def test_ping_issue_updated_at_threshold(self):
+        issue = _make_issue(updated_at=NOW - timedelta(days=4))
         assert should_ping(issue, TEAM, 4, NOW) is True
 
-    def test_skip_team_member_author(self):
-        issue = _make_issue(author="alice", labels=[TRIGGER_LABEL], comment_count=1)
+    def test_skip_maintainer_author(self):
+        issue = _make_issue(author="alice", updated_at=NOW - timedelta(days=4))
         assert should_ping(issue, TEAM, 4, NOW) is False
 
-    def test_skip_already_pinged(self):
-        issue = _make_issue(labels=[TRIGGER_LABEL, PINGED_LABEL], comment_count=1)
+    def test_skip_already_warned_issue(self):
+        issue = _make_issue(
+            labels=[TRIGGER_LABEL, PINGED_LABEL],
+            updated_at=NOW - timedelta(days=4),
+        )
         assert should_ping(issue, TEAM, 4, NOW) is False
 
-    def test_skip_no_comments(self):
-        issue = _make_issue(comment_count=0)
-        assert should_ping(issue, TEAM, 4, NOW) is False
 
-    def test_skip_no_team_comment(self):
-        c = _make_comment("external", NOW - timedelta(days=5))
-        issue = _make_issue(comments=[c], comment_count=1)
-        assert should_ping(issue, TEAM, 4, NOW) is False
+# ---------------------------------------------------------------------------
+# mark_waiting
+# ---------------------------------------------------------------------------
 
-    def test_skip_author_replied(self):
-        team_c = _make_comment("alice", NOW - timedelta(days=5))
-        author_c = _make_comment("external", NOW - timedelta(days=3))
-        issue = _make_issue(comments=[team_c, author_c], comment_count=2)
-        assert should_ping(issue, TEAM, 4, NOW) is False
+class TestMarkWaiting:
+    def test_dry_run_does_not_apply_label(self, capsys):
+        issue = _make_issue(labels=[])
 
-    def test_skip_not_enough_days(self):
-        team_comment = _make_comment("alice", NOW - timedelta(days=2))
-        issue = _make_issue(comments=[team_comment], comment_count=1)
-        assert should_ping(issue, TEAM, 4, NOW) is False
-
-    def test_aware_datetime_handled(self):
-        """Timezone-aware datetimes should not be mangled by astimezone."""
-        aware_dt = (NOW - timedelta(days=5)).replace(tzinfo=timezone.utc)
-        team_comment = _make_comment("alice", aware_dt)
-        issue = _make_issue(comments=[team_comment], comment_count=1)
-        assert should_ping(issue, TEAM, 4, NOW) is True
-
-    def test_naive_datetime_handled(self):
-        """Naive datetimes (pre-PyGithub 2.x) should be handled by astimezone."""
-        naive_dt = (NOW - timedelta(days=5)).replace(tzinfo=None)
-        team_comment = _make_comment("alice", naive_dt)
-        issue = _make_issue(comments=[team_comment], comment_count=1)
-        # astimezone on naive datetime treats it as local time; just verify no crash
-        should_ping(issue, TEAM, 4, NOW)
+        assert mark_waiting(issue, dry_run=True) is True
+        issue.add_to_labels.assert_not_called()
+        assert "DRY RUN" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +318,56 @@ class TestMain:
         with pytest.raises(SystemExit):
             main()
         assert "numeric" in capsys.readouterr().out
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "tok",
+        "GITHUB_REPOSITORY": "org/repo",
+    }, clear=True)
+    @patch("stale_issue_pr_ping.get_maintainers", return_value=TEAM)
+    @patch("stale_issue_pr_ping.Github")
+    def test_scans_all_open_items_and_defers_newly_marked(
+        self,
+        mock_github,
+        mock_get_maintainers,
+        capsys,
+    ):
+        issue = _make_issue(
+            labels=[],
+            comments=[_make_comment("alice", NOW)],
+        )
+        repo = mock_github.return_value.get_repo.return_value
+        repo.get_issues.return_value = [issue]
+
+        main()
+
+        mock_get_maintainers.assert_called_once_with(repo)
+        repo.get_issues.assert_called_once_with(state="open")
+        issue.add_to_labels.assert_called_once_with(TRIGGER_LABEL)
+        issue.create_comment.assert_not_called()
+        assert "marked 1, pinged 0" in capsys.readouterr().out
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "tok",
+        "GITHUB_REPOSITORY": "org/repo",
+    }, clear=True)
+    @patch("stale_issue_pr_ping.datetime")
+    @patch("stale_issue_pr_ping.ping", return_value=True)
+    @patch("stale_issue_pr_ping.get_maintainers", return_value=TEAM)
+    @patch("stale_issue_pr_ping.Github")
+    def test_existing_waiting_item_continues_to_ping_check(
+        self,
+        mock_github,
+        mock_get_maintainers,
+        mock_ping,
+        mock_datetime,
+    ):
+        issue = _make_issue(updated_at=NOW - timedelta(days=4))
+        repo = mock_github.return_value.get_repo.return_value
+        repo.get_issues.return_value = [issue]
+        mock_datetime.now.return_value = NOW
+
+        main()
+
+        mock_get_maintainers.assert_called_once_with(repo)
+        issue.get_comments.assert_not_called()
+        mock_ping.assert_called_once_with(issue, False)

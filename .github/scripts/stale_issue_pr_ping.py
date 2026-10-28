@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Scan open issues and PRs labeled 'waiting-for-author' for stale follow-ups.
+"""Classify open issues and PRs waiting for external authors and ping stale items.
 
-Team members manually add the 'waiting-for-author' label when they need a
-response from the external author.  If the author hasn't replied within
-DAYS_THRESHOLD days of the last team comment, post a reminder and add the
-'requested-info' label to prevent duplicate pings.
+When a maintainer leaves the latest conversation comment on an external item,
+the automation adds 'waiting-for-author'. On later runs, inactive items receive
+a reminder and the 'requested-info' label to prevent duplicate pings.
 """
 
 from __future__ import annotations
@@ -83,6 +82,30 @@ def author_replied_after(
     return False
 
 
+def should_mark_waiting(issue: Issue, team_members: set[str]) -> bool:
+    """Return whether an external item should gain 'waiting-for-author'.
+
+    Policy: a CODEOWNER's latest conversation comment marks the item, and newly
+    marked items are not pinged until a later scheduled run.
+    """
+    if issue.user.login in team_members:
+        return False
+    if any(label.name == TRIGGER_LABEL for label in issue.labels):
+        return False
+    if issue.comments == 0:
+        return False
+
+    comments = list(issue.get_comments())
+    if not comments:
+        return False
+
+    latest_comment = comments[-1]
+    return bool(
+        latest_comment.user
+        and latest_comment.user.login in team_members
+    )
+
+
 def should_ping(
     issue: Issue,
     team_members: set[str],
@@ -106,27 +129,33 @@ def should_ping(
     if any(label.name == PINGED_LABEL for label in issue.labels):
         return False
 
-    # Skip if no comments at all
-    if issue.comments == 0:
+    # Check if the issue has been inactive long enough
+    days_since = (now - issue.updated_at.astimezone(timezone.utc)).days
+    return days_since >= days_threshold
+
+
+def mark_waiting(issue: Issue, dry_run: bool) -> bool:
+    """Add the 'waiting-for-author' label. Returns True on success."""
+    author = issue.user.login
+    kind = "PR" if issue.pull_request else "Issue"
+
+    if dry_run:
+        print(
+            f"  [DRY RUN] Would mark {kind} #{issue.number} "
+            f"as waiting for @{author}"
+        )
+        return True
+
+    try:
+        issue.add_to_labels(TRIGGER_LABEL)
+    except Exception as exc:
+        print(
+            f"  ERROR: Failed to mark {kind} #{issue.number} "
+            f"as waiting for @{author}: {exc}"
+        )
         return False
 
-    # Fetch comments once for both lookups
-    comments = list(issue.get_comments())
-
-    # Find last team member comment
-    last_team_comment = find_last_team_comment(comments, team_members)
-    if last_team_comment is None:
-        return False
-
-    # Skip if author replied after the last team comment
-    if author_replied_after(comments, author, last_team_comment.created_at):
-        return False
-
-    # Check if enough days have passed
-    days_since = (now - last_team_comment.created_at.astimezone(timezone.utc)).days
-    if days_since < days_threshold:
-        return False
-
+    print(f"  Marked {kind} #{issue.number} as waiting for @{author}")
     return True
 
 
@@ -196,14 +225,25 @@ def main() -> None:
         print(f"  @{maintainer}")
 
     now = datetime.now(timezone.utc)
+    marked = []
     pinged = []
     failed = []
     scanned = 0
 
-    print(f"Scanning open issues and PRs labeled '{TRIGGER_LABEL}' (threshold: {days_threshold} days)...\n")
+    print(
+        "Scanning open issues and PRs "
+        f"(stale threshold: {days_threshold} days)...\n"
+    )
 
-    for issue in repo.get_issues(state="open", labels=[TRIGGER_LABEL]):
+    for issue in repo.get_issues(state="open"):
         scanned += 1
+
+        if should_mark_waiting(issue, team_members):
+            if mark_waiting(issue, dry_run):
+                marked.append(issue.number)
+            else:
+                failed.append(issue.number)
+            continue
 
         if should_ping(issue, team_members, days_threshold, now):
             if ping(issue, dry_run):
@@ -211,7 +251,12 @@ def main() -> None:
             else:
                 failed.append(issue.number)
 
-    print(f"\nDone. Scanned {scanned} items, pinged {len(pinged)}, failed {len(failed)}.")
+    print(
+        f"\nDone. Scanned {scanned} items, marked {len(marked)}, "
+        f"pinged {len(pinged)}, failed {len(failed)}."
+    )
+    if marked:
+        print(f"Marked waiting: {', '.join(f'#{n}' for n in marked)}")
     if pinged:
         print(f"Pinged: {', '.join(f'#{n}' for n in pinged)}")
     if failed:
