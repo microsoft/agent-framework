@@ -667,25 +667,25 @@ class RawOpenAIChatCompletionClient(
                         async for chunk in completion_stream:
                             if len(chunk.choices) == 0 and chunk.usage is None:
                                 continue
-                            update = self._parse_response_update_from_openai(chunk)
-                            for content in update.contents:
-                                if content.type != "function_call":
-                                    continue
-                                choice_index = content.additional_properties.get("tool_call_choice_index")
-                                tool_index = content.additional_properties.get("tool_call_index")
-                                if not isinstance(choice_index, int) or not isinstance(tool_index, int):
-                                    continue
-                                index_key = (choice_index, tool_index)
-                                identity = tool_call_identities.get(index_key)
-                                if identity is None:
-                                    identity = (f"af-call-{uuid4().hex}", content.call_id or "")
-                                occurrence_id, provider_call_id = identity
-                                if content.call_id:
-                                    provider_call_id = content.call_id
-                                tool_call_identities[index_key] = (occurrence_id, provider_call_id)
-                                content.id = occurrence_id
-                                content.call_id = provider_call_id
-                            yield update
+                            for update in self._parse_response_updates_from_openai(chunk):
+                                for content in update.contents:
+                                    if content.type != "function_call":
+                                        continue
+                                    choice_index = content.additional_properties.get("tool_call_choice_index")
+                                    tool_index = content.additional_properties.get("tool_call_index")
+                                    if not isinstance(choice_index, int) or not isinstance(tool_index, int):
+                                        continue
+                                    index_key = (choice_index, tool_index)
+                                    identity = tool_call_identities.get(index_key)
+                                    if identity is None:
+                                        identity = (f"af-call-{uuid4().hex}", content.call_id or "")
+                                    occurrence_id, provider_call_id = identity
+                                    if content.call_id:
+                                        provider_call_id = content.call_id
+                                    tool_call_identities[index_key] = (occurrence_id, provider_call_id)
+                                    content.id = occurrence_id
+                                    content.call_id = provider_call_id
+                                yield update
                 except BadRequestError as ex:
                     if ex.code == "content_filter":
                         raise OpenAIContentFilterException(
@@ -926,39 +926,69 @@ class RawOpenAIChatCompletionClient(
             response_format=options.get("response_format"),
         )
 
-    def _parse_response_update_from_openai(
+    def _parse_response_updates_from_openai(
         self,
         chunk: ChatCompletionChunk,
-    ) -> ChatResponseUpdate:
-        """Parse a streaming response update from OpenAI."""
-        chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
-        contents: list[Content] = []
-        finish_reason: FinishReason | None = None
+    ) -> list[ChatResponseUpdate]:
+        """Parse one streaming chunk into one update per choice.
 
+        Each choice of a chunk is an independent alternative completion (the ``n``
+        request parameter), so a chunk with ``n>1`` interleaves deltas that belong
+        to different assistant messages. Emitting one update per choice, each
+        carrying a choice-scoped ``message_id``, lets ``ChatResponse.from_updates``
+        keep the same per-choice message boundaries that the non-streaming path
+        produces; merging them into a single update would concatenate the
+        alternatives' texts in arrival order instead.
+        """
+        base_metadata = self._get_metadata_from_streaming_chat_response(chunk)
         # Process usage data (may coexist with text/tool content in providers like Gemini).
         # See https://github.com/microsoft/agent-framework/issues/3434
-        if chunk.usage:
-            contents.append(
+        usage_contents: list[Content] = (
+            [
                 Content.from_usage(
                     usage_details=self._parse_usage_from_openai(chunk.usage),
                     merge_mode="replace",
                     raw_representation=chunk,
                 )
-            )
+            ]
+            if chunk.usage
+            else []
+        )
 
-        for choice in chunk.choices:
+        def _choice_update(choice: ChunkChoice, contents: list[Content]) -> ChatResponseUpdate:
+            choice_metadata = dict(base_metadata)
             # Missing per-chunk logprobs must not clear the most recent token metadata.
             if choice.logprobs is not None:
-                chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
+                choice_metadata.update(self._get_metadata_from_chat_choice(choice))
+            finish_reason: FinishReason | None = None
             if choice.finish_reason:
-                finish_reason = "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
+                finish_reason = (
+                    "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
+                )
+            # The provider chunk id is shared by every choice, so only choice 0 can
+            # use it as its message id; the other choices get a suffixed id to keep
+            # their message boundaries distinct.
+            message_id = chunk.id if choice.index == 0 else f"{chunk.id}-{choice.index}"
+            return ChatResponseUpdate(
+                created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                contents=contents,
+                role="assistant",
+                model=chunk.model,
+                additional_properties=choice_metadata,
+                finish_reason=finish_reason,
+                raw_representation=chunk,
+                response_id=chunk.id,
+                message_id=message_id,
+            )
 
+        updates: list[ChatResponseUpdate] = []
+        for choice in chunk.choices:
             # Some OpenAI-compatible providers (e.g. Azure) send `"delta": null`
             # on finish chunks instead of the spec-compliant `"delta": {}`.
             # Guard here so all content-parsing below can assume delta is present.
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
+                updates.append(_choice_update(choice, []))
                 continue
-
             choice_contents: list[Content] = []
             choice_contents.extend(self._parse_tool_calls_from_openai(choice))
             if text_content := self._parse_text_from_openai(choice):
@@ -974,18 +1004,93 @@ class RawOpenAIChatCompletionClient(
                 )
             if self.response_parser is not None:
                 choice_contents = list(self.response_parser(choice.delta, choice_contents))
-            contents.extend(choice_contents)
+            updates.append(_choice_update(choice, choice_contents))
+
+        if not updates:
+            if not usage_contents:
+                return []
+            return [
+                ChatResponseUpdate(
+                    created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    contents=usage_contents,
+                    role="assistant",
+                    model=chunk.model,
+                    additional_properties=dict(base_metadata),
+                    raw_representation=chunk,
+                    response_id=chunk.id,
+                    message_id=chunk.id,
+                )
+            ]
+        # Usage is response-level, so it rides on the first choice's update (which is
+        # where a single-choice chunk carried it before).
+        updates[0].contents = [*usage_contents, *updates[0].contents]
+        return updates
+
+    def _parse_response_update_from_openai(
+        self,
+        chunk: ChatCompletionChunk,
+    ) -> ChatResponseUpdate:
+        """Parse a streaming response update from OpenAI.
+
+        Multi-choice chunks (``n>1``) collapse into a single merged update here for
+        backwards compatibility; use :meth:`_parse_response_updates_from_openai`
+        to preserve per-choice message boundaries.
+        """
+        updates = self._parse_response_updates_from_openai(chunk)
+        if not updates:
+            return ChatResponseUpdate(
+                created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                contents=[],
+                role="assistant",
+                model=chunk.model,
+                additional_properties=self._get_metadata_from_streaming_chat_response(chunk),
+                raw_representation=chunk,
+                response_id=chunk.id,
+                message_id=chunk.id,
+            )
+        if len(updates) == 1:
+            return updates[0]
+        merged_metadata: dict[str, Any] = {}
+        for update in updates:
+            merged_metadata.update(update.additional_properties or {})
         return ChatResponseUpdate(
-            created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            contents=contents,
+            created_at=updates[0].created_at,
+            contents=[content for update in updates for content in update.contents],
             role="assistant",
             model=chunk.model,
-            additional_properties=chunk_metadata,
-            finish_reason=finish_reason,
+            additional_properties=merged_metadata,
+            finish_reason=next((update.finish_reason for update in reversed(updates) if update.finish_reason), None),
             raw_representation=chunk,
             response_id=chunk.id,
             message_id=chunk.id,
         )
+
+    @override
+    def _finalize_response_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse[Any]:
+        """Finalize response updates into a single ChatResponse.
+
+        With ``n>1``, the provider interleaves the choices' deltas in one stream, so
+        the per-choice updates arrive as e.g. ``A1, B1, A2, B2`` even though ``A1``
+        and ``A2`` belong to the same assistant message. ``ChatResponse.from_updates``
+        starts a new message whenever the message id changes, so the updates are
+        first grouped by message id (stable, first-seen order) to aggregate each
+        choice into its own message, matching the non-streaming path. Streams where
+        every update shares one id (``n=1``) or any update has no id are left as-is.
+        """
+        message_ids = [update.message_id for update in updates]
+        if len(message_ids) > 1 and all(message_id is not None for message_id in message_ids):
+            first_seen_order = dict.fromkeys(message_ids)
+            if len(first_seen_order) > 1:
+                grouped: dict[str, list[ChatResponseUpdate]] = {message_id: [] for message_id in first_seen_order}
+                for update in updates:
+                    grouped[cast("str", update.message_id)].append(update)
+                updates = [update for message_id in first_seen_order for update in grouped[message_id]]
+        return super()._finalize_response_updates(updates, response_format=response_format)
 
     def _parse_usage_from_openai(self, usage: CompletionUsage) -> UsageDetails:
         details = UsageDetails(

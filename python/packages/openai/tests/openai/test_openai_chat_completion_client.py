@@ -2900,6 +2900,94 @@ def test_streaming_tool_call_preserves_choice_local_index_scope(
     assert [content.additional_properties["tool_call_choice_index"] for content in function_calls] == [0, 1]
 
 
+async def test_streaming_multiple_choices_preserve_message_boundaries(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Text deltas from different choices (n>1) must not interleave inside one message.
+
+    Non-streamed parsing emits one assistant Message per choice, so the streamed
+    aggregation must preserve the same per-choice boundaries instead of
+    concatenating interleaved deltas from all choices into a single message.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+    common: dict[str, Any] = {"object": "chat.completion.chunk", "created": 1234567890, "model": "test-model"}
+    chunks = [
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [
+                {"index": 0, "delta": {"role": "assistant", "content": "A1"}, "finish_reason": None},
+                {"index": 1, "delta": {"role": "assistant", "content": "B1"}, "finish_reason": None},
+            ],
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [
+                {"index": 0, "delta": {"content": "A2"}, "finish_reason": None},
+                {"index": 1, "delta": {"content": "B2"}, "finish_reason": "stop"},
+            ],
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "multi-choice",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
+        }),
+    ]
+
+    async def create(**kwargs: Any) -> Any:
+        return _FakeAsyncStream(chunks)
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response_stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], stream=True, options={}
+        )
+        assert isinstance(response_stream, ResponseStream)
+        streamed_texts: list[str | None] = []
+        async for update in response_stream:
+            streamed_texts.extend(content.text for content in update.contents if content.type == "text")
+        final_response = await response_stream.get_final_response()
+
+    # The live stream keeps provider arrival order (interleaved) with per-choice ids.
+    assert streamed_texts == ["A1", "B1", "A2", "B2"]
+    # The final response keeps one message per choice, like the non-streaming path.
+    assert [message.text for message in final_response.messages] == ["A1A2", "B1B2"]
+    assert final_response.finish_reason == "stop"
+    assert final_response.usage_details is not None
+    assert final_response.usage_details["total_token_count"] == 15
+
+
+def test_streaming_single_choice_message_id_matches_provider_chunk_id(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """n=1 keeps today's behavior: one message whose id is the provider chunk id."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    chunk = ChatCompletionChunk.model_validate({
+        "id": "chatcmpl-single",
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": None}],
+    })
+
+    updates = client._parse_response_updates_from_openai(chunk)
+
+    assert len(updates) == 1
+    assert updates[0].message_id == "chatcmpl-single"
+    response = ChatResponse.from_updates(updates)
+    assert [message.text for message in response.messages] == ["hi"]
+    assert response.messages[0].message_id == "chatcmpl-single"
+
+
 async def test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index(
     openai_unit_test_env: dict[str, str],
 ) -> None:
