@@ -50,6 +50,16 @@ DEFAULT_MEMORY_NO_TOPICS_TEXT = "- none yet"
 # placeholder, so a singleton real memory is distinguishable from a written
 # placeholder line on read. Unmarked files keep their previous meaning.
 _MEMORY_GENUINE_PLACEHOLDER_SUFFIX = " <!-- genuine -->"
+# Header line recording that the memories in this file carry genuine markers.
+# Only files containing this line decode markers, so literal marker-shaped
+# text written by earlier versions keeps its exact bytes.
+_MEMORY_GENUINE_MARKER_LINE = "Encoding: genuine memory markers v1"
+# A placeholder followed by one or more genuine markers: the written shape of
+# a genuine placeholder-valued memory (one marker) and of literal marker-shaped
+# text (every marker beyond the first survives the round trip).
+_MEMORY_GENUINE_MARKED_SHAPE = re.compile(
+    re.escape(DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]) + "(?:" + re.escape(_MEMORY_GENUINE_PLACEHOLDER_SUFFIX) + ")+"
+)
 DEFAULT_MEMORY_EXTRACTION_PROMPT = """You extract durable memory candidates from an agent transcript delta.
 
 Return only JSON with this exact shape:
@@ -127,6 +137,13 @@ def _unescape_markdown_line(line: str) -> str:
     if body.startswith("\\#"):
         return f"{line[:leading_whitespace_length]}{body[1:]}"
     return line
+
+
+def _decode_genuine_memory(memory: str) -> str:
+    """Strip exactly one genuine marker from a marked memory line."""
+    if _MEMORY_GENUINE_MARKED_SHAPE.fullmatch(memory):
+        return memory[: -len(_MEMORY_GENUINE_PLACEHOLDER_SUFFIX)]
+    return memory
 
 
 def _slugify_topic(topic: str) -> str:
@@ -451,14 +468,20 @@ class MemoryTopicRecord:
         # content (or LLM-supplied consolidation output) for a section delimiter.
         escaped_summary_lines = [_escape_markdown_line(line) for line in self.summary.splitlines()]
         escaped_summary = "\n".join(escaped_summary_lines)
-        memory_lines = [f"- {_escape_markdown_line(self._encode_memory_text(memory))}" for memory in self.memories] or [
+        encoded_memories = [self._encode_memory_text(memory) for memory in self.memories]
+        memory_lines = [f"- {_escape_markdown_line(memory)}" for memory in encoded_memories] or [
             f"- {DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]}"
         ]
-        return "\n".join([
+        header_lines = [
             f"# {self.topic}",
             "",
             f"Updated: {self.updated_at}",
             f"Sessions: {session_line}",
+        ]
+        if any(encoded != memory for encoded, memory in zip(encoded_memories, self.memories)):
+            header_lines.append(_MEMORY_GENUINE_MARKER_LINE)
+        return "\n".join([
+            *header_lines,
             "",
             "## Summary",
             escaped_summary,
@@ -469,13 +492,14 @@ class MemoryTopicRecord:
 
     @staticmethod
     def _encode_memory_text(memory: str) -> str:
-        """Mark a genuine memory equal to the placeholder so a reader keeps it.
+        """Mark placeholder-shaped memories so the reader can tell them apart.
 
         The write side emits the bare placeholder line only for an empty memory
-        list; a real memory whose exact text equals it gets a distinguishing
-        suffix so a singleton round trip cannot collapse to empty.
+        list. A real memory whose text equals the placeholder, or already looks
+        like a marked one, gets one more marker, so the reader can strip a
+        single marker and still recover the exact original text.
         """
-        if memory == DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
+        if memory == DEFAULT_MEMORY_NO_TOPICS_TEXT[2:] or _MEMORY_GENUINE_MARKED_SHAPE.fullmatch(memory):
             return memory + _MEMORY_GENUINE_PLACEHOLDER_SUFFIX
         return memory
 
@@ -501,6 +525,7 @@ class MemoryTopicRecord:
         summary_lines: list[str] = []
         memories: list[str] = []
         current_section: str | None = None
+        genuine_markers = False
 
         for raw_line in markdown.splitlines():
             line = raw_line.rstrip()
@@ -508,6 +533,9 @@ class MemoryTopicRecord:
             if stripped.startswith("# "):
                 topic = stripped[2:].strip()
                 current_section = None
+                continue
+            if current_section is None and stripped == _MEMORY_GENUINE_MARKER_LINE:
+                genuine_markers = True
                 continue
             if current_section is None and stripped.startswith("Updated: "):
                 updated_at = stripped.removeprefix("Updated: ").strip()
@@ -535,14 +563,19 @@ class MemoryTopicRecord:
                 if memory_text:
                     memories.append(memory_text)
 
-        # Decode the genuine-marker suffix first so a marked memory can never be
-        # mistaken for the placeholder, then drop a bare placeholder only when it
-        # is the sole entry: that is the only shape the write side emits it in,
-        # and unmarked files keep their previous meaning.
+        # Markers decode only in files whose header records them, so literal
+        # marker-shaped text written by earlier versions keeps its exact bytes.
+        # Each marked line loses a single marker: a genuine placeholder-valued
+        # memory carries one, and literal marker-shaped text keeps every marker
+        # beyond the first. The sole-placeholder drop then applies only to a
+        # bare placeholder, the one shape the write side emits for an empty
+        # memory list.
+        if genuine_markers:
+            was_marked = [_MEMORY_GENUINE_MARKED_SHAPE.fullmatch(memory) is not None for memory in memories]
+            memories = [_decode_genuine_memory(memory) for memory in memories]
+        else:
+            was_marked = [False] * len(memories)
         placeholder = DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]
-        marked = placeholder + _MEMORY_GENUINE_PLACEHOLDER_SUFFIX
-        was_marked = [memory == marked for memory in memories]
-        memories = [placeholder if is_marked else memory for memory, is_marked in zip(memories, was_marked)]
         if memories == [placeholder] and not was_marked[0]:
             memories = []
 

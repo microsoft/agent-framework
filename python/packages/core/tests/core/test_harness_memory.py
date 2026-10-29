@@ -1121,6 +1121,55 @@ def test_memory_topic_record_still_drops_the_placeholder_for_an_empty_list() -> 
     assert parsed.memories == []
 
 
+def test_memory_topic_record_round_trips_literal_marker_shaped_text() -> None:
+    """A memory whose literal text equals the genuine marker must survive a
+    round trip instead of collapsing onto the placeholder value."""
+    record = MemoryTopicRecord(
+        topic="notes",
+        summary="s",
+        memories=["none yet <!-- genuine -->"],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+
+    parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="notes")
+
+    assert parsed.memories == ["none yet <!-- genuine -->"]
+
+
+def test_memory_topic_record_keeps_the_placeholder_value_and_the_literal_marker_apart() -> None:
+    """A genuine placeholder-valued memory and the literal marker text must
+    round trip as two distinct memories rather than merging into one."""
+    record = MemoryTopicRecord(
+        topic="notes",
+        summary="s",
+        memories=["none yet", "none yet <!-- genuine -->"],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+
+    parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="notes")
+
+    assert parsed.memories == ["none yet", "none yet <!-- genuine -->"]
+
+
+def test_memory_topic_record_preserves_literal_marker_text_in_legacy_files() -> None:
+    """Files written before the marker keep literal marker-shaped text verbatim,
+    exactly as the base reader reads them."""
+    legacy = "\n".join([
+        "# notes",
+        "",
+        "Updated: 2026-10-26T00:00:00+00:00",
+        "Sessions: -",
+        "",
+        "## Summary",
+        "s",
+        "",
+        "## Memories",
+        "- none yet <!-- genuine -->",
+    ])
+    parsed = MemoryTopicRecord.from_markdown(legacy, fallback_topic="notes")
+    assert parsed.memories == ["none yet <!-- genuine -->"]
+
+
 def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -> None:
     """Safe identifiers are readable on disk rather than opaque encoded segments."""
     store = MemoryFileStore(tmp_path, owner_prefix="user_", owner_state_key="owner_id")
