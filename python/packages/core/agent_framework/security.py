@@ -4283,7 +4283,12 @@ class SecureAgentConfig(ContextProvider):
                         session,
                         consume=False,
                     )
-                    if rebound is not None and rebound is not content:
+                    if (
+                        rebound is not None
+                        and rebound is not content
+                        and _function_call_replay_key(content.function_call)
+                        == _function_call_replay_key(rebound.function_call)
+                    ):
                         authenticated.add(id(content))
         return authenticated
 
