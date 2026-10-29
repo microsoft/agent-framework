@@ -514,6 +514,33 @@ public sealed class Mem0ProviderTests : IDisposable
         Assert.Empty(this._handler.Requests);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task StateInitializer_Throws_WhenScopeIdsAreBlankAsync(string blankId)
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = blankId }));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ClearStoredMemoriesAsync(new TestAgentSession()));
+        Assert.Empty(this._handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task ClearStoredMemoriesAsync_Throws_WhenRestoredStateHasBlankScopeIdsAsync(string blankId)
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
+        var restoredSession = CreateRestoredSession(new Mem0Provider.State(new Mem0ProviderScope { ThreadId = blankId }));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ClearStoredMemoriesAsync(restoredSession));
+        Assert.Empty(this._handler.Requests);
+    }
+
     [Fact]
     public async Task ClearStoredMemoriesAsync_Throws_WhenRestoredStateHasEmptyScopesAsync()
     {

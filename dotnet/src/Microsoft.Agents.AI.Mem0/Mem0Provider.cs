@@ -114,8 +114,13 @@ public sealed class Mem0Provider : MessageAIContextProvider
     private static bool HasValidScopes(State? state) =>
         state is not null && IsScoped(state.StorageScope) && IsScoped(state.SearchScope);
 
+    // Blank IDs count as unset, matching Mem0Client, which drops them from requests.
     private static bool IsScoped(Mem0ProviderScope? scope) =>
-        scope is not null && (scope.AgentId is not null || scope.ThreadId is not null || scope.UserId is not null || scope.ApplicationId is not null);
+        scope is not null
+        && (!string.IsNullOrWhiteSpace(scope.AgentId)
+            || !string.IsNullOrWhiteSpace(scope.ThreadId)
+            || !string.IsNullOrWhiteSpace(scope.UserId)
+            || !string.IsNullOrWhiteSpace(scope.ApplicationId));
 
     private State GetState(AgentSession? session)
     {
