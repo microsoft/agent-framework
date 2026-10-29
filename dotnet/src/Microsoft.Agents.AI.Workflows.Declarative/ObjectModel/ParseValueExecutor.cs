@@ -38,7 +38,7 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
         catch (Exception exception) when (
             expressionResult.Sensitivity == SensitivityLevel.Sensitive &&
             exception is FormatException or OverflowException or InvalidCastException or ArgumentException or
-                InvalidOperationException or JsonException or DeclarativeActionException)
+                InvalidOperationException or JsonException or DeclarativeActionException or DeclarativeModelException)
         {
             Trace.TraceWarning("Value conversion returned a blank result for action '{0}'.", this.Id);
             parsedValue = FormulaValue.NewBlank();

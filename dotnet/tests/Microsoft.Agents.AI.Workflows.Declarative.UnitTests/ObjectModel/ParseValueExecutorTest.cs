@@ -123,6 +123,8 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
     [InlineData("Record", "[]", false)]
     [InlineData("Table", "x", true)]
     [InlineData("Table", "x", false)]
+    [InlineData("Table", "[[1]]", true)]
+    [InlineData("Table", "[[1]]", false)]
     public async Task ParseInvalidValueAsync(string valueType, string sourceText, bool isSensitive)
     {
         // Arrange
@@ -151,6 +153,26 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
         {
             await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
         }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ParseUnsupportedTargetTypeAsync(bool isSensitive)
+    {
+        // Arrange
+        this.State.Set("Source", FormulaValue.New("x"),
+            sensitivity: isSensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None);
+        ParseValue.Builder builder = this.CreateModel(
+            nameof(ParseUnsupportedTargetTypeAsync), "Target", DataType.Any.ToBuilder(), "").ToBuilder();
+        builder.Value = new ValueExpression.Builder(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
+        ParseValueExecutor action = new(builder.Build(), this.State);
+
+        // Act
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert
+        Assert.IsType<DeclarativeModelException>(exception.InnerException);
     }
 
     private async Task ExecuteTestAsync(
