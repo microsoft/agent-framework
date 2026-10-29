@@ -193,7 +193,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         TestHttpMessageHandler messageHandler = new((_, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
         HttpRequestInfo request = new() { Method = "GET", Url = url };
 
@@ -210,15 +210,18 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         int requestCount = 0;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.Found)
+        {
+            Headers = { Location = new Uri("http://127.0.0.1/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK);
+#pragma warning disable CA2025
         TestHttpMessageHandler messageHandler = new((_, _) =>
         {
             requestCount++;
-            return Task.FromResult(new HttpResponseMessage(
-                requestCount == 1 ? HttpStatusCode.Found : HttpStatusCode.OK)
-            {
-                Headers = { Location = new Uri("http://127.0.0.1/next") },
-            });
+            return Task.FromResult(requestCount == 1 ? redirectResponse : okResponse);
         });
+#pragma warning restore CA2025
         await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
         HttpRequestInfo request = new() { Method = "GET", Url = "http://api.example.test/resource" };
 
@@ -237,8 +240,11 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncWithOwnedClientAllowsPublicAddressAsync(string url)
     {
         // Arrange
+        using HttpResponseMessage response = new(HttpStatusCode.OK);
+#pragma warning disable CA2025
         TestHttpMessageHandler messageHandler = new((_, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+            Task.FromResult(response));
+#pragma warning restore CA2025
         await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
         HttpRequestInfo request = new() { Method = "GET", Url = url };
 
@@ -257,7 +263,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         TestHttpMessageHandler messageHandler = new((_, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         using HttpClient client = new(messageHandler);
         await using DefaultHttpRequestHandler handler = new(client);
         HttpRequestInfo request = new() { Method = "GET", Url = url };
