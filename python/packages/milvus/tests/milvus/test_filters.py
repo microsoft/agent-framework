@@ -80,3 +80,42 @@ def test_unknown_field(collection):
 def test_vector_field_rejected(collection):
     with pytest.raises(NotImplementedError):
         collection._prepare_filter(Filter("embedding", "eq", "a"))
+
+
+def test_non_bmp_string_not_surrogate_escaped(collection):
+    # Emoji / supplementary-plane characters must stay literal UTF-8: Milvus parses string
+    # literals with Go's strconv.Unquote, which rejects 😀-style surrogate escapes.
+    assert collection._prepare_filter(Filter("text", "eq", "hi 😀")) == '(body == "hi 😀")'
+    assert collection._prepare_filter(Filter("text", "in", ["😀", "é"])) == '(body in ["😀", "é"])'
+
+
+def test_integer_field_integral_float_normalized(collection):
+    # Integral floats must emit integer literals so Milvus's INT64 parser can match the key.
+    assert collection._prepare_filter(Filter("id", "eq", 1.0)) == "(point_key == 1)"
+    assert collection._prepare_filter(Filter("id", "ne", 2.0)) == "(point_key != 2)"
+    assert collection._prepare_filter(Filter("id", "gt", 2.0)) == "(point_key > 2)"
+    assert collection._prepare_filter(Filter("id", "in", [1.0, 2.0])) == "(point_key in [1, 2])"
+    assert collection._prepare_filter(Filter("id", "between", [1.0, 3.0])) == "(point_key >= 1 and point_key <= 3)"
+
+
+def test_integer_field_fractional_float_ordered_translated(collection):
+    # Fractional bounds on an INT64 field are rewritten to the exact equivalent integer bound.
+    assert collection._prepare_filter(Filter("id", "gt", 1.5)) == "(point_key >= 2)"
+    assert collection._prepare_filter(Filter("id", "gte", 1.5)) == "(point_key >= 2)"
+    assert collection._prepare_filter(Filter("id", "lt", 1.5)) == "(point_key <= 1)"
+    assert collection._prepare_filter(Filter("id", "lte", 1.5)) == "(point_key <= 1)"
+    assert collection._prepare_filter(Filter("id", "between", [1.5, 3.5])) == "(point_key >= 2 and point_key <= 3)"
+
+
+def test_integer_field_fractional_float_equality_rejected(collection):
+    # A fractional operand cannot equal any integer key, so equality/membership is rejected.
+    with pytest.raises(ValueError, match="integral operand"):
+        collection._prepare_filter(Filter("id", "eq", 1.5))
+    with pytest.raises(ValueError, match="integral operand"):
+        collection._prepare_filter(Filter("id", "in", [1.5]))
+
+
+def test_float_field_keeps_fractional_operand(collection):
+    # Float-declared fields are unaffected by integer normalization.
+    assert collection._prepare_filter(Filter("number", "gte", 1.5)) == "(price >= 1.5)"
+    assert collection._prepare_filter(Filter("number", "eq", 2.5)) == "(price == 2.5)"

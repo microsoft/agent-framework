@@ -68,9 +68,11 @@ _SCALAR_TYPES: Final[dict[str, DataType]] = {
 }
 
 _READ_OPTIONS: Final[set[str]] = {"timeout"}
+# Data reads (get/query/search) accept consistency_level; metadata ops (exists/list) do not.
+_DATA_READ_OPTIONS: Final[set[str]] = {"timeout", "consistency_level"}
 _WRITE_OPTIONS: Final[set[str]] = {"timeout"}
 _CREATE_OPTIONS: Final[set[str]] = {"timeout", "consistency_level"}
-_SEARCH_OPTIONS: Final[set[str]] = {"timeout", "search_params"}
+_SEARCH_OPTIONS: Final[set[str]] = {"timeout", "search_params", "consistency_level"}
 
 
 class MilvusSettings(TypedDict, total=False):
@@ -150,7 +152,10 @@ def _format_scalar(value: Any) -> str:
     if isinstance(value, str):
         # json.dumps escapes quotes, backslashes and control characters (newlines, tabs, …),
         # producing a valid double-quoted Milvus string literal for any stored value.
-        return json.dumps(value)
+        # ensure_ascii=False keeps non-ASCII characters (e.g. emoji / supplementary-plane code
+        # points) as literal UTF-8: Milvus parses string literals with Go's strconv.Unquote, which
+        # rejects the 😀-style surrogate escapes that the default ensure_ascii=True emits.
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, (int, float)):
         return repr(value)
     raise NotImplementedError(f"Milvus filters support only scalar operands, not {type(value).__name__}.")
@@ -187,6 +192,45 @@ def _check_numeric_field(field: VectorStoreField) -> None:
         raise NotImplementedError(
             f"Milvus ordered comparisons require a declared int or float field; '{field.name}' is '{field.type_}'."
         )
+
+
+def _is_int_field(field: VectorStoreField) -> bool:
+    return (field.type_ or "str") == "int"
+
+
+def _as_int_literal(field_name: str, value: Any) -> int:
+    """Coerce an equality/membership operand to an ``int`` literal for an INT64 field.
+
+    Milvus stores integer fields as INT64 and its expression parser will not cast a floating
+    literal to match them, so ``Filter("id", "eq", 1.0)`` must emit ``1`` rather than ``1.0``.
+    An integral float normalizes to ``int``; a fractional float cannot equal any integer key, so
+    it is rejected instead of being emitted as an unmatchable literal.
+    """
+    if isinstance(value, bool):  # pragma: no cover - _check_scalar_operand rejects bools first
+        raise ValueError(f"Filter on integer field '{field_name}' requires an integer operand.")
+    if isinstance(value, int):
+        return value
+    if value.is_integer():
+        return int(value)
+    raise ValueError(
+        f"Filter on integer field '{field_name}' requires an integral operand; "
+        f"{value!r} has a fractional part and cannot match an integer key."
+    )
+
+
+def _int_ordered_bound(field_name: str, operator: str, value: Any) -> tuple[str, int]:
+    """Translate an ordered comparison on an INT64 field to an exact integer ``(symbol, literal)``.
+
+    A fractional bound is rewritten to its exact integer equivalent so Milvus can parse it:
+    ``id > 1.5`` and ``id >= 1.5`` become ``id >= 2`` (ceil), while ``id < 1.5`` and ``id <= 1.5``
+    become ``id <= 1`` (floor). Integral operands keep their original operator.
+    """
+    if isinstance(value, float) and not value.is_integer():
+        if operator in ("gt", "gte"):
+            return ">=", math.ceil(value)
+        return "<=", math.floor(value)
+    symbol = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
+    return symbol, _as_int_literal(field_name, value)
 
 
 # Maximum magnitude representable as float32; Milvus dense vectors are float32.
@@ -377,6 +421,11 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         silently accepted; a mismatch raises ``ValueError``.
         """
         options = _validate_operation_options(operation_options, _CREATE_OPTIONS)
+        # Default to strong consistency so a record is visible to search/get immediately after
+        # upsert, the expected behavior for an agent memory store. On a real Milvus server the
+        # default (bounded) consistency makes read-after-write intermittently miss fresh data;
+        # Milvus Lite is already strongly consistent. Callers can override via operation_options.
+        options.setdefault("consistency_level", "Strong")
         if await self.collection_exists():
             await self._validate_existing_collection()
             return
@@ -546,7 +595,10 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         include_vectors: bool = False,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[Any] | None:
-        options = _validate_operation_options(operation_options, _READ_OPTIONS)
+        options = _validate_operation_options(operation_options, _DATA_READ_OPTIONS)
+        # Strong consistency by default so a record is visible immediately after upsert (see
+        # ensure_collection_exists); the per-read level overrides the collection default. Overridable.
+        options.setdefault("consistency_level", "Strong")
         if order_by:
             raise NotImplementedError("Milvus ordered retrieval is not supported. Omit order_by.")
         output_fields = self._output_fields(include_vectors)
@@ -597,6 +649,9 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         operation_options: Mapping[str, Any] | None = None,
     ) -> SearchResults[dict[str, Any]]:
         options = _validate_operation_options(operation_options, _SEARCH_OPTIONS)
+        # Strong consistency by default so a just-upserted record is searchable immediately; the
+        # per-read level overrides the collection default. Overridable via operation_options.
+        options.setdefault("consistency_level", "Strong")
         if additional_property_name is not None:
             raise NotImplementedError("Milvus keyword-hybrid search is not supported by this connector.")
         if vector is None:
@@ -675,24 +730,34 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             raise NotImplementedError("Milvus filters do not operate on vector fields.")
         name = field.storage_name or field.name
         operator, value = expression.operator, expression.value
+        is_int = _is_int_field(field)
         if operator in ("eq", "ne"):
             _check_scalar_operand(field, value)
-            return f"({name} {'==' if operator == 'eq' else '!='} {_format_scalar(value)})"
+            literal = _as_int_literal(field.name, value) if is_int else value
+            return f"({name} {'==' if operator == 'eq' else '!='} {_format_scalar(literal)})"
         if operator in ("gt", "gte", "lt", "lte"):
             _check_numeric_field(field)
             _check_scalar_operand(field, value)
+            if is_int:
+                symbol, literal = _int_ordered_bound(field.name, operator, value)
+                return f"({name} {symbol} {_format_scalar(literal)})"
             symbol = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
             return f"({name} {symbol} {_format_scalar(value)})"
         if operator == "between":
             _check_numeric_field(field)
             _check_scalar_operand(field, value[0])
             _check_scalar_operand(field, value[1])
+            if is_int:
+                lo_symbol, lo = _int_ordered_bound(field.name, "gte", value[0])
+                hi_symbol, hi = _int_ordered_bound(field.name, "lte", value[1])
+                return f"({name} {lo_symbol} {_format_scalar(lo)} and {name} {hi_symbol} {_format_scalar(hi)})"
             return f"({name} >= {_format_scalar(value[0])} and {name} <= {_format_scalar(value[1])})"
         if operator in ("in", "not_in"):
             for item in value:
                 _check_scalar_operand(field, item)
+            items = [_as_int_literal(field.name, item) for item in value] if is_int else list(value)
             keyword = "in" if operator == "in" else "not in"
-            return f"({name} {keyword} {_format_list(value)})"
+            return f"({name} {keyword} {_format_list(items)})"
         raise NotImplementedError(f"Milvus does not support portable filter operator '{operator}'.")
 
 
