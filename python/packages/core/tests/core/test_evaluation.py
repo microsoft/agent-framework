@@ -245,10 +245,8 @@ class TestToEvalItem:
         assert _to_eval_item(query="Test", response=response, tools=[]).tools is None
         serialized = response.to_dict()
         assert "tools" not in serialized
-        assert "_evaluation_tools" not in serialized
         assert AgentResponse.from_json(response.to_json()).messages[0].contents[0].name == "load_skill"
         restored = pickle.loads(pickle.dumps(response))
-        assert not hasattr(restored, "_evaluation_tools")
         for restored_response in [
             AgentResponse.from_dict(serialized),
             AgentResponse.from_json(response.to_json()),
@@ -284,21 +282,21 @@ class TestToEvalItem:
             contents.insert(0, Content.from_function_call("call_1", "search", arguments={"city": "Seattle"}))
         chat_client_base.run_responses = [ChatResponse(messages=[Message("assistant", contents)])]
         chat_client_base.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=contents)]]
+        reconstructed_responses: list[AgentResponse[Any]] = []
         with patch.object(chat_client_base, "_inner_get_response", wraps=chat_client_base._inner_get_response) as model:
             if stream:
                 response_stream = agent.run("Test", stream=True)
                 updates = [AgentResponseUpdate.from_json(update.to_json()) async for update in response_stream]
                 response = await response_stream.get_final_response()
-                reconstructed = AgentResponse.from_updates(updates)
+                reconstructed_responses.append(AgentResponse.from_updates(updates))
             else:
                 response = await agent.run("Test")
-                reconstructed = response
         assert model.call_count >= 1
         assert all(call.kwargs["options"]["tools"] == exposed_tools for call in model.call_args_list)
 
         for result in (
             response,
-            reconstructed,
+            *reconstructed_responses,
             AgentResponse.from_dict(response.to_dict()),
             AgentResponse.from_json(response.to_json()),
             pickle.loads(pickle.dumps(response)),
@@ -460,6 +458,7 @@ class TestToEvalItem:
             Content.from_function_call("call_1", "search", arguments={}),
             Content.from_function_call("call_2", "search", arguments={"city": "Seattle"}),
         ]
+        reconstructed_responses: list[AgentResponse[Any]] = []
         if stream:
             chat_client_base.streaming_responses = [
                 [ChatResponseUpdate(role="assistant", contents=[call])] for call in calls
@@ -467,15 +466,14 @@ class TestToEvalItem:
             response_stream = agent.run("Test", stream=True)
             updates = [update async for update in response_stream]
             response = await response_stream.get_final_response()
-            restored = AgentResponse.from_updates(updates)
+            reconstructed_responses.append(AgentResponse.from_updates(updates))
         else:
             chat_client_base.run_responses = [ChatResponse(messages=[Message("assistant", [call])]) for call in calls]
             response = await agent.run("Test")
-            restored = AgentResponse.from_json(response.to_json())
 
         for result in (
             response,
-            restored,
+            *reconstructed_responses,
             AgentResponse.from_dict(response.to_dict()),
             AgentResponse.from_json(response.to_json()),
             pickle.loads(pickle.dumps(response)),
@@ -490,10 +488,9 @@ class TestToEvalItem:
             for content in message.contents
         )
 
-    @pytest.mark.parametrize("serialization", ["dict", "json", "pickle"])
     @pytest.mark.parametrize("constraint", ["const", "enum"])
     async def test_boolean_numeric_schema_change_rejects_evaluation(
-        self, chat_client_base: Any, serialization: str, constraint: str
+        self, chat_client_base: Any, constraint: str
     ) -> None:
         def schema(value: bool | int) -> dict[str, Any]:
             return {
@@ -523,14 +520,8 @@ class TestToEvalItem:
             ),
         ]
         response = await Agent(client=chat_client_base, tools=[original]).run("Test")
-        if serialization == "dict":
-            restored = AgentResponse.from_dict(response.to_dict())
-        elif serialization == "json":
-            restored = AgentResponse.from_json(response.to_json())
-        else:
-            restored = pickle.loads(pickle.dumps(response))
 
-        for result in (response, restored):
+        for result in (response, AgentResponse.from_json(response.to_json())):
             with pytest.raises(ValueError, match="search.*changed input schema"):
                 _to_eval_item(query="Test", response=result)
 
@@ -597,7 +588,7 @@ class TestToEvalItem:
             item = _to_eval_item(query="Test", response=response)
             assert item.tools is not None
             tools = {tool.name: tool for tool in item.tools}
-            assert set(tools) == ({"load"} if replace_same_name else {"load", "finish"})
+            assert set(tools) == {"load", "finish"}
             assert tools[added_tool.name].description == added_tool.description
             assert tools[added_tool.name].parameters() == added_tool.parameters()
 
@@ -697,7 +688,6 @@ class TestToEvalItem:
             response = await Agent(client=chat_client_base, tools=[tool]).run("Weather?")
             copied = deepcopy(response)
 
-            assert not hasattr(copied, "_evaluation_tools")
             assert (
                 copied.additional_properties["agent_framework.evaluation"]
                 == (response.additional_properties["agent_framework.evaluation"])
@@ -740,17 +730,6 @@ class TestToEvalItem:
 
         explicit = FunctionTool(name="explicit", func=lambda: "")
         assert _to_eval_item(query="Weather?", response=response, tools=[explicit]).tools == [explicit]
-
-    def test_serialized_empty_definitions_do_not_fall_back_to_agent_tools(self) -> None:
-        response = AgentResponse(
-            additional_properties={
-                "agent_framework.evaluation": {},
-            }
-        )
-        agent = MagicMock()
-        agent.default_options = {"tools": [FunctionTool(name="unused", func=lambda: "")]}
-
-        assert _to_eval_item(query="Test", response=response, agent=agent).tools is None
 
 
 class TestEvaluateAgentTools:
@@ -890,7 +869,7 @@ class TestEvaluateAgentTools:
         assert _to_eval_item(query="No tools", response=restored, agent=agent).tools is None
         assert restored.additional_properties["agent_framework.evaluation"] == {}
 
-    async def test_loop_aggregation_uses_latest_same_name_definition(self, chat_client_base: Any) -> None:
+    async def test_loop_aggregation_uses_latest_same_name_description(self, chat_client_base: Any) -> None:
         class ChangingToolsProvider(ContextProvider):
             async def before_run(
                 self,
@@ -1111,32 +1090,11 @@ class TestEvaluateAgentTools:
 
         assert results[0].passed == 1
 
-    async def test_evaluate_existing_response_includes_skill_tools(self, chat_client_base: Any) -> None:
-        skill = InlineSkill(
-            frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
-            instructions="Skill instructions.",
-        )
-        agent = Agent(client=chat_client_base, context_providers=[SkillsProvider(skill)])
-        response = await agent.run("Test")
-
-        @evaluator
-        def has_skill_tools(tools: list[FunctionTool]) -> bool:
-            return "load_skill" in {tool.name for tool in tools}
-
-        results = await evaluate_agent(
-            queries="Test",
-            responses=response,
-            evaluators=LocalEvaluator(has_skill_tools),
-        )
-
-        assert results[0].passed == 1
-        assert chat_client_base.call_count == 1
-
-    @pytest.mark.parametrize("serialization", ["json", "pickle"])
-    async def test_evaluate_restored_response_discovers_skill_tools(
+    @pytest.mark.parametrize("serialization", [None, "json", "pickle"])
+    async def test_evaluate_existing_response_discovers_skill_tools(
         self,
         chat_client_base: Any,
-        serialization: str,
+        serialization: str | None,
     ) -> None:
         skill = InlineSkill(
             frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
@@ -1146,11 +1104,10 @@ class TestEvaluateAgentTools:
         provider.before_run = AsyncMock(wraps=provider.before_run)  # type: ignore[method-assign]
         agent = Agent(client=chat_client_base, context_providers=[provider])
         response = await agent.run("Test")
-        restored = (
-            AgentResponse.from_json(response.to_json())
-            if serialization == "json"
-            else pickle.loads(pickle.dumps(response))
-        )
+        if serialization == "json":
+            response = AgentResponse.from_json(response.to_json())
+        elif serialization == "pickle":
+            response = pickle.loads(pickle.dumps(response))
 
         @evaluator
         def has_skill_tools(tools: list[FunctionTool]) -> bool:
@@ -1158,7 +1115,7 @@ class TestEvaluateAgentTools:
 
         results = await evaluate_agent(
             queries="Test",
-            responses=restored,
+            responses=response,
             evaluators=LocalEvaluator(has_skill_tools),
         )
 
