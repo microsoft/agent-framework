@@ -973,6 +973,112 @@ async def test_in_memory_ordered_filter_compares_a_native_scalar() -> None:
     assert [record.id for record in matched] == ["one"]
 
 
+def _new_york_zone() -> Any:
+    """Return America/New_York, skipping where no IANA time zone database is installed."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        return ZoneInfo("America/New_York")
+    except ZoneInfoNotFoundError:
+        pytest.skip("No IANA time zone database is available for ZoneInfo.")
+
+
+async def _repeated_hour_collection(zone: Any) -> InMemoryCollection[str, ScalarFilterRecord]:
+    """Three instants in America/New_York's 2026 fall-back repeated hour.
+
+    The two folds share the wall clock 01:30 and are one hour apart in UTC;
+    ``after`` is a third distinct instant in the same zone.
+    """
+    collection = InMemoryCollection(ScalarFilterRecord)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            ScalarFilterRecord(
+                id="fold",
+                created=datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1),
+                day=date(2026, 11, 1),
+                token=UUID("00000000-0000-0000-0000-0000000000f1"),
+                amount=Decimal("1"),
+                span=timedelta(hours=1),
+                label="repeated",
+                count=1,
+                flag=True,
+                vector=[1.0, 0.0],
+            ),
+            ScalarFilterRecord(
+                id="fold0",
+                created=datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=0),
+                day=date(2026, 11, 1),
+                token=UUID("00000000-0000-0000-0000-0000000000f0"),
+                amount=Decimal("1"),
+                span=timedelta(hours=1),
+                label="repeated",
+                count=2,
+                flag=True,
+                vector=[1.0, 0.0],
+            ),
+            ScalarFilterRecord(
+                id="after",
+                created=datetime(2026, 11, 1, 3, 30, tzinfo=zone),
+                day=date(2026, 11, 1),
+                token=UUID("00000000-0000-0000-0000-0000000000f2"),
+                amount=Decimal("1"),
+                span=timedelta(hours=1),
+                label="repeated",
+                count=3,
+                flag=True,
+                vector=[1.0, 0.0],
+            ),
+        ],
+        generate_vectors=False,
+    )
+    return collection
+
+
+async def test_in_memory_repeated_hour_matches_by_instant_through_get() -> None:
+    """Equality, inequality and membership on a repeated-hour instant name the stored record."""
+    zone = _new_york_zone()
+    collection = await _repeated_hour_collection(zone)
+    fold = datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1)
+
+    assert [record.id for record in await collection.get(filter=Filter("created", "eq", fold))] == ["fold"]
+    assert [record.id for record in await collection.get(filter=Filter("created", "ne", fold))] == [
+        "fold0",
+        "after",
+    ]
+    assert [record.id for record in await collection.get(filter=Filter("created", "in", (fold,)))] == ["fold"]
+
+
+async def test_in_memory_repeated_hour_matches_the_earlier_fold_through_get() -> None:
+    """The first fold of the repeated hour keeps naming its own instant."""
+    zone = _new_york_zone()
+    collection = await _repeated_hour_collection(zone)
+    fold0 = datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=0)
+
+    assert [record.id for record in await collection.get(filter=Filter("created", "eq", fold0))] == ["fold0"]
+    assert [record.id for record in await collection.get(filter=Filter("created", "in", (fold0,)))] == ["fold0"]
+
+
+async def test_in_memory_repeated_hour_matches_a_utc_equivalent_operand() -> None:
+    """An aware operand at the same instant in another zone matches the record."""
+    zone = _new_york_zone()
+    collection = await _repeated_hour_collection(zone)
+    utc_equivalent = datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc)
+
+    assert [record.id for record in await collection.get(filter=Filter("created", "eq", utc_equivalent))] == ["fold"]
+
+
+async def test_in_memory_repeated_hour_matches_by_instant_through_search() -> None:
+    """The vector search path applies the same instant semantics."""
+    zone = _new_york_zone()
+    collection = await _repeated_hour_collection(zone)
+    fold = datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1)
+
+    results = await collection.search(vector=[1.0, 0.0], filter=Filter("created", "eq", fold), top=10)
+
+    assert [result["record"].id async for result in results] == ["fold"]
+
+
 async def _scalar_amount_collection() -> InMemoryCollection[str, ScalarFilterRecord]:
     """Two records whose amounts and timestamps sort the other way round as text."""
     collection = InMemoryCollection(ScalarFilterRecord)

@@ -9,7 +9,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from typing import Any, ClassVar, Generic, cast
 from uuid import UUID, uuid4
@@ -166,7 +166,14 @@ def _restore_datetime(value: str) -> datetime:
     """Parse a timestamp the shared serializer wrote."""
     if value.endswith("Z"):
         value = f"{value[:-1]}+00:00"
-    return datetime.fromisoformat(value)
+    restored = datetime.fromisoformat(value)
+    if restored.tzinfo is not None:
+        # Aware values compare by instant, and CPython only guarantees that
+        # when both sides name their time the same way: in a repeated DST
+        # hour a zone datetime is unequal to the fixed-offset form parsed
+        # back from the record even at the same instant.
+        return restored.astimezone(timezone.utc)
+    return restored
 
 
 def _restore_timedelta(value: str) -> timedelta:
@@ -247,9 +254,11 @@ def _evaluate_in_memory_filter(
     """Evaluate a filter against the record as it is stored, one leaf at a time.
 
     A comparison operator restores its own leaf's field to the type the field
-    declares, so the native operand compares in the field's semantics. The
-    text operators stay on the stored string, which lets one group mix a text
-    operator and a native comparison over the same field.
+    declares, so the native operand compares in the field's semantics. Aware
+    datetimes are named in UTC on both sides of the comparison so an operand
+    in any zone matches the instant that was stored. The text operators stay
+    on the stored string, which lets one group mix a text operator and a
+    native comparison over the same field.
     """
     if isinstance(expression, FilterGroup):
         values = (_evaluate_in_memory_filter(item, record, definition) for item in expression.filters)
@@ -268,12 +277,12 @@ def _evaluate_in_memory_filter(
         or field.type_ not in _SERIALIZED_SCALAR_TYPE_NAMES
         or expression.operator in _TEXT_VALUE_OPERATORS
     ):
-        return _evaluate_filter(_normalized_key_leaf(expression, field), record, definition)
+        return _evaluate_filter(_normalized_in_memory_leaf(expression, field), record, definition)
     restored = dict(record)
     storage_name = field.storage_name or field.name
     if storage_name in restored:
         restored[storage_name] = _restore_in_memory_value(restored[storage_name], field.type_)
-    return _evaluate_filter(_normalized_key_leaf(expression, field), restored, definition)
+    return _evaluate_filter(_normalized_in_memory_leaf(expression, field), restored, definition)
 
 
 def _normalized_key_operand(field: Any, operand: Any) -> Any:
@@ -315,6 +324,39 @@ def _normalized_key_leaf(expression: Filter, field: Any) -> Filter:
     if normalized == value:
         return expression
     return Filter(expression.field_name, expression.operator, normalized)
+
+
+def _normalized_datetime_operand(field: Any, operand: Any) -> Any:
+    """Return aware datetime operands as the common instant in UTC.
+
+    CPython compares aware datetimes that carry different tzinfo objects per
+    wall clock, so in a repeated DST hour a zone datetime is unequal to the
+    fixed-offset form a record is restored to even at the same instant.
+    Naming UTC on both sides pins equality, ordering and membership to
+    instants. Naive datetimes and anything else pass through unchanged.
+    """
+    if field is None or field.type_ != "datetime":
+        return operand
+    if isinstance(operand, datetime):
+        return operand.astimezone(timezone.utc) if operand.tzinfo is not None else operand
+    if isinstance(operand, Sequence) and not isinstance(operand, (str, bytes, bytearray)):
+        items = cast("Sequence[Any]", operand)
+        return [_normalized_datetime_operand(field, item) for item in items]
+    return operand
+
+
+def _normalized_in_memory_leaf(expression: Filter, field: Any) -> Filter:
+    """Return the leaf with key and datetime operands in comparison form.
+
+    Key operands normalize so a canonical string compares against the UUID
+    that was stored, and aware datetime operands normalize to UTC so both
+    sides of the comparison name the same instant. Text operators keep their
+    operands verbatim: they address the stored string.
+    """
+    if field is None or field.type_ != "datetime" or expression.operator in _TEXT_VALUE_OPERATORS:
+        return _normalized_key_leaf(expression, field)
+    leaf = _normalized_key_leaf(expression, field)
+    return Filter(leaf.field_name, leaf.operator, _normalized_datetime_operand(field, leaf.value))
 
 
 def _validate_in_memory_filter_value(value: Any) -> None:
