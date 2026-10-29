@@ -19,9 +19,12 @@ namespace Microsoft.Agents.AI.A2A;
 /// Represents an <see cref="AIAgent"/> that can interact with remote agents that are exposed via the A2A protocol
 /// </summary>
 /// <remarks>
-/// This agent supports only messages as a response from A2A agents.
-/// Support for tasks will be added later as part of the long-running
-/// executions work.
+/// This agent supports messages, tasks, and streaming updates as responses from A2A agents.
+/// <para>
+/// For a direct gRPC connection, also reference the SDK's <c>A2A.Grpc</c> package
+/// and supply an <c>A2A.Grpc.A2AGrpcClient</c>.
+/// The caller owns the supplied client and must dispose it if it implements <see cref="IDisposable"/>.
+/// </para>
 /// </remarks>
 public sealed class A2AAgent : AIAgent
 {
@@ -495,7 +498,7 @@ public sealed class A2AAgent : AIAgent
             MessageId = statusUpdateEvent.Status.Message?.MessageId,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
-            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
+            Contents = statusUpdateEvent.Status.ToChatMessage()?.Contents,
         };
     }
 

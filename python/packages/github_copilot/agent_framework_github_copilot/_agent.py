@@ -1505,17 +1505,16 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``approval_mode="always_require"`` is delegated to the Copilot SDK's native
         ``on_pre_tool_use`` hook:
 
-        - If the caller supplies their own session hooks -- either the SDK-native
-          ``hooks`` dict or the convenience ``on_pre_tool_use`` handler (via per-run
-          ``options`` or ``default_options``) -- those take precedence and are used
-          as-is. When both are given, the explicit ``hooks`` dict wins for any key it
-          defines and the ``on_pre_tool_use`` shortcut fills in that key otherwise. A
-          warning is logged naming any approval-required tool that will therefore not
-          be automatically gated, since the caller's hooks are responsible for
-          enforcing approval.
+        - If the caller supplies their own ``on_pre_tool_use`` handler -- either in
+          the SDK-native ``hooks`` dict or through the convenience option (via per-run
+          ``options`` or ``default_options``) -- it takes precedence. When both are
+          given, the explicit ``hooks`` dict wins for any key it defines and the
+          shortcut fills in that key otherwise. A warning names any approval-required
+          tool that the caller's pre-tool-use handler is responsible for gating.
         - Otherwise, when any approval-required tool is present, a default hook is
           installed that returns ``"ask"`` for those tools (routing the decision to
           ``on_permission_request``) and defers (``None``) for all other tools.
+          Unrelated caller hooks are preserved and do not replace this default.
         - The default hook is **not** installed when the deprecated
           ``on_function_approval`` callback is configured: in that case approval is
           enforced inside the tool handler (see :meth:`_tool_to_copilot_tool`) to
@@ -1532,12 +1531,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             The hooks to register for the session, or ``None`` if none are needed.
         """
         user_hook: PreToolUseHandler | None = options.get("on_pre_tool_use") or self._on_pre_tool_use
-        caller_hooks: Mapping[str, Any] | None = options.get("hooks")
+        caller_hooks: SessionHooks | None = options.get("hooks")
 
         # Combine caller-provided hooks: the SDK-native ``hooks`` dict plus the
         # convenience ``on_pre_tool_use`` shortcut. The explicit dict wins for the
         # keys it defines; the shortcut only fills in ``on_pre_tool_use`` otherwise.
-        combined: dict[str, Any] = {}
+        combined: SessionHooks = {}
         if user_hook is not None:
             combined["on_pre_tool_use"] = user_hook
         if caller_hooks:
@@ -1547,7 +1546,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tool.name for tool in all_tools if isinstance(tool, FunctionTool) and tool.approval_mode == "always_require"
         }
 
-        if combined:
+        if combined.get("on_pre_tool_use") is not None:
             if approval_required_names:
                 logger.warning(
                     "Custom session hooks are configured, so %d approval-required tool(s) (%s) "
@@ -1556,15 +1555,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     len(approval_required_names),
                     ", ".join(sorted(approval_required_names)),
                 )
-            return cast("SessionHooks", combined)
+            return combined
 
         if not approval_required_names:
-            return None
+            return combined or None
 
         # The deprecated on_function_approval callback enforces approval in the tool
         # handler; don't also install the default ask-hook (which would double-gate).
         if self._function_approval_handler is not None:
-            return None
+            return combined or None
 
         def default_pre_tool_use(
             hook_input: Mapping[str, Any],
@@ -1580,7 +1579,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 }
             return None
 
-        return {"on_pre_tool_use": default_pre_tool_use}
+        combined["on_pre_tool_use"] = default_pre_tool_use
+        return combined
 
     def _session_run_lock(self, service_session_id: str) -> asyncio.Lock:
         """Return the lock that serializes runs on one Copilot service session."""

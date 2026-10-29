@@ -588,6 +588,10 @@
   <Folder Name="/Solution Items/src/Shared/StructuredOutput/">
     <File Path="src/Shared/StructuredOutput/StructuredOutputSchemaUtilities.cs" />
   </Folder>
+  <Folder Name="/Solution Items/src/Shared/UnitTests/">
+    <File Path="src/Shared/UnitTests/CapturingLoggerFactory.cs" />
+    <File Path="src/Shared/UnitTests/README.md" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/Workflows/" />
   <Folder Name="/Solution Items/src/Shared/Workflows/Execution/">
     <File Path="src/Shared/Workflows/Execution/README.md" />
@@ -645,7 +649,6 @@
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AnthropicChatCompletion.IntegrationTests/AnthropicChatCompletion.IntegrationTests.csproj" />
-    <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
     <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
     <Project Path="tests/Foundry.Hosting.IntegrationTests.TestContainer/Foundry.Hosting.IntegrationTests.TestContainer.csproj" />
     <Project Path="tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj" />

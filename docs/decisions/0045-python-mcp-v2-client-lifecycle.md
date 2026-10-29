@@ -82,6 +82,12 @@ For **caller-supplied** connections, the caller owns:
 - constructing and closing a **supplied** low-level `ClientSession`;
 - the transport, authentication, callbacks, and other configuration already captured by either supplied object.
 
+Transport-specific tool constructors enforce the same ownership boundary. A URL or command selects
+framework-owned Client construction; a supplied high-level `mcp.Client` selects caller-owned construction and
+lifecycle. Constructor combinations that mix those ownership modes or configure a transport the caller already
+owns raise `ValueError` instead of silently ignoring parameters. Temporarily retained legacy constructor and
+`ClientSession` combinations remain compatible and will be removed in vNext.
+
 The SDK `Client` owns:
 
 - modern negotiation and legacy initialization fallback;
@@ -176,8 +182,9 @@ protocol-gated compatibility operations; they are not universal preflights.
 ### Tasks
 
 The supported MCP Python SDK 2.x runtime does not expose the current `io.modelcontextprotocol/tasks` extension.
-Tools that may require Tasks are not presented as ordinary supported calls, and the removed long-running Tasks
-sample remains deferred. An MRTR `InputRequiredResult` is not a Tasks `input_required` status.
+Tools that require Tasks are not presented as ordinary supported calls. Tools with optional Tasks support continue
+through ordinary `tools/call` without task augmentation, and the removed long-running Tasks sample remains deferred.
+An MRTR `InputRequiredResult` is not a Tasks `input_required` status.
 
 ## Consequences
 
@@ -245,4 +252,4 @@ Committed contract tests cover:
 - [MCP caching specification](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching)
 - [ADR 0043: MCP runtime context](0043-python-mcp-runtime-context.md)
 
-This ADR remains `proposed` until accepted through the repository ADR review process.
+This ADR was accepted through the repository ADR review process.

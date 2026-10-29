@@ -1475,8 +1475,8 @@ class _SandboxRegistry(SandboxRuntime):
                     module_path=config.module_path,
                     input_dir=input_dir_handle.name if input_dir_handle is not None else None,
                     output_dir=output_dir_handle.name if output_dir_handle is not None else None,
-                    max_file_size=f"{config.max_output_file_bytes}B",
-                    max_total_size=f"{config.max_output_total_bytes}B",
+                    max_file_size=str(config.max_output_file_bytes),
+                    max_total_size=str(config.max_output_total_bytes),
                     max_file_count=config.max_output_files,
                 )
             except ImportError as exc:

@@ -3,7 +3,7 @@
 import logging
 import sys
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, ClassVar, Literal
 
 from .._agents import SupportsAgentRun
@@ -426,7 +426,7 @@ class WorkflowBuilder:
         self,
         source: Executor | SupportsAgentRun,
         targets: Sequence[Executor | SupportsAgentRun],
-        selection_func: Callable[[Any, list[str]], list[str]],
+        selection_func: Callable[[Any, list[str]], list[str] | Awaitable[list[str]]],
     ) -> Self:
         """Add an edge group that represents a multi-selection execution model.
 

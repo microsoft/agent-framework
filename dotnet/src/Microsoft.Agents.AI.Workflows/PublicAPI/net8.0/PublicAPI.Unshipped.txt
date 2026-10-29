@@ -7,3 +7,5 @@ Microsoft.Agents.AI.Workflows.AIAgentHostResponse.AIAgentHostResponse(string! ex
 Microsoft.Agents.AI.Workflows.AIAgentHostResponse.ExecutorId.get -> string!
 Microsoft.Agents.AI.Workflows.AIAgentHostResponse.ForwardableMessages.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!
 Microsoft.Agents.AI.Workflows.AIAgentHostResponse.CurrentTurnMessages.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.Workflows.Executor.RegisterCheckpointRestoringCallback(object! sharedStateKey, System.Func<Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! callback) -> void
+Microsoft.Agents.AI.Workflows.Executor.RegisterCheckpointRestoringCallback(System.Func<Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! callback) -> void

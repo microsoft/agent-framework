@@ -93,6 +93,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     private MagenticTaskContext? _taskContext;
     private PortBinding? _planReviewPort;
     private string? _currentSpeakerExecutorId;
+    private bool _isAwaitingPlanReview;
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
@@ -118,6 +119,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
         MagenticPlanReviewRequest request = new(taskContext.TaskLedger!.CurrentPlan, progressLedger, replanAfterStall);
 
+        this._isAwaitingPlanReview = true;
         return this._planReviewPort!.PostRequestAsync(request);
     }
 
@@ -147,8 +149,27 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             throw new InvalidOperationException("This Magentic orchestration has already terminated. To process new messages, create a new workflow instance.");
         }
 
+        if (!this._isAwaitingPlanReview)
+        {
+            throw new InvalidOperationException("This Magentic orchestration is not waiting for a plan review response.");
+        }
+
+        // A correlated response can arrive with ordinary messages but without a turn token
+        // to consume them. Discard that buffer before resuming or revising the plan.
+        await this.ProcessTurnMessagesAsync(async (messages, workflowContext, token) =>
+        {
+            if (messages.Count > 0)
+            {
+                await workflowContext.AddEventAsync(new WorkflowWarningEvent("Magentic Orchestrator is waiting for a plan review response; buffered ordinary messages were ignored."), token)
+                                     .ConfigureAwait(false);
+            }
+
+            return [];
+        }, context, cancellationToken).ConfigureAwait(false);
+
         if (response.IsApproved)
         {
+            this._isAwaitingPlanReview = false;
             await this.DelegateToTeamAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
         }
         else
@@ -188,6 +209,13 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         if (this._taskContext?.IsTerminated == true)
         {
             throw new InvalidOperationException("This Magentic orchestration has already terminated. To process new messages, create a new workflow instance.");
+        }
+
+        if (this._isAwaitingPlanReview)
+        {
+            await context.AddEventAsync(new WorkflowWarningEvent("Magentic Orchestrator is waiting for a plan review response; this turn was ignored."), cancellationToken)
+                         .ConfigureAwait(false);
+            return;
         }
 
         if (this._taskContext == null)
@@ -368,9 +396,15 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
                                                             cancellationToken: cancellationToken)
                                         .AsTask();
 
+        Task awaitingPlanReviewTask = context.QueueStateUpdateAsync(MagenticConstants.AwaitingPlanReviewStateKey,
+                                                                  this._isAwaitingPlanReview,
+                                                                  cancellationToken: cancellationToken)
+                                             .AsTask();
+
         await Task.WhenAll(base.OnCheckpointingAsync(context, cancellationToken).AsTask(),
                            contextStateTask,
-                           currentSpeakerTask).ConfigureAwait(false);
+                           currentSpeakerTask,
+                           awaitingPlanReviewTask).ConfigureAwait(false);
     }
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -378,6 +412,14 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         await Task.WhenAll(base.OnCheckpointRestoredAsync(context, cancellationToken).AsTask(),
                             LoadContextStateAsync(),
                             LoadCurrentSpeakerAsync()).ConfigureAwait(false);
+
+        bool? awaitingPlanReview = await context.ReadStateAsync<bool?>(MagenticConstants.AwaitingPlanReviewStateKey, cancellationToken: cancellationToken)
+                                               .ConfigureAwait(false);
+
+        // Older checkpoints have no explicit review state. An active signoff-enabled plan without
+        // a delegated speaker is still waiting for review.
+        this._isAwaitingPlanReview = awaitingPlanReview
+            ?? (requirePlanSignoff && this._taskContext is { TaskLedger: not null, IsTerminated: false } && this._currentSpeakerExecutorId is null);
 
         async Task LoadContextStateAsync()
         {

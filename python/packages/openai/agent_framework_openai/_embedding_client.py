@@ -12,6 +12,7 @@ from agent_framework._clients import BaseEmbeddingClient
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from agent_framework.observability import EmbeddingTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
@@ -251,6 +252,21 @@ class RawOpenAIEmbeddingClient(
         """Get the URL of the service."""
         return str(self.client.base_url) if self.client else "Unknown"
 
+    def _prepare_extra_request_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
+        """Return extra keyword arguments for the ``embeddings.create`` request.
+
+        Only the OpenAI embedding schema is forwarded by default. Subclasses for
+        OpenAI-compatible services override this to send provider-specific fields,
+        typically as ``extra_body``, and to reject invalid values before the request.
+
+        Args:
+            options: The embedding options for the current call.
+
+        Returns:
+            Keyword arguments merged into the request. The default adds none.
+        """
+        return {}
+
     async def get_embeddings(
         self,
         values: Sequence[str],
@@ -276,6 +292,7 @@ class RawOpenAIEmbeddingClient(
         model = opts.get("model") or self.model
         if not model:
             raise ValueError("model is required")
+        extra_request_options = self._prepare_extra_request_options(opts)
 
         kwargs: dict[str, Any] = {"input": list(values), "model": model}
         if self._FEATURE_USAGE_INDEX is not None:
@@ -286,6 +303,7 @@ class RawOpenAIEmbeddingClient(
             kwargs["encoding_format"] = encoding_format
         if user := opts.get("user"):
             kwargs["user"] = user
+        kwargs.update(extra_request_options)
 
         response = await self.client.embeddings.create(**kwargs)
 
@@ -294,8 +312,22 @@ class RawOpenAIEmbeddingClient(
         for item in sorted(response.data, key=lambda item: item.index):
             vector: list[float]
             if encoding == "base64" and isinstance(item.embedding, str):
-                # Decode base64-encoded floats (little-endian IEEE 754)
-                raw = base64.b64decode(item.embedding)
+                # Decode base64-encoded floats (little-endian IEEE 754).
+                # base64.b64decode raises binascii.Error for bad padding/alphabet and
+                # UnicodeEncodeError for non-ASCII input; both are ValueError subclasses.
+                try:
+                    raw = base64.b64decode(item.embedding)
+                except ValueError as exc:
+                    raise IntegrationInvalidResponseException(
+                        f"The base64 embedding returned for input index {item.index} could not be decoded: {exc}"
+                    ) from exc
+                if len(raw) % 4:
+                    # A misaligned buffer would otherwise fail inside struct.unpack with a
+                    # bare buffer-size error and no hint about which response item broke.
+                    raise ValueError(
+                        f"Base64 encoded embedding for input index {item.index} decoded to {len(raw)} bytes, "
+                        "which cannot be split into 4-byte little-endian floats. The response payload is malformed."
+                    )
                 vector = list(struct.unpack(f"<{len(raw) // 4}f", raw))
             else:
                 vector = item.embedding

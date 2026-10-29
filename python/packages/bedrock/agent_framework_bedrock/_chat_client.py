@@ -326,7 +326,9 @@ class BedrockChatClient(
         region = settings.get("region") or session_region or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
-        if client:
+        self._owns_client = client is None
+        self._client_closed = False
+        if client is not None:
             self._bedrock_client = client
         else:
             session = boto3_session or self._create_session(settings)
@@ -343,6 +345,13 @@ class BedrockChatClient(
         )
         self.model = chat_model
         self.region = region
+
+    @override
+    async def close(self) -> None:
+        """Close the owned runtime connection without closing caller-owned sessions."""
+        if self._owns_client and not self._client_closed:
+            await asyncio.to_thread(self._bedrock_client.close)
+            self._client_closed = True
 
     @staticmethod
     def _create_session(settings: BedrockSettings) -> Boto3Session:
@@ -420,7 +429,7 @@ class BedrockChatClient(
 
         async def _get_response() -> ChatResponse:
             raw_response = await asyncio.to_thread(self._invoke_converse, request)
-            return self._process_converse_response(raw_response, options)
+            return self._process_converse_response(raw_response, options, model=request["modelId"])
 
         return _get_response()
 
@@ -758,9 +767,12 @@ class BedrockChatClient(
         )
 
     def _process_converse_response(
-        self, response: dict[str, Any], options: Mapping[str, Any] | None = None
+        self, response: dict[str, Any], options: Mapping[str, Any] | None = None, *, model: str | None = None
     ) -> ChatResponse:
-        """Convert Bedrock Converse API response to ChatResponse."""
+        """Convert Bedrock Converse API response to ChatResponse.
+
+        Converse does not return the model id, so ``model`` should be the ``modelId`` the request was sent with.
+        """
         output = response.get("output") or {}
         message = output.get("message") or {}
         content_blocks = message.get("content") or []
@@ -770,7 +782,7 @@ class BedrockChatClient(
         usage_details = self._parse_usage(usage_source)
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
-        model = response.get("modelId") or output.get("modelId") or self.model
+        model = response.get("modelId") or output.get("modelId") or model or self.model
         return ChatResponse(
             response_id=response_id,
             messages=[chat_message],
