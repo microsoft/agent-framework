@@ -60,6 +60,9 @@ before changing state; reconcile such collisions explicitly.
 A plain sensitivity-helper null update deletes the canonical value, sensitivity metadata, and ownership metadata.
 A wrapped declarative clear retains a blank value with its sensitivity and ownership metadata.
 
+`ParseValue` preserves input sensitivity metadata. Failed conversions of sensitive inputs assign a blank result
+and allow later actions to continue; non-sensitive conversion failures still raise an error.
+
 ## Learn more
 
 - [Declarative agents](https://learn.microsoft.com/agent-framework/agents/declarative)

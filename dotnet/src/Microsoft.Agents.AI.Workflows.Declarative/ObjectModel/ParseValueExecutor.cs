@@ -1,6 +1,9 @@
 ﻿
 // Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Diagnostics;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -27,8 +30,19 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
 
         FormulaValue parsedValue;
         VariableType targetType = new(this.Model.ValueType);
-        object? parsedResult = expressionResult.Value.ToObject().ConvertType(targetType);
-        parsedValue = parsedResult.ToFormula();
+        try
+        {
+            object? parsedResult = expressionResult.Value.ToObject().ConvertType(targetType);
+            parsedValue = parsedResult.ToFormula();
+        }
+        catch (Exception exception) when (
+            expressionResult.Sensitivity == SensitivityLevel.Sensitive &&
+            exception is FormatException or OverflowException or InvalidCastException or ArgumentException or
+                InvalidOperationException or JsonException or DeclarativeActionException)
+        {
+            Trace.TraceWarning("Value conversion returned a blank result for action '{0}'.", this.Id);
+            parsedValue = FormulaValue.NewBlank();
+        }
 
         await this.AssignAsync(this.Model.Variable.Path, parsedValue, context, expressionResult.Sensitivity).ConfigureAwait(false);
 
