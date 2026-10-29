@@ -140,6 +140,190 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncWithDefaultClientRejectsLoopbackDestinationAsync()
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        await using DefaultHttpRequestHandler handler = new();
+        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Null(await server.TryReadRequestAsync());
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1/")]
+    [InlineData("http://2130706433/")]
+    [InlineData("http://0x7f000001/")]
+    [InlineData("http://127.1/")]
+    [InlineData("http://10.0.0.1/")]
+    [InlineData("http://172.16.0.1/")]
+    [InlineData("http://192.168.0.1/")]
+    [InlineData("http://169.254.1.1/")]
+    [InlineData("http://[::1]/")]
+    [InlineData("http://[::ffff:127.0.0.1]/")]
+    [InlineData("http://[fc00::1]/")]
+    [InlineData("http://0.0.0.0/")]
+    [InlineData("http://100.64.0.1/")]
+    [InlineData("http://168.63.129.16/")]
+    [InlineData("http://192.0.0.1/")]
+    [InlineData("http://192.0.2.1/")]
+    [InlineData("http://192.88.99.1/")]
+    [InlineData("http://198.18.0.1/")]
+    [InlineData("http://198.51.100.1/")]
+    [InlineData("http://203.0.113.1/")]
+    [InlineData("http://224.0.0.1/")]
+    [InlineData("http://255.255.255.255/")]
+    [InlineData("http://[::]/")]
+    [InlineData("http://[fe80::1]/")]
+    [InlineData("http://[ff02::1]/")]
+    [InlineData("http://[64:ff9b::7f00:1]/")]
+    [InlineData("http://[2001::1]/")]
+    [InlineData("http://[2001:db8::1]/")]
+    [InlineData("http://[2002:7f00:1::1]/")]
+    [InlineData("http://[3fff::1]/")]
+    [InlineData("http://localhost/")]
+    public async Task SendAsyncWithOwnedClientRejectsNonPublicAddressAsync(string url)
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new() { Method = "GET", Url = url };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Null(messageHandler.LastRequest);
+    }
+
+    [Fact]
+    public async Task SendAsyncWithOwnedClientRejectsNonPublicRedirectAsync()
+    {
+        // Arrange
+        int requestCount = 0;
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(new HttpResponseMessage(
+                requestCount == 1 ? HttpStatusCode.Found : HttpStatusCode.OK)
+            {
+                Headers = { Location = new Uri("http://127.0.0.1/next") },
+            });
+        });
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new() { Method = "GET", Url = "http://api.example.test/resource" };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Theory]
+    [InlineData("https://8.8.8.8/")]
+    [InlineData("https://[2606:4700:4700::1111]/")]
+    [InlineData("https://[::ffff:8.8.8.8]/")]
+    public async Task SendAsyncWithOwnedClientAllowsPublicAddressAsync(string url)
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new() { Method = "GET", Url = url };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(result.IsSuccessStatusCode);
+        Assert.NotNull(messageHandler.LastRequest);
+    }
+
+    [Theory]
+    [InlineData("file:///resource")]
+    [InlineData("ftp://api.example.test/resource")]
+    public async Task SendAsyncRejectsNonHttpSchemeAsync(string url)
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        using HttpClient client = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(client);
+        HttpRequestInfo request = new() { Method = "GET", Url = url };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Null(messageHandler.LastRequest);
+    }
+
+    [Fact]
+    public async Task SendAsyncWithSuppliedClientAllowsConfiguredDestinationAsync()
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        using HttpClient client = new(new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            UseProxy = false,
+            CheckCertificateRevocationList = true,
+        });
+        await using DefaultHttpRequestHandler handler = new(client);
+        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(result.IsSuccessStatusCode);
+        Assert.NotNull(await server.TryReadRequestAsync());
+    }
+
+#if NET
+    [Fact]
+    public async Task OwnedClientRejectsNonPublicResolvedAddressAsync()
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        using HttpClient client = new(DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler());
+        Uri url = new UriBuilder(server.Url) { Host = "localhost" }.Uri;
+
+        // Act
+        async Task actAsync() => await client.GetAsync(url, TestContext.Current.CancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("public destinations", exception.Message, StringComparison.Ordinal);
+        Assert.Null(await server.TryReadRequestAsync());
+    }
+#else
+    [Fact]
+    public async Task SendAsyncWithDefaultClientRequiresSupportedTargetFrameworkAsync()
+    {
+        // Arrange
+        await using DefaultHttpRequestHandler handler = new();
+        HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<PlatformNotSupportedException>(actAsync);
+    }
+#endif
+
+    [Fact]
     public async Task SendAsyncWithRejectedLoopbackDestinationDoesNotSendAsync()
     {
         // Arrange
@@ -394,17 +578,18 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Contains("Content-Type", result.Headers!);
     }
 
+#if NET
     [Fact]
     public async Task SendAsyncOwnedClientDoesNotForwardResponseCookiesToRedirectAsync()
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
-        await using DefaultHttpRequestHandler handler = new();
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedConnectionTo(server.SetCookieRedirectUrl);
         HttpRequestInfo request = new()
         {
             Method = "GET",
-            Url = server.SetCookieRedirectUrl,
+            Url = new UriBuilder(server.SetCookieRedirectUrl) { Host = "api.example.test" }.ToString(),
         };
 
         // Act
@@ -425,17 +610,17 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
-        await using DefaultHttpRequestHandler handler = new();
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedConnectionTo(server.SetCookieUrl);
         HttpRequestInfo victimRequest = new()
         {
             Method = "GET",
-            Url = server.SetCookieUrl,
+            Url = new UriBuilder(server.SetCookieUrl) { Host = "api.example.test" }.ToString(),
         };
 
         HttpRequestInfo attackerRequest = new()
         {
             Method = "GET",
-            Url = server.ReadCookieUrl,
+            Url = new UriBuilder(server.ReadCookieUrl) { Host = "api.example.test" }.ToString(),
         };
 
         // Act
@@ -449,6 +634,7 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equal(2, requests.Count);
         Assert.DoesNotContain("Cookie: backend-session=victim-session", requests[1], StringComparison.OrdinalIgnoreCase);
     }
+#endif
 
     [Fact]
     public async Task SendAsyncReturnsFailureStatusWithoutThrowingAsync()
@@ -1238,6 +1424,29 @@ public sealed class DefaultHttpRequestHandlerTests
 
     #endregion
 
+#if NET
+    private static DefaultHttpRequestHandler CreateHandlerWithOwnedConnectionTo(string serverUrl)
+    {
+        Uri serverUri = new(serverUrl);
+        SocketsHttpHandler messageHandler = DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler();
+        messageHandler.ConnectCallback = async (_, cancellationToken) =>
+        {
+            Socket socket = new(SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(IPAddress.Loopback, serverUri.Port, cancellationToken).ConfigureAwait(false);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        };
+        return CreateHandlerWithOwnedMessageHandler(messageHandler);
+    }
+#endif
+
     private static DefaultHttpRequestHandler CreateHandlerWithOwnedMessageHandler(
         HttpMessageHandler ownedHttpMessageHandler,
         Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
@@ -1290,6 +1499,7 @@ public sealed class DefaultHttpRequestHandlerTests
         }
     }
 
+#if NET
     private sealed class CookieCaptureServer : IAsyncDisposable
     {
         private const int ExpectedRequestCount = 2;
@@ -1417,6 +1627,8 @@ public sealed class DefaultHttpRequestHandlerTests
             return Encoding.ASCII.GetString(rawRequest.ToArray());
         }
     }
+
+#endif
 
     private sealed class RawHttpServer : IAsyncDisposable
     {

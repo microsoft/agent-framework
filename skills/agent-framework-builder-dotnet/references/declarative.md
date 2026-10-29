@@ -24,6 +24,11 @@ commitments.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
 - When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
   to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
+- `DefaultHttpRequestHandler` accepts HTTP(S) URLs only. Its internal client connects directly to public addresses,
+  validates resolved addresses when connecting, and applies the same policy after redirects. It does not use system
+  proxies. Supply an explicitly configured client for internal destinations or proxies, and enforce the host's
+  destination, address-resolution, and redirect policy in that client. The internal client requires .NET 8 or later;
+  the .NET Standard 2.0 and .NET Framework 4.7.2 targets require a supplied client.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.

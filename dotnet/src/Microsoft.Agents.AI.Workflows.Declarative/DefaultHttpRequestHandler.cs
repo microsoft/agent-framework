@@ -6,6 +6,12 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+#if NET
+using System.IO;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
+#endif
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,6 +28,13 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// returns a pre-configured <see cref="HttpClient"/> for a given request (e.g. authenticated, custom handler).
 /// When the provider returns <see langword="null"/>, or no provider is supplied, a shared internal <see cref="HttpClient"/>
 /// is used.
+/// </para>
+/// <para>
+/// Requests must use HTTP or HTTPS. The internally owned client connects directly to public addresses only,
+/// including after redirects, and does not use system proxies. To access other destinations or use a proxy,
+/// supply a client with an explicit destination policy. Caller-supplied clients are responsible for validating
+/// their destinations, resolved addresses, and redirects.
+/// The internally owned client requires .NET 8 or later; other target frameworks require a supplied client.
 /// </para>
 /// <para>
 /// The handler applies the per-request <see cref="HttpRequestInfo.Timeout"/> using a linked <see cref="CancellationTokenSource"/>
@@ -150,6 +163,11 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 {
                     throw new HttpRequestException("Redirects that change the HTTP client are not allowed.");
                 }
+            }
+
+            if (providedClient is null)
+            {
+                ValidateDefaultDestination(currentUri);
             }
 
             HttpClient client = providedClient ?? this._ownedHttpClient.Value;
@@ -295,14 +313,110 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
     private static HttpClient CreateOwnedHttpClient()
     {
-        HttpClientHandler handler = new()
+#if NET
+        return new HttpClient(CreateOwnedHttpMessageHandler());
+#else
+        throw new PlatformNotSupportedException(
+            "The internally owned HTTP client requires .NET 8 or later. Supply an HttpClient with an explicit destination policy on this target framework.");
+#endif
+    }
+
+#if NET
+    internal static SocketsHttpHandler CreateOwnedHttpMessageHandler() =>
+        new()
         {
             AllowAutoRedirect = false,
             UseCookies = false,
-            CheckCertificateRevocationList = true
+            UseProxy = false,
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                CertificateRevocationCheckMode = X509RevocationMode.Online,
+            },
+            ConnectCallback = ConnectToPublicAddressAsync,
         };
 
-        return new HttpClient(handler);
+    private static async ValueTask<Stream> ConnectToPublicAddressAsync(
+        SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    {
+        IPAddress[] addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
+        if (addresses.Length == 0)
+        {
+            throw new HttpRequestException("The destination did not resolve to a public address.");
+        }
+
+        foreach (IPAddress address in addresses)
+        {
+            ValidatePublicAddress(address);
+        }
+
+        Socket socket = new(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            // Connect to the validated addresses without resolving the hostname again.
+            await socket.ConnectAsync(addresses, context.DnsEndPoint.Port, cancellationToken).ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+#endif
+
+    private static void ValidateDefaultDestination(Uri uri)
+    {
+        if (uri.IsLoopback)
+        {
+            throw new HttpRequestException("The internally owned HTTP client only allows public destinations.");
+        }
+
+        if (IPAddress.TryParse(uri.IdnHost.Trim('[', ']'), out IPAddress? address))
+        {
+            ValidatePublicAddress(address);
+        }
+    }
+
+    private static void ValidatePublicAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        byte[] bytes = address.GetAddressBytes();
+        bool isPublic;
+        if (bytes.Length == 4)
+        {
+            // Exclude private and special-use ranges, including the host platform's service address.
+            isPublic = bytes[0] is not (0 or 10 or 127) &&
+                bytes[0] < 224 &&
+                !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127) &&
+                !(bytes[0] == 169 && bytes[1] == 254) &&
+                !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31) &&
+                !(bytes[0] == 192 && bytes[1] == 0 && bytes[2] is 0 or 2) &&
+                !(bytes[0] == 192 && bytes[1] == 88 && bytes[2] == 99) &&
+                !(bytes[0] == 192 && bytes[1] == 168) &&
+                !(bytes[0] == 198 && bytes[1] is 18 or 19) &&
+                !(bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100) &&
+                !(bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113) &&
+                !(bytes[0] == 168 && bytes[1] == 63 && bytes[2] == 129 && bytes[3] == 16);
+        }
+        else
+        {
+            // Allow global unicast except protocol assignments, documentation, and transition ranges.
+            isPublic = address.ScopeId == 0 &&
+                (bytes[0] & 0xE0) == 0x20 &&
+                !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] <= 0x01) &&
+                !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0D && bytes[3] == 0xB8) &&
+                !(bytes[0] == 0x20 && bytes[1] == 0x02) &&
+                !(bytes[0] == 0x3F && bytes[1] == 0xFF && (bytes[2] & 0xF0) == 0);
+        }
+
+        if (!isPublic)
+        {
+            throw new HttpRequestException("The internally owned HTTP client only allows public destinations.");
+        }
     }
 
     private static Uri CreateAbsoluteUri(string requestUri)
@@ -310,6 +424,12 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         if (!Uri.TryCreate(requestUri, UriKind.Absolute, out Uri? uri))
         {
             throw new ArgumentException("Request URL must be an absolute URL.", nameof(requestUri));
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HttpRequestException("Request URLs must use HTTP or HTTPS.");
         }
 
         return uri;
@@ -348,6 +468,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         redirectUri = response.Headers.Location.IsAbsoluteUri
             ? response.Headers.Location
             : new Uri(currentUri, response.Headers.Location);
+        redirectUri = CreateAbsoluteUri(redirectUri.ToString());
 
         if (IsHttpsToHttpRedirect(currentUri, redirectUri))
         {
