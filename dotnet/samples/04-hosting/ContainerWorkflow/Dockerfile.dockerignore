@@ -1,0 +1,15 @@
+﻿**
+!CODE_OF_CONDUCT.md
+!.editorconfig
+!dotnet/
+!dotnet/**
+**/bin/
+**/obj/
+**/.env
+**/.env.*
+**/local-feed/
+**/appsettings.Development.json
+**/secrets.json
+**/*.pfx
+**/*.pem
+**/*.key
