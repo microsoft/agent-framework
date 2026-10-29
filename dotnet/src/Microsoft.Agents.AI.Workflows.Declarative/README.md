@@ -58,28 +58,90 @@ resumes the registered invocation only after a matching approval response.
 
 ### MCP session lifetime
 
-`DefaultMcpToolHandler` caches MCP sessions by server URL, label, connection name,
-and explicit request headers when no custom HTTP client provider is configured.
-Dispose the handler when its owning scope ends.
+`DefaultMcpToolHandler` creates a separate MCP client for every invocation,
+including `tools/list`, and disposes it before completing. The handler retains
+no per-invocation state or shared disposable resources.
 
-When `httpClientProvider` is configured, each invocation (including `tools/list`)
-calls the provider, opens a separate MCP session, and disposes that session before
-completing. This also applies when the provider returns the same `HttpClient` or
-returns `null` for the default transport. Caller-supplied HTTP clients remain
-caller-owned; handler-created fallback clients are disposed with the invocation.
-Handler disposal waits for active provider-backed invocations to finish cleanup.
-Disposal from within an active invocation (including a provider callback or its
-child tasks) throws `InvalidOperationException` without starting shutdown, rather
-than waiting on itself. Dispose the handler from its owning scope.
+Standalone GET/SSE streams for unsolicited server messages are disabled because
+this handler performs request-scoped tool operations, not background subscriptions.
+SSE responses to individual tool requests remain supported.
+
+Each factory-created HTTP client is disposed with its invocation. Construct the
+handler with an application-owned `IHttpClientFactory` through
+`DefaultMcpToolHandler(IHttpClientFactory, string)`. The second
+argument is a stable named-client configuration, or `string.Empty` for the
+default configuration. Factory-created wrappers are owned by the invocation;
+the factory and its pooled handlers remain application-owned. There is no
+parameterless constructor or internally created HTTP pipeline. Configure handler
+reuse in the factory to avoid connection churn and port exhaustion.
+
+Configure the factory once in the application, not once per invocation. For
+example, with `Microsoft.Extensions.DependencyInjection`:
+
+```csharp
+services.AddHttpClient("workflow-mcp")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        UseCookies = false,
+        AllowAutoRedirect = false,
+        CheckCertificateRevocationList = true
+    })
+    .SetHandlerLifetime(TimeSpan.FromMinutes(2));
+
+services.AddSingleton<IMcpToolHandler>(serviceProvider => new DefaultMcpToolHandler(
+    serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp"));
+```
+
+Factory clients use the application's transport-policy configuration.
+Restrict credential-injecting handlers to the configured server origin.
+Do not store per-workflow credentials, cookies, or
+mutable origin policy in pooled handlers. Use a bounded set of configuration
+names, not workflow IDs, credentials, or arbitrary URLs. A finite factory handler
+lifetime lets subsequent invocations refresh connections without interrupting
+active calls. Streamable HTTP remains enforced.
+
+`ProtocolVersion` defaults to `null`, preserving the MCP SDK's automatic protocol
+discovery and legacy fallback. If the server's supported protocol is known, set
+the init-only property when constructing the handler:
+
+```csharp
+DefaultMcpToolHandler handler = new(httpClientFactory, "workflow-mcp")
+{
+    ProtocolVersion = "2025-11-25"
+};
+```
+
+An explicit legacy version skips the discovery probe, including its possible
+timeout, but still initializes and disposes a separate session for every call.
+The server must negotiate that exact legacy version. Explicit newer revisions
+still perform discovery and do not downgrade to a legacy-only server.
+Incompatible selections fail rather than silently reverting to automatic
+negotiation. Use separately configured handlers for differing server protocol
+policies; do not pin a version without knowing the server supports it.
+
+The handler is not disposable. The workflow host owns admission limits,
+invocation deadlines, and shutdown cancellation. Bound concurrent work and pass
+a cancellation token covering the whole invocation; cancel and await those calls
+before disposing the application's HTTP factory infrastructure or service provider.
 Non-cancellation session and transport cleanup failures are reported through
 `System.Diagnostics.Trace` warnings and do not replace a tool result or its
 original error.
 
-Provider-backed calls therefore incur session setup per invocation and do not
-preserve server-side session state between calls. Applications requiring session
-continuity should implement `IMcpToolHandler` with an explicit authentication
-ownership and session lifetime contract, rather than sharing sessions based only
-on the server address.
+Parameterless construction, the callback-based constructor, and handler-level
+`DisposeAsync`/`IAsyncDisposable` are not supported. Migrate default construction
+and callback authentication to application-owned named factory
+clients and origin-bound delegating handlers; every factory call must return a
+fresh HTTP client wrapper owned by the invocation, not a borrowed shared client.
+Remove handler `await using`/disposal calls and await active invocations in the host.
+
+This also changes the previous default behavior, which retained initialized MCP
+clients across calls. Calls now incur any protocol session setup per invocation
+and do not preserve implicit server-side session state between calls, including
+across approval waits or checkpoint resumes. Keep durable workflow state in
+workflow variables/checkpoints and pass explicit remote state handles as tool
+arguments where supported. Applications requiring session continuity should
+implement `IMcpToolHandler` with an explicit authentication ownership and session
+lifetime contract. HTTP connection pooling does not provide MCP session continuity.
 
 ### ⚙️ Foundry Actions
 

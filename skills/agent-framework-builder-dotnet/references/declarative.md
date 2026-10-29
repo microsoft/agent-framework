@@ -22,6 +22,24 @@ commitments.
 
 - Supply the chat clients, project clients, connections, tools, and external handlers the definition references.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
+- `DefaultMcpToolHandler` creates and disposes an MCP client per invocation, including discovery; it does not retain
+  implicit server-side session state across calls, approval waits, or checkpoint resumes. Use explicit state handles
+  or a custom handler with a documented session-lifetime contract when continuity is required.
+- Standalone MCP GET/SSE streams for unsolicited messages are disabled; request-scoped SSE tool responses remain
+  supported. Use an explicitly scoped integration for background subscriptions.
+- Construct `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
+  configuration for HTTP handler reuse and rotation. Factory-created clients are disposed per invocation; the
+  factory remains application-owned. Configure the factory once with pooled handlers to avoid connection churn and
+  port exhaustion. Parameterless construction, callback-based constructors, and handler-level disposal are unsupported.
+- Leave `DefaultMcpToolHandler.ProtocolVersion` unset for SDK automatic negotiation. When a server's protocol is
+  known, an explicit legacy version skips the discovery probe but still creates a fresh session per invocation.
+  Selection restricts negotiation and incompatible versions fail. Configure separate handlers for differing server
+  policies; explicit newer revisions still perform discovery and do not downgrade to legacy-only servers.
+- Configure factory clients with cookies and redirects disabled, certificate revocation checking enabled, and
+  origin-bound credential injection. Do not retain per-workflow credentials or mutable origin state in pooled
+  handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
+- Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. The handler owns no shared
+  disposable resources; cancel and await calls before disposing the application's HTTP factory infrastructure.
 - When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
   to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
 - Keep configuration exposure restricted to intentional values.
