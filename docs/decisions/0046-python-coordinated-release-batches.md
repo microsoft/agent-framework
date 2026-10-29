@@ -35,7 +35,7 @@ must not receive credentials or federated permission to queue that pipeline.
 
 Proposed option: **generated batch manifest with Azure DevOps discovery and publication**.
 
-`python/release.json` contains the expected overall `python-<version>` tag, canonical distribution names mapped
+`python/.github/release.json` contains the expected overall `python-<version>` tag, canonical distribution names mapped
 to their exact metadata versions, and optional additive public `module:export` smoke checks. The release tooling
 generates all selected smoke checks and derives versions from the existing changed-metadata selection, excluding
 dependency-only edits whose version did not change. The source manifest does not contain its own commit SHA.

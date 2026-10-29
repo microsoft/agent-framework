@@ -35,6 +35,7 @@ def workspace(tmp_path: Path, monkeypatch) -> Path:
     _project(root / "packages/core", "agent-framework-core", "1.23.0")
     _project(root / "packages/foundry", "agent-framework-foundry", "1.15.0")
     _project(root / "packages/lab", "agent-framework-lab", "0.1.0")
+    (root / ".github").mkdir()
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "-c", "user.name=Release Test", "-c", "user.email=release@example.invalid", "commit", "-qm", "base")
@@ -86,7 +87,8 @@ def test_generate_and_check_batch_without_duplicate_version_input(workspace: Pat
     args = ["prepare_release", "--base-ref", "HEAD", "--tag", "python-1.24.0"]
     monkeypatch.setattr(sys, "argv", args)
     main()
-    payload = json.loads((workspace / "release.json").read_text())
+    payload = json.loads((workspace / ".github/release.json").read_text())
+    assert not (workspace / "release.json").exists()
     assert payload["packages"] == {
         "agent-framework": "1.24.0",
         "agent-framework-core": "1.24.0",
@@ -103,7 +105,7 @@ def test_generate_and_check_batch_without_duplicate_version_input(workspace: Pat
 
 def test_check_rejects_omitted_bumped_distribution(workspace: Path, monkeypatch) -> None:
     _bump(workspace / "packages/core", "1.23.0", "1.24.0")
-    (workspace / "release.json").write_text(json.dumps(_payload()))
+    (workspace / ".github/release.json").write_text(json.dumps(_payload()))
     monkeypatch.setattr(sys, "argv", ["prepare_release", "--check", "--ci", "--base-ref", "HEAD"])
     with pytest.raises(SystemExit) as exc:
         main()
@@ -116,7 +118,7 @@ def test_ci_skips_unrelated_metadata_edits_without_reading_stale_manifest(worksp
     monkeypatch.setattr(sys, "argv", ["prepare_release", "--check", "--ci", "--base-ref", "HEAD"])
     main()
     assert "No release batch changes." in capsys.readouterr().out
-    assert not (workspace / "release.json").exists()
+    assert not (workspace / ".github/release.json").exists()
 
 
 def test_ci_requires_manifest_when_versions_change(workspace: Path, monkeypatch) -> None:
@@ -130,22 +132,31 @@ def test_ci_requires_manifest_when_versions_change(workspace: Path, monkeypatch)
 def test_generation_failure_does_not_replace_existing_manifest(workspace: Path, monkeypatch) -> None:
     _project(workspace / "packages/new", "agent-framework-new", "0.1.0")
     _git(workspace, "add", ".")
-    (workspace / "release.json").write_text("previous reviewed batch\n")
+    (workspace / ".github/release.json").write_text("previous reviewed batch\n")
     monkeypatch.setattr(sys, "argv", ["prepare_release", "--base-ref", "HEAD", "--tag", "python-1.24.0"])
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 1
-    assert (workspace / "release.json").read_text() == "previous reviewed batch\n"
+    assert (workspace / ".github/release.json").read_text() == "previous reviewed batch\n"
 
 
 def test_release_event_check_needs_expected_tag_but_not_release_base(workspace: Path, monkeypatch) -> None:
-    (workspace / "release.json").write_text(json.dumps(_payload()))
+    (workspace / ".github/release.json").write_text(json.dumps(_payload()))
     monkeypatch.setattr(sys, "argv", ["prepare_release", "--check", "--tag", "python-1.24.0"])
     main()
     monkeypatch.setattr(sys, "argv", ["prepare_release", "--check", "--tag", "python-1.25.0"])
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 1
+
+
+def test_root_manifest_is_not_a_fallback(workspace: Path, monkeypatch, capsys) -> None:
+    (workspace / "release.json").write_text(json.dumps(_payload()))
+    monkeypatch.setattr(sys, "argv", ["prepare_release", "--check", "--tag", "python-1.24.0"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+    assert ".github/release.json" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("tag", ["python-1.24.0", "python-1.0.0b261029", "python-1.0.0rc2", "python-1.0.0.post1"])
@@ -215,8 +226,8 @@ def test_smoke_imports_are_additive_and_default_mapping_is_optional(workspace: P
 
 @pytest.mark.parametrize("text", ['{"tag":"python-1.24.0","tag":"python-1.25.0"}', '["invalid"]', "{"])
 def test_cli_rejects_malformed_manifest(workspace: Path, monkeypatch, text: str) -> None:
-    (workspace / "release.json").write_text(text)
-    _git(workspace, "add", "release.json")
+    (workspace / ".github/release.json").write_text(text)
+    _git(workspace, "add", ".github/release.json")
     monkeypatch.setattr(sys, "argv", ["prepare_release", "--check", "--ci", "--base-ref", "HEAD"])
     with pytest.raises(SystemExit) as exc:
         main()

@@ -21,6 +21,8 @@ from scripts.dependencies._dependency_bounds_release_impl import (
     _selected_release_projects,
 )
 
+RELEASE_MANIFEST = Path(".github/release.json")
+
 # Prefer the public namespace bridges; use documented package entry points where
 # no bridge exists. Importing the build module (e.g. agent_framework_meta) is not a smoke test.
 SMOKE_IMPORTS: dict[str, tuple[str, ...]] = {
@@ -164,13 +166,13 @@ def main() -> None:
     parser.add_argument(
         "--tag", help="Expected overall python-* tag (required to generate or validate a release event)"
     )
-    parser.add_argument("--check", action="store_true", help="Validate instead of writing release.json")
+    parser.add_argument("--check", action="store_true", help=f"Validate instead of writing {RELEASE_MANIFEST}")
     parser.add_argument(
         "--ci", action="store_true", help="Check changed batches; skip PRs with no version/manifest change"
     )
     args = parser.parse_args()
     workspace_root = Path(__file__).resolve().parents[1]
-    manifest_path = workspace_root / "release.json"
+    manifest_path = workspace_root / RELEASE_MANIFEST
     if (not args.check or args.ci) and not args.base_ref:
         parser.error("--base-ref is required for generation and --ci")
     if args.ci and not args.check:
@@ -182,7 +184,9 @@ def main() -> None:
         if (
             args.ci
             and not versions
-            and not _git(workspace_root, "diff", "--name-only", args.base_ref, "--", "release.json").strip()
+            and not _git(
+                workspace_root, "diff", "--name-only", args.base_ref, "--", RELEASE_MANIFEST.as_posix()
+            ).strip()
         ):
             print("No release batch changes.")
             return
@@ -199,9 +203,10 @@ def main() -> None:
         if versions is not None and payload["packages"] != versions:
             raise ValueError("Manifest packages must exactly match version changes from --base-ref; regenerate it")
         if not args.check:
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
             manifest_path.write_text(json.dumps(payload, indent=2) + "\n")
         print(
-            f"{'Validated' if args.check else 'Generated'} release.json for {expected_tag}: "
+            f"{'Validated' if args.check else 'Generated'} {RELEASE_MANIFEST} for {expected_tag}: "
             f"{len(payload['packages'])} packages"
         )
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:

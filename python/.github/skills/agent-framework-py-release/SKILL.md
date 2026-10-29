@@ -52,7 +52,7 @@ If the user states target versions or a date explicitly, use exactly what they s
   `tooling/requirements-*.txt` bundle only for single-version tools.
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
 - **Footer reference links are part of the CHANGELOG edit**, not optional.
-- **One batch, one overall tag, one Azure DevOps run.** Generate `python/release.json` in the same version-bump PR.
+- **One batch, one overall tag, one Azure DevOps run.** Generate `python/.github/release.json` in the same version-bump PR.
   Never replace the reviewed selection with "all versions absent from PyPI", per-package tags, or one run per package.
 - **Azure DevOps is the only production publisher.** GitHub has no Azure DevOps API credentials or federated queue
   permission. The GitHub release workflow is read-only validation; local production `publish` tasks are retired.
@@ -339,7 +339,7 @@ version increased (or new workspace packages). Dependency-only metadata edits re
 but do not select an unchanged version for publication. The root/core coupling and explicit cohort decision above
 still determine which versions are bumped. The excluded standalone Lab workspace is not part of this batch.
 
-Commit **`python/release.json` in this same PR**, together with the version and lockfile changes. Do not maintain a
+Commit **`python/.github/release.json` in this same PR**, together with the version and lockfile changes. Do not maintain a
 duplicate list of versions manually. Regenerate after changing the bump list. For example:
 
 ```json
@@ -422,7 +422,7 @@ The project's pre-commit hook runs `poe check` / `poe typing` / `uv lock` and ma
 
 ```bash
 git add -u
-git add python/release.json  # New files are not included by git add -u.
+git add python/.github/release.json  # New files are not included by git add -u.
 git commit -m "<message>"   # may fail with "files were modified by this hook"
 git add -u                  # re-stage hook-generated changes
 git commit -m "<message>"   # succeeds
@@ -454,7 +454,7 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
 ### 10. Maintainer handoff: tag and existing draft (only when authorized)
 
 After the reviewed bump PR merges, the maintainer selects the exact merged commit and creates the **one** overall
-tag matching `release.json`. The maintainer creates a GitHub **draft** release for that existing tag, with the
+tag matching `python/.github/release.json`. The maintainer creates a GitHub **draft** release for that existing tag, with the
 human-written title, complete release notes, and intended prerelease flag. Do not use a published release as the
 trigger and do not create per-package tags. Release notes must be complete **before ESRP approval**; do not edit
 the draft, tag, or selected source while a release run is in progress.
@@ -463,12 +463,12 @@ Azure DevOps discovery polls eligible existing drafts and tags. It has a disable
 an explicit first eligible release ID, and durable Azure Blob compare-and-swap claims to admit one run for the
 whole batch. No GitHub workflow calls or queues Azure DevOps.
 
-The protected pipeline reads `python/release.json` from the exact tagged commit, validates the requested names,
+The protected pipeline reads `python/.github/release.json` from the exact tagged commit, validates the requested names,
 versions and tag, builds once, and runs isolated install/public-import checks against the selected artifacts.
 It then waits for protected ESRP approval/publication and verifies the published distributions. Only after that
 verification does it upload the **same built wheels/sdists and artifact manifest** to the **existing draft**,
 verify those assets, and change `draft` to `false`. It preserves the draft's title, body, and prerelease flag.
-The source request (`release.json`) and the output artifact manifest (file names, versions, sizes/checksums and
+The source request (`python/.github/release.json`) and the output artifact manifest (file names, versions, sizes/checksums and
 source provenance) are different records.
 
 The published-event GitHub workflow validates the tag contract only. It must not build new artifacts, upload
