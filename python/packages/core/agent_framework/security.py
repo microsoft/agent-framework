@@ -126,6 +126,19 @@ _APPROVAL_HISTORY_RECONSTRUCTION_KEY = "_agent_framework_fides_reconstruct_histo
 _APPROVAL_REPLAY_AUTHORITY_KEY = "_agent_framework_fides_authenticated_approval_calls"
 
 
+def _approval_control_authority_token(content: Content) -> Any | None:
+    """Return a bounded authority token for one approval control."""
+    if content.type not in {"function_approval_request", "function_approval_response"} or content.id is None:
+        return None
+    try:
+        return _argument_authority_token(
+            content.to_dict(),
+            boundary="core approval replay",
+        )
+    except (RecursionError, TypeError, ValueError, MiddlewareFailure):
+        return None
+
+
 class _ApprovalReplayAuthority:
     """Bind authenticated approval snapshots to the exact live controls that use them."""
 
@@ -135,21 +148,9 @@ class _ApprovalReplayAuthority:
         self._bindings: dict[int, tuple[Content, Any, Content]] = {}
         self._snapshots: dict[Any, Content] = {}
 
-    @staticmethod
-    def _control_token(content: Content) -> Any | None:
-        if content.type not in {"function_approval_request", "function_approval_response"} or content.id is None:
-            return None
-        try:
-            return _argument_authority_token(
-                content.to_dict(),
-                boundary="core approval replay",
-            )
-        except (TypeError, ValueError, MiddlewareFailure):
-            return None
-
     def remember(self, content: Content, function_call: Content) -> None:
         """Record one session-authenticated control and its authoritative call."""
-        token = self._control_token(content)
+        token = _approval_control_authority_token(content)
         if token is None:
             return
         self._bindings[id(content)] = (content, token, function_call)
@@ -159,7 +160,7 @@ class _ApprovalReplayAuthority:
         """Bind freshly deserialized controls only when they match an authenticated snapshot."""
         for message in messages:
             for content in message.contents:
-                token = self._control_token(content)
+                token = _approval_control_authority_token(content)
                 if token is None:
                     continue
                 function_call = self._snapshots.get(token)
@@ -169,7 +170,7 @@ class _ApprovalReplayAuthority:
     def function_call_for(self, content: Content) -> Content | None:
         """Return the authoritative call only for this exact live control object."""
         binding = self._bindings.get(id(content))
-        if binding is None or binding[0] is not content or binding[1] != self._control_token(content):
+        if binding is None or binding[0] is not content or binding[1] != _approval_control_authority_token(content):
             return None
         return binding[2]
 
@@ -1189,7 +1190,7 @@ def _function_call_replay_key(content: Content | None) -> Any | None:
             },
             boundary="replayed approval control",
         )
-    except (TypeError, ValueError, MiddlewareFailure):
+    except (RecursionError, TypeError, ValueError, MiddlewareFailure):
         return None
 
 
@@ -1222,7 +1223,7 @@ def _is_pending_approval_control(content: Content, *, scope: _SecurityScope) -> 
             function_call.name,
             cast(Mapping[str, Any], function_call.parse_arguments() or {}),
         )
-    except (TypeError, ValueError):
+    except (RecursionError, TypeError, ValueError):
         return False
     for occurrence_id, payload in scope.pending_approvals.items():
         pending = _PendingPolicyApproval.from_state(payload)
@@ -4320,16 +4321,11 @@ class SecureAgentConfig(ContextProvider):
             for content in message.contents:
                 if content.type == "function_approval_request" and content.id is not None:
                     stored = pending.get(content.id)
+                    content_token = _approval_control_authority_token(content)
                     if (
                         stored is not None
-                        and _argument_authority_token(
-                            content.to_dict(),
-                            boundary="core approval replay",
-                        )
-                        == _argument_authority_token(
-                            stored.to_dict(),
-                            boundary="core approval replay",
-                        )
+                        and content_token is not None
+                        and content_token == _approval_control_authority_token(stored)
                         and stored.function_call is not None
                     ):
                         authority.remember(content, stored.function_call)
@@ -4403,7 +4399,9 @@ class SecureAgentConfig(ContextProvider):
         """Fold complete loaded history before function approval replay can execute."""
         reconstruct_history_unstamped = context.metadata.get(self._approval_history_metadata_key())
         if not isinstance(reconstruct_history_unstamped, bool):
-            reconstruct_history_unstamped = state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
+            reconstruct_history_unstamped = (
+                _STATE_CONTEXT_LABEL not in state or state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
+            )
         history_source_ids = self._history_source_ids(agent)
         raw_approval_authority = context.metadata.get(_APPROVAL_REPLAY_AUTHORITY_KEY)
         approval_authority = (
@@ -4415,7 +4413,6 @@ class SecureAgentConfig(ContextProvider):
         has_local_history = any(context.context_messages.get(source_id) for source_id in history_source_ids)
         if (
             reconstruct_history_unstamped
-            and history_source_ids
             and not has_local_history
             and (context.service_session_id is not None or context.options.get("conversation_id") is not None)
         ):
@@ -4452,9 +4449,11 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
-        reconstruct_history_unstamped = state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
-        context.metadata[self._approval_history_metadata_key()] = reconstruct_history_unstamped
         restored_context_label = _STATE_CONTEXT_LABEL in state
+        reconstruct_history_unstamped = (
+            not restored_context_label or state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
+        )
+        context.metadata[self._approval_history_metadata_key()] = reconstruct_history_unstamped
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
         history_source_ids = self._history_source_ids(agent)

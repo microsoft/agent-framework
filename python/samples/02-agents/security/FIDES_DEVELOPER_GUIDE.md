@@ -235,8 +235,9 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
 - Stored `HistoryProvider` messages are also folded into the label. A restored FIDES label remains authoritative for
   unstamped stored history already represented by that state, while explicit replay labels may still add restrictions.
   If the FIDES state is missing, unstamped assistant/tool history is reconstructed as **UNTRUSTED + PRIVATE**.
-- A resumed service-managed conversation cannot be reconstructed from an empty local history mirror. If it has no
-  authoritative FIDES context label, the run fails closed before model or approval execution.
+- A resumed service-managed conversation without inspectable local history cannot be reconstructed safely. If it has
+  no authoritative FIDES context label, the run fails closed before model or approval execution. This applies when
+  the continuation ID comes from the session or chat options, and when local history is absent or write-only.
 - Policy enforcement uses the context label for validation
 
 `ContextProvider` implementations are trusted plugins and can already read the full conversation and session state.

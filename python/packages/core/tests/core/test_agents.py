@@ -4684,9 +4684,14 @@ async def test_psc_history_load_precedes_fides_replay_reconstruction(stream: boo
     assert any(entry["type"] == "untrusted_context" for entry in security.get_audit_log(session))
 
 
+@pytest.mark.parametrize("state_shape", ["missing", "marker-without-label"])
 @pytest.mark.parametrize("per_service_call", [False, True], ids=["once-per-run", "per-service-call"])
 @_psc_stream_params
-async def test_history_load_precedes_fides_approval_execution(stream: bool, per_service_call: bool) -> None:
+async def test_history_load_precedes_fides_approval_execution(
+    stream: bool,
+    per_service_call: bool,
+    state_shape: str,
+) -> None:
     """FIDES folds stored history before an approved tool can execute."""
     provider = _PscSpyHistoryProvider()
     executed = False
@@ -4719,7 +4724,12 @@ async def test_history_load_precedes_fides_approval_execution(stream: bool, per_
     session = agent.create_session()
     first_response = await agent.run("Prepare the approved sink.", session=session)
     approval_response = first_response.user_input_requests[0].to_function_approval_response(approved=True)
-    session.state.pop(security.source_id, None)
+    if state_shape == "missing":
+        session.state.pop(security.source_id, None)
+    else:
+        security_state = session.state[security.source_id]
+        security_state.pop("context_label", None)
+        security_state["history_reconstruction_complete"] = True
     provider._messages.insert(  # pyright: ignore[reportPrivateUsage]
         0,
         Message(role="assistant", contents=["Historical untrusted private data."]),
@@ -4869,6 +4879,69 @@ async def test_fides_service_history_without_authoritative_state_fails_closed(
     )
     session = agent.create_session()
     session.service_session_id = "existing-service-history"
+
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        await _psc_run(agent, "Continue", session, stream=stream)
+
+    assert provider.get_calls == 0
+    assert client.call_count == 0
+
+
+@pytest.mark.parametrize("provider_mode", ["none", "write-only"])
+@_psc_stream_params
+async def test_fides_service_history_without_loadable_provider_fails_closed(
+    stream: bool,
+    provider_mode: str,
+) -> None:
+    """Unseen service history requires FIDES state even without a loadable provider."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[("text", "must not run")],
+    )
+    security = SecureAgentConfig()
+    context_providers: list[ContextProvider] = [security]
+    if provider_mode == "write-only":
+        context_providers.append(provider)
+    agent = cast(
+        Agent,
+        Agent(
+            client=cast(SupportsChatGetResponse, client),
+            context_providers=context_providers,
+            require_per_service_call_history_persistence=True,
+        ),
+    )
+    session = agent.create_session()
+    session.service_session_id = "existing-service-history"
+
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        await _psc_run(agent, "Continue", session, stream=stream)
+
+    assert provider.get_calls == 0
+    assert client.call_count == 0
+
+
+@_psc_stream_params
+async def test_fides_default_conversation_id_without_authoritative_state_fails_closed(stream: bool) -> None:
+    """Agent-level continuation defaults reach FIDES before service dispatch."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=False,
+        script=[("text", "must not run")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+        require_per_service_call_history_persistence=True,
+        default_options={  # pyrefly: ignore[bad-argument-type]
+            "conversation_id": "default-service-history",
+            "store": True,
+        },
+    )
+    session = agent.create_session()
 
     with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
         await _psc_run(agent, "Continue", session, stream=stream)

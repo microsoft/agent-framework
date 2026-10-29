@@ -4632,6 +4632,92 @@ class TestSecureAgentSessionIsolation:
             )
         assert executed is False
 
+    async def test_history_replay_cyclic_approval_fails_closed(self) -> None:
+        """Malformed cyclic approval history is untrusted instead of aborting replay."""
+        function_call = Content.from_function_call(
+            call_id="cyclic-approval-call",
+            id="cyclic-approval-occurrence",
+            name="cyclic_approval_sink",
+            arguments={"value": "reviewed value"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id="cyclic-approval-occurrence",
+            function_call=function_call,
+        )
+        session = AgentSession(session_id="cyclic-pending-approval")
+        _store_pending_approval_requests(session, [approval_request])
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(
+            history,
+            [Message(role="assistant", contents=[function_call, approval_request])],
+        )
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config, history]),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker, _, replay_middleware = context.get_middleware()
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        cyclic_request = Content.from_function_approval_request(
+            id="cyclic-approval-occurrence",
+            function_call=function_call,
+        )
+        cyclic_request.function_call = cyclic_request
+        original_message = context.context_messages[history.source_id][0]
+        cyclic_message = Message(
+            role="assistant",
+            contents=[cyclic_request],
+            additional_properties=dict(original_message.additional_properties),
+        )
+        chat_context = ChatContext(
+            client=cast(Any, SimpleNamespace()),
+            messages=[cyclic_message],
+            options={},
+            session=session,
+        )
+
+        async def call_next() -> None:
+            return None
+
+        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_history_completion_marker_without_context_label_reconstructs(self) -> None:
+        """Current-format state without an authoritative label reconstructs stored history."""
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="marker-without-context-label")
+        session.state[config.source_id] = {
+            "scope_id": session.session_id,
+            "history_reconstruction_complete": True,
+        }
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(
+            history,
+            [Message(role="assistant", contents=["Stored untrusted history."])],
+        )
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config, history]),
+            session=session,
+            context=context,
+            state=session.state[config.source_id],
+        )
+
+        tracker = context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
     async def test_ordinary_pending_approval_rejects_altered_supplied_call_body(self) -> None:
         """Core binding cannot grant replay provenance to an altered supplied call."""
         responses = [

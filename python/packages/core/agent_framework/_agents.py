@@ -1564,8 +1564,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         )
         # Resolve conversation_id from the same combined view so an agent-level default is honored
         # when the runtime omits it (a live session id still takes precedence below).
-        effective_conversation_id = effective_options.get("conversation_id")
+        effective_conversation_id = cast(str | None, effective_options.get("conversation_id"))
         session_conversation_id = self._get_chat_conversation_id(session)
+        resolved_conversation_id = (
+            session_conversation_id if session_conversation_id is not None else effective_conversation_id
+        )
         # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
         # registered, and no service-side storage indicators
         if (
@@ -1615,6 +1618,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session=active_session,
             input_messages=input_messages,
             options=opts,
+            conversation_id=resolved_conversation_id,
             service_stores_history=service_stores_history,
         )
         default_additional_args = chat_options.pop("additional_function_arguments", None)
@@ -1781,6 +1785,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session: AgentSession | None,
         input_messages: list[Message] | None = None,
         options: dict[str, Any] | None = None,
+        conversation_id: str | None = None,
         service_stores_history: bool = False,
     ) -> tuple[SessionContext, dict[str, Any]]:
         """Prepare the session context and messages for agent execution.
@@ -1792,6 +1797,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session: The conversation session (None for stateless invocation).
             input_messages: Messages to process.
             options: Runtime options dict (already copied, safe to mutate).
+            conversation_id: Effective provider conversation identity after session/default/runtime precedence.
             service_stores_history: Whether the service owns history for this run.
 
         Returns:
@@ -1814,11 +1820,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
 
+        context_options = dict(options or {})
+        if conversation_id is not None:
+            context_options["conversation_id"] = conversation_id
         session_context = SessionContext(
             session_id=provider_session.session_id if provider_session else None,
             service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
-            options=options or {},
+            options=context_options,
         )
 
         # When per-service-call persistence is enabled, the per-service-call middleware owns
