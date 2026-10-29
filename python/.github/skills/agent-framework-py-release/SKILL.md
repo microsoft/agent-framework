@@ -52,7 +52,8 @@ If the user states target versions or a date explicitly, use exactly what they s
   `tooling/requirements-*.txt` bundle only for single-version tools.
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
 - **Footer reference links are part of the CHANGELOG edit**, not optional.
-- **One batch, one overall tag, one Azure DevOps run.** Generate `python/.github/release.json` in the same version-bump PR.
+- **One batch, one overall tag, one Azure DevOps run.** Generate `python/.github/release-<fulltag>.json` in the same
+  version-bump PR. Keep earlier per-tag manifests unchanged for browsing release-batch history.
   Never replace the reviewed selection with "all versions absent from PyPI", per-package tags, or one run per package.
 - **Azure DevOps is the only production publisher.** GitHub has no Azure DevOps API credentials or federated queue
   permission. The GitHub release workflow is read-only validation; local production `publish` tasks are retired.
@@ -331,7 +332,8 @@ If `core` did not bump this cycle, do not touch floors.
 After applying the selected bumps and dependency edits, generate the manifest from that same metadata diff:
 
 ```bash
-uv run --directory python --group tool-runtime poe prepare-python-release --base-ref "$RELEASE_BASE" --tag "python-<release-label>"
+RELEASE_TAG="python-<release-label>"
+uv run --directory python --group tool-runtime poe prepare-python-release --base-ref "$RELEASE_BASE" --tag "$RELEASE_TAG"
 ```
 
 The generator reuses the release validator's changed-`pyproject.toml` selection, then includes only packages whose
@@ -339,8 +341,11 @@ version increased (or new workspace packages). Dependency-only metadata edits re
 but do not select an unchanged version for publication. The root/core coupling and explicit cohort decision above
 still determine which versions are bumped. The excluded standalone Lab workspace is not part of this batch.
 
-Commit **`python/.github/release.json` in this same PR**, together with the version and lockfile changes. Do not maintain a
-duplicate list of versions manually. Regenerate after changing the bump list. For example:
+Commit **`python/.github/release-${RELEASE_TAG}.json` in this same PR**, together with the version and lockfile changes.
+The filename includes the full tag: `python-1.24.0` produces `python/.github/release-python-1.24.0.json`.
+Do not maintain a duplicate list of versions manually. Regenerate the new file after changing the bump list while
+the PR is open. Once it is part of the release base, it is historical: never edit, replace, or delete it.
+For example, `python/.github/release-python-1.24.0.json` contains:
 
 ```json
 {
@@ -362,7 +367,9 @@ Contract:
 
 - `tag` and non-empty `packages` are required. The tag is one overall `python-<PEP440-version>` release label, not
   a requirement that every selected distribution share a version. No source commit SHA is stored in this file:
-  Azure DevOps resolves the immutable tagged commit and reads the manifest there.
+  Azure DevOps resolves the immutable tagged commit and reads `python/.github/release-<fulltag>.json` there.
+  Both sides derive this exact path from the expected full tag. Never scan for the latest file or fall back to
+  the old fixed `.github/release.json` or root `release.json` paths.
 - Keys are exact canonical distribution names; values are PEP 440 strings equal to the tagged `project.version`.
   The expected tag must match the manifest tag, preventing reuse of a stale batch. PyPI absence is validation,
   **never selection**.
@@ -385,11 +392,14 @@ Contract:
 From the repository root, check the generated file against the same base:
 
 ```bash
-uv run --directory python --group tool-runtime python -m scripts.prepare_release --check --base-ref "$RELEASE_BASE" --tag "python-<release-label>"
+uv run --directory python --group tool-runtime python -m scripts.prepare_release --check --base-ref "$RELEASE_BASE" --tag "$RELEASE_TAG"
 ```
 
-PR CI enforces exact agreement between the manifest and version changes. PRs without version or manifest changes
-(including dependency maintenance) do not need to rewrite an old manifest.
+PR CI requires exactly one new per-tag manifest and enforces agreement between its filename, JSON tag, and version
+changes. Changes or deletions of historical manifests fail the check. Earlier files remain browsable on `main`;
+their old package versions are not revalidated against current metadata. PRs without version or manifest changes
+(including dependency maintenance) do not need to add a manifest. These files record reviewed intended batches,
+not proof that publication completed; that evidence is the verified artifact manifest on the published release.
 
 ```bash
 uv run --directory python --group tool-runtime poe validate-python-release --base-ref "$RELEASE_BASE"
@@ -422,7 +432,7 @@ The project's pre-commit hook runs `poe check` / `poe typing` / `uv lock` and ma
 
 ```bash
 git add -u
-git add python/.github/release.json  # New files are not included by git add -u.
+git add "python/.github/release-${RELEASE_TAG}.json"  # New files are not included by git add -u.
 git commit -m "<message>"   # may fail with "files were modified by this hook"
 git add -u                  # re-stage hook-generated changes
 git commit -m "<message>"   # succeeds
@@ -454,7 +464,7 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
 ### 10. Maintainer handoff: tag and existing draft (only when authorized)
 
 After the reviewed bump PR merges, the maintainer selects the exact merged commit and creates the **one** overall
-tag matching `python/.github/release.json`. The maintainer creates a GitHub **draft** release for that existing tag, with the
+tag matching its `python/.github/release-<fulltag>.json`. The maintainer creates a GitHub **draft** release for that tag, with the
 human-written title, complete release notes, and intended prerelease flag. Do not use a published release as the
 trigger and do not create per-package tags. Release notes must be complete **before ESRP approval**; do not edit
 the draft, tag, or selected source while a release run is in progress.
@@ -463,12 +473,12 @@ Azure DevOps discovery polls eligible existing drafts and tags. It has a disable
 an explicit first eligible release ID, and durable Azure Blob compare-and-swap claims to admit one run for the
 whole batch. No GitHub workflow calls or queues Azure DevOps.
 
-The protected pipeline reads `python/.github/release.json` from the exact tagged commit, validates the requested names,
+The protected pipeline reads `python/.github/release-<fulltag>.json` from the exact tagged commit, validates the requested names,
 versions and tag, builds once, and runs isolated install/public-import checks against the selected artifacts.
 It then waits for protected ESRP approval/publication and verifies the published distributions. Only after that
 verification does it upload the **same built wheels/sdists and artifact manifest** to the **existing draft**,
 verify those assets, and change `draft` to `false`. It preserves the draft's title, body, and prerelease flag.
-The source request (`python/.github/release.json`) and the output artifact manifest (file names, versions, sizes/checksums and
+The source request (`python/.github/release-<fulltag>.json`) and the output artifact manifest (file names, versions, sizes/checksums and
 source provenance) are different records.
 
 The published-event GitHub workflow validates the tag contract only. It must not build new artifacts, upload

@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: ["main", "feature*"]
     paths:
-      - "python/.github/release.json"
+      - "python/.github/release-*.json"
       - "python/pyproject.toml"
       - "python/packages/*/pyproject.toml"
       - "python/scripts/prepare_release.py"

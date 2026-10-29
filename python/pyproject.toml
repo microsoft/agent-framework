@@ -387,7 +387,7 @@ shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test -
 args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
 
 [tool.poe.tasks.prepare-python-release]
-help = "Generate .github/release.json from version changes against the same base as release validation."
+help = "Generate .github/release-<fulltag>.json from version changes against the same base as release validation."
 cmd = "python -m scripts.prepare_release --base-ref ${base_ref} --tag ${tag}"
 args = [
     { name = "base_ref", options = ["-B", "--base-ref"] },

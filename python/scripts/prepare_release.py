@@ -21,7 +21,7 @@ from scripts.dependencies._dependency_bounds_release_impl import (
     _selected_release_projects,
 )
 
-RELEASE_MANIFEST = Path(".github/release.json")
+RELEASE_MANIFEST_GLOB = ".github/release-*.json"
 
 # Prefer the public namespace bridges; use documented package entry points where
 # no bridge exists. Importing the build module (e.g. agent_framework_meta) is not a smoke test.
@@ -103,6 +103,12 @@ def _validate_tag(tag: object) -> None:
     Version(tag.removeprefix("python-"))
 
 
+def release_manifest_path(tag: str) -> Path:
+    """Derive the request path from the exact expected overall tag."""
+    _validate_tag(tag)
+    return Path(".github") / f"release-{tag}.json"
+
+
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -166,13 +172,14 @@ def main() -> None:
     parser.add_argument(
         "--tag", help="Expected overall python-* tag (required to generate or validate a release event)"
     )
-    parser.add_argument("--check", action="store_true", help=f"Validate instead of writing {RELEASE_MANIFEST}")
+    parser.add_argument(
+        "--check", action="store_true", help="Validate instead of writing .github/release-<fulltag>.json"
+    )
     parser.add_argument(
         "--ci", action="store_true", help="Check changed batches; skip PRs with no version/manifest change"
     )
     args = parser.parse_args()
     workspace_root = Path(__file__).resolve().parents[1]
-    manifest_path = workspace_root / RELEASE_MANIFEST
     if (not args.check or args.ci) and not args.base_ref:
         parser.error("--base-ref is required for generation and --ci")
     if args.ci and not args.check:
@@ -180,16 +187,44 @@ def main() -> None:
     if not args.ci and not args.tag:
         parser.error("--tag is required outside PR CI")
     try:
-        versions = selected_versions(workspace_root, args.base_ref) if args.base_ref else None
+        base_commit = (
+            _git(workspace_root, "rev-parse", "--verify", "--end-of-options", f"{args.base_ref}^{{commit}}").strip()
+            if args.base_ref
+            else None
+        )
+        versions = selected_versions(workspace_root, base_commit) if base_commit else None
+        expected_tag = args.tag
+        if args.ci:
+            changed_paths = [
+                Path(value)
+                for value in _git(
+                    workspace_root,
+                    "diff",
+                    "--relative",
+                    "--no-renames",
+                    "--name-only",
+                    "-z",
+                    base_commit,
+                    "--",
+                    RELEASE_MANIFEST_GLOB,
+                ).split("\0")
+                if value
+            ]
+            if not versions and not changed_paths:
+                print("No release batch changes.")
+                return
+            if len(changed_paths) != 1:
+                raise ValueError("A release PR must add exactly one .github/release-<fulltag>.json batch")
+            expected_tag = expected_tag or changed_paths[0].stem.removeprefix("release-")
+            if changed_paths[0] != release_manifest_path(expected_tag):
+                raise ValueError("Changed manifest filename does not match the expected release tag")
+        relative_manifest = release_manifest_path(expected_tag)
+        manifest_path = workspace_root / relative_manifest
         if (
-            args.ci
-            and not versions
-            and not _git(
-                workspace_root, "diff", "--name-only", args.base_ref, "--", RELEASE_MANIFEST.as_posix()
-            ).strip()
+            base_commit
+            and _git(workspace_root, "ls-tree", "--name-only", base_commit, "--", relative_manifest.as_posix()).strip()
         ):
-            print("No release batch changes.")
-            return
+            raise ValueError("Historical release manifests must not be changed or removed; use a new tag")
         if args.check:
             payload = json.loads(manifest_path.read_text(), object_pairs_hook=_reject_duplicate_keys)
         else:
@@ -198,7 +233,6 @@ def main() -> None:
                 "packages": versions,
                 "smoke_imports": {name: list(SMOKE_IMPORTS.get(name, ())) for name in versions or {}},
             }
-        expected_tag = args.tag or (payload.get("tag") if isinstance(payload, dict) else None)
         validate_manifest(payload, _build_release_project_map(workspace_root), expected_tag=expected_tag)
         if versions is not None and payload["packages"] != versions:
             raise ValueError("Manifest packages must exactly match version changes from --base-ref; regenerate it")
@@ -206,7 +240,7 @@ def main() -> None:
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             manifest_path.write_text(json.dumps(payload, indent=2) + "\n")
         print(
-            f"{'Validated' if args.check else 'Generated'} {RELEASE_MANIFEST} for {expected_tag}: "
+            f"{'Validated' if args.check else 'Generated'} {relative_manifest.as_posix()} for {expected_tag}: "
             f"{len(payload['packages'])} packages"
         )
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:

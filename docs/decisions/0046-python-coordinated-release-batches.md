@@ -35,10 +35,15 @@ must not receive credentials or federated permission to queue that pipeline.
 
 Proposed option: **generated batch manifest with Azure DevOps discovery and publication**.
 
-`python/.github/release.json` contains the expected overall `python-<version>` tag, canonical distribution names mapped
+`python/.github/release-<fulltag>.json` contains the expected overall `python-<version>` tag, canonical distribution names mapped
 to their exact metadata versions, and optional additive public `module:export` smoke checks. The release tooling
 generates all selected smoke checks and derives versions from the existing changed-metadata selection, excluding
 dependency-only edits whose version did not change. The source manifest does not contain its own commit SHA.
+For `python-1.24.0`, its path is `python/.github/release-python-1.24.0.json`. Earlier per-tag files remain unchanged
+and browsable on `main`. PR checks validate exactly one new batch against current metadata and reject edits or
+deletions of historical requests, without revalidating their old versions. These are intended release batches,
+not evidence of successful publication. Producer and consumer derive the exact filename from the validated
+expected full tag, never from latest-file scanning or a fixed-path fallback.
 
 Azure DevOps resolves the existing tag, reads the manifest from that exact commit, claims the batch once, builds,
 checks isolated installs/imports, obtains protected approval, publishes through ESRP, and verifies publication.
