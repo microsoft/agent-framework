@@ -195,9 +195,11 @@ async def test_ollama_embedding_client_context_ownership(injected: bool) -> None
         else:
             client_cls.assert_called_once()
 
-    async with client as entered:
-        assert entered is client
-    await client.close()
+    with patch.object(client.client._client, "aclose", wraps=client.client._client.aclose) as aclose:
+        async with client as entered:
+            assert entered is client
+        await client.close()
+    assert aclose.await_count == (0 if injected else 1)
     assert client.client._client.is_closed is not injected
     assert "_owns_client" not in client.to_dict()
     assert "_client_closed" not in client.to_dict()

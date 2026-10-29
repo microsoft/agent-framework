@@ -1476,3 +1476,20 @@ async def test_base_embedding_client_context_calls_close(error: BaseException | 
                     raise error
             assert raised.value is error
         close.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
+async def test_base_embedding_client_context_accepts_sync_close(
+    error: RuntimeError | None,
+) -> None:
+    client = _MockEmbeddingClient()
+    with patch.object(client, "close", new_callable=MagicMock, return_value=None) as close:
+        if error is None:
+            async with client:
+                close.assert_not_called()
+        else:
+            with pytest.raises(type(error)) as raised:
+                async with client:
+                    raise error
+            assert raised.value is error
+        close.assert_called_once_with()
