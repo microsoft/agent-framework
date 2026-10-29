@@ -56,7 +56,12 @@ publish tasks are retired. Public runtime APIs and package versions do not chang
 change. The standalone Lab workspace remains outside the coordinated release batch.
 
 Merge the disabled Azure DevOps consumer first, then the upstream producer and old-publisher retirement.
-Configure identities, durable claims, and protected gates before choosing the first eligible draft ID and
-activating discovery last. Neither PR authorizes production tags, drafts, publication, or infrastructure changes.
+Reuse the existing `github-agent-framework` Azure DevOps GitHub service connection used by the .NET release
+pipeline, with explicit authorization for the Python pipelines and verification of repository/release access.
+Do not introduce a separate GitHub App, private key, or Key Vault token-minting setup. Azure identity for durable
+Blob claims and protected ESRP gates remains separate operator setup. Connection reuse does not replace the
+asset-only REST finalizer with a task that rewrites release notes, prerelease flags, or existing assets.
+Verify that setup before choosing the first eligible draft ID and activating discovery last. Neither PR
+authorizes production tags, drafts, publication, or infrastructure changes.
 The [release skill](../../python/.github/skills/agent-framework-py-release/SKILL.md) contains the operator procedure
 and recovery requirements. Maintainer and engineering/architecture approval is required before accepting this ADR.

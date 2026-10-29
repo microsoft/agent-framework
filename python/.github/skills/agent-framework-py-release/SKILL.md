@@ -504,13 +504,21 @@ release assets, publish packages, or request Azure DevOps credentials.
 1. Merge the Azure DevOps consumer first, with discovery disabled. Review the matching contract, artifact
    verification, recovery, and draft-only finalization.
 2. Merge this repository's producer and retirement of the old GitHub build/upload path second.
-3. Configure and verify the Azure DevOps identities, least-privilege GitHub release access, durable claim storage,
-   and protected ESRP approval gates outside GitHub. Verify the merged upstream revision is compatible.
+3. Reuse the existing Azure DevOps GitHub service connection `github-agent-framework`, already used by the .NET
+   release pipeline, and authorize it for the Python pipelines. Verify its repository and release access; do not
+   introduce a separate GitHub App, private key, or Key Vault token-minting setup. Configure and verify the separate
+   Azure identity for durable Blob claims and the protected ESRP approval gates outside GitHub. Verify the merged
+   upstream revision is compatible. Reusing the connection does not authorize a new pipeline automatically.
 4. Choose the first eligible draft release ID and activate tag/draft discovery **last**, only after the previous
    steps are confirmed. Do not create production tags/drafts merely to test rollout.
 
 The coordinated change requires both PRs and maintainer approval. Merging producer code alone must not enable
 a second publisher or silently activate discovery.
+
+Connection reuse does not mean reusing a release task that rewrites metadata or replaces existing assets.
+The consumer's asset-only REST finalizer must still preserve the existing draft's title, body, and prerelease flag,
+verify the exact retained artifacts, and publish only after verification. GitHub never receives Azure DevOps
+credentials or queue permission.
 
 ## Pitfalls from past cycles — avoid repeating
 
