@@ -391,7 +391,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   the public `EvalItem` directly.
 - Agent responses retain schema-only tool snapshots keyed by tool name, including context-provider tools, under
   `additional_properties["agent_framework.evaluation"]` for evaluation after serialization; executable callbacks are
-  not persisted. `evaluate_agent(tools=...)` overrides discovery without changing agent execution.
+  not persisted. Same-name input-schema changes retain a `schema_changed` marker through capture and aggregation.
+  Automatic evaluation rejects called tools with that marker rather than applying the latest schema to earlier calls;
+  description-only changes and uncalled tools do not block evaluation.
+  `evaluate_agent(tools=...)` overrides discovery without changing agent execution.
 
 ## Built-in Providers
 

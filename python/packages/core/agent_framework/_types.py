@@ -66,16 +66,32 @@ if TYPE_CHECKING:
 def _capture_evaluation_tools(  # pyright: ignore[reportUnusedFunction]
     captured: dict[str, dict[str, Any]], tools: Any
 ) -> None:
-    """Retain exposed declarations, refreshing same-name schemas at each model call."""
+    """Retain exposed declarations and flag same-name schema changes."""
     from ._tools import FunctionTool, normalize_tools
 
     for tool in normalize_tools(tools or []):
         if not isinstance(tool, FunctionTool):
             continue
-        captured[tool.name] = {
-            "description": tool.description,
-            "input_schema": json.loads(json.dumps(tool.parameters(), allow_nan=False)),
-        }
+        captured[tool.name] = _merge_evaluation_tool_definition(
+            captured.get(tool.name),
+            {
+                "description": tool.description,
+                "input_schema": json.loads(json.dumps(tool.parameters(), allow_nan=False)),
+            },
+        )
+
+
+def _merge_evaluation_tool_definition(
+    previous: Mapping[str, Any] | None, incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    definition = dict(incoming)
+    if previous is not None and (
+        previous.get("schema_changed") is True
+        or json.dumps(previous.get("input_schema"), sort_keys=True, allow_nan=False)
+        != json.dumps(incoming.get("input_schema"), sort_keys=True, allow_nan=False)
+    ):
+        definition["schema_changed"] = True
+    return definition
 
 
 # region Content Parsing Utilities
@@ -634,7 +650,17 @@ def merge_additional_properties(
     for key, value in (second or {}).items():
         current = merged.get(key)
         if isinstance(current, Mapping) and isinstance(value, Mapping):
-            merged[key] = {**current, **value}
+            current = cast("Mapping[str, Any]", current)
+            value = cast("Mapping[str, Any]", value)
+            namespace = {**current, **value}
+            if key == _EVALUATION_TOOLS_METADATA_KEY:
+                for name, definition in value.items():
+                    previous = current.get(name)
+                    if isinstance(previous, Mapping) and isinstance(definition, Mapping):
+                        namespace[name] = _merge_evaluation_tool_definition(
+                            cast("Mapping[str, Any]", previous), cast("Mapping[str, Any]", definition)
+                        )
+            merged[key] = namespace
         else:
             merged[key] = dict(cast("Mapping[str, Any]", value)) if isinstance(value, Mapping) else value
     return merged

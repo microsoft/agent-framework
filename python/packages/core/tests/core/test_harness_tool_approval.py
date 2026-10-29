@@ -11,7 +11,7 @@ from contextlib import nullcontext
 from datetime import timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -46,6 +46,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._feature_stage import ExperimentalWarning
+from agent_framework._types import _get_operation_state, _set_operation_state
 from agent_framework.security import (
     PRINCIPAL_METADATA_KEY,
     ConfidentialityLabel,
@@ -3337,6 +3338,38 @@ async def test_streaming_filtered_approval_preserves_response_metadata(
         assert not _approval_requests(response.messages)
         assert all(message.contents for message in response.messages)
     assert executions == ["called"]
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_streaming_buffered_hosted_approval_preserves_continuation(
+    chat_client_base: MockBaseChatClient, terminal: bool
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False
+    call = Content.from_function_call("call_1", "hosted", arguments={}, hosted=True)
+    update = ChatResponseUpdate(
+        role="assistant",
+        contents=[Content.from_function_approval_request("approval_1", call)],
+        continuation_token=cast(Any, {"resume": "token"}),
+    )
+    _set_operation_state(update, "in_progress")
+    provider_updates = [update]
+    if terminal:
+        terminal_update = ChatResponseUpdate(finish_reason="stop")
+        _set_operation_state(terminal_update, "terminal")
+        provider_updates.append(terminal_update)
+    chat_client_base.streaming_responses = [provider_updates]
+    agent = Agent(client=chat_client_base, middleware=[ToolApprovalMiddleware()])
+
+    stream = agent.run("Test", stream=True, session=agent.create_session())
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+    restored_updates = [AgentResponseUpdate.from_json(update.to_json()) for update in updates]
+
+    for response in (final, AgentResponse.from_updates(updates), AgentResponse.from_updates(restored_updates)):
+        assert response.continuation_token == (None if terminal else {"resume": "token"})
+        assert _get_operation_state(response) == ("terminal" if terminal else "in_progress")
+        assert len(_approval_requests(response.messages)) == 1
+        assert all(message.contents for message in response.messages)
 
 
 async def test_streaming_auto_approved_tool_preserves_value_when_preamble_text_coalesces(

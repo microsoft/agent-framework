@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import pickle
 from copy import deepcopy
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -39,6 +39,8 @@ from agent_framework._types import (
     ChatResponseUpdate,
     Content,
     Message,
+    _get_operation_state,
+    _set_operation_state,
 )
 
 
@@ -334,7 +336,7 @@ class TestToEvalItem:
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("chat_middleware", [False, True])
-    async def test_progressively_replaced_tool_uses_latest_schema(
+    async def test_progressively_replaced_tool_rejects_ambiguous_evaluation(
         self, chat_client_base: Any, stream: bool, chat_middleware: bool
     ) -> None:
         replacement = FunctionTool(
@@ -369,17 +371,66 @@ class TestToEvalItem:
             response = await agent.run("Test")
             restored = AgentResponse.from_json(response.to_json())
 
-        for result in (response, restored):
-            item = _to_eval_item(query="Test", response=result)
-            assert item.tools is not None
-            assert len(item.tools) == 1
-            assert item.tools[0].description == replacement.description
-            assert item.tools[0].parameters() == replacement.parameters()
+        for result in (
+            response,
+            restored,
+            AgentResponse.from_dict(response.to_dict()),
+            AgentResponse.from_json(response.to_json()),
+            pickle.loads(pickle.dumps(response)),
+        ):
+            with pytest.raises(ValueError, match="search.*changed input schema"):
+                _to_eval_item(query="Test", response=result)
+            assert _to_eval_item(query="Test", response=result, tools=[replacement]).tools == [replacement]
+            assert _to_eval_item(query="Test", response=result, tools=[]).tools is None
         assert any(
             content.type == "function_result" and content.result == "Seattle"
             for message in response.messages
             for content in message.contents
         )
+
+    @pytest.mark.parametrize("serialization", ["dict", "json", "pickle"])
+    @pytest.mark.parametrize("constraint", ["const", "enum"])
+    async def test_boolean_numeric_schema_change_rejects_evaluation(
+        self, chat_client_base: Any, serialization: str, constraint: str
+    ) -> None:
+        def schema(value: bool | int) -> dict[str, Any]:
+            return {
+                "type": "object",
+                "properties": {"value": {constraint: [value] if constraint == "enum" else value}},
+                "required": ["value"],
+            }
+
+        replacement = FunctionTool(name="search", input_model=schema(1), func=lambda value: str(value))
+
+        def replace(value: bool, ctx: FunctionInvocationContext) -> str:
+            ctx.remove_tools(["search"])
+            ctx.add_tools([replacement])
+            return "Replaced"
+
+        original = FunctionTool(name="search", input_model=schema(True), func=replace)
+        chat_client_base.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message("assistant", [Content.from_function_call("call_1", "search", arguments={"value": True})])
+                ]
+            ),
+            ChatResponse(
+                messages=[
+                    Message("assistant", [Content.from_function_call("call_2", "search", arguments={"value": 1})])
+                ]
+            ),
+        ]
+        response = await Agent(client=chat_client_base, tools=[original]).run("Test")
+        if serialization == "dict":
+            restored = AgentResponse.from_dict(response.to_dict())
+        elif serialization == "json":
+            restored = AgentResponse.from_json(response.to_json())
+        else:
+            restored = pickle.loads(pickle.dumps(response))
+
+        for result in (response, restored):
+            with pytest.raises(ValueError, match="search.*changed input schema"):
+                _to_eval_item(query="Test", response=result)
 
     @pytest.mark.parametrize("serialization", ["dict", "json", "pickle"])
     async def test_empty_snapshot_survives_agent_reconfiguration(
@@ -437,6 +488,10 @@ class TestToEvalItem:
             == (final.additional_properties["agent_framework.evaluation"])
         )
         for response in (final, restored):
+            if replace_same_name:
+                with pytest.raises(ValueError, match="load.*changed input schema"):
+                    _to_eval_item(query="Test", response=response)
+                continue
             item = _to_eval_item(query="Test", response=response)
             assert item.tools is not None
             tools = {tool.name: tool for tool in item.tools}
@@ -572,6 +627,7 @@ class TestToEvalItem:
             {"weather": {"description": None, "input_schema": {}}},
             {"weather": {"description": "", "input_schema": []}},
             {"weather": {"description": "", "input_schema": {"default": object()}}},
+            {"weather": {"description": "", "input_schema": {}, "schema_changed": "yes"}},
         ],
     )
     def test_invalid_serialized_tool_metadata_raises(self, metadata: Any) -> None:
@@ -596,6 +652,53 @@ class TestToEvalItem:
 
 
 class TestEvaluateAgentTools:
+    @pytest.mark.parametrize("with_approval_middleware", [False, True])
+    @pytest.mark.parametrize("operation_state", [None, "in_progress", "terminal"])
+    async def test_stream_tool_metadata_preserves_continuation(
+        self,
+        chat_client_base: Any,
+        with_approval_middleware: bool,
+        operation_state: Literal["in_progress", "terminal"] | None,
+    ) -> None:
+        token = {"response_id": "response_1"}
+        update = ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_text("Working")],
+            continuation_token=cast(Any, token),
+        )
+        _set_operation_state(update, "in_progress" if operation_state == "terminal" else operation_state)
+        provider_updates = [update]
+        if operation_state == "terminal":
+            terminal_update = ChatResponseUpdate(finish_reason="stop")
+            _set_operation_state(terminal_update, "terminal")
+            provider_updates.append(terminal_update)
+        chat_client_base.streaming_responses = [provider_updates]
+
+        if with_approval_middleware:
+            agent = create_harness_agent(
+                chat_client_base,
+                disable_compaction=True,
+                disable_todo=True,
+                disable_mode=True,
+                disable_file_memory=True,
+                disable_web_search=True,
+            )
+        else:
+            agent = Agent(client=chat_client_base)
+
+        stream = agent.run("Test", stream=True, session=agent.create_session())
+        updates = [update async for update in stream]
+        final = await stream.get_final_response()
+        restored_updates = [AgentResponseUpdate.from_json(update.to_json()) for update in updates]
+        expected_token = None if operation_state == "terminal" else token
+
+        for result in (final, AgentResponse.from_updates(updates), AgentResponse.from_updates(restored_updates)):
+            assert result.continuation_token == expected_token
+            assert _get_operation_state(result) == operation_state
+            assert result.text == "Working"
+            assert len(result.messages) == 1
+            assert result.additional_properties["agent_framework.evaluation"] == {}
+
     @pytest.mark.parametrize("auto_approve", [False, True])
     async def test_harness_stream_preserves_provider_tools(self, chat_client_base: Any, auto_approve: bool) -> None:
         skill = InlineSkill(
@@ -716,6 +819,75 @@ class TestEvaluateAgentTools:
             tools = {tool.name: tool for tool in item.tools}
             assert set(tools) == {"search", "iteration_1", "iteration_2"}
             assert tools["search"].description == "Version 2"
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_loop_rejects_called_tool_with_changing_schema(self, chat_client_base: Any, stream: bool) -> None:
+        class ChangingToolsProvider(ContextProvider):
+            async def before_run(
+                self,
+                *,
+                agent: SupportsAgentRun,
+                session: AgentSession,
+                context: SessionContext,
+                state: dict[str, Any],
+            ) -> None:
+                iteration = state["iteration"] = state.get("iteration", 0) + 1
+                context.extend_tools(
+                    self.source_id,
+                    [
+                        FunctionTool(
+                            name="search",
+                            input_model={
+                                "type": "object",
+                                "properties": {"value": {"type": "integer", "enum": [min(iteration, 2)]}},
+                                "required": ["value"],
+                            },
+                            func=lambda value: str(value),
+                        )
+                    ],
+                )
+
+        calls = [
+            Content.from_function_call(f"call_{iteration}", "search", arguments={"value": min(iteration, 2)})
+            for iteration in (1, 2, 3)
+        ]
+        agent = Agent(
+            client=chat_client_base,
+            context_providers=[ChangingToolsProvider("changing")],
+            middleware=[AgentLoopMiddleware(lambda iteration, **kwargs: iteration < 3)],
+        )
+        if stream:
+            chat_client_base.streaming_responses = [
+                updates
+                for call in calls
+                for updates in (
+                    [ChatResponseUpdate(role="assistant", contents=[call])],
+                    [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done")])],
+                )
+            ]
+            response_stream = agent.run("Test", stream=True, session=agent.create_session())
+            updates = [update async for update in response_stream]
+            response = AgentResponse.from_updates(updates)
+        else:
+            chat_client_base.run_responses = [
+                result
+                for call in calls
+                for result in (
+                    ChatResponse(messages=[Message("assistant", [call])]),
+                    ChatResponse(messages=[Message("assistant", ["Done"])]),
+                )
+            ]
+            response = await agent.run("Test", session=agent.create_session())
+
+        for result in (response, AgentResponse.from_json(response.to_json())):
+            assert [
+                content.arguments
+                for message in result.messages
+                for content in message.contents
+                if content.type == "function_call"
+            ] == [{"value": 1}, {"value": 2}, {"value": 2}]
+            with pytest.raises(ValueError, match="search.*changed input schema"):
+                _to_eval_item(query="Test", response=result)
 
     @pytest.mark.parametrize("tool_free_final", [False, True])
     async def test_streaming_loop_updates_retain_previous_tool_definitions(

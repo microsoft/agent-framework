@@ -62,6 +62,7 @@ from ._types import (
     _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     _capture_evaluation_tools,  # pyright: ignore[reportPrivateUsage]
+    _copy_operation_state,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
 )
@@ -1495,13 +1496,16 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 async for update in stream:
                     yield update
                 response = await stream.get_final_response()
-                yield AgentResponseUpdate(
+                metadata_update = AgentResponseUpdate(
+                    continuation_token=response.continuation_token,
                     additional_properties={
                         _EVALUATION_TOOLS_METADATA_KEY: deepcopy(
                             response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
                         )
-                    }
+                    },
                 )
+                _copy_operation_state(response, metadata_update)
+                yield metadata_update
 
         async def _finalize_with_metadata(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
             return await stream.get_final_response()

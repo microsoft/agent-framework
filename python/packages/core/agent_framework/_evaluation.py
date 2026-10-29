@@ -879,6 +879,9 @@ def _to_eval_item(
     if tools is not None:
         typed_tools = [tool for tool in normalize_tools(tools) if isinstance(tool, FunctionTool)]
     elif _EVALUATION_TOOLS_METADATA_KEY in response.additional_properties:
+        called_tools = {
+            content.name for message in all_msgs for content in message.contents if content.type == "function_call"
+        }
         definitions = response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
         if not isinstance(definitions, dict):
             raise ValueError("Invalid agent_framework.evaluation metadata: expected tool definitions keyed by name.")
@@ -892,6 +895,17 @@ def _to_eval_item(
                 raise ValueError(
                     f"Invalid agent_framework.evaluation definition for {name!r}: "
                     "expected a string description and an input_schema object."
+                )
+            schema_changed = definition.get("schema_changed", False)
+            if not isinstance(schema_changed, bool):
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation definition for {name!r}: schema_changed must be bool."
+                )
+            if schema_changed and name in called_tools:
+                raise ValueError(
+                    f"Tool {name!r} changed input schema during the captured conversation; "
+                    "automatic evaluation cannot represent multiple schemas for the same called tool. "
+                    "Use distinct tool names or supply an explicit tools= override."
                 )
             try:
                 schema = json.loads(json.dumps(schema, allow_nan=False))
@@ -1654,6 +1668,10 @@ async def evaluate_agent(
     agent's configured tools; supply ``tools`` when those definitions are
     unavailable or need to be overridden. In this mode ``queries`` is required
     to construct the conversation.
+
+    Automatic discovery rejects a called tool whose captured input schema changed
+    under the same name, even if the schemas might be compatible. Use distinct
+    names for different schemas or supply an explicit ``tools`` override.
 
     Args:
         agent: An agent-framework agent instance.
