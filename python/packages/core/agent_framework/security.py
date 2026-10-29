@@ -49,11 +49,13 @@ from ._sessions import AgentSession, ContextProvider, HistoryProvider, SessionCo
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    _FUNCTION_RESULT_CARRIER_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
     _bind_approval_response_to_pending_request,  # pyright: ignore[reportPrivateUsage]
+    _FunctionResultCarrier,  # pyright: ignore[reportPrivateUsage]
     _load_pending_approval_requests,  # pyright: ignore[reportPrivateUsage]
     tool,
 )
@@ -1176,6 +1178,35 @@ def _replayed_content_labels(
     return labels, is_authenticated_hidden_wrapper
 
 
+class _DuplicateJsonKeyError(ValueError):
+    """Raised when a replayed JSON object contains duplicate keys."""
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJsonKeyError(f"Duplicate JSON key {key!r}.")
+        result[key] = value
+    return result
+
+
+def _parse_replay_function_call_arguments(content: Content) -> dict[str, Any]:
+    """Parse replay arguments without allowing duplicate JSON object keys."""
+    arguments = content.arguments
+    if not isinstance(arguments, str):
+        return dict(content.parse_arguments() or {})
+    try:
+        parsed = json.loads(arguments, object_pairs_hook=_reject_duplicate_json_keys)
+    except _DuplicateJsonKeyError:
+        raise
+    except (json.JSONDecodeError, TypeError):
+        return {"raw": arguments}
+    if isinstance(parsed, dict):
+        return cast(dict[str, Any], parsed)
+    return {"raw": parsed}
+
+
 def _function_call_replay_key(content: Content | None) -> Any | None:
     """Return a stable key for one replayed function call."""
     if content is None or content.type != "function_call":
@@ -1186,7 +1217,7 @@ def _function_call_replay_key(content: Content | None) -> Any | None:
                 "id": content.id,
                 "call_id": content.call_id,
                 "name": content.name,
-                "arguments": content.parse_arguments(),
+                "arguments": _parse_replay_function_call_arguments(content),
             },
             boundary="replayed approval control",
         )
@@ -1328,9 +1359,13 @@ def _replayed_message_label(
         is_bound_approval_call = (
             content.type == "function_call" and _function_call_replay_key(content) in bound_approval_call_keys
         )
-        argument_label = _replayed_function_call_argument_label(
-            authoritative_approval_call if is_bound_approval_control else content
-        )
+        if is_bound_approval_control:
+            argument_content = authoritative_approval_call
+        elif reconstruct_unstamped:
+            argument_content = content
+        else:
+            argument_content = None
+        argument_label = _replayed_function_call_argument_label(argument_content)
         if argument_label is not None:
             content_labels.append(argument_label)
         if (
@@ -5573,6 +5608,39 @@ def _stamp_mcp_content_labels(
     return contents_list
 
 
+def _stamp_mcp_error_carrier_label(
+    context: FunctionInvocationContext,
+    local_label: ContentLabel,
+    *,
+    trust_server_ifc: bool,
+) -> ContentLabel | None:
+    """Apply retained MCP IFC to a generic function-error result carrier."""
+    raw_carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+    if not isinstance(raw_carrier, _FunctionResultCarrier):
+        return None
+
+    security_meta = raw_carrier.private_metadata.pop(_MCP_RESULT_SECURITY_META_KEY, None)
+    probe = Content.from_text("")
+    if security_meta is not None:
+        probe.additional_properties[_MCP_RESULT_SECURITY_META_KEY] = security_meta
+    stamped = cast(
+        list[Content],
+        _stamp_mcp_content_labels([probe], local_label, trust_server_ifc=trust_server_ifc),
+    )
+    if not stamped:
+        return None
+
+    stamped_item = stamped[0]
+    raw_carrier.item_additional_properties = {
+        **raw_carrier.item_additional_properties,
+        **stamped_item.additional_properties,
+    }
+    label_data = stamped_item.additional_properties.get("security_label")
+    if not isinstance(label_data, MutableMapping):
+        return None
+    return ContentLabel.from_dict(cast(MutableMapping[str, Any], label_data))
+
+
 def _current_mcp_local_label(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> ContentLabel:
     """Read the current local MCP output policy from a FunctionTool."""
     props = func_tool.additional_properties or {}
@@ -5607,9 +5675,30 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
         local_label = _current_mcp_local_label(func_tool, default_integrity)
         trust_server_ifc = props.get(_MCP_TRUST_SERVER_IFC_KEY) is True
 
-        res = original(*args, **kwargs)
-        if _inspect.isawaitable(res):
-            res = await res
+        invocation_context = next(
+            (value for value in kwargs.values() if isinstance(value, FunctionInvocationContext)),
+            None,
+        )
+        try:
+            res = original(*args, **kwargs)
+            if _inspect.isawaitable(res):
+                res = await res
+        except Exception:
+            if invocation_context is not None:
+                error_label = _stamp_mcp_error_carrier_label(
+                    invocation_context,
+                    local_label,
+                    trust_server_ifc=trust_server_ifc,
+                )
+                active_middleware = _current_middleware.get()
+                if (
+                    error_label is not None
+                    and active_middleware is not None
+                    and _current_context.get() is invocation_context
+                ):
+                    invocation_context.metadata["result_label"] = error_label
+                    active_middleware._update_context_label(error_label)  # pyright: ignore[reportPrivateUsage]
+            raise
         return _stamp_mcp_content_labels(res, local_label, trust_server_ifc=trust_server_ifc)
 
     _wrapped._ifc_wrapped = True  # type: ignore[attr-defined]

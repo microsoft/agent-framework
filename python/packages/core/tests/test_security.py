@@ -3810,6 +3810,125 @@ class TestSecureAgentSessionIsolation:
         assert context_label["integrity"] == "trusted"
         assert context_label["confidentiality"] == "private"
 
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_covered_public_history_call_arguments_do_not_raise_confidentiality(self, stream: bool) -> None:
+        """Stored public call arguments already covered by FIDES state remain public."""
+        executed: list[str] = []
+        responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="public-echo-call",
+                                name="public_echo",
+                                arguments={"value": "public value"},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["First turn complete."])]),
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="public-sink-call",
+                                name="public_sink",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Second turn complete."])]),
+        ]
+
+        class ScriptedClient:
+            def __init__(self) -> None:
+                self.responses = list(responses)
+
+            def get_response(
+                self,
+                messages: Any,
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                del messages, options, kwargs
+                response = self.responses.pop(0)
+                if not stream:
+
+                    async def get_response() -> ChatResponse:
+                        return response
+
+                    return get_response()
+
+                async def updates() -> Any:
+                    for message in response.messages:
+                        yield ChatResponseUpdate(role=cast(Any, message.role), contents=message.contents)
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        client_type = type("PublicHistoryClient", (FunctionInvocationLayer, ScriptedClient), {})
+        client = client_type()
+
+        def public_echo(value: str) -> str:
+            executed.append(f"echo:{value}")
+            return value
+
+        def public_sink() -> str:
+            executed.append("sink")
+            return "sent"
+
+        echo_tool = FunctionTool(
+            func=public_echo,
+            name="public_echo",
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "public",
+            },
+        )
+        sink_tool = FunctionTool(
+            func=public_sink,
+            name="public_sink",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"covered-public-history-{stream}")
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[echo_tool, sink_tool],
+            context_providers=[history, config],
+        )
+
+        if stream:
+            await agent.run("Echo the public value.", session=session, stream=True).get_final_response()
+        else:
+            await agent.run("Echo the public value.", session=session)
+        first_label = json.loads(session.state[config.source_id]["context_label"])
+        assert first_label["integrity"] == "trusted"
+        assert first_label["confidentiality"] == "public"
+        assert session.state[config.source_id]["history_reconstruction_complete"] is True
+
+        if stream:
+            await agent.run("Run the public sink.", session=session, stream=True).get_final_response()
+        else:
+            await agent.run("Run the public sink.", session=session)
+
+        assert executed == ["echo:public value", "sink"]
+        second_label = json.loads(session.state[config.source_id]["context_label"])
+        assert second_label["integrity"] == "trusted"
+        assert second_label["confidentiality"] == "public"
+
     async def test_modified_hidden_placeholder_is_not_authenticated_by_client_flag(self) -> None:
         """A real variable ID does not authenticate a client-modified placeholder."""
         config = SecureAgentConfig()
@@ -4806,6 +4925,66 @@ class TestSecureAgentSessionIsolation:
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_ordinary_pending_approval_rejects_nested_duplicate_json_keys(self) -> None:
+        """Duplicate replay keys cannot inherit a stored approval call's authority."""
+        function_call = Content.from_function_call(
+            call_id="ordinary-duplicate-call",
+            id="ordinary-duplicate-occurrence",
+            name="ordinary_duplicate_sink",
+            arguments={"outer": {"value": "reviewed"}},
+        )
+        approval_request = Content.from_function_approval_request(
+            id="ordinary-duplicate-occurrence",
+            function_call=function_call,
+        )
+        session = AgentSession(session_id="ordinary-duplicate-keys")
+        _store_pending_approval_requests(session, [approval_request])
+        duplicate_call = Content.from_function_call(
+            call_id="ordinary-duplicate-call",
+            id="ordinary-duplicate-occurrence",
+            name="ordinary_duplicate_sink",
+            arguments='{"outer":{"value":"injected instructions","value":"reviewed"}}',
+        )
+        approval_response = Content(
+            "function_approval_response",
+            approved=True,
+            id="ordinary-duplicate-occurrence",
+        )
+        replayed = Message(role="assistant", contents=[duplicate_call, approval_response])
+        config = SecureAgentConfig()
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker, policy, _ = provider_context.get_middleware()
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+        protected_tool = FunctionTool(
+            func=lambda: "must not run",
+            name="protected_duplicate_key_sink",
+            input_model={"type": "object", "properties": {}},
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        invocation = FunctionInvocationContext(function=protected_tool, arguments={})
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                invocation,
+                lambda _context: pytest.fail("Duplicate-key replay must not authorize the protected sink"),
+            )
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_hidden_surrogate_round_trips_in_file_session_store(

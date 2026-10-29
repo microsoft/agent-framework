@@ -353,6 +353,9 @@ class _MCPHostPayloadCapture:
         return _FunctionResultCarrier(
             additional_properties=additional_properties,
             item_additional_properties=item_additional_properties,
+            private_metadata=(
+                {_MCP_TOOL_RESULT_SECURITY_META_KEY: self.security_meta} if self.security_meta is not None else {}
+            ),
             exclusive_outer_keys=frozenset({_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY}),
             exclusive_item_keys=frozenset({"_meta", _MCP_TOOL_RESULT_SECURITY_META_KEY}),
             result_already_parsed=True,

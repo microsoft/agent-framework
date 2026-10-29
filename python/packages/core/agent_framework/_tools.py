@@ -22,7 +22,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
 from decimal import Decimal
@@ -312,6 +312,7 @@ class _FunctionResultCarrier:
 
     additional_properties: dict[str, Any]
     item_additional_properties: dict[str, Any]
+    private_metadata: dict[str, Any] = field(default_factory=dict[str, Any])
     exclusive_outer_keys: frozenset[str] = frozenset()
     exclusive_item_keys: frozenset[str] = frozenset()
     result_already_parsed: bool = False
