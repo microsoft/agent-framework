@@ -18,6 +18,7 @@ from agent_framework import (
     SUMMARY_OF_MESSAGE_IDS_KEY,
     AgentTriggeredCompactionStrategy,
     BaseChatClient,
+    BaseEmbeddingClient,
     ChatMiddleware,
     ChatOptions,
     ChatResponse,
@@ -36,6 +37,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID
+from agent_framework._types import Embedding, GeneratedEmbeddings
 from agent_framework.exceptions import ChatClientInvalidRequestException
 
 
@@ -1564,3 +1566,36 @@ async def test_chat_client_instructions_handling(chat_client_base: SupportsChatG
         assert appended_messages[0].text == "You are a helpful assistant."
         assert appended_messages[1].role == "user"
         assert appended_messages[1].text == "hello"
+
+
+class _MockEmbeddingClient(BaseEmbeddingClient[str, list[float], None]):
+    """Minimal embedding client used to exercise the base lifecycle methods."""
+
+    async def get_embeddings(self, values, *, options=None):  # type: ignore[override,no-untyped-def]
+        return GeneratedEmbeddings([Embedding(vector=[0.1, 0.2, 0.3]) for _ in values], options=options)
+
+
+async def test_base_embedding_client_default_lifecycle() -> None:
+    client = _MockEmbeddingClient()
+    await client.close()
+    async with client as entered:
+        assert entered is client
+        embeddings = await entered.get_embeddings(["hello"])
+        assert len(embeddings) == 1
+    await client.close()
+    assert len(await client.get_embeddings(["again"])) == 1
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
+async def test_base_embedding_client_context_calls_close(error: BaseException | None) -> None:
+    client = _MockEmbeddingClient()
+    with patch.object(client, "close", new_callable=AsyncMock) as close:
+        if error is None:
+            async with client:
+                close.assert_not_awaited()
+        else:
+            with pytest.raises(type(error)) as raised:
+                async with client:
+                    raise error
+            assert raised.value is error
+        close.assert_awaited_once_with()

@@ -31,6 +31,10 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # pragma: no cover
+else:
+    from typing_extensions import override  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.bedrock")
@@ -126,6 +130,8 @@ class RawBedrockEmbeddingClient(
         )
         resolved_region = settings.get("region") or DEFAULT_REGION
 
+        self._owns_client = client is None
+        self._client_closed = False
         if client:
             self._bedrock_client = client
         else:
@@ -149,6 +155,13 @@ class RawBedrockEmbeddingClient(
         self.model: str = settings["embedding_model"]  # type: ignore[assignment]
         self.region = resolved_region
         super().__init__(additional_properties=additional_properties)
+
+    @override
+    async def close(self) -> None:
+        """Close the owned runtime connection without closing caller-owned sessions."""
+        if self._owns_client and not self._client_closed:
+            await asyncio.to_thread(self._bedrock_client.close)
+            self._client_closed = True
 
     def service_url(self) -> str:
         """Get the URL of the service."""
