@@ -54,8 +54,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_With_AzureAIProject",
             ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureAIProject",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain = ["Latest agent version id:"],
             ExpectedOutputDescription =
             [
@@ -69,7 +69,7 @@ internal static class AgentsSamples
             Name = "Agent_With_AzureFoundryModel",
             ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureFoundryModel",
             RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain a joke about a pirate.",
@@ -464,8 +464,8 @@ internal static class AgentsSamples
         {
             Name = "AgentWithMemory_Step04_MemoryUsingFoundry",
             ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MEMORY_STORE_ID", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_EMBEDDING_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_AI_MEMORY_STORE_ID", "FOUNDRY_MODEL", "AZURE_AI_EMBEDDING_DEPLOYMENT_NAME"],
             MustContain =
             [
                 ">> Setting up Foundry Memory Store",
@@ -590,8 +590,8 @@ internal static class AgentsSamples
         {
             Name = "AgentWithRAG_Step04_FoundryServiceRAG",
             ProjectPath = "samples/02-agents/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain = [">> Asking about returns", ">> Asking about shipping", ">> Asking about product care"],
             ExpectedOutputDescription =
             [
@@ -608,8 +608,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step00_FoundryAgentLifecycle",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step00_FoundryAgentLifecycle",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain a joke about a pirate.",
@@ -621,8 +621,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step01_Basics",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step01_Basics",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain a joke response from the agent.",
@@ -634,8 +634,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step02.1_MultiturnConversation",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step02.1_MultiturnConversation",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain multiple joke responses showing a multi-turn conversation.",
@@ -648,8 +648,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step02.2_MultiturnWithServerConversations",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step02.2_MultiturnWithServerConversations",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain multiple joke responses showing a multi-turn conversation.",
@@ -661,8 +661,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step03_UsingFunctionTools",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step03_UsingFunctionTools",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain weather information about Amsterdam from a function tool.",
@@ -676,8 +676,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step04_UsingFunctionToolsWithApprovals",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step04_UsingFunctionToolsWithApprovals",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["Y", "Y", "Y"],
             InputDelayMs = 3000,
             ExpectedOutputDescription =
@@ -692,8 +692,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step05_StructuredOutput",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step05_StructuredOutput",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain = ["Assistant Output:", "Name:"],
             ExpectedOutputDescription =
             [
@@ -707,8 +707,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step06_PersistedConversations",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step06_PersistedConversations",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain a pirate joke, then after session persistence, a second response retelling the joke in pirate voice with emojis.",
@@ -720,8 +720,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step08_DependencyInjection",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step08_DependencyInjection",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["Tell me a joke about a pirate", ""],
             InputDelayMs = 5000,
             ExpectedOutputDescription =
@@ -735,8 +735,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step10_UsingImages",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step10_UsingImages",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should describe an image of a nature walkway or boardwalk scene.",
@@ -749,8 +749,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step11_AsFunctionTool",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step11_AsFunctionTool",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should be a response about the weather in Amsterdam, written in French.",
@@ -763,8 +763,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step12_Middleware",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step12_Middleware",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["Y", "Y", "Y"],
             InputDelayMs = 3000,
             ExpectedOutputDescription =
@@ -779,8 +779,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step13_Plugins",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step13_Plugins",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain information about both the current time and the weather in Seattle.",
@@ -793,8 +793,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step14_CodeInterpreter",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step14_CodeInterpreter",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show the code interpreter being used to solve sin(x) + x^2 = 42, including a 'Code Input:' section with Python code.",
@@ -808,8 +808,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step16_FileSearch",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step16_FileSearch",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain = ["--- Running File Search Agent ---"],
             ExpectedOutputDescription =
             [
@@ -822,8 +822,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step17_OpenAPITools",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step17_OpenAPITools",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain the current EUR exchange rate against USD and GBP as numeric values.",
@@ -964,8 +964,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step07_AsMcpTool",
             ProjectPath = "samples/02-agents/Agents/Agent_Step07_AsMcpTool",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             SkipReason = "Runs as an MCP stdio server that does not exit on its own.",
         },
 
@@ -973,7 +973,7 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step15_DeepResearch",
             ProjectPath = "samples/02-agents/Agents/Agent_Step15_DeepResearch",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_BING_CONNECTION_ID"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL", "AZURE_AI_BING_CONNECTION_ID"],
             OptionalEnvironmentVariables = ["AZURE_AI_REASONING_DEPLOYMENT_NAME"],
             SkipReason = "Requires Microsoft Foundry project with Bing search connection.",
         },
@@ -1168,8 +1168,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step07_Observability",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step07_Observability",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME", "APPLICATIONINSIGHTS_CONNECTION_STRING"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL", "APPLICATIONINSIGHTS_CONNECTION_STRING"],
             SkipReason = "Requires Application Insights / OpenTelemetry infrastructure.",
         },
 
@@ -1177,8 +1177,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step09_UsingMcpClientAsTools",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step09_UsingMcpClientAsTools",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show an agent using the Microsoft Learn MCP tool to search or retrieve documentation.",
@@ -1199,7 +1199,7 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step18_BingCustomSearch",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step18_BingCustomSearch",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID", "AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL", "AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID", "AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME"],
             SkipReason = "Requires Bing Custom Search connection.",
         },
 
@@ -1207,7 +1207,7 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step19_SharePoint",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step19_SharePoint",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "SHAREPOINT_PROJECT_CONNECTION_ID"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL", "SHAREPOINT_PROJECT_CONNECTION_ID"],
             SkipReason = "Requires SharePoint connection.",
         },
 
@@ -1215,7 +1215,7 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step20_MicrosoftFabric",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step20_MicrosoftFabric",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "FABRIC_PROJECT_CONNECTION_ID"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL", "FABRIC_PROJECT_CONNECTION_ID"],
             SkipReason = "Requires Microsoft Fabric connection.",
         },
 
@@ -1223,8 +1223,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step21_WebSearch",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step21_WebSearch",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show an agent using web search to answer a question, with response text and citation annotations.",
@@ -1236,7 +1236,7 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step22_MemorySearch",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step22_MemorySearch",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_EMBEDDING_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL", "AZURE_AI_EMBEDDING_DEPLOYMENT_NAME"],
             OptionalEnvironmentVariables = ["AZURE_AI_MEMORY_STORE_ID"],
             MustContain = ["Agent created with Memory Search tool. Starting conversation..."],
             ExpectedOutputDescription =
@@ -1250,8 +1250,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step23_LocalMCP",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step23_LocalMCP",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription = ["The output should show an agent using the Microsoft Learn MCP server to search for documentation and provide a response."],
         },
 
@@ -1259,8 +1259,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Hosted_MCP",
             ProjectPath = "samples/02-agents/ModelContextProtocol/FoundryAgent_Hosted_MCP",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["Y", "Y", "Y", "Y", "Y"],
             InputDelayMs = 5000,
             ExpectedOutputDescription = ["The output should contain a summary or information about Azure AI documentation from Microsoft Learn."],

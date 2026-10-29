@@ -24,6 +24,18 @@ Use `OpenAIChatClient` for new work unless you specifically need the Chat Comple
 
 The previous deprecated Responses alias has been removed. Use `OpenAIChatClient` directly.
 
+## Citations and annotations
+
+`OpenAIChatClient` exposes Responses API URL, file, file-path, and container-file citations through
+`Content.annotations`, using the provider-neutral `Annotation(type="citation", ...)` representation.
+URL citations retain their title, URL, and text-span indices, including SharePoint grounding citations.
+
+Inspect `content.annotations` in response messages or streaming `update.contents`. Annotations can arrive
+in an update whose `content.text` is empty: completed content parts and output messages supply citations
+without repeating text that was already streamed. Annotation-added and completion events are deduplicated
+by item, content part, and annotation position, so separate references to the same source remain distinct.
+Foundry clients that inherit the Responses parser receive the same behavior.
+
 ## Hosted function results
 
 `OpenAIChatClient` parses hosted `function_call_output` items in both streaming and non-streaming responses.

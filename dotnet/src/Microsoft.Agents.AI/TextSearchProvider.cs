@@ -150,9 +150,10 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     /// <inheritdoc />
     protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        // Retrieve recent messages from the session state.
-        var recentMessagesText = this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText
-            ?? [];
+        // Retrieve recent messages from the session state only when memory is enabled.
+        var recentMessagesText = this._recentMessageMemoryLimit > 0
+            ? this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText ?? []
+            : [];
 
         // Aggregate text from memory + current request messages.
         var sbInput = new StringBuilder();

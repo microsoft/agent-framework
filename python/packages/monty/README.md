@@ -6,6 +6,22 @@ Monty-backed CodeAct integrations for Microsoft Agent Framework.
 > This package is in **beta**. APIs may change before its stable release. It is
 > included in `agent-framework[all]`.
 
+## FIDES compatibility
+
+> [!WARNING]
+> **FIDES integration is not supported with CodeAct providers.** Host-tool calls
+> made inside generated code bypass the agent's function middleware, so FIDES
+> policy enforcement and label tracking do not apply to those nested calls or
+> intermediate code values. Checks on the outer `execute_code` invocation do not
+> enforce the policies of individual tools called inside it.
+>
+> Registering tools with recognized FIDES `additional_properties` logs a warning,
+> but does not block execution. This is a best-effort diagnostic: FIDES also uses
+> defaults for unannotated tools, so no warning does not imply support or safety.
+> Keep tools that require FIDES as direct agent tools, not Monty-managed tools, and
+> enforce authorization and destination restrictions inside host functions.
+> See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
+
 ## Installation
 
 ```bash
@@ -179,12 +195,22 @@ codeact = MontyCodeActProvider(
   after each `execute_code` call and returned as `Content.from_data(...)`
   attachments (with a `path` annotation in `additional_properties`),
   mirroring Hyperlight's `/output` flow.
+- Capture is limited to **20 files and 20 MiB of raw file data per call across
+  all read-write mounts**, with a **5 MiB per-file limit**. Empty files count
+  toward the file limit. Files that do not fit the remaining byte budget are
+  skipped; later smaller files can still be captured. Exact fits are accepted.
+  Returned base64 data and Python objects add memory overhead beyond the raw
+  byte budget.
+- Files omitted by capture limits produce one text summary, not one warning
+  per file. Omission does not undo filesystem writes. These limits bound
+  attachment capture, not filesystem traversal, disk use, or all host memory.
 - `overlay` mounts buffer writes in memory (nothing leaks to the host and
   nothing is captured). `read-only` mounts reject writes.
 - **`resource_limits`** is forwarded straight to Monty's
   [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
   (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
-  `max_suspensions`).
+  `max_suspensions`). These interpreter limits do not independently bound
+  host-side post-execution attachment capture.
 
 ## DSL inside `execute_code`
 

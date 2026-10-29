@@ -1,6 +1,6 @@
 # Hosted-MemoryAgent
 
-A hosted agent with long-term memory backed by a Foundry Memory store and an embedding deployment. Requires AZURE_AI_MEMORY_STORE_ID and AZURE_AI_EMBEDDING_DEPLOYMENT_NAME to be set to resources that exist in your project.
+A hosted agent with long-term memory backed by a Foundry Memory store and an embedding deployment. Set `AZURE_AI_MEMORY_STORE_ID` and `FOUNDRY_EMBEDDING_MODEL` to resources that exist in your project. Hosted deployments retain `AZURE_AI_EMBEDDING_DEPLOYMENT_NAME` as the azd-managed fallback.
 
 This sample deploys to Foundry **directly from source (code / ZIP upload)**: the platform builds and runs your code with no container image, so there is no Dockerfile to author or container registry to manage. Source deploy is the default for .NET.
 
@@ -45,9 +45,9 @@ cp .env.example .env
 
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 AZURE_AI_MEMORY_STORE_ID=<your-memory-store-name>
-AZURE_AI_EMBEDDING_DEPLOYMENT_NAME=<your-embedding-deployment>
+FOUNDRY_EMBEDDING_MODEL=<your-embedding-deployment>
 ASPNETCORE_URLS=http://+:8088
 AZURE_TOKEN_CREDENTIALS=dev
 ```

@@ -55,7 +55,7 @@ def create_agent() -> Agent:
     config, context = AgentConfig.from_env(), get_request_context()
     scope = memory_scope(config, context)
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     store_name = os.environ["MEMORY_STORE_NAME"]
     headers = context.platform_headers()
     credential = (

@@ -25,6 +25,11 @@ public static class ToolApprovalAgentBuilderExtensions
     /// When a caller responds with an <see cref="AlwaysApproveToolApprovalResponseContent"/>, the middleware records a standing
     /// approval rule so that future matching tool calls are auto-approved without user interaction.
     /// </para>
+    /// <para>
+    /// <b>Security:</b> Standing rules persist in session state and are not tied to the agent or tool instance
+    /// that recorded them. Before reusing a session with a different agent or tool set, especially one that can
+    /// load tools from an outside source such as MCP, ensure its standing approvals are still appropriate.
+    /// </para>
     /// </remarks>
     public static AIAgentBuilder UseToolApproval(
         this AIAgentBuilder builder,

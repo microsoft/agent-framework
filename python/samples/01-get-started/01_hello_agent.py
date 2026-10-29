@@ -1,50 +1,29 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Create and run a minimal Agent Framework agent.
+
+The agent uses a Microsoft Foundry chat client and prints one response.
+For streaming, see `foundry_chat_client_basic.py` in:
+https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/providers/foundry
+"""
+
 import asyncio
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
-"""
-Hello Agent — Simplest possible agent
-
-This sample creates a minimal agent using FoundryChatClient via an
-Microsoft Foundry project endpoint, and runs it in both non-streaming and streaming modes.
-
-There are XML tags in all of the get started samples, those are used to display the same code in the docs repo.
-"""
-
 
 async def main() -> None:
-    # <create_agent>
-    client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
-        model="gpt-4o",
-        credential=AzureCliCredential(),
-    )
-
     agent = Agent(
-        client=client,
-        name="HelloAgent",
+        client=FoundryChatClient(
+            project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
+            model="gpt-6-luna",
+            credential=AzureCliCredential(),
+        ),
         instructions="You are a friendly assistant. Keep your answers brief.",
     )
-    # </create_agent>
-
-    # <run_agent>
-    # Non-streaming: get the complete response at once
-    result = await agent.run("What is the capital of France?")
-    print(f"Agent: {result}")
-    # </run_agent>
-
-    # <run_agent_streaming>
-    # Streaming: receive tokens as they are generated
-    print("Agent (streaming): ", end="", flush=True)
-    async for chunk in agent.run("Tell me a one-sentence fun fact.", stream=True):
-        if chunk.text:
-            print(chunk.text, end="", flush=True)
-    print()
-    # </run_agent_streaming>
+    print(await agent.run("What is the largest city of France?"))
 
 
 if __name__ == "__main__":

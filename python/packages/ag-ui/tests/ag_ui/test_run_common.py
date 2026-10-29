@@ -620,7 +620,7 @@ class TestEmitToolResultWithState:
         approval_event = _make_approval_tool_result_events([content])[0]
         approval_snapshot = _resolved_tool_result_snapshot_messages(
             [Message(role="tool", contents=[content], message_id="approval-result")]
-        )["mcp-1"]
+        )[("mcp-1", 1)][0]
         assert json.loads(approval_event.content) == host_payload
         assert approval_snapshot["content"] == "Summary"
         assert json.loads(approval_snapshot[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == host_payload
@@ -646,8 +646,8 @@ class TestEmitToolResultWithState:
         snapshot = _build_messages_snapshot(flow, []).messages[-1].model_dump(by_alias=True, exclude_none=True)
         approval_event = _make_approval_tool_result_events([content])[0]
         approval_snapshot = _resolved_tool_result_snapshot_messages([Message(role="tool", contents=[content])])[
-            "mcp-empty"
-        ]
+            ("mcp-empty", 1)
+        ][0]
 
         assert getattr(result_event, _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY) == []
         assert flow.tool_results[-1]["content"] == ""
@@ -683,8 +683,8 @@ class TestEmitToolResultWithState:
         )
         approval_event = _make_approval_tool_result_events([content])[0]
         approval_snapshot = _resolved_tool_result_snapshot_messages([Message(role="tool", contents=[content])])[
-            "mcp-display"
-        ]
+            ("mcp-display", 1)
+        ][0]
 
         assert json.loads(result_event.content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "Summary"

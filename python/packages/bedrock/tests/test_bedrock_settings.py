@@ -14,7 +14,7 @@ from agent_framework import (
 from agent_framework._settings import load_settings
 from pydantic import BaseModel
 
-from agent_framework_bedrock._chat_client import BedrockChatClient, BedrockSettings
+from agent_framework_bedrock import BedrockChatClient, BedrockSettings
 
 
 class _WeatherArgs(BaseModel):

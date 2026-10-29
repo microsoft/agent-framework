@@ -378,9 +378,7 @@ async def test_embedding_2_rejects_unsupported_task_type() -> None:
 async def test_invalid_dimensions_rejected_before_sdk_call(dimensions: Any) -> None:
     client, sdk = _make_client()
     with pytest.raises(ValueError, match="dimensions must be a positive integer"):
-        await client.get_embeddings(
-            ["text"], options=cast(GeminiEmbeddingOptions, {"task_type": "RETRIEVAL_QUERY", "dimensions": dimensions})
-        )
+        await client.get_embeddings(["text"], options={"task_type": "RETRIEVAL_QUERY", "dimensions": dimensions})
     sdk.aio.models.embed_content.assert_not_awaited()
 
 
@@ -407,9 +405,7 @@ async def test_title_requires_retrieval_document() -> None:
 async def test_model_override_must_be_nonempty_string(model: Any) -> None:
     client, sdk = _make_client()
     with pytest.raises(ValueError, match="model must be a non-empty string"):
-        await client.get_embeddings(
-            ["text"], options=cast(GeminiEmbeddingOptions, {"model": model, "task_type": "RETRIEVAL_QUERY"})
-        )
+        await client.get_embeddings(["text"], options={"model": model, "task_type": "RETRIEVAL_QUERY"})
     sdk.aio.models.embed_content.assert_not_awaited()
 
 

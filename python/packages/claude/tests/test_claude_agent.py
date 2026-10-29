@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import copy
 import json
 from types import SimpleNamespace
 from typing import Any, cast
@@ -465,6 +466,8 @@ class TestClaudeAgentRunStream:
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+            assert updates[0].contents[0].merge_mode == "append"
+            assert updates[1].contents[0].merge_mode == "append"
 
     async def test_run_stream_final_response_captures_usage_and_finish_reason(self) -> None:
         """Test run(stream=True) final response includes ResultMessage metadata."""
@@ -500,10 +503,11 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             stream = agent.run("Hello", stream=True)
-            async for _ in stream:
-                pass
+            updates = [update async for update in stream]
             response = await stream.get_final_response()
 
+        usage_content = next(content for update in updates for content in update.contents if content.type == "usage")
+        assert usage_content.merge_mode == "replace"
         assert response.finish_reason == "length"
         assert response.usage_details == {
             "input_token_count": 7,
@@ -792,6 +796,88 @@ class TestClaudeAgentToolConversion:
         assert "Address" in input_schema["$defs"]
         # Verify the nested reference exists in properties
         assert "person" in input_schema["properties"]
+
+    async def test_function_tool_to_sdk_mcp_tool_uses_json_schema(self) -> None:
+        """Test that a tool declared with a JSON schema keeps the full schema, including additionalProperties."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "title": "WeatherInput",
+            "properties": {
+                "city": {"type": "string", "description": "City name"},
+                "unit": {"$ref": "#/$defs/Unit"},
+            },
+            "required": ["city"],
+            "additionalProperties": False,
+            "$defs": {"Unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}},
+        }
+
+        @tool(schema=schema)
+        def get_weather(city: str, unit: str = "celsius") -> str:
+            """Get the weather."""
+            return f"Sunny in {city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(get_weather)  # type: ignore[reportPrivateUsage]
+
+        assert sdk_tool.input_schema == schema
+        assert cast(dict[str, Any], sdk_tool.input_schema)["additionalProperties"] is False
+        result = await sdk_tool.handler({"city": "Paris"})
+        assert result["content"][0]["text"] == "Sunny in Paris"
+
+    def test_function_tool_to_sdk_mcp_tool_keeps_input_model_keywords(self) -> None:
+        """Test that top-level keywords of a pydantic input model, such as additionalProperties, are kept."""
+        from pydantic import BaseModel, ConfigDict
+
+        class WeatherInput(BaseModel):
+            model_config = ConfigDict(extra="forbid")
+            city: str
+
+        @tool(schema=WeatherInput)
+        def get_weather(city: str) -> str:
+            """Get the weather."""
+            return f"Sunny in {city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(get_weather)  # type: ignore[reportPrivateUsage]
+
+        assert sdk_tool.input_schema == WeatherInput.model_json_schema()
+        assert cast(dict[str, Any], sdk_tool.input_schema)["additionalProperties"] is False
+
+    @pytest.mark.parametrize(
+        ("schema", "expected"),
+        [
+            (
+                {"properties": {"city": {"type": "string"}}},
+                {"type": "object", "properties": {"city": {"type": "string"}}},
+            ),
+            (
+                {"type": "object", "additionalProperties": False},
+                {"type": "object", "properties": {}, "additionalProperties": False},
+            ),
+            (
+                {"type": ["object", "null"], "properties": {"city": {"type": "string"}}},
+                {"type": "object", "properties": {"city": {"type": "string"}}},
+            ),
+            ({"type": "object", "properties": None}, {"type": "object", "properties": {}}),
+            ({}, {"type": "object", "properties": {}}),
+        ],
+        ids=["no-type", "no-properties", "list-type", "null-properties", "empty"],
+    )
+    def test_function_tool_to_sdk_mcp_tool_sets_type_and_properties(
+        self, schema: dict[str, Any], expected: dict[str, Any]
+    ) -> None:
+        """Test that a schema without an object type or properties still reaches the SDK as a JSON schema."""
+        declared = copy.deepcopy(schema)
+
+        @tool(name="lookup", description="Look something up.", schema=schema)
+        def lookup(**kwargs: Any) -> str:
+            return "ok"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(lookup)  # type: ignore[reportPrivateUsage]
+
+        assert sdk_tool.input_schema == expected
+        assert lookup.parameters() == declared
 
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""
@@ -1156,6 +1242,25 @@ class TestPrepareClientOptions:
             call_kwargs = mock_opts.call_args[1]
             assert call_kwargs.get("model") == "opus"
             assert call_kwargs.get("max_turns") == 15
+
+    def test_prepare_client_options_preserves_explicit_zero_limits(self) -> None:
+        """Test that explicit zero limit values are preserved."""
+        agent = ClaudeAgent(
+            default_options={
+                "max_turns": 0,
+                "max_budget_usd": 0.0,
+            }
+        )
+
+        with patch("agent_framework_claude._agent.SDKOptions") as mock_opts:
+            mock_opts.return_value = MagicMock()
+            agent._prepare_client_options()  # type: ignore[reportPrivateUsage]
+            call_kwargs = mock_opts.call_args[1]
+
+            assert "max_turns" in call_kwargs
+            assert call_kwargs["max_turns"] == 0
+            assert "max_budget_usd" in call_kwargs
+            assert call_kwargs["max_budget_usd"] == 0.0
 
     def test_prepare_client_options_with_instructions(self) -> None:
         """Test building options with instructions parameter."""

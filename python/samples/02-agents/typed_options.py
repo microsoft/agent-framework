@@ -40,15 +40,15 @@ async def demo_anthropic_chat_client() -> None:
     # Create Anthropic client
     client = AnthropicClient(model="claude-sonnet-4-5-20250929")
 
-    # Standard options work great:
+    # Supported standard and Anthropic-specific options are type checked:
     response = await client.get_response(
         [Message("user", contents=["What is the capital of France?"])],
         options={
-            "temperature": 1,  # Must be 1 when thinking is enabled
             "max_tokens": 2048,
-            # Anthropic-specific options:
             "thinking": {"type": "enabled", "budget_tokens": 1024},
-            # "top_k": 40,  # <-- Uncomment for Anthropic-specific option
+            # Sampling options removed from Anthropic SDK 1.x are caught by the type checker:
+            # "temperature": 1,
+            # "top_k": 40,
         },
     )
 
@@ -68,9 +68,10 @@ async def demo_anthropic_agent() -> None:
         name="claude-assistant",
         instructions="You are a helpful assistant powered by Claude. Be concise.",
         default_options={
-            "temperature": 0.5,
             "max_tokens": 200,
-            "top_k": 40,  # Anthropic-specific option, uncomment to try
+            # Sampling options removed from Anthropic SDK 1.x are caught by the type checker:
+            # "temperature": 0.5,
+            # "top_k": 40,
         },
     )
 

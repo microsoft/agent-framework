@@ -19,7 +19,7 @@ This sample demonstrates the self-reflection pattern using Agent Framework and M
 
 ### Environment Variables
 ```bash
-FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ```
 
 ## Running the Sample

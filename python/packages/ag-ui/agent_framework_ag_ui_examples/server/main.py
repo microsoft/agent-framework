@@ -12,7 +12,7 @@ from typing import Any, cast
 import uvicorn
 from agent_framework import ChatOptions
 from agent_framework._clients import SupportsChatGetResponse
-from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint as _add_agent_framework_fastapi_endpoint
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatCompletionClient
 from fastapi import FastAPI
@@ -113,6 +113,17 @@ def _default_shared_client() -> SupportsChatGetResponse[ChatOptions]:
 
 
 client: SupportsChatGetResponse[ChatOptions] = _default_shared_client()
+
+
+def add_agent_framework_fastapi_endpoint(*args: Any, **kwargs: Any) -> None:
+    """Register local example endpoints under one explicit authorization principal.
+
+    Production deployments must remove this default and pass an
+    authorization_scope_resolver backed by authenticated request context.
+    """
+    kwargs.setdefault("single_user", True)
+    _add_agent_framework_fastapi_endpoint(*args, **kwargs)
+
 
 # Agentic Chat - basic chat agent
 add_agent_framework_fastapi_endpoint(

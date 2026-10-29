@@ -126,6 +126,38 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
         Assert.Equal(messageCount, mockAgentProvider.TestMessages.Count);
     }
 
+    [Fact]
+    public async Task AddMessageWithSensitiveConversationIdThrowsAsync()
+    {
+        // Arrange
+        this.State.Set("ConversationId", FormulaValue.New("sensitive-conversation"), sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        int messageCount = mockAgentProvider.TestMessages.Count;
+        AddConversationMessage.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(AddMessageWithSensitiveConversationIdThrowsAsync)),
+            Message = PropertyPath.Create(FormatVariablePath("TestMessage")),
+            ConversationId = StringExpression.Variable(PropertyPath.TopicVariable("ConversationId")),
+            Role = AgentMessageRoleWrapper.Get(AgentMessageRole.User),
+        };
+        builder.Content.Add(new AddConversationMessageContent.Builder
+        {
+            Type = AgentMessageContentType.Text,
+            Value = TemplateLine.Parse("Hello"),
+        });
+        AddConversationMessage model = AssignParent<AddConversationMessage>(builder);
+        AddConversationMessageExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("conversation ID", exception.Message);
+        Assert.Equal(messageCount, mockAgentProvider.TestMessages.Count);
+    }
+
     private async Task ExecuteTestAsync(
         string displayName,
         string variableName,

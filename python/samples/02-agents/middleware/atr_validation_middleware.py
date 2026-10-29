@@ -36,7 +36,22 @@ This sample shows the pattern recommended in #5366: a single, deterministic enfo
 point that validates a tool call right before it executes. ATRValidationMiddleware is a
 FunctionMiddleware that inspects the validated tool arguments in
 ``FunctionInvocationContext.arguments`` and raises ``MiddlewareTermination`` BEFORE calling
-``call_next()`` when the arguments match a known attack pattern, so the tool never runs.
+``call_next()`` when the arguments match a high- or critical-severity attack rule, so the tool
+never runs.
+
+Why that threshold: ATR's reference verdict is "deny" or "ask" for every high- or
+critical-severity match, where "ask" means a person should confirm the call. This sample has no
+confirmation step (``approval_mode="never_require"``), so it treats both as stop. Below high, the
+cut is a false-positive trade-off, not ATR's verdict: ATR also returns "ask" for some
+medium-severity matches, but those rules also match ordinary commands such as
+``curl https://example.com``, so medium- and low-severity matches are logged as warnings and the
+tool runs.
+
+Limits: ATR targets agent attacks such as prompt injection, tool-argument tampering, and
+exfiltration; it is not a filter for dangerous shell commands. ``rm -rf ~`` matches only a
+medium-severity rule, so it runs with a warning, and some destructive commands match no rule at
+all. This middleware does not replace tool approval (``approval_mode="always_require"``) for
+tools with side effects.
 
 Detection is delegated to Agent Threat Rules (ATR) -- an open, MIT-licensed detection ruleset
 for AI-agent threats such as prompt injection, tool-argument tampering, and exfiltration. The
@@ -47,6 +62,10 @@ https://github.com/Agent-Threat-Rule/agent-threat-rules.
 """
 
 logger = logging.getLogger(__name__)
+
+# ATR's verdict for a high or critical match is deny or ask; with no confirmation step here, both
+# terminate the run. Medium and low matches are logged and the tool runs.
+BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 
 
 def _arguments_to_text(arguments: BaseModel | Mapping[str, Any]) -> str:
@@ -71,27 +90,29 @@ def _load_atr_engine() -> Any:
     return engine
 
 
-def detect_attack(arguments: BaseModel | Mapping[str, Any]) -> str | None:
-    """Return the matched ATR rule id, or None when the arguments look benign.
+def detect_attack(arguments: BaseModel | Mapping[str, Any]) -> Any | None:
+    """Return the highest-severity ATR match, or None when the arguments look benign.
 
     Runs the real ATR engine over the flattened tool arguments. The text is evaluated as a
     ``tool_call`` event so it is checked against the rules' ``tool_args`` conditions; ``evaluate``
-    sorts matches critical-first, so the first rule id is the highest-severity hit.
+    sorts matches critical-first, so the first match is the highest-severity hit. The returned
+    ``pyatr.ATRMatch`` carries ``rule_id``, ``severity`` and ``confidence``; the middleware decides
+    whether to block.
 
     The ruleset replaces a hand-rolled deny-list. For reference, the shape of the patterns ATR
-    encodes (and that the earlier version of this sample inlined) is, e.g.::
+    encodes is, e.g.::
 
         ignore (previous|prior|above) instructions        # instruction override / prompt injection
         send (secret|token|api_key|password) to http...    # credential exfiltration
         (cat|read|open) (.env|id_rsa|/etc/passwd)          # sensitive-file access
 
-    pyatr ships hundreds of such rules and keeps them maintained, so the sample stays a single
-    straight-line call instead of a local regex list.
+    pyatr ships and maintains these rules, so the sample stays a single straight-line call
+    instead of a local regex list.
     """
     text = _arguments_to_text(arguments)
     event = pyatr.AgentEvent(content=text, event_type="tool_call", fields={"tool_args": text})
     matches = _load_atr_engine().evaluate(event)
-    return matches[0].rule_id if matches else None
+    return matches[0] if matches else None
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
@@ -107,10 +128,12 @@ def get_weather(
 
 
 class ATRValidationMiddleware(FunctionMiddleware):
-    """Validates tool arguments at the execution boundary and blocks malicious calls.
+    """Validates tool arguments at the execution boundary and blocks high- or critical-severity matches.
 
-    The check is deterministic and runs before the tool executes: on a match it raises
+    The check is deterministic and runs before the tool executes: on a match whose severity is in
+    ``BLOCKING_SEVERITIES`` (ATR verdict deny or ask, with no one here to confirm) it raises
     ``MiddlewareTermination`` so ``call_next()`` is never reached and the tool does not fire.
+    Medium- and low-severity matches are logged as warnings and the tool runs.
     """
 
     async def process(
@@ -118,18 +141,32 @@ class ATRValidationMiddleware(FunctionMiddleware):
         context: FunctionInvocationContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
-        matched = detect_attack(context.arguments)
-        if matched is not None:
+        match = detect_attack(context.arguments)
+        if match is not None and match.severity in BLOCKING_SEVERITIES:
             logger.warning(
-                "[ATRValidationMiddleware] Blocked tool '%s': arguments matched ATR rule %s.",
+                "[ATRValidationMiddleware] Blocked tool '%s': arguments matched ATR rule %s (%s, %s confidence).",
                 context.function.name,
-                matched,
+                match.rule_id,
+                match.severity,
+                match.confidence,
             )
             # Raise BEFORE call_next() so the tool is never executed. The matched rule id is
             # included for auditability.
-            raise MiddlewareTermination(f"ATR validation blocked tool '{context.function.name}' (rule: {matched})")
+            raise MiddlewareTermination(
+                f"ATR validation blocked tool '{context.function.name}' (rule: {match.rule_id})"
+            )
 
-        logger.info("[ATRValidationMiddleware] Tool '%s' passed ATR validation.", context.function.name)
+        if match is not None:
+            # Medium or low severity: surface the finding for review, but let the tool run.
+            logger.warning(
+                "[ATRValidationMiddleware] Tool '%s' matched ATR rule %s (%s, %s confidence); not blocking.",
+                context.function.name,
+                match.rule_id,
+                match.severity,
+                match.confidence,
+            )
+        else:
+            logger.info("[ATRValidationMiddleware] Tool '%s' passed ATR validation.", context.function.name)
         await call_next()
 
 

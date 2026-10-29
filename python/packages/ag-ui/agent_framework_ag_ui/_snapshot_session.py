@@ -22,6 +22,7 @@ from ag_ui.core import (
     StateSnapshotEvent,
 )
 
+from ._message_adapters import sanitize_legacy_snapshot_media
 from ._run_common import _build_run_finished_event
 from ._snapshots import (
     AGUIThreadSnapshot,
@@ -74,6 +75,18 @@ class ThreadSnapshotSession:
         stored: AGUIThreadSnapshot | None = None
         if store is not None and scope is not None:
             stored = await store.get(scope=scope, thread_id=thread_id)
+            if stored is not None and stored.messages:
+                sanitized_messages, replacements = sanitize_legacy_snapshot_media(stored.messages)
+                if replacements:
+                    stored = copy.deepcopy(stored)
+                    stored.messages = sanitized_messages
+                    logger.warning(
+                        "Replaced %d unsupported media URI(s) in legacy AG-UI snapshot history for "
+                        "scope=%s thread_id=%s.",
+                        replacements,
+                        scope,
+                        thread_id,
+                    )
         return cls(store=store, scope=scope, thread_id=thread_id, stored=stored)
 
     @property

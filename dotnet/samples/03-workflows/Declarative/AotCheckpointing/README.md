@@ -91,8 +91,8 @@ Prerequisites:
 
   | Setting | Description |
   | --- | --- |
-  | `AZURE_AI_PROJECT_ENDPOINT` | Foundry project endpoint URL. |
-  | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment name. |
+  | `FOUNDRY_PROJECT_ENDPOINT` | Foundry project endpoint URL. |
+  | `FOUNDRY_MODEL` | Model deployment name. |
 
   See the [parent README](../README.md) for the full walkthrough.
 

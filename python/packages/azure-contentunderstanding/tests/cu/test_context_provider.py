@@ -9,6 +9,7 @@ import re
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from agent_framework import Content, Message, SessionContext
 from agent_framework._sessions import AgentSession
 from azure.ai.contentunderstanding.models import AnalysisResult
@@ -1407,6 +1408,101 @@ class TestFileSearchIntegration:
         all_msg_text = " ".join(m.text for msgs in context.context_messages.values() for m in msgs)
         assert "file_search" in all_msg_text or any("file_search" in instr for instr in context.instructions)
         assert "provided above" not in all_msg_text
+
+    @staticmethod
+    def _make_pending_upload_session() -> AgentSession:
+        entry: dict[str, Any] = {
+            "status": DocumentStatus.UPLOADING.value,
+            "filename": "report.pdf",
+            "media_type": "application/pdf",
+            "analyzer_id": "prebuilt-documentSearch",
+            "analyzed_at": "2026-01-01T00:00:00+00:00",
+            "analysis_duration_s": 0.1,
+            "upload_duration_s": None,
+            "result": "# Report\nDocument content",
+            "error": None,
+        }
+        session = AgentSession()
+        session.state["azure_contentunderstanding"] = {
+            "documents": {"report.pdf": entry},
+            "_pending_uploads": [("report.pdf", entry)],
+        }
+        return session
+
+    @pytest.mark.parametrize("restore", [False, True])
+    @pytest.mark.parametrize("fails", [False, True])
+    async def test_pending_upload_updates_canonical_document(self, restore: bool, fails: bool) -> None:
+        backend = self._make_mock_backend()
+        if fails:
+            backend.upload_file.side_effect = RuntimeError("upload unavailable")
+        provider = _make_provider(mock_client=AsyncMock(), file_search=self._make_file_search_config(backend))
+        session = self._make_pending_upload_session()
+        if restore:
+            session = AgentSession.from_dict(session.to_dict())
+        state = session.state[provider.source_id]
+        context = _make_context([Message(role="user", contents=["Is the report ready?"])])
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        document = state["documents"]["report.pdf"]
+        expected_status = DocumentStatus.FAILED if fails else DocumentStatus.READY
+        assert document["status"] == expected_status
+        assert document["upload_duration_s"] is not None
+        assert ("upload unavailable" in (document["error"] or "")) == fails
+        assert state["_pending_uploads"] == []
+        backend.upload_file.assert_awaited_once_with("vs_test123", "report.pdf.md", b"# Report\nDocument content")
+        list_tool = next(tool for tool in context.tools if getattr(tool, "name", None) == "list_documents")
+        listed = json.loads(await list_tool.invoke(skip_parsing=True))
+        assert listed[0]["status"] == expected_status
+        assert listed[0]["upload_duration_s"] == document["upload_duration_s"]
+
+    async def test_pending_upload_timeout_then_restore_and_success(self) -> None:
+        calls = 0
+
+        async def upload_file(*args: Any) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await asyncio.Event().wait()
+            return "file_test456"
+
+        backend = self._make_mock_backend()
+        backend.upload_file.side_effect = upload_file
+        provider = _make_provider(
+            mock_client=AsyncMock(), file_search=self._make_file_search_config(backend), max_wait=0.01
+        )
+        session = self._make_pending_upload_session()
+        session = AgentSession.from_dict(session.to_dict())
+        state = session.state[provider.source_id]
+        context = _make_context([Message(role="user", contents=["Is the report ready?"])])
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+        assert len(state["_pending_uploads"]) == 1
+        assert state["documents"]["report.pdf"]["status"] == DocumentStatus.UPLOADING
+        # JSON persistence encodes the string enum as its value.
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        state = session.state[provider.source_id]
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=_make_context([]), state=state)
+        assert state["documents"]["report.pdf"]["status"] == DocumentStatus.READY
+        assert state["documents"]["report.pdf"]["upload_duration_s"] is not None
+        assert state["documents"]["report.pdf"]["error"] is None
+        assert state["_pending_uploads"] == []
+        assert backend.upload_file.await_count == 2
+
+    async def test_pending_upload_without_document_keeps_existing_fallback(self) -> None:
+        backend = self._make_mock_backend()
+        provider = _make_provider(mock_client=AsyncMock(), file_search=self._make_file_search_config(backend))
+        session = self._make_pending_upload_session()
+        session.state[provider.source_id]["documents"] = {}
+        session = AgentSession.from_dict(session.to_dict())
+        state = session.state[provider.source_id]
+        queued_entry = state["_pending_uploads"][0][1]
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=_make_context([]), state=state)
+
+        assert queued_entry["status"] == DocumentStatus.READY
+        assert state["documents"] == {}
+        assert state["_pending_uploads"] == []
+        backend.upload_file.assert_awaited_once_with("vs_test123", "report.pdf.md", b"# Report\nDocument content")
 
 
 class TestCloseCancel:

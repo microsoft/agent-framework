@@ -223,7 +223,7 @@ class CustomSessionStoreProvider(StoreProvider[SessionStore]):
 def create_agent() -> Agent:
     """Create and clean up the request's own Foundry transports and credential."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
         ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
         if AgentConfig.from_env().is_hosted

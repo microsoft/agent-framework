@@ -45,7 +45,7 @@ cp .env.example .env
 
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 PROVISION_SAMPLE_SKILLS=true
 SKILL_NAMES=support-style,escalation-policy
 ASPNETCORE_URLS=http://+:8088

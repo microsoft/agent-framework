@@ -20,11 +20,11 @@ from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-import tomli
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from rich import print
 
+from scripts._toml import tomllib
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
@@ -316,7 +316,7 @@ def _load_lock_versions(workspace_root: Path) -> dict[str, list[Version]]:
     if not lock_file.exists():
         return {}
     with lock_file.open("rb") as f:
-        lock_data = tomli.load(f)
+        lock_data = tomllib.load(f)
     versions_by_name: dict[str, set[Version]] = {}
     for package_data in lock_data.get("package", []):
         package_name = str(package_data.get("name", "")).lower()
@@ -420,7 +420,7 @@ def _upload_is_not_newer(file_info: dict[str, object], *, exclude_newer: datetim
 
 def _load_package_name(pyproject_file: Path) -> str:
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     return str(data["project"]["name"])
 
 
@@ -440,7 +440,7 @@ def _collect_targets(
     dependency_filters: set[str] | None,
 ) -> tuple[list[DependencyTarget], list[str]]:
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     project = data.get("project", {})
     dependencies: list[str] = list(project.get("dependencies", []) or [])
     # Lower-bound validation also covers optional extras because those dependency ranges are part
@@ -587,7 +587,7 @@ def _run_tasks(
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        extend_command_with_task(command, task_name, workspace_root=workspace_root)
+        extend_command_with_task(command, task_name)
         try:
             result = subprocess.run(
                 command,

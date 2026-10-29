@@ -66,11 +66,11 @@ The client never sees the user's token. Consent and the on-behalf-of token excha
 cd Hosted-Toolbox-AuthPaths-Client
 
 # Against the local dev server (the {project} segment is a wildcard the server ignores):
-$env:AZURE_AI_PROJECT_ENDPOINT = "http://localhost:8088/api/projects/local"
+$env:FOUNDRY_PROJECT_ENDPOINT = "http://localhost:8088/api/projects/local"
 $env:AZURE_AI_AGENT_NAME       = "hosted-toolbox-auth-paths-agent"
 
 # Or against a deployed agent:
-# $env:AZURE_AI_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
+# $env:FOUNDRY_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
 # $env:AZURE_AI_AGENT_NAME       = "hosted-toolbox-auth-paths-agent"
 
 dotnet run --tl:off
@@ -85,5 +85,5 @@ approval prompt appears, enter `Y` to let the agent execute `load_skill`.
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `AZURE_AI_PROJECT_ENDPOINT` | yes | — | Foundry project endpoint, or the local dev server base. `FOUNDRY_PROJECT_ENDPOINT` is read as a fallback. |
+| `FOUNDRY_PROJECT_ENDPOINT` | yes | — | Foundry project endpoint, or the local dev server base. |
 | `AZURE_AI_AGENT_NAME` | no | `hosted-toolbox-auth-paths-agent` | Registered server-side agent name. |

@@ -24,7 +24,7 @@
 // approvals use the native OpenAI mcp_approval_response item.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT  - Foundry project endpoint, or the local dev server base
+//   FOUNDRY_PROJECT_ENDPOINT   - Foundry project endpoint, or the local dev server base
 //                                (e.g. http://localhost:8088/api/projects/local).
 //   AZURE_AI_AGENT_NAME        - The registered server-side agent name
 //                                (default: hosted-toolbox-auth-paths-agent).
@@ -44,9 +44,8 @@ using OpenAI.Responses;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-Uri projectEndpoint = new(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set."));
+Uri projectEndpoint = new(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 
 string agentName = Environment.GetEnvironmentVariable("AZURE_AI_AGENT_NAME")
     ?? "hosted-toolbox-auth-paths-agent";

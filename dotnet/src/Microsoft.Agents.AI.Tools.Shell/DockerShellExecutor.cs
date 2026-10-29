@@ -26,8 +26,12 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <c>--cap-drop=ALL</c>, <c>--security-opt=no-new-privileges</c>, memory and
 /// pids limits, <c>--tmpfs /tmp</c>). These are a best-effort starting point,
 /// NOT a guarantee: the actual isolation you get depends on the host kernel,
-/// the container runtime, the image, and any caller-supplied
-/// <c>ExtraRunArgs</c>. Do not rely on this tool as your sole defense against
+/// the container runtime, the image, and the complete caller configuration.
+/// <see cref="DockerShellExecutorOptions.UnsafeExtraRunArgs"/> must come only
+/// from developer-controlled configuration, never users, model output, or
+/// other untrusted sources; it can weaken or remove isolation. The model-facing
+/// function accepts only commands and cannot choose Docker options. Do not
+/// rely on this tool as your sole defense against
 /// untrusted input. Approval gating via <see cref="AsAIFunction"/> is the
 /// primary safety control; pair it with the precautions you would normally
 /// apply when running adversarial code: review the model's output before
@@ -92,7 +96,7 @@ public sealed class DockerShellExecutor : ShellExecutor
     private readonly int _pidsLimit;
     private readonly ContainerUser _user;
     private readonly bool _readOnlyRoot;
-    private readonly IReadOnlyList<string> _extraRunArgs;
+    private readonly IReadOnlyList<string> _unsafeExtraRunArgs;
     private readonly IReadOnlyDictionary<string, string> _env;
     private readonly ShellPolicy _policy;
     private readonly TimeSpan? _timeout;
@@ -125,6 +129,8 @@ public sealed class DockerShellExecutor : ShellExecutor
         {
             throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(options.MemoryBytes)} must be positive.");
         }
+        string[] unsafeExtraRunArgs = options.UnsafeExtraRunArgs is null ? [] : options.UnsafeExtraRunArgs.ToArray();
+        ValidateUnsafeExtraRunArgs(unsafeExtraRunArgs);
 
         this._image = options.Image;
         this.ContainerName = options.ContainerName ?? GenerateContainerName();
@@ -137,7 +143,7 @@ public sealed class DockerShellExecutor : ShellExecutor
         this._pidsLimit = options.PidsLimit;
         this._user = options.User ?? ContainerUser.Default;
         this._readOnlyRoot = options.ReadOnlyRoot;
-        this._extraRunArgs = options.ExtraRunArgs ?? [];
+        this._unsafeExtraRunArgs = unsafeExtraRunArgs;
         this._env = options.Environment ?? new Dictionary<string, string>();
         this._policy = options.Policy ?? new ShellPolicy();
         this._timeout = options.Timeout;
@@ -277,9 +283,8 @@ public sealed class DockerShellExecutor : ShellExecutor
     public override AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true)
     {
         description ??=
-            "Execute a single shell command inside an isolated Docker container and return its " +
-            "stdout, stderr, and exit code. The container has no network, no host filesystem access " +
-            "(except an optional read-only workspace mount), and runs as a non-root user. " +
+            "Execute a single shell command using the configured Docker container and return its " +
+            "stdout, stderr, and exit code. Container isolation depends on the application's complete configuration. " +
             (this._mode == ShellMode.Persistent
                 ? "PERSISTENT MODE: a single long-lived container handles every call; cd and exported variables persist."
                 : "STATELESS MODE: each call runs in a fresh container.");
@@ -430,10 +435,7 @@ public sealed class DockerShellExecutor : ShellExecutor
 
     private async Task StartContainerAsync(CancellationToken cancellationToken)
     {
-        var argv = BuildRunArgv(
-            this.DockerBinary, this._image, this.ContainerName, this._user, this._network,
-            this._memoryBytes, this._pidsLimit, this._containerWorkdir, this._hostWorkdir,
-            this._mountReadonly, this._readOnlyRoot, this._env, this._extraRunArgs);
+        var argv = this.BuildRunArgvPersistent();
 
         var (exit, _, stderr) = await RunDockerCommandAsync(argv, cancellationToken).ConfigureAwait(false);
         if (exit != 0)
@@ -535,7 +537,7 @@ public sealed class DockerShellExecutor : ShellExecutor
             TimedOut: timedOut);
     }
 
-    private List<string> BuildRunArgvStateless(string perCallName)
+    internal List<string> BuildRunArgvStateless(string perCallName)
     {
         var argv = new List<string>
         {
@@ -563,8 +565,26 @@ public sealed class DockerShellExecutor : ShellExecutor
             argv.Add("-e");
             argv.Add($"{kv.Key}={kv.Value}");
         }
-        argv.AddRange(this._extraRunArgs);
+        argv.AddRange(this._unsafeExtraRunArgs);
         return argv;
+    }
+
+    internal IReadOnlyList<string> BuildRunArgvPersistent() =>
+        BuildRunArgv(
+            this.DockerBinary, this._image, this.ContainerName, this._user, this._network,
+            this._memoryBytes, this._pidsLimit, this._containerWorkdir, this._hostWorkdir,
+            this._mountReadonly, this._readOnlyRoot, this._env, this._unsafeExtraRunArgs);
+
+    private static void ValidateUnsafeExtraRunArgs(string[] args)
+    {
+        for (var index = 0; index < args.Length; index++)
+        {
+            if (args[index] is null)
+            {
+                throw new ArgumentException(
+                    $"{nameof(DockerShellExecutorOptions.UnsafeExtraRunArgs)} contains a null token at index {index}.");
+            }
+        }
     }
 
     private async Task BestEffortKillContainerAsync(string containerName)

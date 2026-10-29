@@ -40,6 +40,7 @@ using types like `IChatClient`, `FunctionInvokingChatClient`, `AITool`, `AIFunct
 - **Async**: Use `Async` suffix for methods returning `Task`/`ValueTask`
 - **Private classes**: Should be `sealed` unless subclassed
 - **Config**: Read from environment variables with `UPPER_SNAKE_CASE` naming
+- **String comparisons**: Use `string.Equals` with an explicit `StringComparison` (typically `Ordinal`) rather than `==`.
 - **Tests**: Add Arrange/Act/Assert comments; use Moq for mocking; test methods returning `Task`/`ValueTask` must use the `Async` suffix.
 
 ## Key Design Principles

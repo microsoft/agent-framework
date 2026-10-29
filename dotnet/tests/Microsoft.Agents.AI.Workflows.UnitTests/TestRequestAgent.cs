@@ -83,6 +83,11 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             foreach (TResponse response in messages.SelectMany(message => message.Contents).OfType<TResponse>())
             {
                 strategy.ProcessResponse(response, traSessin);
+                if (response is ToolApprovalResponseContent { ToolCall: FunctionCallContent call })
+                {
+                    yield return new(ChatRole.Assistant, [new FunctionCallContent(call.CallId, call.Name, call.Arguments) { InformationalOnly = true }]);
+                    yield return new(ChatRole.Tool, [new FunctionResultContent(call.CallId, "Completed")]);
+                }
             }
 
             if (traSessin.UnservicedRequests.Count == 0)

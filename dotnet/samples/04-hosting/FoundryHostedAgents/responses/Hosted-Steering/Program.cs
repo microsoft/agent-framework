@@ -14,8 +14,8 @@ Env.TraversePath().Load();
 var projectEndpoint = new Uri(System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 var deployment = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o");
 var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-steering";
 
@@ -30,7 +30,7 @@ AIAgent agent = new AIProjectClient(projectEndpoint, new DefaultAzureCredential(
         description: "A steerable general-purpose AI assistant");
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent, configure: options => options.SteerableConversations = true);
+builder.AddFoundryResponses(agent, configure: options => options.SteerableConversations = true);
 
 var app = builder.Build();
 app.MapFoundryResponses();

@@ -37,7 +37,7 @@ Set the following environment variables:
 
 ```powershell
 # Replace with your Microsoft Foundry project endpoint
-$env:FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
 
 # Replace with your Bing Grounding connection ID (full ARM resource URI)
 $env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection-name>"

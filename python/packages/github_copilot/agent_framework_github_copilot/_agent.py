@@ -10,7 +10,16 @@ import logging
 import sys
 import warnings
 import weakref
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from pathlib import Path
 from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 from urllib.parse import urlparse
@@ -182,6 +191,17 @@ async def _resolve_function_approval(
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by the Copilot agent or client."""
+    keys: set[str] = set()
+    for owner in (agent, client):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast(Collection[Any], declared) if isinstance(key, str))
+    return frozenset(keys)
+
 
 # One lock per (CopilotClient, service session ID), shared across agents that share a client.
 # Entries disappear once no run holds or awaits the lock.
@@ -1127,7 +1147,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 if data.delta_content:
                     update = AgentResponseUpdate(
                         role="assistant",
-                        contents=[Content.from_text(data.delta_content)],
+                        contents=[Content.from_text(data.delta_content, merge_mode="append")],
                         response_id=data.message_id,
                         message_id=data.message_id,
                         raw_representation=event,
@@ -1145,7 +1165,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 model = event.data.model or None
                 if usage_details or finish_reason or model:
                     update = AgentResponseUpdate(
-                        contents=[Content.from_usage(usage_details, raw_representation=event.data)]
+                        contents=[
+                            Content.from_usage(
+                                usage_details,
+                                merge_mode="replace",
+                                raw_representation=event.data,
+                            )
+                        ]
                         if usage_details
                         else None,
                         finish_reason=cast(Any, finish_reason),
@@ -1161,6 +1187,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     call_id=tool_call_id,
                     name=tool_name,
                     arguments=arguments,
+                    hosted=True,
+                    merge_mode="replace",
                     raw_representation=event.data,
                 )
                 update = AgentResponseUpdate(
@@ -1354,6 +1382,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             List of Copilot SDK tools.
         """
         copilot_tools: list[CopilotTool] = []
+        parent_service_session_state_keys = _provider_service_session_state_keys(self, self._client)
 
         for tool in tools:
             if isinstance(tool, CopilotTool):
@@ -1364,6 +1393,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         tool,
                         agent_session=agent_session,
                         function_invocation_kwargs=function_invocation_kwargs,
+                        parent_service_session_state_keys=parent_service_session_state_keys,
                     )
                 )
             elif isinstance(tool, MutableMapping):
@@ -1378,6 +1408,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         agent_session: AgentSession | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
+        parent_service_session_state_keys: frozenset[str] = frozenset(),
     ) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool.
 
@@ -1392,6 +1423,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         callback is configured instead, approval is enforced inside this handler for
         backward compatibility. (``on_function_approval`` and ``on_pre_tool_use`` are
         mutually exclusive, so only one mechanism is ever active.)
+
+        Args:
+            ai_func: Agent Framework function tool to convert.
+
+        Keyword Args:
+            agent_session: Parent agent session passed to the tool.
+            function_invocation_kwargs: Runtime keyword arguments forwarded to the tool.
+            parent_service_session_state_keys: Provider-owned state declared by the parent agent and client.
         """
         approval_handler = self._function_approval_handler
         enforce = approval_handler is not None and ai_func.approval_mode == "always_require"
@@ -1419,6 +1458,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     arguments=args,
                     session=agent_session,
                     kwargs=runtime_kwargs,
+                    parent_service_session_state_keys=parent_service_session_state_keys,
                 )
                 if ai_func.input_model:
                     args_instance = ai_func.input_model(**args)
@@ -1465,17 +1505,16 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``approval_mode="always_require"`` is delegated to the Copilot SDK's native
         ``on_pre_tool_use`` hook:
 
-        - If the caller supplies their own session hooks -- either the SDK-native
-          ``hooks`` dict or the convenience ``on_pre_tool_use`` handler (via per-run
-          ``options`` or ``default_options``) -- those take precedence and are used
-          as-is. When both are given, the explicit ``hooks`` dict wins for any key it
-          defines and the ``on_pre_tool_use`` shortcut fills in that key otherwise. A
-          warning is logged naming any approval-required tool that will therefore not
-          be automatically gated, since the caller's hooks are responsible for
-          enforcing approval.
+        - If the caller supplies their own ``on_pre_tool_use`` handler -- either in
+          the SDK-native ``hooks`` dict or through the convenience option (via per-run
+          ``options`` or ``default_options``) -- it takes precedence. When both are
+          given, the explicit ``hooks`` dict wins for any key it defines and the
+          shortcut fills in that key otherwise. A warning names any approval-required
+          tool that the caller's pre-tool-use handler is responsible for gating.
         - Otherwise, when any approval-required tool is present, a default hook is
           installed that returns ``"ask"`` for those tools (routing the decision to
           ``on_permission_request``) and defers (``None``) for all other tools.
+          Unrelated caller hooks are preserved and do not replace this default.
         - The default hook is **not** installed when the deprecated
           ``on_function_approval`` callback is configured: in that case approval is
           enforced inside the tool handler (see :meth:`_tool_to_copilot_tool`) to
@@ -1492,12 +1531,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             The hooks to register for the session, or ``None`` if none are needed.
         """
         user_hook: PreToolUseHandler | None = options.get("on_pre_tool_use") or self._on_pre_tool_use
-        caller_hooks: Mapping[str, Any] | None = options.get("hooks")
+        caller_hooks: SessionHooks | None = options.get("hooks")
 
         # Combine caller-provided hooks: the SDK-native ``hooks`` dict plus the
         # convenience ``on_pre_tool_use`` shortcut. The explicit dict wins for the
         # keys it defines; the shortcut only fills in ``on_pre_tool_use`` otherwise.
-        combined: dict[str, Any] = {}
+        combined: SessionHooks = {}
         if user_hook is not None:
             combined["on_pre_tool_use"] = user_hook
         if caller_hooks:
@@ -1507,7 +1546,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tool.name for tool in all_tools if isinstance(tool, FunctionTool) and tool.approval_mode == "always_require"
         }
 
-        if combined:
+        if combined.get("on_pre_tool_use") is not None:
             if approval_required_names:
                 logger.warning(
                     "Custom session hooks are configured, so %d approval-required tool(s) (%s) "
@@ -1516,15 +1555,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     len(approval_required_names),
                     ", ".join(sorted(approval_required_names)),
                 )
-            return cast("SessionHooks", combined)
+            return combined
 
         if not approval_required_names:
-            return None
+            return combined or None
 
         # The deprecated on_function_approval callback enforces approval in the tool
         # handler; don't also install the default ask-hook (which would double-gate).
         if self._function_approval_handler is not None:
-            return None
+            return combined or None
 
         def default_pre_tool_use(
             hook_input: Mapping[str, Any],
@@ -1540,7 +1579,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 }
             return None
 
-        return {"on_pre_tool_use": default_pre_tool_use}
+        combined["on_pre_tool_use"] = default_pre_tool_use
+        return combined
 
     def _session_run_lock(self, service_session_id: str) -> asyncio.Lock:
         """Return the lock that serializes runs on one Copilot service session."""

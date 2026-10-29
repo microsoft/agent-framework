@@ -22,6 +22,11 @@ namespace Microsoft.Agents.AI;
 /// to the inner agent, while extracting the approval settings to persist as <see cref="ToolApprovalRule"/>
 /// entries in the session state.
 /// </para>
+/// <para>
+/// <b>Security:</b> The resulting rules are not tied to the agent or tool instance that created the request.
+/// Before reusing the session with a different agent or tool set, especially one that can load tools from an
+/// outside source such as MCP, ensure the rules are still appropriate for matching tool names and arguments.
+/// </para>
 /// </remarks>
 public sealed class AlwaysApproveToolApprovalResponseContent : AIContent
 {

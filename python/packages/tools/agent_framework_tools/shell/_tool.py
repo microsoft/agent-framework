@@ -19,7 +19,14 @@ from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
 from ._resolve import is_powershell, resolve_shell
 from ._session import ShellSession
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,8 +130,12 @@ class LocalShellTool:
             gating + sandbox tier are the real defenses.
         timeout: Per-command timeout in seconds. ``None`` disables. Default
             30 s.
-        max_output_bytes: Combined stdout/stderr byte cap before truncation.
-            Default 64 KiB.
+        max_stdout_bytes: Positive retained byte allowance for normal output.
+            Default 64 KiB, plus bounded capture overhead.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
+        max_stderr_bytes: Positive retained byte allowance for error output.
+            Default 64 KiB, independent of ``max_stdout_bytes``.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
         approval_mode: ``"always_require"`` (default) or ``"never_require"``.
             Controls the ``FunctionTool.approval_mode`` on the returned
             function, which the framework uses to gate execution via
@@ -150,11 +161,14 @@ class LocalShellTool:
         clean_env: bool = False,
         policy: ShellPolicy | None = None,
         timeout: float | None = 30.0,
-        max_output_bytes: int = 64 * 1024,
+        max_stdout_bytes: int = 64 * 1024,
+        max_stderr_bytes: int = 64 * 1024,
         approval_mode: Literal["always_require", "never_require"] = "always_require",
         acknowledge_unsafe: bool = False,
         on_command: Callable[[str], None] | None = None,
     ) -> None:
+        _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
+        _validate_output_limit(max_stderr_bytes, name="max_stderr_bytes")
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
         if approval_mode == "never_require" and not acknowledge_unsafe:
@@ -172,7 +186,8 @@ class LocalShellTool:
         self._confine_workdir = confine_workdir
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
-        self._max_output_bytes = max_output_bytes
+        self._max_stdout_bytes = max_stdout_bytes
+        self._max_stderr_bytes = max_stderr_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
 
@@ -208,7 +223,8 @@ class LocalShellTool:
                     self._interactive_argv,
                     workdir=self._workdir,
                     env=self._env,
-                    max_output_bytes=self._max_output_bytes,
+                    max_stdout_bytes=self._max_stdout_bytes,
+                    max_stderr_bytes=self._max_stderr_bytes,
                 )
             await self._session.start()
 
@@ -274,7 +290,8 @@ class LocalShellTool:
             workdir=self._workdir,
             env=self._env,
             timeout=effective_timeout,
-            max_output_bytes=self._max_output_bytes,
+            max_stdout_bytes=self._max_stdout_bytes,
+            max_stderr_bytes=self._max_stderr_bytes,
         )
 
     # ------------------------------------------------------------------ AF wiring
@@ -311,7 +328,7 @@ class LocalShellTool:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -321,6 +338,7 @@ class LocalShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )
 
     # ------------------------------------------------------------------ helpers

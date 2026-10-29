@@ -63,6 +63,7 @@ public static partial class DeclarativeWorkflowJsonOptions
     [JsonSerializable(typeof(ExternalInputResponse))]
     [JsonSerializable(typeof(UnassignedValue))]
     [JsonSerializable(typeof(List<string>))]
+    [JsonSerializable(typeof(Dictionary<string, bool>))]
     // TypeInfoPropertyName disambiguates the two ApprovalSnapshot records that share a simple name.
     [JsonSerializable(typeof(Dictionary<string, InvokeFunctionToolExecutor.ApprovalSnapshot>),
         TypeInfoPropertyName = "DictionaryStringFunctionApprovalSnapshot")]

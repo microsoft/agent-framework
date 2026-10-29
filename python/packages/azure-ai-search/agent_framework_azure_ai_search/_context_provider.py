@@ -682,7 +682,24 @@ class AzureAISearchContextProvider(ContextProvider):
         messages_list = list(context.input_messages)
 
         filtered_messages = [
-            msg for msg in messages_list if msg and msg.text and msg.text.strip() and msg.role in ["user", "assistant"]
+            msg
+            for msg in messages_list
+            if msg
+            and msg.role in ["user", "assistant"]
+            and (
+                (msg.text and msg.text.strip())
+                or (
+                    self.mode == "agentic"
+                    and self.retrieval_reasoning_effort in ["low", "medium"]
+                    and any(
+                        content.type in ["uri", "data"]
+                        and content.uri
+                        and content.media_type
+                        and content.media_type.startswith("image/")
+                        for content in msg.contents
+                    )
+                )
+            )
         ]
         if not filtered_messages:
             return

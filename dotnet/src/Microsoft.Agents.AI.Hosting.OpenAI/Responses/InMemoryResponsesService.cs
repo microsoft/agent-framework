@@ -368,15 +368,17 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             itemResources.Reverse();
         }
 
-        // Apply pagination
-        var filtered = itemResources.AsEnumerable();
+        // Apply pagination. Both cursors are item ids, looked up in the full ordered list, so the
+        // window is computed from their indexes rather than by applying one to what the other already cut.
+        int start = 0;
+        int end = itemResources.Count;
 
         if (!string.IsNullOrEmpty(after))
         {
             int afterIndex = itemResources.FindIndex(m => m.Id == after);
             if (afterIndex >= 0)
             {
-                filtered = itemResources.Skip(afterIndex + 1);
+                start = afterIndex + 1;
             }
         }
 
@@ -385,9 +387,11 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             int beforeIndex = itemResources.FindIndex(m => m.Id == before);
             if (beforeIndex >= 0)
             {
-                filtered = filtered.Take(beforeIndex);
+                end = beforeIndex;
             }
         }
+
+        var filtered = itemResources.Skip(start).Take(Math.Max(0, end - start));
 
         var result = filtered.Take(effectiveLimit + 1).ToList();
         var hasMore = result.Count > effectiveLimit;

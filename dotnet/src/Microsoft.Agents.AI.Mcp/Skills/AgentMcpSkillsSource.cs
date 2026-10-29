@@ -48,6 +48,11 @@ namespace Microsoft.Agents.AI;
 /// does not apply to lazily fetched <c>skill-md</c> entries or their supporting resources.
 /// </para>
 /// <para>
+/// Archive members resolving to the same file keep the first file's content. Later colliding members
+/// are skipped with a warning, and discovery continues with the remaining archive content.
+/// This applies whether or not an archive supplies a matching digest.
+/// </para>
+/// <para>
 /// <b>Thread safety and archive reconciliation.</b> For <c>archive</c>-type skills, every call to
 /// <see cref="GetSkillsAsync"/> reconciles a shared on-disk directory: it extracts newly advertised
 /// skills, re-extracts existing ones, and prunes those the server no longer advertises. Because that

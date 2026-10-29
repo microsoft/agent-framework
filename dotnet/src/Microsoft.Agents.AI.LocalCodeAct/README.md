@@ -40,7 +40,8 @@ using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
 ## What the Package Controls
 
 - **AST validation** (default on): Validates generated code against allow-lists
-  before execution.
+  before execution. OS-derived aliases and containers are collected before
+  their uses are checked, including references in helpers and later loop iterations.
 - **Subprocess execution**: Runs generated code in a child Python process.
 - **Explicit Python path**: the provider and standalone function constructors require a Python executable path (no default).
 - **Isolated environment**: Does not inherit host environment variables unless
@@ -56,6 +57,14 @@ These are defense-in-depth controls, not a containment boundary. The AST
 validator blocks common dangerous operations (`eval`, `exec`,
 `import subprocess`, attribute access for `os.system`, `__class__`, etc.) but
 does not make Python execution safe on an unsandboxed host.
+
+OS provenance collection uses a finite set of permitted chains and a forbidden
+state so cyclic aliases cannot grow the analysis indefinitely. A dependency
+worklist revisits only assignments that depend on newly discovered provenance.
+Tracking is conservative across scopes and assignments; reusing a name for
+unrelated values can cause validation to reject otherwise benign code. Capability restrictions
+also apply to private asyncio process transports and Windows process helpers,
+including aliases and from-imports.
 
 ## What the Package Does NOT Protect
 
@@ -133,8 +142,37 @@ dedicated timeout (`ProcessExecutionLimits.ValidationTimeoutSeconds`).
 - **Blocked imports**: `subprocess`, `sys`, `socket`, `importlib`, network and
   threading modules, etc.
 - **Allowed builtins**: `print`, `len`, `str`, type constructors, etc.
-- **Blocked builtins**: `eval`, `exec`, `compile`, `__import__`, `open`,
-  `getattr`, `setattr`, etc.
+- **Blocked builtins**: `__builtins__`, `__loader__`, `__spec__`, `eval`, `exec`,
+  `compile`, `__import__`, `open`, `getattr`, `setattr`, etc.
+
+`str.format` and `str.format_map` method access is blocked because replacement
+fields perform runtime attribute and item traversal that is invisible to AST
+validation. Use f-strings or the `format()` builtin instead; f-string
+expressions are validated as regular AST nodes.
+
+Runtime annotation evaluation is restricted as well. Access to ForwardRef
+evaluation methods (`_evaluate`, `evaluate`), annotation helpers (`_eval_type`,
+`evaluate_forward_ref`, `get_type_hints`, `get_annotations`), and the
+`functools.singledispatch`/`singledispatchmethod` factories is blocked.
+These helpers can evaluate annotation strings outside the inspected AST,
+including during annotation-inferred dispatch registration.
+
+Ordinary typing constructs, ForwardRef construction, unevaluated annotation
+declarations, and other functools utilities remain available. Generator
+expressions, async-generator expressions, and async functions are also allowed,
+but access to their `gi_frame`, `ag_frame`, and `cr_frame` attributes is
+blocked.
+
+Frame payload attributes (`f_builtins`, `f_globals`, and `f_locals`) are also
+blocked regardless of how a frame is obtained. Generated code may inspect
+non-payload task stack information, but it cannot recover the runner's builtin,
+global, or local namespaces from those frames.
+
+Capability restrictions apply at attribute access and from-import acquisition,
+before references can be aliased. Receiver types are not statically knowable,
+so unrelated attributes with the same names are also rejected. This includes
+harmless annotation resolution, non-evaluating modes of the blocked helpers,
+and otherwise-safe explicit-type singledispatch registration.
 
 OS-derived aliases retain the same restrictions. Filesystem-querying path
 helpers, environment mutation, unknown descendants, and reflective access are
@@ -158,6 +196,10 @@ using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeA
 ```
 
 Custom lists **replace** the defaults (not augment).
+
+Fixed attribute and AST-node restrictions remain in effect independently of
+these lists. Allowing a module does not enable its blocked capability or
+runtime-traversal attributes.
 
 ### Disabling Validation
 

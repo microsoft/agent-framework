@@ -322,7 +322,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
             .ReturnsAsync(Array.Empty<Item>());
         if (shutdownRequested)
         {
-            mock.Object.IsShutdownRequested = true;
+            mock.Setup(x => x.IsShutdownRequested).Returns(true);
         }
 
         return mock.Object;
@@ -446,6 +446,12 @@ public class AgentFrameworkResponseHandlerResilienceTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private sealed class CountingSessionStore : AgentSessionStore
@@ -469,6 +475,12 @@ public class AgentFrameworkResponseHandlerResilienceTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             new((AgentSession?)null);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private sealed class AlwaysLoadedSessionStore : AgentSessionStore
@@ -485,6 +497,12 @@ public class AgentFrameworkResponseHandlerResilienceTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private sealed class SessionAdvancingAgent : AIAgent

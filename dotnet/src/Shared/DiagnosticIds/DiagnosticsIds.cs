@@ -15,6 +15,9 @@ internal static class DiagnosticIds
         // This experiment ID is used for all experimental features in the Microsoft Agent Framework.
         internal const string AgentsAIExperiments = "MAAI001";
 
+        // This experiment ID is used for Agent Framework extensions over Anthropic beta services.
+        internal const string AIAnthropicBetaServices = "MAAIANTHROPIC001";
+
         // These diagnostic IDs are defined by the MEAI package for its experimental APIs.
         // We use the same IDs so consumers do not need to suppress additional diagnostics
         // when using the experimental MEAI APIs.

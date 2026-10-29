@@ -52,8 +52,16 @@ public sealed class DockerShellExecutorOptions
     /// <summary>When <see langword="true"/> (the default), the container root filesystem is read-only.</summary>
     public bool ReadOnlyRoot { get; set; } = true;
 
-    /// <summary>Additional args appended to <c>docker run</c>.</summary>
-    public IReadOnlyList<string>? ExtraRunArgs { get; set; }
+    /// <summary>
+    /// Trusted application-supplied options appended verbatim to <c>docker run</c>.
+    /// Set this only from developer-controlled configuration; never use values
+    /// from users, model output, or other untrusted sources. These options can
+    /// weaken or completely remove container isolation. Review every option
+    /// carefully. In particular, avoid <c>--privileged</c>, <c>--network=host</c>,
+    /// host-path volume mounts, and added capabilities unless the application
+    /// explicitly requires and secures them.
+    /// </summary>
+    public IReadOnlyList<string>? UnsafeExtraRunArgs { get; set; }
 
     /// <summary>Environment variables passed via <c>-e</c> to every command.</summary>
     public IReadOnlyDictionary<string, string>? Environment { get; set; }

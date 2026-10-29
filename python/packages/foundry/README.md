@@ -8,6 +8,27 @@ This package supports `azure-ai-projects>=2.2.0,<2.8.0`. Projects 2.5 and later 
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
 
+## Chat client lifecycle
+
+Use `async with FoundryChatClient(...)` or `async with FoundryAgent(...)` to release owned connections, or call
+`await client.close()` explicitly when using a chat client without a context manager. Chat clients close their
+derived OpenAI connection, including when a timeout-configured copy shares its transport. They also close the
+project connection if they created it. A supplied `project_client` and credential remain caller-owned; manage the
+credential's context outside the chat client or agent. Cleanup does not delete remote agents or conversations.
+
+## Tool ownership for preconfigured Foundry agents
+
+`FoundryAgent` connects to a PromptAgent or HostedAgent whose instructions, tool declarations, and tool-selection
+behavior are configured in Microsoft Foundry. The `tools=` argument supplies only the local Python implementations
+for function declarations already present on that remote agent; it does not replace or restrict the remote tool
+inventory.
+
+Per-run `tool_choice` restrictions and `allow_multiple_tool_calls` values cannot be sent with an agent reference and
+are ignored with a warning. The framework's unrestricted `tool_choice="auto"` default is omitted silently. Configure
+tool behavior on the remote Foundry agent, or use `FoundryChatClient` when tool selection must vary per request.
+`FunctionMiddleware` and tool approval policies can authorize local Python execution, but they do not change tools
+that execute inside the remote Foundry agent.
+
 ## Tracing an existing Foundry agent
 
 Install Azure Monitor to connect client and service traces:
@@ -81,6 +102,10 @@ For manual control, construct public `EvalItem` instances and pass them to
 entry points for existing traces, response IDs, and registered targets.
 
 ## Concurrent reuse
+
+When a Foundry agent is used through `as_tool(propagate_session=True)`, application-owned state propagates
+between the parent and child, but service-owned session handles do not. Each delegated invocation has its own
+service session. This also applies to an `Agent` configured with a `RawFoundryAgentChatClient`.
 
 A `FoundryChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
 non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and

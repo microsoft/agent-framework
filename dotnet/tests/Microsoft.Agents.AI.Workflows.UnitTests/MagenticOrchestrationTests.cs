@@ -142,6 +142,92 @@ public class MagenticOrchestrationTests
         Assert.NotNull(planEvent.FullTaskLedger);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task PlanReview_Pending_Ignores_Unrelated_TurnsAsync(bool streaming, bool revisePlan)
+    {
+        // Arrange
+        List<List<ChatMessage>> managerResponses =
+        [
+            CreatePlanResponse("Task facts"),
+            CreatePlanResponse("Task plan")
+        ];
+        if (revisePlan)
+        {
+            managerResponses.Add(CreatePlanResponse("Updated facts"));
+            managerResponses.Add(CreatePlanResponse("Updated plan"));
+        }
+
+        managerResponses.Add(CreateProgressLedgerResponse(false, false, true, "Worker", "Complete the task"));
+        managerResponses.Add(CreateProgressLedgerResponse(true, false, true, "Worker", "Done"));
+        managerResponses.Add(CreateFinalAnswerResponse("Task completed after review"));
+
+        TestReplayAgent manager = new(managerResponses, name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        AIAgent agent = BuildAgent();
+        AgentSession session = await agent.CreateSessionAsync();
+
+        AgentResponse initialResponse = await RunAsync(new(ChatRole.User, "Complete the task"));
+        FunctionCallContent initialRequest = Assert.Single(initialResponse.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+        FunctionCallContent pendingRequest = initialRequest;
+        if (revisePlan)
+        {
+            AgentResponse revisedResponse = await RunAsync(new(ChatRole.Tool,
+                [new FunctionResultContent(initialRequest.CallId, new MagenticPlanReviewResponse([new(ChatRole.User, "Add detail")]))]));
+            pendingRequest = Assert.Single(revisedResponse.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+            Assert.NotEqual(initialRequest.CallId, pendingRequest.CallId);
+        }
+
+        int planningTurns = revisePlan ? 4 : 2;
+        Assert.Equal(planningTurns, manager.Turn);
+        Assert.Empty(worker.RecordedInputs);
+
+        JsonElement serializedSession = await agent.SerializeSessionAsync(session);
+        agent = BuildAgent();
+        session = await agent.DeserializeSessionAsync(serializedSession);
+
+        List<ChatMessage> unrelatedMessages =
+        [
+            new(ChatRole.User, "Additional context"),
+            new(ChatRole.User, []),
+            new(ChatRole.Tool, [new FunctionResultContent("unrelated-request", new MagenticPlanReviewResponse([]))])
+        ];
+        if (revisePlan)
+        {
+            unrelatedMessages.Add(new(ChatRole.Tool, [new FunctionResultContent(initialRequest.CallId, new MagenticPlanReviewResponse([]))]));
+        }
+
+        // Act / Assert
+        foreach (ChatMessage message in unrelatedMessages)
+        {
+            AgentResponse response = await RunAsync(message);
+            Assert.Empty(response.Messages.SelectMany(item => item.Contents).OfType<ErrorContent>());
+            Assert.Equal(planningTurns, manager.Turn);
+            Assert.Empty(worker.RecordedInputs);
+        }
+
+        AgentResponse approvedResponse = await RunAsync(new(ChatRole.Tool,
+            [new FunctionResultContent(pendingRequest.CallId, new MagenticPlanReviewResponse([]))]));
+
+        Assert.Empty(approvedResponse.Messages.SelectMany(message => message.Contents).OfType<ErrorContent>());
+        Assert.Equal(planningTurns + 3, manager.Turn);
+        Assert.Single(worker.RecordedInputs);
+        Assert.Contains("Task completed after review", approvedResponse.Text);
+
+        AIAgent BuildAgent() => new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .Build()
+            .AsAIAgent(id: "magentic-review", includeWorkflowOutputsInResponse: true);
+
+        Task<AgentResponse> RunAsync(ChatMessage message) => streaming
+            ? agent.RunStreamingAsync(message, session).ToAgentResponseAsync()
+            : agent.RunAsync(message, session);
+    }
+
     [Fact]
     public async Task NextSpeaker_Invalid_Triggers_FinalAnswerAsync()
     {
@@ -178,6 +264,76 @@ public class MagenticOrchestrationTests
         Assert.Contains(collectedEvents.OfType<WorkflowWarningEvent>(), e => e.Data?.ToString()?.Contains("Invalid next speaker") == true);
         Assert.NotNull(runResult.Result);
         Assert.Contains("Forced to conclude", runResult.Result![0].Text);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task PlanReview_Response_Discards_Unrelated_Buffered_MessagesAsync(bool streaming, bool revisePlan)
+    {
+        // Arrange
+        const string UnrelatedText = "Unrelated follow-up";
+        const string ReviewFeedback = "Add detail to the plan";
+        List<List<ChatMessage>> managerResponses =
+        [
+            CreatePlanResponse("Task facts"),
+            CreatePlanResponse("Task plan")
+        ];
+        if (revisePlan)
+        {
+            managerResponses.Add(CreatePlanResponse("Updated facts"));
+            managerResponses.Add(CreatePlanResponse("Updated plan"));
+        }
+
+        managerResponses.Add(CreateProgressLedgerResponse(false, false, true, "Worker", "Complete the task"));
+        managerResponses.Add(CreateProgressLedgerResponse(true, false, true, "Worker", "Done"));
+        managerResponses.Add(CreateFinalAnswerResponse("Task completed after review"));
+        RecordingReplayAgent manager = new(managerResponses, name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        AIAgent agent = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .Build()
+            .AsAIAgent(includeWorkflowOutputsInResponse: true);
+        AgentSession session = await agent.CreateSessionAsync();
+        AgentResponse initialResponse = await agent.RunAsync("Complete the task", session);
+        FunctionCallContent pendingRequest = Assert.Single(initialResponse.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+
+        // Act
+        if (revisePlan)
+        {
+            AgentResponse revisedResponse = await RespondAsync(new([new(ChatRole.User, ReviewFeedback)]));
+            pendingRequest = Assert.Single(revisedResponse.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+            Assert.Empty(worker.RecordedInputs);
+            Assert.Contains(manager.RecordedInputs.SelectMany(messages => messages),
+                message => string.Equals(message.Text, ReviewFeedback, StringComparison.Ordinal));
+            session = await agent.DeserializeSessionAsync(await agent.SerializeSessionAsync(session));
+        }
+
+        AgentResponse approvedResponse = await RespondAsync(new([]));
+
+        // Assert
+        Assert.Empty(approvedResponse.Messages.SelectMany(message => message.Contents).OfType<ErrorContent>());
+        Assert.Contains("Task completed after review", approvedResponse.Text);
+        Assert.Single(worker.RecordedInputs);
+        Assert.DoesNotContain(manager.RecordedInputs.SelectMany(messages => messages),
+            message => message.Text.Contains(UnrelatedText, StringComparison.Ordinal));
+        Assert.DoesNotContain(worker.RecordedInputs.SelectMany(messages => messages),
+            message => message.Text.Contains(UnrelatedText, StringComparison.Ordinal));
+
+        Task<AgentResponse> RespondAsync(MagenticPlanReviewResponse response)
+        {
+            ChatMessage[] messages =
+            [
+                new(ChatRole.User, UnrelatedText),
+                new(ChatRole.Tool, [new FunctionResultContent(pendingRequest.CallId, response), new TextContent(UnrelatedText)])
+            ];
+            return streaming
+                ? agent.RunStreamingAsync(messages, session).ToAgentResponseAsync()
+                : agent.RunAsync(messages, session);
+        }
     }
 
     [Fact]

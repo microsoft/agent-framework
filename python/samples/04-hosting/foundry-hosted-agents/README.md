@@ -15,7 +15,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 2 | [Tools](responses/tools/) | An agent with local tools (e.g., weather lookup), demonstrating how to register and invoke custom tool functions alongside the LLM. |
 | 3 | [MCP](responses/mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
 | 4 | [Foundry Toolbox](responses/foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
-| 5 | [Workflows](responses/workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
+| 5 | [Native Workflows](responses/workflows/) | Typed native Responses workflows, including exact checkpoint continuation and approval resume without `.as_agent()`. |
 | 6 | [Files](responses/files/) | Bounded, symlink-safe reads of explicitly uploaded files under the current sandbox's home, with local staging and hosted upload guidance. |
 | 7 | [Observability](responses/observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
 | 8 | [Azure AI Search RAG](responses/azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
@@ -23,7 +23,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 10 | [Monty CodeAct](responses/monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the beta `agent-framework-monty` package. |
 | 11 | [Foundry Toolbox MCP Skills](responses/foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
 | 13 | [Custom Storage](responses/custom_storage/) | Trusted user-and-sandbox session snapshots with create-only/ETag writes and managed-identity Cosmos authentication; local snapshots need no account. |
-| 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A long-running, crash-resilient workflow demonstrating how `resilient_background=True` lets a background response survive a hard crash of the server process and resume from its last checkpoint instead of restarting from scratch. |
+| 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A model-free native background workflow that pairs each outer response snapshot with its exact scoped checkpoint for crash recovery. |
 | 15 | [Long-Running Agent (steering gated)](responses/steerable_long_running_agent/) | A working long-running Responses agent with ordinary background polling; steering currently fails at host construction until a patched AgentServer SDK is published and verified. |
 | 16 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
 
@@ -55,11 +55,11 @@ Agent Framework `AgentSession`, but they are not interchangeable.
 During a hosted-agent conversation, one `AgentSession` can therefore contain both remote values:
 
 ```python
-session.service_session_id
 # Response or conversation continuation handle
+session.service_session_id
 
-session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 # Foundry hosted-agent session ID
+session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 ```
 
 Keep the same `AgentSession` across turns so Agent Framework can forward both values correctly. When cleaning up,
@@ -79,6 +79,7 @@ An opaque call ID correlates one request; it is not a storage namespace.
 | 1 | [Basic](invocations/basic/) | An Invocations agent with a custom JSON parser, durable MAF history, and JSON/SSE responses. |
 | 2 | [Break Glass](invocations/break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
 | 3 | [Telegram](invocations/telegram/) | A Telegram bot routed through API Management to a direct-code hosted agent, with streaming responses and durable Cosmos DB history. |
+| 4 | [Native Workflow](invocations/basic/README.md#native-workflow-with-typed-tickets) | An explicit JSON parser maps typed tickets and pending review replies to a freshly built native workflow, with scoped exact-checkpoint continuation and JSON/SSE output. |
 
 ## Running the Agent Host Locally
 
@@ -137,7 +138,7 @@ This will create the following Azure resources:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+export FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -145,7 +146,7 @@ Or in PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+$env:FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -186,15 +187,15 @@ Or in PowerShell:
 1. An existing Foundry project
 2. A deployed model in your Foundry project
 3. Azure CLI installed and authenticated
-4. Python 3.10 or later
+4. Python 3.11–3.15, subject to the selected sample's dependency requirements
 
 #### Running the Agent Host with Python
 
-Clone the repository containing the sample code:
+Clone the repository containing the sample code and change directory to the selected sample (here we use `/responses/basic`):
 
 ```bash
 git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
+cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses/basic
 ```
 
 #### Environment setup
@@ -224,7 +225,7 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
    uv pip install -r requirements.txt
    ```
 
-3. Create a `.env` file with your Foundry configuration following the `env.example` file in the sample.
+3. Create a `.env` file with your Foundry configuration following the `.env.example` file in the sample.
 
 4. Make sure you are logged in with the Azure CLI:
 
@@ -245,6 +246,10 @@ Right now, the agent host should be running on `http://localhost:8088`
 On another terminal, run the following command to invoke the agent:
 
 ```bash
+# Windows Command Prompt
+curl.exe -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d "{\"input\":\"Hello!\"}"
+
+# macOS/Linux
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hello!"}'
 ```
 
@@ -279,7 +284,7 @@ azd deploy
 > The Foundry hosting infrastructure will inject the following environment variables into your agent at runtime:
 >
 > - `FOUNDRY_PROJECT_ENDPOINT`: The endpoint URL for the Foundry project where the agent is deployed.
-> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of the model deployment in your Foundry project. This is configured during the agent initialization process with `azd ai agent init`.
+> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The azd-managed model deployment name configured by `azd ai agent init`. Sample code prefers `FOUNDRY_MODEL` for local runs and falls back to this hosted value.
 > - `APPLICATIONINSIGHTS_CONNECTION_STRING`: The connection string for Application Insights to enable telemetry for your agent.
 
 This will package your agent and deploy it to the Foundry environment, making it accessible through the Foundry project endpoint. Once it's deployed, you can also access the agent through the Foundry UI.

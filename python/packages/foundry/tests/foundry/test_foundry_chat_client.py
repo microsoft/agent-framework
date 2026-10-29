@@ -290,6 +290,30 @@ def test_foundry_chat_client_init_uses_explicit_parameters() -> None:
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
+def test_init_applies_timeout_to_openai_client() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    timeout_client = _make_mock_openai_client()
+    mock_openai_client.with_options.return_value = timeout_client
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL, timeout=12.5)
+
+    mock_openai_client.with_options.assert_called_once_with(timeout=12.5)
+    assert client.client is timeout_client
+
+
+def test_init_without_timeout_keeps_openai_client() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL)
+
+    mock_openai_client.with_options.assert_not_called()
+    assert client.client is mock_openai_client
+
+
 def test_init_with_default_header() -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
     mock_openai_client = _make_mock_openai_client()
@@ -656,6 +680,44 @@ def test_streaming_stateless_replay_prefers_completed_foundry_reasoning_item() -
     }
 
 
+async def test_stateless_replay_accepts_canonical_foundry_reasoning_metadata() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    reasoning_item = {
+        "type": "reasoning",
+        "id": "rs_canonical",
+        "response_id": "resp_canonical",
+        "summary": [],
+        "content": [],
+    }
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_canonical",
+                    text="",
+                    additional_properties={"foundry": {"reasoning_item": reasoning_item}},
+                ),
+                Content.from_function_call(
+                    call_id="call_canonical",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_canonical", result="probe-result-step-1")],
+        ),
+    ]
+
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"][0] == reasoning_item
+
+
 async def test_stateless_replay_rejects_incomplete_foundry_reasoning_item() -> None:
     project_client = MagicMock()
     project_client.get_openai_client.return_value = _make_mock_openai_client()
@@ -998,6 +1060,23 @@ async def test_bad_request_error_non_content_filter() -> None:
         )
 
     assert "failed to complete the prompt" in str(exc_info.value)
+
+
+def test_get_mcp_tool_merges_both_approval_lists() -> None:
+    """Both approval lists must survive: overwriting the first with the second would
+    silently auto-approve tools the caller asked to gate."""
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="MCP",
+        url="https://mcp.example",
+        approval_mode={
+            "always_require_approval": ["dangerous_tool"],
+            "never_require_approval": ["safe_tool"],
+        },
+    )
+    assert tool_config["require_approval"] == {
+        "always": {"tool_names": ["dangerous_tool"]},
+        "never": {"tool_names": ["safe_tool"]},
+    }
 
 
 def test_get_mcp_tool_with_project_connection_id() -> None:
@@ -1981,6 +2060,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+async def test_get_response_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming response carrying an oauth_consent_request output item surfaces the consent link."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        response = await client.get_response([Message(role="user", contents=["List my repos"])])
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
 
 
 def test_agent_accepts_foundry_chat_clients() -> None:

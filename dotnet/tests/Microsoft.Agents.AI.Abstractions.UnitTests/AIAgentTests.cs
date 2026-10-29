@@ -231,6 +231,83 @@ public class AIAgentTests
         "MessagesCollection"
     };
 
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public async Task RunMethods_ShareMaterializedMessagesWithRunContextAsync(bool streaming, bool useDecorator, bool useCollection)
+    {
+        // Arrange
+        int enumerations = 0;
+        ChatMessage message = new(ChatRole.User, "Hello");
+        IReadOnlyCollection<ChatMessage>? receivedMessages = null;
+        AgentRunContext? capturedContext = null;
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock.Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> messages, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                CaptureMessages(messages);
+                return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+            });
+        agentMock.Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> messages, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                CaptureMessages(messages);
+                return ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, "Response")]);
+            });
+        AIAgent agent = useDecorator ? new PassthroughAIAgent(agentMock.Object) : agentMock.Object;
+        IEnumerable<ChatMessage> input = useCollection ? new[] { message } : EnumerateMessages();
+
+        // Act
+        if (streaming)
+        {
+            await agent.RunStreamingAsync(input).ToAgentResponseAsync();
+        }
+        else
+        {
+            await agent.RunAsync(input);
+        }
+
+        // Assert
+        Assert.Equal(useCollection ? 0 : 1, enumerations);
+        Assert.NotNull(capturedContext);
+        Assert.Same(capturedContext.RequestMessages, receivedMessages);
+        Assert.Same(message, Assert.Single(receivedMessages!));
+        if (useCollection)
+        {
+            Assert.Same(input, receivedMessages);
+        }
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
+
+        IEnumerable<ChatMessage> EnumerateMessages()
+        {
+            enumerations++;
+            yield return message;
+        }
+
+        void CaptureMessages(IEnumerable<ChatMessage> messages)
+        {
+            capturedContext = AIAgent.CurrentRunContext;
+            receivedMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        }
+    }
+
     /// <summary>
     /// Verifies that CurrentRunContext is properly set and accessible from RunCoreAsync for all RunAsync overloads.
     /// </summary>
@@ -795,6 +872,8 @@ public class AIAgentTests
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }
+
+    private sealed class PassthroughAIAgent(AIAgent innerAgent) : DelegatingAIAgent(innerAgent);
 
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
     {

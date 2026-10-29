@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import warnings
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from agent_framework import (
     ResponseStream,
     UsageDetails,
 )
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
 import agent_framework_hosting_responses._parsing as parsing_module
@@ -82,6 +84,14 @@ class TestMessagesFromResponsesInput:
         assert [m.role for m in msgs] == ["system", "user"]
         assert msgs[0].text == "be brief"
 
+    def test_message_envelope_without_type(self) -> None:
+        msgs = messages_from_responses_input([
+            {"role": "developer", "content": "be brief"},
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ])
+        assert [m.role for m in msgs] == ["developer", "user"]
+        assert [m.text for m in msgs] == ["be brief", "hi"]
+
     def test_message_envelope_with_content_parts(self) -> None:
         msgs = messages_from_responses_input([
             {
@@ -103,7 +113,10 @@ class TestMessagesFromResponsesInput:
 
         assert msgs[0].contents[0].type == "text"
         assert msgs[0].contents[0].text == "I cannot help."
-        assert msgs[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
+        assert msgs[0].contents[0].additional_properties == {
+            "core": {"model_output_kind": "refusal"},
+            "model_output_kind": "refusal",
+        }
 
     def test_message_envelope_rejects_non_object_content_item(self) -> None:
         with pytest.raises(ValueError, match="content.*object"):
@@ -137,8 +150,12 @@ class TestMessagesFromResponsesInput:
         assert msgs[0].contents[0].uri == "https://example.com/report.pdf"
 
     def test_input_file_via_file_id(self) -> None:
-        msgs = messages_from_responses_input([{"type": "input_file", "file_id": "file_123"}])
-        assert msgs[0].contents[0].file_id == "file_123"
+        msgs = messages_from_responses_input([{"type": "input_file", "file_id": "file_123", "filename": "report.pdf"}])
+        content = msgs[0].contents[0]
+        assert content.file_id == "file_123"
+        assert content.name == "report.pdf"
+        assert content.additional_properties["openai"]["content_type"] == "input_file"
+        assert content.additional_properties["openai_content_type"] == "input_file"
 
     def test_input_file_missing_anchor_raises(self) -> None:
         with pytest.raises(ValueError, match="input_file"):
@@ -154,16 +171,38 @@ class TestMessagesFromResponsesInput:
         assert msgs[1].text == "second"
 
     def test_image_url_via_string(self) -> None:
-        msgs = messages_from_responses_input([{"type": "input_image", "image_url": "https://example.com/cat.png"}])
+        msgs = messages_from_responses_input([
+            {"type": "input_image", "image_url": "https://example.com/cat.png", "detail": "high"}
+        ])
         assert len(msgs) == 1
-        # Image content present.
-        assert any(getattr(c, "uri", None) == "https://example.com/cat.png" for c in msgs[0].contents)
+        content = msgs[0].contents[0]
+        assert content.uri == "https://example.com/cat.png"
+        assert content.additional_properties["openai"] == {
+            "content_type": "input_image",
+            "image_detail": "high",
+        }
+        assert content.additional_properties["openai_content_type"] == "input_image"
+        assert content.additional_properties["detail"] == "high"
 
     def test_image_url_via_object(self) -> None:
         msgs = messages_from_responses_input([
             {"type": "input_image", "image_url": {"url": "https://example.com/cat.png"}}
         ])
         assert any(getattr(c, "uri", None) == "https://example.com/cat.png" for c in msgs[0].contents)
+
+    @pytest.mark.parametrize("as_object", [False, True])
+    def test_image_data_url_keeps_its_media_type(self, as_object: bool) -> None:
+        data_url = "data:image/png;base64,iVBORw0KGgo="
+        image_url: Any = {"url": data_url} if as_object else data_url
+        msgs = messages_from_responses_input([{"type": "input_image", "image_url": image_url}])
+        image = msgs[0].contents[0]
+        assert image.type == "data"
+        assert image.uri == data_url
+        assert image.media_type == "image/png"
+
+    def test_image_https_url_keeps_generic_image_media_type(self) -> None:
+        msgs = messages_from_responses_input([{"type": "input_image", "image_url": "https://example.com/cat.png"}])
+        assert msgs[0].contents[0].media_type == "image/*"
 
     def test_unknown_input_type_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported"):
@@ -353,8 +392,24 @@ class TestResponsesRunHelpers:
         assert len(payload["output"]) == 1
         assert payload["output"][0]["type"] == "function_call_output"
         assert payload["output"][0]["call_id"] == "call_1"
+        assert payload["output"][0]["id"].startswith("fcout_")
+        assert payload["output"][0]["id"] != "call_1"
         assert payload["output"][0]["output"] == [{"type": "input_text", "text": "sunny"}]
         assert payload["output"][0]["status"] == "completed"
+
+    def test_responses_from_run_generates_distinct_output_ids_for_reused_call_id(self) -> None:
+        result = AgentResponse(
+            messages=[
+                Message(role="tool", contents=[Content.from_function_result("reused", result="first")]),
+                Message(role="tool", contents=[Content.from_function_result("reused", result="second")]),
+            ]
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert [item["call_id"] for item in payload["output"]] == ["reused", "reused"]
+        assert all(item["id"].startswith("fcout_") for item in payload["output"])
+        assert payload["output"][0]["id"] != payload["output"][1]["id"]
 
     def test_responses_from_run_omits_internal_function_exception(self) -> None:
         diagnostic = "test-token-value at /srv/private/tool.py"
@@ -536,7 +591,7 @@ class TestResponsesRunHelpers:
         raw_usage = ResponseUsage.model_validate(_native_usage_payload())
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
-            usage_details=cast("UsageDetails", {"input_token_count": True}),
+            usage_details={"input_token_count": True},
             raw_representation=SimpleNamespace(object="response", usage=raw_usage),
         )
 
@@ -964,6 +1019,73 @@ class TestResponsesRunHelpers:
         content = cast("list[dict[str, object]]", output[0]["content"])
         assert content == [{"type": "refusal", "refusal": "I cannot help."}]
 
+    async def test_responses_from_streaming_run_consumes_text_snapshot(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello ", merge_mode="append")],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello world", merge_mode="replace")],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [
+            event
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id="resp_new",
+            )
+        ]
+
+        deltas = [
+            cast(str, _sse_payload(event)["delta"])
+            for event in events
+            if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.done"
+        )
+
+        assert deltas == ["Hello ", "world"]
+        assert done["text"] == "Hello world"
+
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_responses_from_streaming_run_rejects_divergent_or_shrinking_text_snapshot(
+        self, replacement: str
+    ) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello world", merge_mode="append")],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(replacement, merge_mode="replace")],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        deltas = [
+            cast(str, _sse_payload(event)["delta"])
+            for event in events
+            if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.done"
+        )
+        failed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", failed["response"])
+        error = cast("dict[str, object]", response["error"])
+
+        assert deltas == ["Hello world"]
+        assert done["text"] == "Hello world"
+        assert failed["type"] == "response.failed"
+        assert error == {"code": "server_error", "message": "An internal server error occurred."}
+
     async def test_responses_from_streaming_run_preserves_mixed_text_and_refusal_parts(self) -> None:
         marker = {"model_output_kind": "refusal"}
 
@@ -1317,9 +1439,11 @@ class TestResponsesRunHelpers:
         assert output[0]["code"] == "print('done')"
 
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
+        private_error_detail = "iterator-secret at C:\\sensitive\\iterator.py"
+
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
-            raise RuntimeError("upstream blew up")
+            raise RuntimeError(private_error_detail)
 
         stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
@@ -1340,9 +1464,12 @@ class TestResponsesRunHelpers:
         error = cast("dict[str, object]", response["error"])
         assert payload["type"] == "response.failed"
         assert response["status"] == "failed"
+        assert response["id"] == "resp_new"
         assert response["conversation"] == {"id": "conv_1"}
-        assert error["message"] == "upstream blew up"
+        assert error["code"] == "server_error"
+        assert error["message"] == "An internal server error occurred."
         assert "partial" in events[-1]
+        assert private_error_detail not in "".join(events)
 
     async def test_failed_stream_preserves_partial_marked_refusal(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -1456,14 +1583,16 @@ class TestResponsesRunHelpers:
 
         assert events[-1].startswith("event: response.failed")
         assert response["status"] == "failed"
-        assert f"unsupported status {status!r}" in cast(str, error["message"])
+        assert error == {"code": "server_error", "message": "An internal server error occurred."}
 
     async def test_responses_from_streaming_run_emits_failed_when_finalizer_raises(self) -> None:
+        private_error_detail = "finalizer-secret at C:\\sensitive\\finalizer.py"
+
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
 
         def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
-            raise RuntimeError("finalizer blew up")
+            raise RuntimeError(private_error_detail)
 
         stream = ResponseStream(updates(), finalizer=finalizer)
 
@@ -1476,4 +1605,70 @@ class TestResponsesRunHelpers:
         response = cast("dict[str, object]", payload["response"])
         error = cast("dict[str, object]", response["error"])
         assert response["status"] == "failed"
-        assert error["message"] == "finalizer blew up"
+        assert error == {"code": "server_error", "message": "An internal server error occurred."}
+        assert private_error_detail not in "".join(events)
+
+    async def test_responses_from_streaming_run_sanitizes_projection_failures(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        private_error_detail = "projection-secret at C:\\sensitive\\projection.py"
+
+        def fail_projection(content: Content) -> tuple[str, str] | None:
+            del content
+            raise RuntimeError(private_error_detail)
+
+        monkeypatch.setattr(parsing_module, "_code_interpreter_projection_key", fail_projection)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_call("call_1", "lookup", arguments={})],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_projection")]
+
+        assert _sse_types(events)[-1] == "response.failed"
+        assert "response.output_text.delta" in _sse_types(events)
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+        assert response["id"] == "resp_projection"
+        assert response["error"] == {"code": "server_error", "message": "An internal server error occurred."}
+        assert "partial" in events[-1]
+        assert private_error_detail not in "".join(events)
+
+    @pytest.mark.parametrize("sensitive_data", [False, True])
+    async def test_responses_from_streaming_run_failure_diagnostics_respect_sensitive_data(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        sensitive_data: bool,
+    ) -> None:
+        private_error_detail = "diagnostic-secret at C:\\sensitive\\diagnostic.py"
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_sensitive_data", sensitive_data)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+            raise RuntimeError(private_error_detail)
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_hosting_responses._parsing"):
+            events = [event async for event in responses_from_streaming_run(stream, response_id="resp_diagnostics")]
+
+        assert private_error_detail not in "".join(events)
+        assert "response_id=resp_diagnostics" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        assert (private_error_detail in caplog.text) is sensitive_data
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "agent_framework_hosting_responses._parsing"
+            and "response_id=resp_diagnostics" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert bool(records[0].exc_info) is sensitive_data

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +39,7 @@ class MockExecutor(Executor):
 @asynccontextmanager
 async def make_context(
     executor_id: str = "exec",
-) -> AsyncIterator[tuple[WorkflowContext[object], "InProcRunnerContext"]]:
+) -> AsyncGenerator[tuple[WorkflowContext[object], "InProcRunnerContext"], None]:
     from agent_framework._workflows._runner_context import InProcRunnerContext
     from agent_framework._workflows._state import State
 

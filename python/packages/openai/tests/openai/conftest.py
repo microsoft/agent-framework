@@ -59,6 +59,7 @@ def openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
         [
             "OPENAI_API_KEY",
             "OPENAI_ORG_ID",
+            "OPENAI_PROJECT_ID",
             "OPENAI_MODEL",
             "OPENAI_EMBEDDING_MODEL",
             "OPENAI_CHAT_COMPLETION_MODEL",
@@ -108,6 +109,7 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
         [
             "OPENAI_API_KEY",
             "OPENAI_ORG_ID",
+            "OPENAI_PROJECT_ID",
             "OPENAI_MODEL",
             "OPENAI_EMBEDDING_MODEL",
             "OPENAI_CHAT_COMPLETION_MODEL",

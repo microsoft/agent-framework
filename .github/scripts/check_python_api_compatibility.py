@@ -33,7 +33,8 @@ _UNRELEASED_DECORATORS = frozenset(
 )
 _GRIFFE_VERSION = version("griffe")
 _PACKAGE_STATUS_ROW = re.compile(
-    r"^\| `(?P<name>[^`]+)` \| `(?P<path>python/packages/[^`]+)` \| `(?P<state>[^`]+)` \|$"
+    r"^\| `(?P<name>[^`]+)` \| `(?P<path>python/packages/[^`]+)` \| `(?P<state>[^`]+)` \|"
+    r"(?: `[^`]+` \|)?$"
 )
 
 

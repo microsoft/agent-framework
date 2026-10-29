@@ -13,6 +13,7 @@ Supported classes and functions:
 - AGUIHttpService
 - AGUIThreadSnapshot
 - AGUIThreadSnapshotStore
+- AuthorizationScopeResolver
 - InMemoryAGUIThreadSnapshotStore
 - SnapshotScopeResolver
 - add_agent_framework_fastapi_endpoint
@@ -37,6 +38,7 @@ _IMPORTS = [
     "AGUIHttpService",
     "AGUIThreadSnapshot",
     "AGUIThreadSnapshotStore",
+    "AuthorizationScopeResolver",
     "InMemoryAGUIThreadSnapshotStore",
     "SnapshotScopeResolver",
     "state_carrier",

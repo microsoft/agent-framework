@@ -41,10 +41,10 @@ Set the following environment variables:
 
 ```bash
 # Required: Your Microsoft Foundry project endpoint
-export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
 
 # Optional: Model deployment name (defaults to gpt-5.4)
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4"
+export FOUNDRY_MODEL="gpt-5.4"
 ```
 
 ## Running the Sample

@@ -41,7 +41,7 @@ Chosen option: **Promote the Foundry Hosting contract to `Microsoft.Agents.AI.Ab
 - The abstraction and every public implementation start as experimental under diagnostic `MAAI001`.
 - `GetSessionAsync` returns `AgentSession?` and returns `null` when no session is stored.
 - `GetOrCreateSessionAsync` performs the explicit lookup or creation operation.
-- `SaveSessionAsync` and both lookup methods receive an `AgentSessionStoreKey`.
+- `SaveSessionAsync`, `DeleteSessionAsync`, and both lookup methods receive an `AgentSessionStoreKey`.
 - `AgentSessionStoreKey.SessionId` identifies the logical session.
 - `AgentSessionStoreKey.Partitions` holds zero or more named isolation dimensions. Every partition is
   part of identity and implementations cannot ignore unknown partitions.
@@ -50,7 +50,9 @@ Chosen option: **Promote the Foundry Hosting contract to `Microsoft.Agents.AI.Ab
 - Partition order does not affect identity. Physical encoding remains the responsibility of each store.
 - `GetService(Type, object?)` and `GetService<TService>(object?)` retain service discovery from conventional
   Hosting. Stores can expose themselves, underlying implementations, or additional capabilities.
-- `DeleteSessionAsync` is not part of the shared contract.
+- `DeleteSessionAsync` is abstract, like `GetSessionAsync` and `SaveSessionAsync`, so the store remains the
+  single owner of the whole session lifecycle. It removes the stored session and treats a missing session as
+  a no-op. Decorators forward it, applying the same key transformation used for lookup and save.
 
 The duplicate types in `Microsoft.Agents.AI.Hosting` and `Microsoft.Agents.AI.Foundry.Hosting` are removed.
 Both packages reference the shared type directly.
@@ -86,7 +88,7 @@ Negative:
 
 - This is a source-breaking change for implementations of the preview Hosting contract.
 - Callers must construct an `AgentSessionStoreKey`; unpartitioned sessions use only `SessionId`.
-- Consumers that need deletion must use a storage-specific API until a separate shared deletion capability is defined.
+- Every store implementation must provide `DeleteSessionAsync`.
 
 ## More Information
 

@@ -81,6 +81,8 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from mcp import types
     from mcp.server.lowlevel import Server
     from pydantic import BaseModel
@@ -105,9 +107,23 @@ _DELEGATED_STATE_MISSING = object()
 
 def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
     """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    if not middleware:
+        return frozenset()
+
     from ._harness._tool_approval import ToolApprovalMiddleware
 
-    return frozenset(item.source_id for item in middleware or () if isinstance(item, ToolApprovalMiddleware))
+    return frozenset(item.source_id for item in middleware if isinstance(item, ToolApprovalMiddleware))
+
+
+def _provider_service_session_state_keys(agent: object) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by an agent or its client."""
+    keys: set[str] = set()
+    # A generic Agent can use a provider client that persists its own continuation state.
+    for owner in (agent, getattr(agent, "client", None)):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast("Collection[Any]", declared) if isinstance(key, str))
+    return frozenset(keys)
 
 
 def _merge_delegated_session_state(
@@ -662,9 +678,10 @@ class BaseAgent(SerializationMixin):
             propagate_session: If True, the parent agent's session is forwarded
                 to this sub-agent's ``run()`` call. Application-state changes
                 propagate back to the parent, while framework approval continuation
-                state remains isolated. Defaults to False. The sub-agent always
-                receives an AgentSession so session-backed middleware can run.
-                When False, that session is private to this invocation.
+                state and provider-owned service session state remain isolated.
+                Defaults to False. The sub-agent always receives an AgentSession
+                so session-backed middleware can run. When False, that session is
+                private to this invocation.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -679,6 +696,10 @@ class BaseAgent(SerializationMixin):
             ``propagate_session=True``, configure distinct middleware ``source_id``
             values. The delegated call raises ToolExecutionException before running
             the child when their shared session-state keys overlap.
+
+            Direct or custom-loop invocation with ``propagate_session=True`` must set
+            :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
+            the parent session is non-empty. Automatic function calling supplies it.
 
         Examples:
             .. code-block:: python
@@ -730,10 +751,24 @@ class BaseAgent(SerializationMixin):
             session = AgentSession()
             child_approval_source_ids = _tool_approval_source_ids(self.middleware)
             parent_approval_source_ids: frozenset[str] = frozenset()
+            parent_service_session_state_keys: frozenset[str] = frozenset()
 
             if propagate_session and parent_session is not None:
                 from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
+                # A custom loop can bypass the framework seam that identifies the parent provider's state.
+                # Refuse a non-empty shared session rather than guessing which keys are safe to delegate.
+                if ctx.parent_service_session_state_keys is None:
+                    if parent_session.state:
+                        raise ToolExecutionException(
+                            f"Agent tool {tool_name!r} cannot safely propagate a non-empty parent session because "
+                            "the invocation path did not provide parent provider-owned session state keys. "
+                            "Use the automatic function-calling loop, set "
+                            "FunctionInvocationContext.parent_service_session_state_keys in a custom loop, "
+                            "or set propagate_session=False."
+                        )
+                else:
+                    parent_service_session_state_keys = ctx.parent_service_session_state_keys
                 raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
                 parent_approval_source_ids = (
                     cast("frozenset[str]", raw_parent_approval_source_ids)
@@ -767,6 +802,10 @@ class BaseAgent(SerializationMixin):
                     _TOOL_APPROVAL_STATE_KEY,
                     _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
                     _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+                    # Service handles belong to one agent's remote resources, not shared application state.
+                    # Exclude them in both directions so later children cannot inherit an earlier child's handles.
+                    *_provider_service_session_state_keys(self),
+                    *parent_service_session_state_keys,
                     *child_approval_source_ids,
                     *parent_approval_source_ids,
                 })
@@ -956,7 +995,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
-        """Initialize a Agent instance.
+        """Initialize an Agent instance.
 
         Args:
             client: The chat client to use for the agent.
@@ -1586,7 +1625,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_name = self._get_agent_name()
         from ._mcp import MCPTool
-        from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+        from ._tools import (
+            _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+        )
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
@@ -1633,6 +1675,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
             self.middleware
+        )
+        # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
+        additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
+            _provider_service_session_state_keys(self)
         )
 
         model = opts.pop("model", None)
@@ -1835,8 +1881,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         """
         try:
             from mcp import types
+            from mcp.server import ServerRequestContext
             from mcp.server.lowlevel import Server
-            from mcp.shared.exceptions import McpError
+            from mcp.shared.exceptions import MCPError
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "`mcp` is required to use `Agent.as_mcp_server()`. Please install `mcp`."
@@ -1845,55 +1892,57 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         server_args: dict[str, Any] = {
             "name": server_name,
-            "version": version,
             "instructions": instructions,
         }
+
+        if version is not None:
+            server_args["version"] = version
+
         if lifespan:
             server_args["lifespan"] = lifespan
         if kwargs:
             server_args.update(kwargs)
 
-        server: Server[Any] = Server(**server_args)
-
         agent_tool = self.as_tool(name=self._get_agent_name())
 
-        async def _log(level: types.LoggingLevel, data: Any) -> None:
-            """Log a message to the server and logger."""
-            # Log to the local logger
+        async def _log(ctx: ServerRequestContext[dict[str, Any]], level: types.LoggingLevel, data: Any) -> None:
+            """Log locally and forward through the session handling this request."""
             logger.log(LOG_LEVEL_MAPPING[level], data)
-            if server and server.request_context and server.request_context.session:
-                try:
-                    await server.request_context.session.send_log_message(level=level, data=data)
-                except Exception as e:
-                    logger.error("Failed to send log message to server: %s", e)
+            try:
+                await ctx.session.send_log_message(  # pyright: ignore[reportDeprecated]
+                    level=level,
+                    data=data,
+                )
+            except Exception as exc:
+                logger.error("Failed to send log message to MCP client: %s", exc)
 
-        @server.list_tools()
-        async def _list_tools() -> list[types.Tool]:
+        async def _list_tools(
+            ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
+        ) -> types.ListToolsResult:
             """List all tools in the agent."""
             schema = agent_tool.parameters()
 
             tool = types.Tool(
                 name=agent_tool.name,
                 description=agent_tool.description,
-                inputSchema=schema,
+                input_schema=schema,
             )
 
-            await _log(level="debug", data=f"Agent tool: {agent_tool}")
-            return [tool]
+            await _log(ctx, level="debug", data=f"Agent tool: {agent_tool}")
+            return types.ListToolsResult(tools=[tool])
 
-        @server.call_tool()
         async def _call_tool(
-            name: str, arguments: dict[str, Any]
-        ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
+            ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+        ) -> types.CallToolResult:
             """Call a tool in the agent."""
-            await _log(level="debug", data=f"Calling tool with args: {arguments}")
+            arguments = params.arguments or {}
+            name = params.name
+            await _log(ctx, level="debug", data=f"Calling tool with args: {arguments}")
 
             if name != agent_tool.name:
-                raise McpError(
-                    error=types.ErrorData(
-                        code=types.INTERNAL_ERROR,
-                        message=f"Tool {name} not found",
-                    ),
+                raise MCPError(
+                    code=types.INTERNAL_ERROR,
+                    message=f"Tool {name} not found",
                 )
 
             # Create an instance of the input model with the arguments
@@ -1903,17 +1952,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 )
                 result = await agent_tool.invoke(arguments=args_instance)
             except Exception as e:
-                raise McpError(
-                    error=types.ErrorData(
-                        code=types.INTERNAL_ERROR,
-                        message=f"Error calling tool {name}: {e}",
-                    ),
+                raise MCPError(
+                    code=types.INTERNAL_ERROR,
+                    message=f"Error calling tool {name}: {e}",
                 ) from e
 
             # Convert result to MCP content.
             # Currently only text items are forwarded over MCP; rich content
             # (images, audio) is not yet supported in the MCP server path.
-            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
+            mcp_content: list[types.ContentBlock] = []
             for c in result:
                 if c.type == "text" and c.text:
                     mcp_content.append(types.TextContent(type="text", text=c.text))
@@ -1922,15 +1969,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                         "MCP server does not yet forward rich content (images, audio) "
                         "in tool results. Rich content items will be omitted."
                     )
-            return mcp_content or [types.TextContent(type="text", text="")]
+            return types.CallToolResult(content=mcp_content)
 
-        @server.set_logging_level()
-        async def _set_logging_level(level: types.LoggingLevel) -> None:
-            """Set the logging level for the server."""
-            logger.setLevel(LOG_LEVEL_MAPPING[level])
-            # emit this log with the new minimum level
-            await _log(level=level, data=f"Log level set to {level}")
+        async def _set_logging_level(
+            ctx: ServerRequestContext[dict[str, Any]], params: types.SetLevelRequestParams
+        ) -> types.EmptyResult:
+            """Set the local threshold and confirm it through the requesting MCP session."""
+            logger.setLevel(LOG_LEVEL_MAPPING[params.level])
+            await _log(ctx, level=params.level, data=f"Log level set to {params.level}")
+            return types.EmptyResult()
 
+        server: Server[Any] = Server(  # pyright: ignore[reportDeprecated]
+            **server_args,
+            on_list_tools=_list_tools,
+            on_call_tool=_call_tool,
+            on_set_logging_level=_set_logging_level,
+        )
         return server
 
     def _get_agent_name(self) -> str:
@@ -2058,7 +2112,7 @@ class Agent(
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
-        """Initialize a Agent instance."""
+        """Initialize an Agent instance."""
         super().__init__(
             client=client,
             instructions=instructions,

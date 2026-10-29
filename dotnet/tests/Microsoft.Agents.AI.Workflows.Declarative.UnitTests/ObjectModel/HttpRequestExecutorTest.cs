@@ -418,6 +418,8 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
     [InlineData(RequestValueLocation.JsonBody)]
     [InlineData(RequestValueLocation.RawBody)]
     [InlineData(RequestValueLocation.ContentType)]
+    [InlineData(RequestValueLocation.ConversationId)]
+    [InlineData(RequestValueLocation.ConnectionName)]
     public async Task HttpRequestWithProtectedEnvironmentValueThrowsAsync(RequestValueLocation location)
     {
         // Arrange
@@ -437,6 +439,27 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
 
         // Assert
         await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        handler.VerifyNotSent();
+    }
+
+    [Fact]
+    public async Task HttpRequestRejectsSensitiveTimeoutAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Timeout", FormulaValue.New(1500), sensitivity: SensitivityLevel.Sensitive);
+        HttpRequestAction.Builder builder = this.CreateModel(
+            nameof(HttpRequestRejectsSensitiveTimeoutAsync), TestUrl, HttpMethodType.Get).ToBuilder();
+        builder.RequestTimeoutInMilliseconds = IntExpression.Expression("Local.Timeout").ToBuilder();
+        MockHttpRequestHandler handler = new(HttpRequestResult("{}"));
+        HttpRequestExecutor action = new(AssignParent<HttpRequestAction>(builder), handler.Object, this._agentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("timeout", exception.Message);
         handler.VerifyNotSent();
     }
 
@@ -807,6 +830,15 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
                     ContentType = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression)),
                 };
                 break;
+            case RequestValueLocation.ConversationId:
+                builder.ConversationId = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression));
+                break;
+            case RequestValueLocation.ConnectionName:
+                builder.Connection = new RemoteConnection.Builder
+                {
+                    Name = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression)),
+                };
+                break;
         }
 
         return AssignParent<HttpRequestAction>(builder);
@@ -821,6 +853,8 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
         JsonBody,
         RawBody,
         ContentType,
+        ConversationId,
+        ConnectionName,
     }
 
     private sealed class MockHttpRequestHandler : Mock<IHttpRequestHandler>

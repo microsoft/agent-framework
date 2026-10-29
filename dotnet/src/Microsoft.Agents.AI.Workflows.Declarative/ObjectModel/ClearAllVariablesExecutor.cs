@@ -17,7 +17,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
     {
         EvaluationResult<VariablesToClearWrapper> variablesResult = this.Evaluator.GetValue(this.Model.Variables);
 
-        string? scope = variablesResult.Value.Value switch
+        string? scope = this.GetNonSensitiveValue(variablesResult, "variable scope").Value switch
         {
             VariablesToClear.AllGlobalVariables => VariableScopeNames.Global,
             VariablesToClear.ConversationScopedVariables => WorkflowFormulaState.DefaultScopeName,

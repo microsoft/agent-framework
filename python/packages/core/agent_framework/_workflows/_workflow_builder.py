@@ -3,12 +3,12 @@
 import logging
 import sys
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, ClassVar, Literal
 
 from .._agents import SupportsAgentRun
 from .._telemetry import FeatureIndex, mark_feature_used
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import OtelAttr, create_workflow_span
 from ._agent_executor import AgentExecutor
 from ._agent_utils import resolve_agent_id
 from ._checkpoint import CheckpointStorage
@@ -426,7 +426,7 @@ class WorkflowBuilder:
         self,
         source: Executor | SupportsAgentRun,
         targets: Sequence[Executor | SupportsAgentRun],
-        selection_func: Callable[[Any, list[str]], list[str]],
+        selection_func: Callable[[Any, list[str]], list[str] | Awaitable[list[str]]],
     ) -> Self:
         """Add an edge group that represents a multi-selection execution model.
 
@@ -881,10 +881,12 @@ class WorkflowBuilder:
                 return workflow
 
             except Exception as exc:
+                from ..observability import OBSERVABILITY_SETTINGS
+
                 attributes = {
-                    OtelAttr.BUILD_ERROR_MESSAGE: str(exc),
                     OtelAttr.BUILD_ERROR_TYPE: type(exc).__name__,
                 }
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                    attributes[OtelAttr.BUILD_ERROR_MESSAGE] = str(exc)
                 span.add_event(OtelAttr.BUILD_ERROR, attributes)  # type: ignore[reportArgumentType, arg-type]
-                capture_exception(span, exc)
                 raise
