@@ -1,9 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.Logging;
 using Microsoft.PowerFx.Types;
+using Shared.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -78,6 +82,63 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
     }
 
     [Theory]
+    [InlineData("Number", "text")]
+    [InlineData("Number", "999999999999999999999999999999999999")]
+    [InlineData("Float", "text")]
+    [InlineData("Boolean", "text")]
+    [InlineData("DateTime", "text")]
+    [InlineData("Date", "text")]
+    [InlineData("Time", "text")]
+    [InlineData("Record", "text")]
+    [InlineData("Record", "42")]
+    [InlineData("Table", "text")]
+    [InlineData("Table", "[[1]]")]
+    public async Task ParseInvalidExpressionContinuesAsync(string typeName, string sourceText)
+    {
+        // Arrange
+        DataType.Builder typeBuilder = typeName switch
+        {
+            "Number" => new NumberDataType.Builder(),
+            "Float" => new FloatDataType.Builder(),
+            "Boolean" => new BooleanDataType.Builder(),
+            "DateTime" => new DateTimeDataType.Builder(),
+            "Date" => new DateDataType.Builder(),
+            "Time" => new TimeDataType.Builder(),
+            "Record" => new RecordDataType.Builder(),
+            "Table" => DataType.EmptyTable,
+            _ => throw new ArgumentOutOfRangeException(nameof(typeName)),
+        };
+        this.State.Set("Setting", FormulaValue.New(sourceText), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        ParseValue model = this.CreateModel(
+            nameof(ParseInvalidExpressionContinuesAsync),
+            "Target",
+            typeBuilder,
+            ValueExpression.Expression("Env.Setting"));
+        using CapturingLoggerFactory loggerFactory = new();
+        ParseValueExecutor action = new(model, this.State)
+        {
+            Logger = loggerFactory.CreateLogger<DeclarativeActionExecutor>(),
+        };
+        bool continued = false;
+
+        // Act
+        await this.ExecuteAsync(action, "next_action", (context, message, cancellationToken) =>
+        {
+            continued = true;
+            return default;
+        });
+
+        // Assert
+        Assert.True(continued);
+        Assert.IsType<BlankValue>(this.State.Get("Target"));
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("Target"));
+        (LogLevel level, string warning) = Assert.Single(loggerFactory.Entries);
+        Assert.Equal(LogLevel.Warning, level);
+        Assert.Contains(action.Id, warning, StringComparison.Ordinal);
+        Assert.DoesNotContain(sourceText, warning.Replace(action.Id, string.Empty), StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task ParseConditionalExpressionContinuesAsync(bool value)
@@ -85,12 +146,15 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
         // Arrange
         this.State.Set("Setting", FormulaValue.New(value), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
         ParseValue.Builder builder = this.CreateModel(
-            nameof(ParseConditionalExpressionContinuesAsync), "Target", new NumberDataType.Builder(), "").ToBuilder();
+            nameof(ParseConditionalExpressionContinuesAsync),
+            "Target",
+            new NumberDataType.Builder(),
+            ValueExpression.Expression("")).ToBuilder();
         builder.Value = new ValueExpression.Builder(ValueExpression.Expression("If(Env.Setting, \"42\", \"x\")"));
         ParseValueExecutor action = new(builder.Build(), this.State);
-        bool continued = false;
 
         // Act
+        bool continued = false;
         await this.ExecuteAsync(action, "next_action", (context, message, cancellationToken) =>
         {
             continued = true;
@@ -138,7 +202,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
         this.State.Set("Source", FormulaValue.New(sourceText),
             sensitivity: isSensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None);
         ParseValue.Builder builder = this.CreateModel(
-            nameof(ParseInvalidValueAsync), "Target", typeBuilder, "").ToBuilder();
+            nameof(ParseInvalidValueAsync), "Target", typeBuilder, ValueExpression.Expression("")).ToBuilder();
         builder.Value = new ValueExpression.Builder(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
         ParseValueExecutor action = new(builder.Build(), this.State);
 
@@ -158,15 +222,75 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ParseUnsupportedTargetTypeAsync(bool isSensitive)
+    public async Task ParseUnsupportedTargetTypeFailsAsync(bool isSensitive)
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New("x"),
             sensitivity: isSensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None);
         ParseValue.Builder builder = this.CreateModel(
-            nameof(ParseUnsupportedTargetTypeAsync), "Target", DataType.Any.ToBuilder(), "").ToBuilder();
+            nameof(ParseUnsupportedTargetTypeFailsAsync),
+            "Target",
+            DataType.Any.ToBuilder(),
+            ValueExpression.Expression("")).ToBuilder();
         builder.Value = new ValueExpression.Builder(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
         ParseValueExecutor action = new(builder.Build(), this.State);
+
+        // Act
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert
+        Assert.IsType<DeclarativeModelException>(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task ParseValidExpressionPreservesLabelAsync()
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New("42"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        ParseValue model = this.CreateModel(
+            nameof(ParseValidExpressionPreservesLabelAsync),
+            "Target",
+            new NumberDataType.Builder(),
+            ValueExpression.Expression("Env.Setting"));
+        ParseValueExecutor action = new(model, this.State);
+
+        // Act
+        await this.ExecuteAsync(action);
+
+        // Assert
+        this.VerifyState("Target", FormulaValue.New(42));
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("Target"));
+    }
+
+    [Fact]
+    public async Task ParseInvalidLiteralFailsAsync()
+    {
+        // Arrange
+        ParseValue model = this.CreateModel(
+            nameof(ParseInvalidLiteralFailsAsync),
+            "Target",
+            new NumberDataType.Builder(),
+            ValueExpression.Literal(StringDataValue.Create("text")));
+        ParseValueExecutor action = new(model, this.State);
+
+        // Act
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert
+        Assert.IsType<FormatException>(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task ParseUnsupportedTypeFailsAsync()
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New("42"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        ParseValue model = this.CreateModel(
+            nameof(ParseUnsupportedTypeFailsAsync),
+            "Target",
+            new ColorDataType.Builder(),
+            ValueExpression.Expression("Env.Setting"));
+        ParseValueExecutor action = new(model, this.State);
 
         // Act
         DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
@@ -186,7 +310,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
                 displayName,
                 "Target",
                 dataBuilder,
-                sourceText);
+                ValueExpression.Literal(StringDataValue.Create(sourceText)));
 
         // Act
         ParseValueExecutor action = new(model, this.State);
@@ -201,7 +325,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
         string displayName,
         string variableName,
         DataType.Builder typeBuilder,
-        string sourceText)
+        ValueExpression value)
     {
         ParseValue.Builder actionBuilder =
             new()
@@ -210,7 +334,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
                 DisplayName = this.FormatDisplayName(displayName),
                 ValueType = typeBuilder,
                 Variable = PropertyPath.TopicVariable(variableName),
-                Value = new ValueExpression.Builder(ValueExpression.Literal(StringDataValue.Create(sourceText))),
+                Value = new ValueExpression.Builder(value),
             };
 
         return AssignParent<ParseValue>(actionBuilder);

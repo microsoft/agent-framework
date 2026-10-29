@@ -2,7 +2,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +11,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
@@ -32,16 +32,20 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
         VariableType targetType = new(this.Model.ValueType);
         try
         {
-            object? parsedResult = expressionResult.Value.ToObject().ConvertType(targetType);
+            object? sourceValue = expressionResult.Value.ToObject();
+            object? parsedResult = sourceValue.ConvertType(targetType);
             parsedValue = parsedResult.ToFormula();
         }
         catch (Exception exception) when (
             expressionResult.Sensitivity == SensitivityLevel.Sensitive &&
-            exception is FormatException or OverflowException or InvalidCastException or ArgumentException or
-                InvalidOperationException or JsonException or DeclarativeActionException or DeclarativeModelException)
+            exception is FormatException or OverflowException or JsonException or DeclarativeActionException or
+                DeclarativeModelException or ArgumentException or InvalidCastException or InvalidOperationException)
         {
-            Trace.TraceWarning("Value conversion returned a blank result for action '{0}'.", this.Id);
-            parsedValue = FormulaValue.NewBlank();
+            this.Logger.LogWarning(
+                "Value conversion returned a blank result for action {ActionId} and target type {TargetType}.",
+                this.Id,
+                targetType.Type.Name);
+            parsedValue = this.Model.ValueType.NewBlank();
         }
 
         await this.AssignAsync(this.Model.Variable.Path, parsedValue, context, expressionResult.Sensitivity).ConfigureAwait(false);

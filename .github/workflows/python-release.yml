@@ -1,131 +1,60 @@
-name: Python - Build Release Assets
+name: Python - Validate Release
 
 on:
   release:
     types: [published]
+  pull_request:
+    branches: ["main", "feature*"]
+    paths:
+      - "python/.github/release-*.json"
+      - "python/pyproject.toml"
+      - "python/packages/*/pyproject.toml"
+      - "python/scripts/prepare_release.py"
+      - "python/scripts/tests/test_prepare_release.py"
+      - "python/scripts/dependencies/**"
+      - ".github/workflows/python-release.yml"
 
+# Azure DevOps owns build, ESRP approval/publication, exact asset upload, and the
+# final draft -> published transition. This workflow must never write releases
+# or obtain an identity that can start an Azure DevOps run.
 permissions:
-  contents: write
-  id-token: write
-env:
-  # Configure a constant location for the uv cache
-  UV_CACHE_DIR: /tmp/.uv-cache
+  contents: read
 
 jobs:
-  python-build-assets:
-    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'python-')
-    name: Python Build Assets and add to Release
+  validate:
+    if: github.event_name == 'pull_request' || startsWith(github.event.release.tag_name, 'python-')
+    name: Validate Python release manifest
     runs-on: ubuntu-latest
-    environment: "integration"
-    env:
-      UV_PYTHON: "3.13"
     defaults:
       run:
         working-directory: python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up python and install the project
-        id: python-setup
-        uses: ./.github/actions/python-setup
         with:
-          python-version: ${{ matrix.python-version }}
-          os: ${{ runner.os }}
-        env:
-          # Configure a constant location for the uv cache
-          UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Resolve the package to build
-        env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-
-          TAG="$TAG_NAME"
-
-          # Release tags are either python-<version> for the whole workspace, or
-          # python-<package>-<version> for a single package. Package names may
-          # themselves contain hyphens (hosting-a2a, azure-ai-search), so the
-          # package part cannot be found by splitting on the first hyphen.
-          #
-          # Versions follow the lifecycle patterns in the python-package-management
-          # skill: X.Y.Z, X.Y.ZaYYMMDD, X.Y.ZbYYMMDD, X.Y.ZrcN, each optionally
-          # carrying a .N or .postN re-cut suffix.
-          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+([ab][0-9]+|rc[0-9]+)?(\.[0-9]+|\.post[0-9]+)?$'
-
-          REST="${TAG#python-}"
-
-          if [[ -z "$REST" ]]; then
-            echo "Error: tag '$TAG' has no version or package component"
-            exit 1
-          fi
-
-          if [[ "$REST" =~ $VERSION_PATTERN ]]; then
-            # python-<version>: build every workspace package plus the root meta package.
-            PACKAGE="all"
-            echo "Resolved tag '$TAG' to the full workspace build"
-          else
-            # python-<package>-<version>: split off the trailing version component and
-            # require it to be a real version, so a malformed tag fails here rather
-            # than being mistaken for another kind of release.
-            CANDIDATE="${REST%-*}"
-            VERSION="${REST##*-}"
-
-            if [[ "$CANDIDATE" == "$REST" || -z "$CANDIDATE" ]]; then
-              echo "Error: tag '$TAG' is neither python-<version> nor python-<package>-<version>"
-              exit 1
-            fi
-
-            if [[ ! "$VERSION" =~ $VERSION_PATTERN ]]; then
-              echo "Error: tag '$TAG' does not end in a supported version"
-              echo "Derived version: '$VERSION'"
-              exit 1
-            fi
-
-            # Resolve the package part against the real package directories. Tags use
-            # hyphens even where the directory uses underscores
-            # (python-github-copilot -> github_copilot).
-            PACKAGE=""
-
-            for dir in packages/*/; do
-              name="${dir#packages/}"
-              name="${name%/}"
-              if [[ "$name" == "$CANDIDATE" || "${name//_/-}" == "$CANDIDATE" ]]; then
-                PACKAGE="$name"
-                break
-              fi
-            done
-
-            if [[ -z "$PACKAGE" ]]; then
-              echo "Error: tag '$TAG' does not map to a directory in packages/"
-              echo "Derived package name: '$CANDIDATE'"
-              echo "Available packages: $(ls packages/)"
-              exit 1
-            fi
-
-            echo "Resolved tag '$TAG' to package '$PACKAGE'"
-          fi
-
-          echo "PACKAGE=$PACKAGE" >> "$GITHUB_ENV"
-
-      - name: Check version
-        env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
-        run: |
-          echo "Building and uploading Python release: $TAG_NAME"
-          if [[ "$PACKAGE" == "all" ]]; then
-            echo "Build scope: all workspace packages and the root meta package"
-          else
-            echo "Build scope: packages/$PACKAGE"
-          fi
-      - name: Build the package
-        run: |
-          set -euo pipefail
-          if [[ "$PACKAGE" == "all" ]]; then
-            uv run poe build
-          else
-            uv run poe --directory "packages/$PACKAGE" build
-          fi
-      - name: Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+          # A release must validate the exact tagged commit, never current main.
+          ref: ${{ github.event_name == 'release' && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          files: |
-            python/dist/*
+          version-file: "python/pyproject.toml"
+          enable-cache: true
+      - name: Test release tooling
+        run: >-
+          uv run --no-project --python 3.12 --with packaging==26.3 --with rich --with pytest==9.1.1
+          python -m pytest -c /dev/null -p no:cacheprovider
+          scripts/tests/test_prepare_release.py scripts/dependencies/tests/test_dependency_bounds_release.py -q
+      - name: Check reviewed batch in PR
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          uv run --no-project --python 3.12 --with packaging==26.3 --with rich
+          python -m scripts.prepare_release --check --ci --base-ref "$BASE_SHA"
+      - name: Check published tag contract
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: >-
+          uv run --no-project --python 3.12 --with packaging==26.3 --with rich
+          python -m scripts.prepare_release --check --tag "$RELEASE_TAG"
