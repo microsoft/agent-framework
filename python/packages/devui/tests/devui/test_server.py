@@ -848,6 +848,11 @@ def test_devserver_accepts_request_with_valid_bearer_token(monkeypatch):
         pytest.param("s3cret", "s\u00e9cret", 401, id="non-ascii-presented-is-rejected"),
         pytest.param("s\u00e9cret", "s\u00e9cret", 200, id="non-ascii-configured-matches"),
         pytest.param("s\u00e9cret", "s3cret", 401, id="non-ascii-configured-wrong-token"),
+        # U+00E0 ("à") encodes to UTF-8 bytes 0xC3 0xA0, whose second byte is NBSP
+        # (U+00A0). A bare `.strip()` would drop that trailing 0xA0 and reject the
+        # correct token; trimming only HTTP whitespace must keep it intact.
+        pytest.param("secret\u00e0", "secret\u00e0", 200, id="trailing-a-grave-matches"),
+        pytest.param("secret\u00e0", "secret\u00e9", 401, id="trailing-a-grave-wrong-token"),
     ],
 )
 def test_bearer_token_comparison_survives_non_ascii_tokens(
@@ -869,9 +874,11 @@ def test_bearer_token_comparison_survives_non_ascii_tokens(
 
     with TestClient(app, base_url="http://127.0.0.1", raise_server_exceptions=False) as client:
         # Sent as raw bytes: httpx refuses to encode a non-ASCII header value itself.
+        # A bytes key keeps the header mapping bytes/bytes so the raw token bytes are
+        # preserved on the wire and the mapping stays type-consistent for Pyright/Pyrefly.
         response = client.get(
             "/v1/entities",
-            headers={"Authorization": b"Bearer " + presented_token.encode("utf-8")},
+            headers={b"Authorization": b"Bearer " + presented_token.encode("utf-8")},
         )
 
     assert response.status_code == expected_status

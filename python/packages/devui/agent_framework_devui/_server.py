@@ -466,7 +466,12 @@ class DevServer:
                         },
                     )
 
-                token = auth_header.replace("Bearer ", "", 1).strip()
+                # Trim only HTTP optional-whitespace (space/tab). A bare `.strip()`
+                # would also drop non-ASCII whitespace such as NBSP (U+00A0), which
+                # is a valid byte in a UTF-8 token (e.g. the second byte of "à" is
+                # 0xA0), so a correct non-ASCII token would be truncated before the
+                # byte comparison and rejected with 401.
+                token = auth_header.replace("Bearer ", "", 1).strip(" \t")
                 if not self._token_matches(token, expected_token):
                     return JSONResponse(
                         status_code=401,
