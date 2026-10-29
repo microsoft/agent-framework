@@ -92,6 +92,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
     [InlineData("Record", "text")]
     [InlineData("Record", "42")]
     [InlineData("Table", "text")]
+    [InlineData("Table", "[[1]]")]
     public async Task ParseInvalidExpressionContinuesAsync(string typeName, string sourceText)
     {
         // Arrange
@@ -134,7 +135,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
         (LogLevel level, string warning) = Assert.Single(loggerFactory.Entries);
         Assert.Equal(LogLevel.Warning, level);
         Assert.Contains(action.Id, warning, StringComparison.Ordinal);
-        Assert.DoesNotContain(sourceText, warning.Replace(action.Id, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.DoesNotContain(sourceText, warning.Replace(action.Id, string.Empty), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -173,6 +174,25 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
 
         // Assert
         Assert.IsType<FormatException>(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task ParseUnsupportedTypeFailsAsync()
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New("42"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        ParseValue model = this.CreateModel(
+            nameof(ParseUnsupportedTypeFailsAsync),
+            "Target",
+            new ColorDataType.Builder(),
+            ValueExpression.Expression("Env.Setting"));
+        ParseValueExecutor action = new(model, this.State);
+
+        // Act
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert
+        Assert.IsType<DeclarativeModelException>(exception.InnerException);
     }
 
     private async Task ExecuteTestAsync(
