@@ -7,8 +7,10 @@ Evaluation APIs are experimental. Check current feature maturity and API docstri
 application contract.
 
 Agent responses retain schema-only snapshots of tools exposed during execution, including context-provider tools.
-These snapshots survive response serialization. `evaluate_agent(tools=...)` overrides automatic discovery for
-evaluation only; it does not change agent execution, and `tools=[]` disables tool definitions.
+These snapshots survive response serialization. For `BaseChatClient` clients, only tools sent to model calls after
+chat middleware are captured; tools exposed in earlier calls remain included even if later removed. Other clients
+fall back to prepared tool configuration. `evaluate_agent(tools=...)` overrides automatic discovery for evaluation
+only; it does not change agent execution, and `tools=[]` disables tool definitions.
 
 Automatic discovery rejects a called tool whose input schema changed under the same name during the captured run or
 aggregated conversation, even if the schemas might be compatible. Use distinct names for different schemas, evaluate

@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import pickle
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any, Literal, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
@@ -28,7 +29,7 @@ from agent_framework._evaluation import (
 from agent_framework._harness._agent import create_harness_agent
 from agent_framework._harness._loop import AgentLoopMiddleware
 from agent_framework._mcp import MCPTool
-from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._middleware import ChatContext, FunctionInvocationContext
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
 from agent_framework._skills import InlineSkill, SkillFrontmatter, SkillsProvider
 from agent_framework._tools import FunctionInvocationLayer, FunctionTool
@@ -259,6 +260,107 @@ class TestToEvalItem:
                 tool.name: (tool.description, tool.parameters()) for tool in item.tools
             }
             assert all(tool.declaration_only for tool in restored_item.tools)
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("replace_tool", [False, True])
+    async def test_chat_middleware_exposure_overrides_prepared_tools(
+        self, chat_client_base: Any, stream: bool, replace_tool: bool
+    ) -> None:
+        original = FunctionTool(name="search", input_model={"type": "object"}, func=lambda **kwargs: "Seattle")
+        replacement = FunctionTool(
+            name="search",
+            input_model={"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+            func=lambda city: city,
+        )
+        exposed_tools = [replacement] if replace_tool else []
+
+        async def change_tools(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            context.options = {**(context.options or {}), "tools": exposed_tools}
+            await call_next()
+
+        agent = Agent(client=chat_client_base, tools=[original], middleware=[change_tools])
+        contents = [Content.from_text("Done")]
+        if replace_tool:
+            contents.insert(0, Content.from_function_call("call_1", "search", arguments={"city": "Seattle"}))
+        chat_client_base.run_responses = [ChatResponse(messages=[Message("assistant", contents)])]
+        chat_client_base.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=contents)]]
+        with patch.object(chat_client_base, "_inner_get_response", wraps=chat_client_base._inner_get_response) as model:
+            if stream:
+                response_stream = agent.run("Test", stream=True)
+                updates = [AgentResponseUpdate.from_json(update.to_json()) async for update in response_stream]
+                response = await response_stream.get_final_response()
+                reconstructed = AgentResponse.from_updates(updates)
+            else:
+                response = await agent.run("Test")
+                reconstructed = response
+        assert model.call_count >= 1
+        assert all(call.kwargs["options"]["tools"] == exposed_tools for call in model.call_args_list)
+
+        for result in (
+            response,
+            reconstructed,
+            AgentResponse.from_dict(response.to_dict()),
+            AgentResponse.from_json(response.to_json()),
+            pickle.loads(pickle.dumps(response)),
+        ):
+            item = _to_eval_item(query="Test", response=result, agent=agent)
+            if replace_tool:
+                assert item.tools is not None
+                assert [(tool.name, tool.parameters()) for tool in item.tools] == [("search", replacement.parameters())]
+            else:
+                assert item.tools is None
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_chat_middleware_removal_retains_previously_exposed_tools(
+        self, chat_client_base: Any, stream: bool
+    ) -> None:
+        search = FunctionTool(name="search", func=lambda: "Seattle")
+        exposed_tools: list[list[Any]] = []
+
+        async def remove_after_first_call(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            if exposed_tools:
+                context.options = {**(context.options or {}), "tools": []}
+            exposed_tools.append(list((context.options or {}).get("tools") or []))
+            await call_next()
+
+        call = Content.from_function_call("call_1", "search", arguments={})
+        chat_client_base.run_responses = [
+            ChatResponse(messages=[Message("assistant", [call])]),
+            ChatResponse(messages=[Message("assistant", ["Done"])]),
+        ]
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done")])],
+        ]
+        agent = Agent(client=chat_client_base, tools=[search], middleware=[remove_after_first_call])
+        if stream:
+            response_stream = agent.run("Test", stream=True)
+            updates = [AgentResponseUpdate.from_json(update.to_json()) async for update in response_stream]
+            response = AgentResponse.from_updates(updates)
+        else:
+            response = await agent.run("Test")
+
+        assert exposed_tools == [[search], []]
+        for result in (response, AgentResponse.from_json(response.to_json())):
+            item = _to_eval_item(query="Test", response=result)
+            assert item.tools is not None
+            assert [tool.name for tool in item.tools] == ["search"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_custom_client_retains_prepared_tool_fallback(self, client: Any, stream: bool) -> None:
+        search = FunctionTool(name="search", func=lambda: "Seattle")
+        agent = Agent(client=client, tools=[search])
+        if stream:
+            response_stream = agent.run("Test", stream=True)
+            updates = [AgentResponseUpdate.from_json(update.to_json()) async for update in response_stream]
+            response = AgentResponse.from_updates(updates)
+        else:
+            response = await agent.run("Test")
+
+        for result in (response, AgentResponse.from_json(response.to_json())):
+            item = _to_eval_item(query="Test", response=result)
+            assert item.tools is not None
+            assert [(tool.name, tool.parameters()) for tool in item.tools] == [("search", search.parameters())]
 
     async def test_context_provider_tools_are_isolated_per_run(self, chat_client_base: Any) -> None:
         class QueryToolsProvider(ContextProvider):

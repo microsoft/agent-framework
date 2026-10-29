@@ -1789,9 +1789,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             ]
 
         evaluation_tools: dict[str, dict[str, Any]] = {}
-        _capture_evaluation_tools(evaluation_tools, co.get("tools"))
         if isinstance(self.client, BaseChatClient):
             effective_client_kwargs["_evaluation_tool_capture"] = partial(_capture_evaluation_tools, evaluation_tools)
+        else:
+            _capture_evaluation_tools(evaluation_tools, co.get("tools"))
 
         return {
             "session": active_session,
