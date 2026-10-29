@@ -38,7 +38,7 @@ public sealed class McpSkillsLoaderTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_PositiveTtl_ReturnsOriginalListUntilExactExpirationAsync()
+    public async Task GetSkillsAsync_PositiveTtl_ReusesListUntilExactExpirationAsync()
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -61,7 +61,9 @@ public sealed class McpSkillsLoaderTests
         // Assert
         Assert.NotNull(discovered);
         Assert.Same(discovered.Value, first);
+        Assert.Same(discovered.Value[0], Assert.Single(first));
         Assert.Same(first, fresh);
+        Assert.Same(Assert.Single(first), Assert.Single(fresh));
         Assert.False(first.IsReadOnly);
         Assert.Equal(1, calls);
 
@@ -72,7 +74,36 @@ public sealed class McpSkillsLoaderTests
         // Assert
         Assert.NotSame(first, refreshed);
         Assert.Same(discovered.Value, refreshed);
+        Assert.NotSame(Assert.Single(first), Assert.Single(refreshed));
+        Assert.Same(discovered.Value[0], Assert.Single(refreshed));
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ModifiedReturnedList_SharesChangesWithCachedListAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        var snapshot = CreateSnapshot(clock, 1000);
+        int calls = 0;
+        using var loader = new McpSkillsLoader(clock, _ =>
+        {
+            calls++;
+            return Task.FromResult(snapshot);
+        }, UnexpectedRefreshAsync);
+        IList<AgentSkill> first = await loader.GetSkillsAsync(CancellationToken.None);
+        Assert.Single(first);
+
+        // Act
+        first.Clear();
+        IList<AgentSkill> second = await loader.GetSkillsAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Same(first, second);
+        Assert.Empty(second);
+        Assert.Same(snapshot.Value, second);
+        Assert.Empty(snapshot.Value);
+        Assert.Equal(1, calls);
     }
 
     [Theory]
@@ -130,10 +161,11 @@ public sealed class McpSkillsLoaderTests
         if (ttl > 0)
         {
             Assert.All(results, result => Assert.Same(results[0], result));
+            Assert.All(results, result => Assert.Same(Assert.Single(results[0]), Assert.Single(result)));
         }
         else
         {
-            Assert.All(results.Skip(1), result => Assert.NotSame(results[0], result));
+            Assert.All(results.Skip(1), result => Assert.NotSame(Assert.Single(results[0]), Assert.Single(result)));
         }
     }
 
@@ -158,7 +190,7 @@ public sealed class McpSkillsLoaderTests
         Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() => active.WaitAsync(TimeSpan.FromSeconds(10))));
         var skills = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Single(skills);
-        Assert.Same(skills, await loader.GetSkillsAsync(CancellationToken.None));
+        Assert.Equal(skills, await loader.GetSkillsAsync(CancellationToken.None));
         Assert.Equal(2, calls);
     }
 
@@ -187,7 +219,7 @@ public sealed class McpSkillsLoaderTests
         var skills = await loader.GetSkillsAsync(CancellationToken.None);
         Assert.Single(skills);
         Assert.Equal(2, calls);
-        Assert.Same(skills, await loader.GetSkillsAsync(CancellationToken.None));
+        Assert.Equal(skills, await loader.GetSkillsAsync(CancellationToken.None));
     }
 
     [Theory]

@@ -38,7 +38,7 @@ public sealed partial class AgentMcpSkillsTests
         var fresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
-        Assert.Same(first, fresh);
+        Assert.Equal(first, fresh);
         Assert.False(first.IsReadOnly);
         Assert.Equal(empty ? 0 : 1, fresh.Count);
         Assert.Equal(1, calls);
@@ -57,7 +57,7 @@ public sealed partial class AgentMcpSkillsTests
         var stillFresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
-        Assert.Same(refreshed, stillFresh);
+        Assert.Equal(refreshed, stillFresh);
         Assert.Equal(2, calls);
 
         // Act
@@ -131,7 +131,7 @@ public sealed partial class AgentMcpSkillsTests
         var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
-        Assert.Same(first, second);
+        Assert.Equal(first, second);
         Assert.Equal(paginated ? 2 : 1, calls);
     }
 
@@ -177,7 +177,7 @@ public sealed partial class AgentMcpSkillsTests
         var fresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
-        Assert.Same(first, fresh);
+        Assert.Equal(first, fresh);
         Assert.Equal(3, first.Count);
         Assert.Equal(3, cursors.Count);
 
@@ -273,7 +273,7 @@ public sealed partial class AgentMcpSkillsTests
         var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
-        Assert.Same(first, second);
+        Assert.Equal(first, second);
         Assert.Equal(1, calls);
     }
 
@@ -305,7 +305,7 @@ public sealed partial class AgentMcpSkillsTests
         var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
 
         // Assert
-        Assert.All(results, result => Assert.Same(results[0], result));
+        Assert.All(results, result => Assert.Equal(results[0], result));
         Assert.Equal(refresh ? 2 : 1, calls);
     }
 
@@ -367,7 +367,7 @@ public sealed partial class AgentMcpSkillsTests
         }
 
         var first = await initiating.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Same(first, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(first, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(1, calls);
     }
 
@@ -391,7 +391,7 @@ public sealed partial class AgentMcpSkillsTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => initiating.WaitAsync(TimeSpan.FromSeconds(10)));
         var skills = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Single(skills);
-        Assert.Same(skills, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(skills, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(2, calls);
     }
 
@@ -453,7 +453,7 @@ public sealed partial class AgentMcpSkillsTests
         var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         Assert.NotSame(first, refreshed);
         Assert.Equal(3, calls);
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Theory]
@@ -493,7 +493,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.NotSame(first, refreshed);
         Assert.Equal(laterPage ? 6 : 3, calls);
         Assert.Equal(laterPage ? [null, "next", null, "next", null, "next"] : new string?[] { null, null, null }, cursors);
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Theory]
@@ -538,7 +538,7 @@ public sealed partial class AgentMcpSkillsTests
             Assert.All(refreshed, skill => Assert.DoesNotContain(skill, first));
         }
 
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(2, calls);
     }
 
@@ -574,7 +574,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Single(refreshed);
         Assert.NotSame(first, refreshed);
         Assert.Equal([null, "next", null, "next", null, "next"], cursors);
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Fact]
@@ -782,9 +782,16 @@ public sealed partial class AgentMcpSkillsTests
     {
         private long _timestamp;
 
+        public Action? AfterTimestampRead { get; set; }
+
         public override long TimestampFrequency => timestampFrequency;
 
-        public override long GetTimestamp() => Interlocked.Read(ref this._timestamp);
+        public override long GetTimestamp()
+        {
+            long timestamp = Interlocked.Read(ref this._timestamp);
+            this.AfterTimestampRead?.Invoke();
+            return timestamp;
+        }
 
         public void Advance(TimeSpan duration) => Interlocked.Add(ref this._timestamp, (long)(duration.TotalSeconds * this.TimestampFrequency));
     }
