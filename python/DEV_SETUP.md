@@ -75,9 +75,10 @@ uv run poe install
 uv run poe prek-install
 ```
 
-Python 3.10 remains supported and tested for this release, but it is deprecated
-because upstream Python 3.10 has reached end of life. Prefer Python 3.11 or
-later for new development environments.
+Python 3.10 is no longer supported because it has reached upstream end of life.
+Package metadata still permits Python 3.10 installation, and CI retains
+compatibility checks for now, but compatibility is not guaranteed. Use
+Python 3.11 or later for supported development environments.
 
 The checked-in root workspace lock supports the common Python 3.11–3.14
 development range. CI validates the Python 3.10 and 3.15 boundaries by
