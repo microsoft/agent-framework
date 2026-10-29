@@ -202,6 +202,27 @@ def _log_abandoned_background_task(task: asyncio.Task[Any]) -> None:
         logger.debug("Abandoned background task raised: %s", exception)
 
 
+# Strong references to tasks abandoned by a session release. The event loop only keeps weak
+# references to tasks, so without these an abandoned task could be garbage collected while pending.
+_abandoned_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _abandon_background_tasks(tasks: Sequence[asyncio.Task[Any]]) -> None:
+    """Retrieve exceptions of finished tasks now and of unfinished tasks once they complete.
+
+    Used when a session release stops waiting (timeout or cancellation): the runtime is cleared
+    afterwards, so any task whose exception is not retrieved here would be reported as "Task exception
+    was never retrieved". Unfinished tasks are kept alive until they complete.
+    """
+    for task in tasks:
+        if task.done():
+            _log_abandoned_background_task(task)
+        elif task not in _abandoned_background_tasks:
+            _abandoned_background_tasks.add(task)
+            task.add_done_callback(_abandoned_background_tasks.discard)
+            task.add_done_callback(_log_abandoned_background_task)
+
+
 def _validate_and_build_agent_dict(agents: Sequence[SupportsAgentRun]) -> dict[str, SupportsAgentRun]:
     """Validate agents and build a case-insensitive lookup dict.
 
@@ -484,8 +505,10 @@ class BackgroundAgentsProvider(ContextProvider):
         Cancelled tasks are observed with :func:`asyncio.wait`, which returns at the deadline. Using
         ``asyncio.wait_for(asyncio.gather(...))`` instead would, on timeout, cancel the gather and then
         wait for that cancellation to complete, so a task that keeps suppressing ``CancelledError``
-        could hold the release open indefinitely. Tasks still running at the deadline are abandoned
-        with a done-callback that retrieves their eventual exception.
+        could hold the release open indefinitely. Because :func:`asyncio.wait` does not retrieve
+        exceptions, when the release stops waiting (timeout or cancellation) the exceptions of finished
+        tasks are retrieved immediately and tasks still running are abandoned with a done-callback that
+        retrieves their eventual exception.
         """
         loop = asyncio.get_running_loop()
         deadline = None if timeout is None else loop.time() + float(timeout)
@@ -514,19 +537,21 @@ class BackgroundAgentsProvider(ContextProvider):
                         "Session release timed out before all tasks finished. Abandoning %s task(s).",
                         len(pending),
                     )
-                    for task in pending:
-                        if not task.done():
-                            task.add_done_callback(_log_abandoned_background_task)
+                    _abandon_background_tasks(tasks)
                     return
 
-            _, not_done = await asyncio.wait(pending, timeout=remaining)
+            try:
+                _, not_done = await asyncio.wait(pending, timeout=remaining)
+            except asyncio.CancelledError:
+                # The release itself was cancelled; still observe the tasks it will no longer track.
+                _abandon_background_tasks(tasks)
+                raise
             if not_done:
                 logger.warning(
                     "Session release timed out waiting for %s task(s). They will be abandoned.",
                     len(not_done),
                 )
-                for task in not_done:
-                    task.add_done_callback(_log_abandoned_background_task)
+                _abandon_background_tasks(tasks)
                 return
 
     async def before_run(

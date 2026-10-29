@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import threading
+import weakref
 from contextlib import suppress
 from typing import Any
 
@@ -1010,6 +1012,158 @@ async def test_release_session_times_out_if_task_repeatedly_suppresses_cancellat
     await asyncio.sleep(0)
     assert isinstance(task.exception(), RuntimeError)
     assert "Abandoned background task raised: failed after release" in caplog.text
+
+
+async def test_release_session_timeout_retrieves_exceptions_of_finished_tasks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A timed-out release must still observe failures of tasks that finished, not only abandon the rest."""
+    caplog.set_level(logging.DEBUG, logger=_background_agents.__name__)
+    loop = asyncio.get_running_loop()
+    unobserved: list[dict[str, Any]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unobserved.append(context))
+
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+    runtime = provider._get_runtime(session)
+    exit_gate = asyncio.Event()
+
+    async def _fail_before_release() -> Any:
+        raise RuntimeError("failed before release")
+
+    async def _fail_when_cancelled() -> Any:
+        try:
+            await exit_gate.wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("failed during cancellation") from None
+
+    async def _suppress_every_cancellation() -> Any:
+        while True:
+            with suppress(asyncio.CancelledError):
+                await exit_gate.wait()
+                return
+
+    runtime.in_flight_tasks[1] = asyncio.create_task(_fail_before_release())
+    runtime.in_flight_tasks[2] = asyncio.create_task(_fail_when_cancelled())
+    stubborn = asyncio.create_task(_suppress_every_cancellation())
+    runtime.in_flight_tasks[3] = stubborn
+    failed_task_refs = [weakref.ref(runtime.in_flight_tasks[1]), weakref.ref(runtime.in_flight_tasks[2])]
+    await asyncio.sleep(0)  # task 1 fails; tasks 2 and 3 start waiting on the gate
+
+    release = asyncio.create_task(provider.release_session(session, cancel_running=True, timeout=0.05))
+    try:
+        done, _ = await asyncio.wait({release}, timeout=2.0)
+        assert release in done, "release_session did not return within its timeout"
+        await release
+        assert not stubborn.done()
+        assert not runtime.in_flight_tasks
+    finally:
+        exit_gate.set()
+        await asyncio.wait({stubborn, release}, timeout=2.0)
+        # Unretrieved task exceptions are reported when the task is garbage collected.
+        gc.collect()
+        loop.set_exception_handler(previous_handler)
+
+    assert not [context["message"] for context in unobserved if "never retrieved" in context.get("message", "")]
+    assert all(ref() is None for ref in failed_task_refs)  # the failed tasks were really collected
+    assert "Abandoned background task raised: failed before release" in caplog.text
+    assert "Abandoned background task raised: failed during cancellation" in caplog.text
+
+
+async def test_cancelled_release_session_still_retrieves_task_exceptions(caplog: pytest.LogCaptureFixture) -> None:
+    """If the release itself is cancelled while waiting, tasks it stops tracking are still observed."""
+    caplog.set_level(logging.DEBUG, logger=_background_agents.__name__)
+    loop = asyncio.get_running_loop()
+    unobserved: list[dict[str, Any]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unobserved.append(context))
+
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+    runtime = provider._get_runtime(session)
+    exit_gate = asyncio.Event()
+
+    async def _fail_after_gate() -> Any:
+        while True:
+            try:
+                await exit_gate.wait()
+            except asyncio.CancelledError:
+                continue
+            raise RuntimeError("failed after release was cancelled")
+
+    runtime.in_flight_tasks[1] = asyncio.create_task(_fail_after_gate())
+    failed_task_ref = weakref.ref(runtime.in_flight_tasks[1])
+    await asyncio.sleep(0)
+
+    release = asyncio.create_task(provider.release_session(session, cancel_running=True, timeout=None))
+    try:
+        for _ in range(100):
+            if runtime.closed:
+                break
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)  # let the release start waiting on the task
+        release.cancel()
+        with suppress(asyncio.CancelledError):
+            await release
+        assert release.cancelled()
+        assert not runtime.in_flight_tasks
+    finally:
+        exit_gate.set()
+        for _ in range(10):
+            await asyncio.sleep(0)  # let the abandoned task fail and its callbacks run
+        # On Python 3.10 a cancelled task keeps its CancelledError traceback, whose frames reference the tasks.
+        del release
+        gc.collect()
+        loop.set_exception_handler(previous_handler)
+
+    assert not [context["message"] for context in unobserved if "never retrieved" in context.get("message", "")]
+    assert failed_task_ref() is None
+    assert "Abandoned background task raised: failed after release was cancelled" in caplog.text
+
+
+async def test_release_session_timeout_keeps_abandoned_tasks_alive() -> None:
+    """An abandoned task must not be garbage collected while still pending."""
+    loop = asyncio.get_running_loop()
+    unobserved: list[dict[str, Any]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unobserved.append(context))
+
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+    runtime = provider._get_runtime(session)
+    keep_running = True
+
+    async def _wait_on_unreferenced_future() -> Any:
+        while True:
+            try:
+                await asyncio.get_running_loop().create_future()
+            except asyncio.CancelledError:
+                if not keep_running:
+                    raise
+
+    runtime.in_flight_tasks[1] = asyncio.create_task(_wait_on_unreferenced_future())
+    task_ref = weakref.ref(runtime.in_flight_tasks[1])
+    await asyncio.sleep(0)
+
+    try:
+        await asyncio.wait_for(provider.release_session(session, cancel_running=True, timeout=0.05), timeout=2.0)
+        gc.collect()  # nothing outside the provider references the abandoned task any more
+        abandoned = task_ref()
+        assert abandoned is not None, "abandoned task was garbage collected while pending"
+        assert not abandoned.done()
+        assert abandoned in _background_agents._abandoned_background_tasks
+    finally:
+        keep_running = False
+        abandoned = task_ref()
+        if abandoned is not None:
+            abandoned.cancel()
+            with suppress(asyncio.CancelledError):
+                await abandoned
+        loop.set_exception_handler(previous_handler)
+
+    assert task_ref() is None or task_ref() not in _background_agents._abandoned_background_tasks
+    assert not [context["message"] for context in unobserved if "pending" in context.get("message", "")]
 
 
 async def test_release_session_does_not_pop_replacement_runtime() -> None:
