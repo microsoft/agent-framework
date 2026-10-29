@@ -8,13 +8,13 @@ import argparse
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from scripts._toml import tomllib
 from scripts.dependencies._dependency_bounds_release_impl import (
     ReleaseProject,
     _build_release_project_map,
@@ -77,23 +77,53 @@ def _git(workspace_root: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=workspace_root, capture_output=True, text=True, check=True).stdout
 
 
+def _base_release_versions(workspace_root: Path, base_commit: str) -> dict[str, str]:
+    """Discover the base workspace by the same membership rules as the current tree."""
+    paths = _git(
+        workspace_root, "ls-tree", "-r", "--name-only", "-z", base_commit, "--", "pyproject.toml", "packages/"
+    ).split("\0")
+    with tempfile.TemporaryDirectory(prefix="release-metadata-") as directory:
+        snapshot = Path(directory)
+        for value in paths:
+            path = Path(value)
+            if path.name != "pyproject.toml":
+                continue
+            destination = snapshot / path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(_git(workspace_root, "show", f"{base_commit}:./{path.as_posix()}"))
+        return {name: project.version for name, project in _build_release_project_map(snapshot).items()}
+
+
 def selected_versions(workspace_root: Path, base_ref: str) -> dict[str, str]:
     """Reuse release-probe selection, excluding dependency-only metadata edits."""
     base_commit = _git(workspace_root, "rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}").strip()
     projects = _build_release_project_map(workspace_root)
+    untracked = set(_git(workspace_root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"))
+    untracked_metadata = sorted(
+        (project.project_path / "pyproject.toml").as_posix()
+        for project in projects.values()
+        if (project.project_path / "pyproject.toml").as_posix() in untracked
+    )
+    if untracked_metadata:
+        raise ValueError(
+            "Stage new workspace metadata with git add before preparing a release: " + ", ".join(untracked_metadata)
+        )
+    base_versions = _base_release_versions(workspace_root, base_commit)
     selected = _selected_release_projects(
         workspace_root=workspace_root, projects=projects, base_ref=base_commit, package_filter=None
     )
     versions: dict[str, str] = {}
     for project in selected:
-        path = project.project_path / "pyproject.toml"
-        if _git(workspace_root, "ls-tree", "--name-only", base_commit, "--", path.as_posix()).strip():
-            previous = tomllib.loads(_git(workspace_root, "show", f"{base_commit}:./{path.as_posix()}"))["project"]
-            if Version(previous["version"]) == Version(project.version):
+        name = canonicalize_name(project.package_name)
+        if name in base_versions:
+            previous_version = Version(base_versions[name])
+            if previous_version == Version(project.version):
                 continue
-            if Version(project.version) <= Version(previous["version"]):
-                raise ValueError(f"{project.package_name}: version must increase from {previous['version']}")
+            if Version(project.version) < previous_version:
+                raise ValueError(f"{project.package_name}: version must increase from {previous_version}")
         versions[project.package_name] = project.version
+    if "agent-framework-core" in versions and "agent-framework" not in versions:
+        raise ValueError("Releasing agent-framework-core requires a version increase for agent-framework too")
     return dict(sorted(versions.items()))
 
 
@@ -213,6 +243,14 @@ def main() -> None:
             if not versions and not changed_paths:
                 print("No release batch changes.")
                 return
+            if (
+                not changed_paths
+                and not args.tag
+                and versions
+                and not (set(versions) & _base_release_versions(workspace_root, base_commit).keys())
+            ):
+                print("New-package development only; no release manifest required.")
+                return
             if len(changed_paths) != 1:
                 raise ValueError("A release PR must add exactly one .github/release-<fulltag>.json batch")
             expected_tag = expected_tag or changed_paths[0].stem.removeprefix("release-")
@@ -225,6 +263,12 @@ def main() -> None:
             and _git(workspace_root, "ls-tree", "--name-only", base_commit, "--", relative_manifest.as_posix()).strip()
         ):
             raise ValueError("Historical release manifests must not be changed or removed; use a new tag")
+        if (
+            base_commit
+            and f"refs/tags/{expected_tag}"
+            in _git(workspace_root, "for-each-ref", "--format=%(refname)", f"refs/tags/{expected_tag}").splitlines()
+        ):
+            raise ValueError(f"Release tag {expected_tag} already exists; choose a new overall release tag")
         if args.check:
             payload = json.loads(manifest_path.read_text(), object_pairs_hook=_reject_duplicate_keys)
         else:

@@ -329,7 +329,10 @@ If `core` did not bump this cycle, do not touch floors.
 
 ### 7. Generate the reviewed release batch and validate
 
-After applying the selected bumps and dependency edits, generate the manifest from that same metadata diff:
+After applying the selected bumps and dependency edits, stage any new workspace package metadata with
+`git add python/packages/<package>/pyproject.toml`. The generator fails explicitly if workspace metadata is still
+untracked, rather than silently omitting that distribution. Existing tracked metadata need not be staged.
+Generate the manifest from that same metadata diff:
 
 ```bash
 RELEASE_TAG="python-<release-label>"
@@ -337,9 +340,11 @@ uv run --directory python --group tool-runtime poe prepare-python-release --base
 ```
 
 The generator reuses the release validator's changed-`pyproject.toml` selection, then includes only packages whose
-version increased (or new workspace packages). Dependency-only metadata edits remain part of dependency validation
-but do not select an unchanged version for publication. The root/core coupling and explicit cohort decision above
-still determine which versions are bumped. The excluded standalone Lab workspace is not part of this batch.
+version increased (or new workspace packages). Compare package identity by canonical distribution name, not directory:
+a move does not make an existing version new, and a renamed distribution is a new identity. Dependency-only metadata
+edits remain part of dependency validation but do not select an unchanged version for publication. The generator
+rejects a Core release without a version increase for root `agent-framework`; the explicit cohort decision above
+still determines other bumps. The excluded standalone Lab workspace is not part of this batch.
 
 Commit **`python/.github/release-${RELEASE_TAG}.json` in this same PR**, together with the version and lockfile changes.
 The filename includes the full tag: `python-1.24.0` produces `python/.github/release-python-1.24.0.json`.
@@ -370,6 +375,9 @@ Contract:
   Azure DevOps resolves the immutable tagged commit and reads `python/.github/release-<fulltag>.json` there.
   Both sides derive this exact path from the expected full tag. Never scan for the latest file or fall back to
   the old fixed `.github/release.json` or root `release.json` paths.
+  Generation and PR validation reject tags already present in the freshly fetched local tag refs. Fetch tags as in
+  step 1 before preparation. Published-release validation permits its existing tag and checks the qualified
+  `refs/tags/<fulltag>` revision; PR checks use the immutable event SHA, not a moving merge ref.
 - Keys are exact canonical distribution names; values are PEP 440 strings equal to the tagged `project.version`.
   The expected tag must match the manifest tag, preventing reuse of a stale batch. PyPI absence is validation,
   **never selection**.
@@ -395,8 +403,11 @@ From the repository root, check the generated file against the same base:
 uv run --directory python --group tool-runtime python -m scripts.prepare_release --check --base-ref "$RELEASE_BASE" --tag "$RELEASE_TAG"
 ```
 
-PR CI requires exactly one new per-tag manifest and enforces agreement between its filename, JSON tag, and version
-changes. Changes or deletions of historical manifests fail the check. Earlier files remain browsable on `main`;
+For version increases of existing distributions or an explicit manifest change, PR CI requires exactly one new
+per-tag manifest and enforces agreement between its filename, JSON tag, and version changes. Ordinary development
+PRs that only add new distribution identities do not need to choose a release tag or add a manifest. Explicit
+release preparation still includes all selected new packages, and a supplied manifest is always validated.
+Changes or deletions of historical manifests fail the check. Earlier files remain browsable on `main`;
 their old package versions are not revalidated against current metadata. PRs without version or manifest changes
 (including dependency maintenance) do not need to add a manifest. These files record reviewed intended batches,
 not proof that publication completed; that evidence is the verified artifact manifest on the published release.
