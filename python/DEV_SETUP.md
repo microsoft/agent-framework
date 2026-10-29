@@ -455,13 +455,23 @@ Use this for repo-wide tooling and dependency-group refreshes. For targeted
 runtime dependency upgrades, prefer `uv lock --upgrade-package
 <dependency-name>` plus the package-scoped bound validation tasks above.
 
-### Building and Publishing
+### Building and Releasing
 
-#### `publish`
-Publish packages to PyPI:
+Local build tasks remain available for development. Production publication is owned by the protected Azure DevOps
+release pipeline, not by a local `publish` task or a GitHub Actions publisher.
+
+Prepare selective version bumps and generate the reviewed `release.json` in the same PR:
+
 ```bash
-uv run poe publish
+uv run --group tool-runtime poe prepare-python-release --base-ref origin/main --tag python-<release-label>
+uv run --group tool-runtime poe validate-python-release --base-ref origin/main
 ```
+
+Use the same freshly fetched base for both commands. The first command derives the selected distributions and
+versions from version changes in package metadata; do not enter a second set of versions by hand. See
+[the release skill](.github/skills/agent-framework-py-release/SKILL.md) for the batch contract, overall tag and existing
+draft handoff, approval timing, recovery, and deployment order. Do not create a tag or draft until that handoff is
+explicitly authorized.
 
 ## Prek Hooks
 

@@ -1,11 +1,14 @@
 ---
 name: agent-framework-py-release
-description: Use when cutting a Python release for the microsoft/agent-framework monorepo. Triggers on "bump py versions", "cut a python release", "prepare release PR for python", "release py packages", "bump python to X.Y.Z", or similar requests to bump Python package versions and prepare a release PR. Handles all four lifecycle tiers (alpha, beta, rc, released) with CHANGELOG-driven selective bumps, floor bound checks, and post-bump validation.
+description: Use when cutting a Python release for the microsoft/agent-framework monorepo. Triggers on "bump py versions", "cut a python release", "prepare release PR for python", "release py packages", "bump python to X.Y.Z", or similar requests to bump Python package versions and prepare a release PR. Handles all four lifecycle tiers with CHANGELOG-driven selective bumps, a reviewed batch manifest, dependency checks, and the protected Azure DevOps release handoff.
 ---
 
 # Agent Framework Python Release
 
 Cuts a Python release PR for the `microsoft/agent-framework` monorepo.
+
+Release preparation does **not** authorize production tags, draft creation, publication, or deployment. Stop at the
+requested PR unless a maintainer separately authorizes the release handoff below.
 
 ## Core principle: CHANGELOG drives bumps
 
@@ -49,6 +52,10 @@ If the user states target versions or a date explicitly, use exactly what they s
   `tooling/requirements-*.txt` bundle only for single-version tools.
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
 - **Footer reference links are part of the CHANGELOG edit**, not optional.
+- **One batch, one overall tag, one Azure DevOps run.** Generate `python/release.json` in the same version-bump PR.
+  Never replace the reviewed selection with "all versions absent from PyPI", per-package tags, or one run per package.
+- **Azure DevOps is the only production publisher.** GitHub has no Azure DevOps API credentials or federated queue
+  permission. The GitHub release workflow is read-only validation; local production `publish` tasks are retired.
 
 ## Workflow
 
@@ -319,10 +326,73 @@ rm "${file}.bak"
 
 If `core` did not bump this cycle, do not touch floors.
 
-### 7. Validate
+### 7. Generate the reviewed release batch and validate
+
+After applying the selected bumps and dependency edits, generate the manifest from that same metadata diff:
 
 ```bash
-cd python && uv run --group tool-runtime poe validate-python-release --base-ref "$RELEASE_BASE"
+uv run --directory python --group tool-runtime poe prepare-python-release --base-ref "$RELEASE_BASE" --tag "python-<release-label>"
+```
+
+The generator reuses the release validator's changed-`pyproject.toml` selection, then includes only packages whose
+version increased (or new workspace packages). Dependency-only metadata edits remain part of dependency validation
+but do not select an unchanged version for publication. The root/core coupling and explicit cohort decision above
+still determine which versions are bumped. The excluded standalone Lab workspace is not part of this batch.
+
+Commit **`python/release.json` in this same PR**, together with the version and lockfile changes. Do not maintain a
+duplicate list of versions manually. Regenerate after changing the bump list. For example:
+
+```json
+{
+  "tag": "python-1.24.0",
+  "packages": {
+    "agent-framework": "1.24.0",
+    "agent-framework-core": "1.24.0",
+    "agent-framework-foundry": "1.16.0"
+  },
+  "smoke_imports": {
+    "agent-framework": ["agent_framework:Agent"],
+    "agent-framework-core": ["agent_framework:Message"],
+    "agent-framework-foundry": ["agent_framework.foundry:FoundryAgent"]
+  }
+}
+```
+
+Contract:
+
+- `tag` and non-empty `packages` are required. The tag is one overall `python-<PEP440-version>` release label, not
+  a requirement that every selected distribution share a version. No source commit SHA is stored in this file:
+  Azure DevOps resolves the immutable tagged commit and reads the manifest there.
+- Keys are exact canonical distribution names; values are PEP 440 strings equal to the tagged `project.version`.
+  The expected tag must match the manifest tag, preventing reuse of a stale batch. PyPI absence is validation,
+  **never selection**.
+- `smoke_imports` is an optional additive map of public `module:export` checks (classes or functions). The generator
+  emits it for **every** selected distribution. The consumer only has built-in defaults for meta/core/Foundry;
+  other packages require explicit reviewed checks. Unknown packages fail until `scripts/prepare_release.py`
+  has a reviewed public import entry. A check imports the module and resolves the export, without creating an
+  agent, opening a connection, or calling a service.
+- Prefer public `agent_framework.*` bridges. Never derive checks from build configuration (the root's
+  `agent_framework_meta` is not its public API), or substitute a private implementation module.
+  Packages without a bridge use their documented public top-level entry points. The explicit exceptions are
+  `agent_framework_azure_cosmos_memory`, `agent_framework_azure_documentdb`, `agent_framework_duckdb`,
+  `agent_framework_hosting`, `agent_framework_hosting_a2a`, `agent_framework_hosting_mcp`,
+  `agent_framework_hosting_responses`, `agent_framework_hosting_telegram`, `agent_framework_mongodb`,
+  `agent_framework_nvidia`, `agent_framework_oracle`, `agent_framework_postgres`, `agent_framework_qdrant`,
+  `agent_framework_sql_server`, and `agent_framework_typesafe`. See their package READMEs and exported `__all__`;
+  the inventory test checks each selected public export. A new exception must also be reviewed in the consumer
+  allowlist before release.
+
+From the repository root, check the generated file against the same base:
+
+```bash
+uv run --directory python --group tool-runtime python -m scripts.prepare_release --check --base-ref "$RELEASE_BASE" --tag "python-<release-label>"
+```
+
+PR CI enforces exact agreement between the manifest and version changes. PRs without version or manifest changes
+(including dependency maintenance) do not need to rewrite an old manifest.
+
+```bash
+uv run --directory python --group tool-runtime poe validate-python-release --base-ref "$RELEASE_BASE"
 ```
 
 Use the same freshly fetched main ref that the release branch was based on (`upstream/main` above; use `origin/main`
@@ -352,6 +422,7 @@ The project's pre-commit hook runs `poe check` / `poe typing` / `uv lock` and ma
 
 ```bash
 git add -u
+git add python/release.json  # New files are not included by git add -u.
 git commit -m "<message>"   # may fail with "files were modified by this hook"
 git add -u                  # re-stage hook-generated changes
 git commit -m "<message>"   # succeeds
@@ -380,6 +451,57 @@ git push origin bump-py-ver-release-YYMMDD
 
 The push output includes a `Create a pull request for '<branch>' on GitHub by visiting: <URL>` line — surface that to the user.
 
+### 10. Maintainer handoff: tag and existing draft (only when authorized)
+
+After the reviewed bump PR merges, the maintainer selects the exact merged commit and creates the **one** overall
+tag matching `release.json`. The maintainer creates a GitHub **draft** release for that existing tag, with the
+human-written title, complete release notes, and intended prerelease flag. Do not use a published release as the
+trigger and do not create per-package tags. Release notes must be complete **before ESRP approval**; do not edit
+the draft, tag, or selected source while a release run is in progress.
+
+Azure DevOps discovery polls eligible existing drafts and tags. It has a disabled-by-default activation switch,
+an explicit first eligible release ID, and durable Azure Blob compare-and-swap claims to admit one run for the
+whole batch. No GitHub workflow calls or queues Azure DevOps.
+
+The protected pipeline reads `python/release.json` from the exact tagged commit, validates the requested names,
+versions and tag, builds once, and runs isolated install/public-import checks against the selected artifacts.
+It then waits for protected ESRP approval/publication and verifies the published distributions. Only after that
+verification does it upload the **same built wheels/sdists and artifact manifest** to the **existing draft**,
+verify those assets, and change `draft` to `false`. It preserves the draft's title, body, and prerelease flag.
+The source request (`release.json`) and the output artifact manifest (file names, versions, sizes/checksums and
+source provenance) are different records.
+
+The published-event GitHub workflow validates the tag contract only. It must not build new artifacts, upload
+release assets, publish packages, or request Azure DevOps credentials.
+
+### Failure and recovery
+
+- Before approval/publication: leave the draft unpublished, inspect the failing checks, and fix the source in a
+  reviewed PR if needed. Do not move an existing release tag or silently replace its manifest. A new release
+  attempt requiring source changes needs a new overall tag and appropriate new package versions.
+- A queued/failed batch remains claimed. Use the consumer's audited recovery procedure to retry/reconcile the
+  **same batch and retained artifact set**. Do not delete a claim to create parallel runs, queue individual
+  distributions, or bypass the approval gate with local `uv publish`/Twine.
+- Publication may partially succeed before a failure. PyPI versions are immutable: inspect package versions,
+  retained artifact hashes, and the publication record before retrying. Already-published versions do not change
+  the reviewed selection. Never overwrite or rebuild artifacts and assume they are identical.
+- If publication succeeds but GitHub asset upload or finalization fails, keep the draft unpublished and retry
+  that finalization using the verified retained artifacts. Do not republish packages, create a replacement
+  release, or lose the human-authored release metadata.
+
+### Rollout order (no publication as part of implementation)
+
+1. Merge the Azure DevOps consumer first, with discovery disabled. Review the matching contract, artifact
+   verification, recovery, and draft-only finalization.
+2. Merge this repository's producer and retirement of the old GitHub build/upload path second.
+3. Configure and verify the Azure DevOps identities, least-privilege GitHub release access, durable claim storage,
+   and protected ESRP approval gates outside GitHub. Verify the merged upstream revision is compatible.
+4. Choose the first eligible draft release ID and activate tag/draft discovery **last**, only after the previous
+   steps are confirmed. Do not create production tags/drafts merely to test rollout.
+
+The coordinated change requires both PRs and maintainer approval. Merging producer code alone must not enable
+a second publisher or silently activate discovery.
+
 ## Pitfalls from past cycles — avoid repeating
 
 - **Scoping from the wrong tag.** A release may have been tagged between bump cycles. Always compute `LAST_RELEASED_TAG` fresh — do NOT reuse the previous compare base. Symptom: dragging already-shipped PRs into the new CHANGELOG section.
@@ -404,4 +526,6 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
 - Lifecycle source of truth: `python/PACKAGE_STATUS.md`
 - Release validator: `python/scripts/dependencies/validate_dependency_bounds.py --mode release` (changed-package,
   lock-independent `lowest-direct` and `highest` import probes under a five-minute deadline)
+- Batch generator and read-only validator: `python/scripts/prepare_release.py`
+- Read-only PR/published-tag check: `.github/workflows/python-release.yml`
 - Poe task definitions: `python/pyproject.toml` `[tool.poe.tasks]`
