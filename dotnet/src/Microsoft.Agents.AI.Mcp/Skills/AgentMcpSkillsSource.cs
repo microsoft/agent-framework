@@ -33,7 +33,7 @@ namespace Microsoft.Agents.AI;
 /// The skill list may span multiple response pages, each with a time to live (TTL).
 /// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
 /// By default, a missing, zero, or negative page TTL causes the list to be fetched on every call.
-/// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override page and resource TTLs.
+/// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override page, skill metadata, and resource TTLs.
 /// Disable other caches around this source, including the builder's cache through
 /// <see cref="AgentSkillsProviderBuilder.DisableCaching"/>, so this source can check expiration on each call.
 /// </para>
@@ -52,13 +52,15 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// If fetched resource content has a different size or content hash than its manifest entry,
 /// the skill that owns that resource is queued for refresh.
-/// The resource read returns previously verified cached content if available, without extending its TTL;
+/// The resource read returns previously verified cached content if available and caches it indefinitely for that skill object;
 /// otherwise, it throws. Other resource-read and validation errors propagate without queuing a skill refresh.
 /// </para>
 /// <para>
 /// On the next <see cref="GetSkillsAsync"/> call, <c>skills/get</c> fetches updated metadata and resource lists
 /// for queued skills. Skills that no longer exist on the server are removed from the cached list.
 /// If the cached skill list has expired, <c>skills/list</c> fetches the whole list instead.
+/// Each successful <c>skills/get</c> response controls only that skill's lifetime, not the list's lifetime.
+/// When the skill expires, the next <see cref="GetSkillsAsync"/> call refreshes it through <c>skills/get</c>.
 /// A failed refresh leaves the previous list unchanged and is retried on a later call.
 /// </para>
 /// <para>
@@ -181,7 +183,9 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            skills.Add(this.CreateSkill(entry));
+            // Listing responses specify a TTL per page, not per skill. Use Infinite to avoid independent
+            // skill expiration; the page's TTL triggers a refresh of the whole catalog, including this skill.
+            skills.Add(this.CreateSkill(entry, McpCacheLifetime.Infinite));
         }
 
         return new(skills, this.CombineLifetimes(pageLifetimes));
@@ -206,6 +210,8 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return null;
         }
 
+        long receivedTimestamp = this._timeProvider.GetTimestamp();
+
         cancellationToken.ThrowIfCancellationRequested();
 
         McpSkillsGetResult result = response.Result?.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult)
@@ -221,19 +227,21 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
         }
 
-        return this.CreateSkill(result.Skill);
+        // Unlike listing responses, skills/get provides a TTL for this skill,
+        // allowing it to expire and refresh independently of the catalog.
+        return this.CreateSkill(result.Skill, McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
     }
 
     /// <summary>
     /// Checks the server's skill details and creates a skill object with its own resource cache.
     /// </summary>
-    private AgentMcpSkill CreateSkill(McpSkillEntry entry)
+    private AgentMcpSkill CreateSkill(McpSkillEntry entry, McpCacheLifetime metadataLifetime)
     {
         AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
 
         List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._skillsLoader, this._logger, this._maxResourceSizeBytes, this._timeProvider, this._ttlResolver);
+        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._skillsLoader, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver);
     }
 
     /// <summary>

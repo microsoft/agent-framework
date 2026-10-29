@@ -7,10 +7,100 @@ using System.Text.Json.Nodes;
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 /// <summary>
-/// Tests JSON deserialization of <c>skills/list</c> results.
+/// Tests JSON deserialization of <c>skills/list</c> and <c>skills/get</c> results.
 /// </summary>
 public sealed class AgentMcpSkillsSerializationTests
 {
+    [Theory]
+    [InlineData("null", null)]
+    [InlineData("0", 0L)]
+    [InlineData("300000", 300000L)]
+    [InlineData("-1", -1L)]
+    public void Deserialize_GetTimeToLive_PreservesMilliseconds(string ttl, long? expectedMilliseconds)
+    {
+        // Arrange
+        JsonObject node = new()
+        {
+            ["resultType"] = "complete",
+            ["skill"] = CreateEntry(),
+            ["ttlMs"] = JsonNode.Parse(ttl),
+        };
+
+        // Act
+        var result = node.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(expectedMilliseconds is { } ms ? TimeSpan.FromMilliseconds(ms) : null, result.TimeToLive);
+    }
+
+    [Fact]
+    public void Deserialize_GetMissingTimeToLive_PreservesAbsence()
+    {
+        // Arrange
+        JsonObject node = new()
+        {
+            ["resultType"] = "complete",
+            ["skill"] = CreateEntry(),
+        };
+
+        // Act
+        var result = node.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Null(result.TimeToLive);
+    }
+
+    [Theory]
+    [InlineData("\"1000\"")]
+    [InlineData("true")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    public void Deserialize_GetInvalidTimeToLive_Throws(string ttl)
+    {
+        // Arrange
+        JsonObject node = new()
+        {
+            ["resultType"] = "complete",
+            ["skill"] = CreateEntry(),
+            ["ttlMs"] = JsonNode.Parse(ttl),
+        };
+
+        // Act & Assert
+        Assert.Throws<JsonException>(() => node.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult));
+    }
+
+    [Theory]
+    [InlineData(long.MinValue)]
+    [InlineData(long.MaxValue)]
+    public void Deserialize_GetExtremeTimeToLive_MatchesListConversion(long ttl)
+    {
+        // Arrange
+        JsonObject getNode = new()
+        {
+            ["resultType"] = "complete",
+            ["skill"] = CreateEntry(),
+            ["ttlMs"] = ttl,
+        };
+        JsonObject listNode = new()
+        {
+            ["resultType"] = "complete",
+            ["skills"] = new JsonArray(),
+            ["ttlMs"] = ttl,
+        };
+
+        // Act
+        var getResult = getNode.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult);
+        var listResult = listNode.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult);
+
+        // Assert
+        Assert.NotNull(getResult);
+        Assert.NotNull(listResult);
+        Assert.NotNull(getResult.TimeToLive);
+        Assert.Equal(listResult.TimeToLive, getResult.TimeToLive);
+    }
+
     [Theory]
     [InlineData("null", null)]
     [InlineData("0", 0L)]

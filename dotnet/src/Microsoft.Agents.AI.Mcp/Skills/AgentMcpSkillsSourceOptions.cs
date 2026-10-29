@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI;
 public sealed class AgentMcpSkillsSourceOptions
 {
     /// <summary>
-    /// Gets or sets a callback that determines the cache duration for each skill-list page and resource response.
+    /// Gets or sets a callback that determines the cache duration for each skill-list page, skill metadata, and resource response.
     /// </summary>
     /// <remarks>
     /// <para>

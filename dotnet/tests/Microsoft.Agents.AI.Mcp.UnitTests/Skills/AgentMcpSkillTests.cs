@@ -42,6 +42,27 @@ public sealed partial class AgentMcpSkillTests
         Assert.Same(frontmatter, skill.Frontmatter);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Constructor_MetadataLifetime_PreservesProvidedLifetimeOrDefaultsToInfiniteAsync(bool provideLifetime)
+    {
+        // Arrange
+        await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, SkillContent)));
+        await using var client = await server.CreateClientAsync();
+        using var loader = CreateLoader();
+        McpCacheLifetime? lifetime = provideLifetime
+            ? new McpCacheLifetime(TimeProvider.System.GetTimestamp(), TimeSpan.FromSeconds(1))
+            : null;
+
+        // Act
+        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
+            [Resource(SkillUri, SkillContent)], client, loader, metadataLifetime: lifetime);
+
+        // Assert
+        Assert.Same(lifetime ?? McpCacheLifetime.Infinite, skill.MetadataLifetime);
+    }
+
     [Fact]
     public async Task GetContentAsync_ResourceList_FindsInstructionsByExactUriAsync()
     {
@@ -842,19 +863,26 @@ public sealed partial class AgentMcpSkillTests
         const string Uri = SkillRootUri + "references/checklist.md";
         byte[] expected = Encoding.UTF8.GetBytes("Checklist.");
         byte[] changed = Encoding.UTF8.GetBytes(sizeMismatch ? "Changed checklist." : "Different.");
+        int reads = 0;
         await using var server = CreateServer((uri, _) =>
-            ValueTask.FromResult(binary
+        {
+            reads++;
+            return ValueTask.FromResult(binary
                 ? new ReadResourceResult { Contents = [BlobResourceContents.FromBytes(changed, uri, "application/octet-stream")] }
-                : Text(uri, Encoding.UTF8.GetString(changed))));
+                : Text(uri, Encoding.UTF8.GetString(changed)));
+        });
         await using var client = await server.CreateClientAsync();
         var skill = CreateSkill(client, resources: [Resource(Uri, expected)]);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+        var repeated = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/checklist.md"));
 
         // Assert
         Assert.Contains(sizeMismatch ? "byte size" : "SHA-256 digest", exception.Message);
         Assert.Contains(Uri, exception.Message);
+        Assert.Equal(exception.Message, repeated.Message);
+        Assert.Equal(2, reads);
     }
 
     [Theory]

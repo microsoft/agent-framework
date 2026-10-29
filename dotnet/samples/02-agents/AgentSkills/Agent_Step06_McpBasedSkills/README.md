@@ -46,7 +46,8 @@ The MCP specification requires a TTL, but some servers may not provide it. By de
 zero, or negative TTL causes a fetch on every access. A positive TTL allows reuse for that duration,
 starting when the response arrives.
 
-Set `AgentMcpSkillsSourceOptions.TtlResolver` to override TTLs for both the skill list and resources.
+Set `AgentMcpSkillsSourceOptions.TtlResolver` to override TTLs for the skill list, refreshed skill metadata,
+and resources.
 For example, use five minutes for missing, zero, or negative TTLs, and keep positive server TTLs unchanged:
 
 ```csharp

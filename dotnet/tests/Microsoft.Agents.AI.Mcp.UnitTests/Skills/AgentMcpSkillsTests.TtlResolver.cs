@@ -401,7 +401,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Equal(SkillContent, fallback);
         Assert.Equal(SkillContent, repeatedFallback);
         Assert.Equal(3, resolutions);
-        Assert.Equal(4, methods.Count(method => method == "resources/read"));
+        Assert.Equal(3, methods.Count(method => method == "resources/read"));
 
         // Act
         AgentSkill replacement = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
@@ -412,18 +412,91 @@ public sealed partial class AgentMcpSkillsTests
         // Assert
         Assert.NotSame(original, replacement);
         Assert.Equal(UpdatedContent, updated);
-        Assert.Equal(4, resolutions);
+        Assert.Equal(5, resolutions);
         Assert.Single(methods, method => method == "skills/list");
         Assert.Single(methods, method => method == "skills/get");
-        Assert.Equal(5, methods.Count(method => method == "resources/read"));
+        Assert.Equal(4, methods.Count(method => method == "resources/read"));
 
         // Act
         clock.Advance(TimeSpan.FromMilliseconds(1));
         await replacement.GetContentAsync();
 
         // Assert
-        Assert.Equal(5, resolutions);
-        Assert.Equal(6, methods.Count(method => method == "resources/read"));
+        Assert.Equal(6, resolutions);
+        Assert.Equal(5, methods.Count(method => method == "resources/read"));
+    }
+
+    [Theory]
+    [InlineData(null, 2000)]
+    [InlineData(-1L, 2000)]
+    [InlineData(0L, 2000)]
+    [InlineData(1000L, 2000)]
+    [InlineData(5000L, 2000)]
+    [InlineData(5000L, 0)]
+    [InlineData(5000L, -1000)]
+    public async Task GetSkillsAsync_TtlResolver_OverridesRefreshedMetadataTtlAsync(long? serverMilliseconds, int resolvedMilliseconds)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        List<TimeSpan?> inputs = [];
+        List<string> methods = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            methods.Add(request.Method);
+            JsonObject result = request.Method switch
+            {
+                "skills/list" => TtlListResult(60000, Entry()),
+                "skills/get" => GetSkillResult(Entry()),
+                _ => ResourceReadResult(SkillUri, 60000, SkillContent + "\nChanged."),
+            };
+            if (request.Method == "skills/get")
+            {
+                if (serverMilliseconds is { } milliseconds)
+                {
+                    result["ttlMs"] = milliseconds;
+                }
+                else
+                {
+                    result.Remove("ttlMs");
+                }
+            }
+
+            return Task.FromResult(result);
+        });
+        var options = new AgentMcpSkillsSourceOptions
+        {
+            TtlResolver = ttl =>
+            {
+                inputs.Add(ttl);
+                return ttl == TimeSpan.FromMinutes(1) ? ttl.Value : TimeSpan.FromMilliseconds(resolvedMilliseconds);
+            },
+        };
+        using var source = new AgentMcpSkillsSource(client.Object, options, loggerFactory: null, timeProvider: clock);
+        AgentSkill original = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original.GetContentAsync());
+
+        // Act
+        AgentSkill replacement = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        if (resolvedMilliseconds > 0)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(resolvedMilliseconds - 1));
+            AgentSkill fresh = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+            // Assert
+            Assert.Same(replacement, fresh);
+            Assert.Equal(2, inputs.Count);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+        }
+
+        // Act
+        AgentSkill refreshed = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.NotSame(original, replacement);
+        Assert.NotSame(replacement, refreshed);
+        TimeSpan? expected = serverMilliseconds is { } value ? TimeSpan.FromMilliseconds(value) : null;
+        Assert.Equal(new[] { TimeSpan.FromMinutes(1), expected, expected }, inputs);
+        Assert.Equal(["skills/list", "resources/read", "skills/get", "skills/get"], methods);
     }
 
     [Fact]

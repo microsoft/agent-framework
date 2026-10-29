@@ -27,7 +27,7 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// </para>
     /// <para>
     /// The MCP source manages caching using the server's time to live (TTL) values.
-    /// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override TTLs for list pages and resources.
+    /// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override TTLs for list pages, skill metadata, and resources.
     /// Call <see cref="AgentSkillsProviderBuilder.DisableCaching"/> and disable other caches around
     /// this source so it can refresh the skill list when its cached data expires.
     /// </para>

@@ -15,6 +15,256 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 public sealed partial class AgentMcpSkillsTests
 {
+    [Theory]
+    [InlineData(1000L, 1000L, false)]
+    [InlineData(60000L, 50000L, true)]
+    [InlineData(long.MaxValue, 50000L, true)]
+    public async Task GetSkillsAsync_RefreshedSkillTtl_PreservesCatalogLifetimeAsync(long ttl, long remainingMilliseconds, bool catalogExpiresFirst)
+    {
+        // Arrange
+        const string UpdatedContent = SkillContent + "\nUpdated.";
+        var clock = new ManualTimeProvider();
+        List<string> methods = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            methods.Add(request.Method);
+            return Task.FromResult(request.Method switch
+            {
+                "skills/list" => TtlListResult(60000, Entry(), Entry("skill://other/unit-converter/")),
+                "resources/read" => ResourceReadResult(SkillUri, 1000, UpdatedContent),
+                "skills/get" => GetSkillResult(Entry(content: UpdatedContent), ttl),
+                _ => throw new InvalidOperationException(request.Method),
+            });
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        Assert.All(original, skill => Assert.Same(McpCacheLifetime.Infinite, Assert.IsType<AgentMcpSkill>(skill).MetadataLifetime));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
+
+        // Act
+        IList<AgentSkill> refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(remainingMilliseconds - 1));
+
+        // Assert
+        Assert.NotSame(original, refreshed);
+        Assert.NotSame(original[0], refreshed[0]);
+        Assert.Same(original[1], refreshed[1]);
+        Assert.Same(McpCacheLifetime.Infinite, Assert.IsType<AgentMcpSkill>(original[0]).MetadataLifetime);
+        Assert.NotSame(McpCacheLifetime.Infinite, Assert.IsType<AgentMcpSkill>(refreshed[0]).MetadataLifetime);
+        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(["skills/list", "resources/read", "skills/get"], methods);
+
+        // Act
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        IList<AgentSkill> expired = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(refreshed, expired);
+        Assert.Equal(["skills/list", "resources/read", "skills/get", catalogExpiresFirst ? "skills/list" : "skills/get"], methods);
+        if (!catalogExpiresFirst)
+        {
+            Assert.NotSame(refreshed[0], expired[0]);
+            Assert.Same(refreshed[1], expired[1]);
+
+            // Act
+            clock.Advance(TimeSpan.FromMilliseconds(50000 - remainingMilliseconds));
+            IList<AgentSkill> reloaded = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+            // Assert
+            Assert.NotSame(expired, reloaded);
+            Assert.Equal(["skills/list", "resources/read", "skills/get", "skills/get", "skills/list"], methods);
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("null")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("-9223372036854775808")]
+    public async Task GetSkillsAsync_RefreshedSkillMissingOrNonpositiveTtl_RefreshesOnlyThatSkillOnNextAccessAsync(string? ttl)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        List<string> methods = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            methods.Add(request.Method);
+            if (request.Method == "skills/get")
+            {
+                JsonObject result = GetSkillResult(Entry());
+                result.Remove("ttlMs");
+                if (ttl is not null)
+                {
+                    result["ttlMs"] = JsonNode.Parse(ttl);
+                }
+
+                return Task.FromResult(result);
+            }
+
+            return Task.FromResult(request.Method switch
+            {
+                "skills/list" => TtlListResult(60000, Entry(), Entry("skill://other/unit-converter/")),
+                "resources/read" => ResourceReadResult(SkillUri, 1000, SkillContent + "\nChanged."),
+                _ => throw new InvalidOperationException(request.Method),
+            });
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
+
+        // Act
+        IList<AgentSkill> refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(original, refreshed);
+        Assert.Same(original[1], refreshed[1]);
+        Assert.Equal(["skills/list", "resources/read", "skills/get"], methods);
+
+        // Act
+        IList<AgentSkill> next = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(refreshed, next);
+        Assert.NotSame(refreshed[0], next[0]);
+        Assert.Same(refreshed[1], next[1]);
+        Assert.Equal(["skills/list", "resources/read", "skills/get", "skills/get"], methods);
+    }
+
+    [Theory]
+    [InlineData(true, 600, 400, false)]
+    [InlineData(false, 600, 1000, false)]
+    [InlineData(true, 1100, 0, false)]
+    [InlineData(true, 600, 400, true)]
+    public async Task GetSkillsAsync_MultipleRefreshedSkillTtls_KeepIndependentExpirationsAsync(
+        bool shorterFirst, int secondResponseDelay, int remainingMilliseconds, bool separateBatches)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int gets = 0;
+        int lists = 0;
+        List<string> getUris = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            if (request.Method == "skills/list")
+            {
+                lists++;
+                return Task.FromResult(TtlListResult(60000, Entry(), Entry("skill://other/unit-converter/")));
+            }
+
+            string uri = request.Params!["uri"]!.GetValue<string>();
+            if (request.Method == "resources/read")
+            {
+                return Task.FromResult(ResourceReadResult(uri, 1000, SkillContent + "\nChanged."));
+            }
+
+            Assert.Equal("skills/get", request.Method);
+            getUris.Add(uri);
+            bool first = ++gets == 1;
+            if (gets == 2)
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(secondResponseDelay));
+            }
+
+            return Task.FromResult(GetSkillResult(Entry(uri[..^"SKILL.md".Length]), first == shorterFirst ? 1000 : 5000));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
+        if (separateBatches)
+        {
+            await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[1].GetContentAsync());
+
+        // Act
+        IList<AgentSkill> refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, gets);
+        Assert.Equal(1, lists);
+        Assert.NotSame(original[0], refreshed[0]);
+        Assert.NotSame(original[1], refreshed[1]);
+        if (remainingMilliseconds > 0)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(remainingMilliseconds - 1));
+            Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+            Assert.Equal(1, lists);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+        }
+
+        // Act
+        IList<AgentSkill> next = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(refreshed, next);
+        Assert.Equal(1, lists);
+        Assert.Equal(3, gets);
+        Assert.Equal(getUris[shorterFirst ? 0 : 1], getUris[2]);
+        int expiredIndex = refreshed[0] is AgentMcpSkill skill && skill.Uri == getUris[2] ? 0 : 1;
+        Assert.NotSame(refreshed[expiredIndex], next[expiredIndex]);
+        Assert.Same(refreshed[1 - expiredIndex], next[1 - expiredIndex]);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_CatalogExpiresAfterFreshnessCheck_DoesNotQueueListedSkillsAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int lists = 0;
+        List<string> gets = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            if (request.Method == "skills/list")
+            {
+                lists++;
+                return Task.FromResult(TtlListResult(1000, Entry(), Entry("skill://other/unit-converter/")));
+            }
+
+            string uri = request.Params!["uri"]!.GetValue<string>();
+            if (request.Method == "resources/read")
+            {
+                return Task.FromResult(ResourceReadResult(uri, 1000, SkillContent + "\nChanged."));
+            }
+
+            Assert.Equal("skills/get", request.Method);
+            gets.Add(uri);
+            return Task.FromResult(GetSkillResult(Entry(uri[..^"SKILL.md".Length])));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
+        clock.Advance(TimeSpan.FromMilliseconds(999));
+        int checks = 0;
+        clock.AfterTimestampRead = () =>
+        {
+            // Expire the catalog just after RefreshCatalogAsync observes it as fresh.
+            if (++checks == 2)
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(1));
+                clock.AfterTimestampRead = null;
+            }
+        };
+
+        // Act
+        IList<AgentSkill> refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal([SkillUri], gets);
+        Assert.Equal(1, lists);
+        Assert.NotSame(original[0], refreshed[0]);
+        Assert.Same(original[1], refreshed[1]);
+
+        // Act
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, lists);
+        Assert.Single(gets);
+    }
+
     [Fact]
     public async Task GetSkillsAsync_VerificationFailure_RefreshesManifestOnNextRequestAsync()
     {
@@ -134,7 +384,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Equal("Checklist.", await (await original.GetResourceAsync("references/checklist.md"))!.ReadAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await original.GetContentAsync());
         Assert.Equal([GuideUri, SkillUri, SkillUri, AddedUri, SkillUri], reads);
-        Assert.Same(refreshedList, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshedList, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Fact]
@@ -207,7 +457,7 @@ public sealed partial class AgentMcpSkillsTests
         await ReadSkillContentAsync(skill, instructions);
 
         // Assert
-        Assert.Same(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(["skills/list", "resources/read"], methods);
 
         // Act
@@ -218,7 +468,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Assert
         Assert.Equal(["skills/list", "resources/read", "resources/read"], methods);
-        Assert.Same(original, current);
+        Assert.Equal(original, current);
         Assert.Same(skill, current[0]);
     }
 
@@ -293,7 +543,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Same(original[1], refreshed[1]);
         Assert.Single(methods, method => method == "skills/list");
         Assert.Single(methods, method => method == "skills/get");
-        Assert.Equal(cached ? 3 : 2, methods.FindAll(method => method == "resources/read").Count);
+        Assert.Equal(2, methods.FindAll(method => method == "resources/read").Count);
         if (instructions)
         {
             Assert.Equal(updatedContent, await refreshed[0].GetContentAsync());
@@ -312,7 +562,8 @@ public sealed partial class AgentMcpSkillsTests
             await Assert.ThrowsAsync<InvalidOperationException>(() => ReadSkillContentAsync(original[0], instructions));
         }
 
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(cached ? 3 : 4, methods.FindAll(method => method == "resources/read").Count);
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Theory]
@@ -357,10 +608,10 @@ public sealed partial class AgentMcpSkillsTests
         IList<AgentSkill> current = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
-        Assert.Same(skills, current);
+        Assert.Equal(skills, current);
         Assert.Same(original, Assert.Single(current));
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await original.GetContentAsync());
-        Assert.Same(skills, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(skills, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(0, gets);
     }
 
@@ -397,7 +648,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Same(original[1], Assert.Single(refreshed));
         Assert.Equal(2, original.Count);
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(1, gets);
     }
 
@@ -478,7 +729,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Act & Assert
         Assert.Same(error, await Assert.ThrowsAsync(exceptionType, async () => await original[0].GetContentAsync()));
-        Assert.Same(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(cached ? ["skills/list", "resources/read", "resources/read"] : ["skills/list", "resources/read"], methods);
     }
 
@@ -538,7 +789,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
-        Assert.Same(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(cached ? ["skills/list", "resources/read", "resources/read"] : ["skills/list", "resources/read"], methods);
     }
 
@@ -566,7 +817,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await original[0].GetContentAsync(cts.Token));
-        Assert.Same(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(original, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(["skills/list", "resources/read"], methods);
     }
 
@@ -582,11 +833,13 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData("size", typeof(InvalidOperationException))]
     [InlineData("incomplete", typeof(InvalidOperationException))]
     [InlineData("dynamic", typeof(JsonException))]
+    [InlineData("ttl", typeof(JsonException))]
     public async Task GetSkillsAsync_VerificationRefreshFailure_RetainsPendingWorkAsync(string failure, Type exceptionType)
     {
         // Arrange
         const string UpdatedContent = SkillContent + "\nUpdated.";
         int gets = 0;
+        int reads = 0;
         var client = CreateTtlClient((request, _) =>
         {
             if (request.Method == "skills/list")
@@ -596,6 +849,7 @@ public sealed partial class AgentMcpSkillsTests
 
             if (request.Method == "resources/read")
             {
+                reads++;
                 return Task.FromResult(ResourceReadResult(SkillUri, 1000, UpdatedContent));
             }
 
@@ -616,6 +870,7 @@ public sealed partial class AgentMcpSkillsTests
                     case "size": result["skill"]!["resources"]![0]!["size"] = 2_000_000; break;
                     case "incomplete": result["skill"]!["resources"] = new JsonArray(); break;
                     case "dynamic": result["skill"]!["resources"] = "dynamic"; break;
+                    case "ttl": result["ttlMs"] = "1000"; break;
                     default: throw new ArgumentOutOfRangeException(nameof(failure));
                 }
             }
@@ -628,13 +883,16 @@ public sealed partial class AgentMcpSkillsTests
 
         // Act & Assert
         await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original[0].GetContentAsync());
+        Assert.Equal(2, reads);
         IList<AgentSkill> refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         Assert.NotSame(original, refreshed);
         Assert.NotSame(original[0], Assert.Single(refreshed));
         Assert.Single(original);
         Assert.Equal(UpdatedContent, await refreshed[0].GetContentAsync());
+        Assert.Equal(3, reads);
         Assert.Equal(2, gets);
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Theory]
@@ -644,6 +902,7 @@ public sealed partial class AgentMcpSkillsTests
     {
         // Arrange
         const string UpdatedContent = SkillContent + "\nUpdated.";
+        var clock = new ManualTimeProvider();
         int gets = 0;
         bool fail = true;
         var client = CreateTtlClient((request, _) =>
@@ -670,9 +929,9 @@ public sealed partial class AgentMcpSkillsTests
                 throw new McpProtocolException("Skill removed.", McpErrorCode.InvalidParams);
             }
 
-            return Task.FromResult(GetSkillResult(Entry(uri[..^"SKILL.md".Length], content: UpdatedContent)));
+            return Task.FromResult(GetSkillResult(Entry(uri[..^"SKILL.md".Length], content: UpdatedContent), fail ? 0 : 10000));
         });
-        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
         IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         AgentSkill[] held = [.. original];
         foreach (AgentSkill skill in original)
@@ -683,6 +942,7 @@ public sealed partial class AgentMcpSkillsTests
         // Act & Assert
         await Assert.ThrowsAsync<McpException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
         Assert.Equal(held, original);
+        clock.Advance(TimeSpan.FromMilliseconds(1));
         fail = false;
         IList<AgentSkill> refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         Assert.Equal(4, gets);
@@ -690,6 +950,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.NotSame(original[0], refreshed[0]);
         Assert.NotSame(original[1], refreshed[1]);
         Assert.Equal(held, original);
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Theory]
@@ -721,7 +982,7 @@ public sealed partial class AgentMcpSkillsTests
                         }
                     }
 
-                    return GetSkillResult(Entry());
+                    return GetSkillResult(Entry(), gets == 1 ? 0 : 10000);
                 default: throw new InvalidOperationException(request.Method);
             }
         });
@@ -740,7 +1001,7 @@ public sealed partial class AgentMcpSkillsTests
         IList<AgentSkill> refreshed = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.NotSame(original, Assert.Single(refreshed));
         Assert.Equal(2, gets);
-        Assert.Same(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
     }
 
     [Fact]
@@ -768,7 +1029,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Assert
         Assert.Equal(1, gets);
-        Assert.All(results, result => Assert.Same(results[0], result));
+        Assert.All(results, result => Assert.Same(Assert.Single(results[0]), Assert.Single(result)));
         Assert.NotSame(original, Assert.Single(results[0]));
     }
 
@@ -969,11 +1230,11 @@ public sealed partial class AgentMcpSkillsTests
     /// <summary>
     /// Creates a skills/get response for the supplied skill.
     /// </summary>
-    private static JsonObject GetSkillResult(JsonObject entry) => new()
+    private static JsonObject GetSkillResult(JsonObject entry, long ttl = 10000) => new()
     {
         ["resultType"] = "complete",
         ["skill"] = entry,
-        ["ttlMs"] = 10000,
+        ["ttlMs"] = ttl,
         ["cacheScope"] = "private",
     };
 
