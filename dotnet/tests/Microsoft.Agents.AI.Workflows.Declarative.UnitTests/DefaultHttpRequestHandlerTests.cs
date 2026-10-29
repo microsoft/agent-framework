@@ -116,10 +116,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         int providerCalls = 0;
         TestHttpMessageHandler messageHandler = new((_, _) =>
-        {
-            HttpResponseMessage response = new(HttpStatusCode.OK);
-            return Task.FromResult(response);
-        });
+            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         using HttpClient client = new(messageHandler);
         await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) =>
         {
