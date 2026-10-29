@@ -26,30 +26,10 @@ public sealed class DefaultHttpRequestHandlerTests
     #region Constructor Tests
 
     [Fact]
-    public async Task ConstructorWithNoParametersCreatesInstanceAsync()
-    {
-        // Act
-        await using DefaultHttpRequestHandler handler = new();
-
-        // Assert
-        Assert.NotNull(handler);
-    }
-
-    [Fact]
-    public async Task ConstructorWithNullProviderCreatesInstanceAsync()
-    {
-        // Act
-        await using DefaultHttpRequestHandler handler = new(httpClientProvider: null);
-
-        // Assert
-        Assert.NotNull(handler);
-    }
-
-    [Fact]
     public void ConstructorWithNullHttpClientThrows()
     {
         // Act
-        static void act() => _ = new DefaultHttpRequestHandler((HttpClient)null!);
+        static void act() => _ = new DefaultHttpRequestHandler([], (HttpClient)null!);
 
         // Assert
         Assert.Throws<ArgumentNullException>(act);
@@ -110,12 +90,12 @@ public sealed class DefaultHttpRequestHandlerTests
         using HttpClient client = new(messageHandler);
 #pragma warning disable CA2025
         await using DefaultHttpRequestHandler handler = useProvider
-            ? new((_, _) =>
+            ? new([], (_, _) =>
             {
                 providerCalls++;
                 return Task.FromResult<HttpClient?>(client);
             })
-            : new(client);
+            : new([], client);
 #pragma warning restore CA2025
         HttpRequestInfo request = new() { Url = TestUrl };
 
@@ -132,7 +112,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncWithNullRequestThrowsAsync()
     {
         // Arrange
-        await using DefaultHttpRequestHandler handler = new();
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"]);
 
         // Act
         async Task actAsync() => await handler.SendAsync(null!);
@@ -145,7 +125,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncWithEmptyUrlThrowsAsync()
     {
         // Arrange
-        await using DefaultHttpRequestHandler handler = new();
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"]);
         HttpRequestInfo request = new() { Method = "GET", Url = "" };
 
         // Act
@@ -159,7 +139,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncWithEmptyMethodThrowsAsync()
     {
         // Arrange
-        await using DefaultHttpRequestHandler handler = new();
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"]);
         HttpRequestInfo request = new() { Method = "", Url = TestUrl };
 
         // Act
@@ -169,14 +149,12 @@ public sealed class DefaultHttpRequestHandlerTests
         await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task SendAsyncWithoutAllowedHostsDoesNotConnectAsync(bool explicitEmptyAllowlist)
+    [Fact]
+    public async Task SendAsyncWithoutAllowedHostsDoesNotConnectAsync()
     {
         // Arrange
         await using RawHttpServer server = new();
-        await using DefaultHttpRequestHandler handler = explicitEmptyAllowlist ? new([]) : new();
+        await using DefaultHttpRequestHandler handler = new([]);
         HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
 
         // Act
@@ -1338,7 +1316,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task DisposeAsyncCompletesAsync()
     {
         // Arrange
-        DefaultHttpRequestHandler handler = new();
+        DefaultHttpRequestHandler handler = new(["api.example.test"]);
 
         // Act
         async Task actAsync() => await handler.DisposeAsync();
@@ -1351,7 +1329,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task DisposeAsyncCalledMultipleTimesSucceedsAsync()
     {
         // Arrange
-        DefaultHttpRequestHandler handler = new();
+        DefaultHttpRequestHandler handler = new(["api.example.test"]);
 
         // Act
         await handler.DisposeAsync();

@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </para>
 /// <para>
 /// Requests must use HTTP or HTTPS and target a host explicitly allowed by the application, including after
-/// redirects. The default allowlist is empty, so constructors without an allowlist reject all requests.
+/// redirects. Every constructor requires an explicit allowlist; an empty list rejects all requests.
 /// Host matching is exact and case-insensitive, with internationalized names and trailing DNS dots normalized;
 /// wildcards and implicit subdomains are not supported. Hosts are allowed independently of scheme and port.
 /// The allowlist is copied at construction and applies before invoking the client provider.
@@ -53,67 +53,8 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     private readonly Lazy<HttpClient> _ownedHttpClient;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses an
-    /// internally owned <see cref="HttpClient"/> for all requests. The internal client is disposed
-    /// when <see cref="DisposeAsync"/> is called. The allowlist is empty, so all requests are rejected.
-    /// </summary>
-    public DefaultHttpRequestHandler()
-        : this(httpClientProvider: null)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses the
-    /// supplied <see cref="HttpClient"/>. The allowlist is empty, so all requests are rejected.
-    /// </summary>
-    /// <param name="httpClient">
-    /// The <see cref="HttpClient"/> to use for all requests. The caller retains ownership of this
-    /// instance; it is not disposed by <see cref="DisposeAsync"/>.
-    /// </param>
-    /// <exception cref="ArgumentNullException"><paramref name="httpClient"/> is <see langword="null"/>.</exception>
-    public DefaultHttpRequestHandler(HttpClient httpClient)
-        : this(CreateSingleClientProvider(httpClient))
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that selects
-    /// an <see cref="HttpClient"/> per request via a caller-supplied callback — for example, to route
-    /// different URLs through differently authenticated clients. The allowlist is empty, so all requests
-    /// are rejected before invoking the callback.
-    /// </summary>
-    /// <param name="httpClientProvider">
-    /// An optional callback invoked for each request. The callback receives the <see cref="HttpRequestInfo"/>
-    /// and should return a pre-configured <see cref="HttpClient"/> (e.g. with authentication or a custom
-    /// transport). Return <see langword="null"/> to fall back to the handler's shared internal
-    /// <see cref="HttpClient"/>.
-    /// </param>
-    /// <remarks>
-    /// <para>
-    /// <b>Redirects</b>: the callback is also invoked for redirect destinations when the internally owned client
-    /// follows a redirect. It may reject a destination by throwing, or return <see langword="null"/> to continue
-    /// using the internally owned client. Returning a client for a redirect destination causes an
-    /// <see cref="HttpRequestException"/>; redirects cannot change the selected client.
-    /// </para>
-    /// <para>
-    /// <b>Ownership</b>: the caller is solely responsible for the lifetime of clients returned by this
-    /// callback. <see cref="DefaultHttpRequestHandler"/> will <b>not</b> dispose provider-returned
-    /// clients; only the handler's internally owned fallback client is disposed by <see cref="DisposeAsync"/>.
-    /// </para>
-    /// <para>
-    /// <b>Reuse</b>: callers are expected to cache and reuse clients (for example, keyed by base URL or
-    /// auth scope) across requests. Returning a newly allocated <see cref="HttpClient"/> on every
-    /// invocation will leak sockets and handler resources.
-    /// </para>
-    /// </remarks>
-    public DefaultHttpRequestHandler(Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
-        : this([], httpClientProvider)
-    {
-    }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
-    /// and an internally owned HTTP client.
+    /// and an internally owned HTTP client, disposed when <see cref="DisposeAsync"/> is called.
     /// </summary>
     /// <param name="allowedHosts">
     /// The exact DNS names or IP literals the application permits. An empty collection rejects all requests.
@@ -139,6 +80,12 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="allowedHosts"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
+    /// <remarks>
+    /// Clients returned by the provider remain caller-owned and are not disposed by this handler.
+    /// Cache and reuse them rather than allocating a client per request. The provider also runs for allowed
+    /// redirect destinations; return <see langword="null"/> to continue using the internal client or throw
+    /// to reject the destination. Returning a supplied client on a redirect is rejected.
+    /// </remarks>
     public DefaultHttpRequestHandler(
         IEnumerable<string> allowedHosts,
         Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)

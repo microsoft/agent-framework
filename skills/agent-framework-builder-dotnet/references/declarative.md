@@ -26,9 +26,9 @@ commitments.
   to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
 - `DefaultHttpRequestHandler` accepts HTTP(S) URLs only and denies every request unless the application supplies
   allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"])`. Configure the allowlist in
-  trusted application code, not in workflow content. Constructors without an allowlist allow no hosts, even with
-  a supplied client or client provider. The handler copies the list and checks it before invoking the provider and
-  on every handler-managed redirect.
+  trusted application code, not in workflow content. Every constructor requires an explicit allowlist, including
+  when supplying a client or client provider; an empty list allows no hosts. The handler copies the list and checks
+  it before invoking the provider and on every handler-managed redirect.
 - Allowed hosts are exact DNS names or IP literals, without schemes, ports, paths, or wildcards. Matching is
   case-insensitive, normalizes internationalized names and trailing DNS dots, and does not implicitly include
   subdomains. A host entry permits both HTTP and HTTPS and any port, subject to existing redirect restrictions.

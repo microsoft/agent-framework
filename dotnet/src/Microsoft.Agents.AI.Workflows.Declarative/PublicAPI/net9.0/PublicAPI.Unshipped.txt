@@ -1,4 +1,7 @@
 ﻿#nullable enable
+*REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler() -> void
+*REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Func<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Net.Http.HttpClient?>!>? httpClientProvider) -> void
+*REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Net.Http.HttpClient! httpClient) -> void
 Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AllowedEnvironmentVariables.get -> System.Collections.Generic.IEnumerable<string!>?
 Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AllowedEnvironmentVariables.init -> void
 Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AllowProcessEnvironmentVariableFallback.get -> bool

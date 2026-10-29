@@ -43,8 +43,8 @@ Bad: existing applications must configure their hosts, and allowing a hostname t
 
 Chosen option: "Require an application-owned host allowlist".
 
-The default list is empty and denies every request. Constructor overloads accept exact host names or IP
-literals, copy and normalize the list, and authorize the canonical URL before client selection and every
+Every constructor requires an explicit list; an empty list denies every request. Constructor overloads accept
+exact host names or IP literals, copy and normalize the list, and authorize the canonical URL before client selection and every
 handler-managed redirect. Matching is case-insensitive with IDN and trailing-dot normalization; wildcards and
 implicit subdomains are not supported. Entries authorize hosts, not individual schemes, ports, or IP ranges.
 Only HTTP(S) URLs are accepted, and existing redirect restrictions remain in effect.
@@ -54,6 +54,6 @@ automatic redirects and cookies on every target framework. Supplied clients rema
 disable automatic redirects or independently enforce the same allowlist on redirects inside their transport.
 The handler does not inspect or reconfigure an opaque supplied transport.
 
-This is a breaking behavioral change: existing constructors remain available but have an empty allowlist,
-including constructors accepting a client or provider. The HTTP sample and integration caller configure
-their intended hosts explicitly.
+This is a breaking API and behavioral change: the parameterless, client-only, and provider-only constructors
+are removed. Callers must supply an allowlist at construction, including when supplying a client or provider.
+The HTTP sample and integration caller configure their intended hosts explicitly.
