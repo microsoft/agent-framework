@@ -3,12 +3,12 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
+using OpenAIAgentReference = Azure.AI.Extensions.OpenAI.AgentReference;
 
 #pragma warning disable OPENAI001
 
@@ -58,7 +58,7 @@ internal static class FoundryPromptAgentConverter
         // Prompt Agent (Mode 2) AgentReference-only: fetch the agent definition from the service.
         // Honor a pinned AgentReference.Version when present (Q-C fix); fall back to the latest
         // version only when the reference is unpinned ("", null, or "latest").
-        if (foundryChatClient.GetService<AgentReference>() is { } agentReference)
+        if (foundryChatClient.GetService<OpenAIAgentReference>() is { } agentReference)
         {
             var aiProjectClient = foundryChatClient.GetService<AIProjectClient>()
                 ?? throw new InvalidOperationException(

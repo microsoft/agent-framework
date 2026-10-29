@@ -230,7 +230,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 is { } workflowCheckpointRecovery)
         {
             string? checkpointId =
-                stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
+                stream.PersistedMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
                 && !string.IsNullOrWhiteSpace(persistedCheckpointId)
                     ? persistedCheckpointId
                     : null;
@@ -429,7 +429,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                                     // AgentServer persists its orchestrator-owned response snapshot.
                                     // Apply the updated internal metadata first, then request persistence.
                                     pendingEvents.Enqueue(checkpointStateEvent);
-                                    pendingEvents.Enqueue(stream.Checkpoint());
+                                    pendingEvents.Enqueue(stream.CreateCheckpointEvent());
                                 }
 
                                 continue;
@@ -657,7 +657,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 || session is null
                 || session.GetService<WorkflowSessionCheckpointRecovery>() is null
                 || agentSessionKey is null
-                || (stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
+                || (stream.PersistedMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
                     && string.Equals(lastCheckpointId, checkpoint.CheckpointId, StringComparison.Ordinal)))
             {
                 return null;
@@ -685,7 +685,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 return null;
             }
 
-            stream.InternalMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
+            stream.PersistedMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
             return stream.EmitInProgress();
         }
 
@@ -964,7 +964,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
+            : $"Agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
@@ -1013,7 +1013,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
+            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }

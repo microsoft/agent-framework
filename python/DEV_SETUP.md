@@ -465,14 +465,6 @@ Use this for repo-wide tooling and dependency-group refreshes. For targeted
 runtime dependency upgrades, prefer `uv lock --upgrade-package
 <dependency-name>` plus the package-scoped bound validation tasks above.
 
-### Building and Publishing
-
-#### `publish`
-Publish packages to PyPI:
-```bash
-uv run poe publish
-```
-
 ## Prek Hooks
 
 Prek hooks run automatically on commit and stay intentionally lightweight:

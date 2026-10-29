@@ -78,7 +78,7 @@ await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAg
 });
 
 // AddFoundryResponses wires up the Responses API host for the agent and auto-applies OpenTelemetry.
-builder.Services.AddFoundryResponses(build.Agent);
+builder.AddFoundryResponses(build.Agent);
 
 var app = builder.Build();
 
