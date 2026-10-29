@@ -64,8 +64,8 @@ version does not match.
 You can then run the following commands manually:
 
 ```bash
-# Install every Python version covered by package or CI compatibility checks
-uv python install 3.10 3.11 3.12 3.13 3.14 3.15
+# Install every Python version covered by CI
+uv python install 3.11 3.12 3.13 3.14 3.15
 # Use Python 3.11 through 3.14 for a normal full-workspace development environment
 PYTHON_VERSION="3.13"
 uv venv --python $PYTHON_VERSION
@@ -76,18 +76,20 @@ uv run poe prek-install
 ```
 
 Python 3.10 is no longer supported because it has reached upstream end of life.
-Package metadata still permits Python 3.10 installation, and CI retains
-compatibility checks for now, but compatibility is not guaranteed. Use
+Package metadata still permits Python 3.10 installation, but CI no longer runs
+unit or integration tests on it and compatibility is not guaranteed. Use
 Python 3.11–3.15 for supported development environments, subject to the
 workspace and integration-specific limits below.
 
 The checked-in root workspace lock supports the common Python 3.11–3.14
-development range. CI validates the Python 3.10 and 3.15 boundaries by
-temporarily excluding workspace packages whose own Python constraints do not
-cover those versions; see `.github/actions/python-setup/action.yml`. For local
-work specifically targeting a boundary version, use an isolated
-package-scoped environment or the corresponding CI lane rather than expecting
-the frozen full-workspace install above to resolve unchanged.
+development range. CI validates the Python 3.15 boundary by temporarily
+excluding workspace packages whose own Python constraints do not cover that
+version; see `.github/actions/python-setup/action.yml`. For local work
+specifically targeting Python 3.15, use an isolated package-scoped environment
+or the corresponding CI lane rather than expecting the frozen full-workspace
+install above to resolve unchanged. Python 3.10 unit and integration tests no
+longer run in CI; use an isolated package-scoped environment for unsupported
+compatibility work.
 
 Alternatively, you can reinstall the venv, packages, dependencies and prek
 hooks with a single command. Poe is part of the cross-version development

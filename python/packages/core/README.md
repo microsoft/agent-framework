@@ -26,11 +26,11 @@ Supported Platforms:
 - OS: Windows, macOS, Linux
 
 Python 3.10 is no longer supported because it has reached upstream end of life.
-Package metadata still permits Python 3.10 installation, and CI retains
-compatibility checks for now, but compatibility is not guaranteed. Use
+Package metadata still permits Python 3.10 installation, but CI no longer runs
+unit or integration tests on it and compatibility is not guaranteed. Use
 Python 3.11–3.15 for supported environments, subject to
 [integration-specific limits](../../README.md#python-315-limitations). Raising
-the installation minimum and removing compatibility checks will be handled separately.
+the installation minimum will be handled separately.
 
 ## 1. Setup API Keys
 
