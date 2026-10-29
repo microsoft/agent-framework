@@ -11,6 +11,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, _AsyncGeneratorContextManager  # type: ignore
 from contextvars import ContextVar
+from pathlib import Path
 from textwrap import dedent
 from types import SimpleNamespace, TracebackType
 from typing import Any, cast
@@ -28,6 +29,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FileSessionStore,
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionTool,
@@ -246,6 +248,7 @@ async def _call_generated_mcp_tool(
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
     mcp_local_label: tuple[str, str] | None = None,
+    mcp_local_principals: list[dict[str, str]] | None = None,
     trust_server_ifc: bool = False,
     include_detailed_errors: bool = False,
     **kwargs: Any,
@@ -261,7 +264,7 @@ async def _call_generated_mcp_tool(
         **function_kwargs,
     )
     if mcp_local_label is not None:
-        from agent_framework.security import IntegrityLabel, _wrap_mcp_function_for_ifc
+        from agent_framework.security import PRINCIPAL_METADATA_KEY, IntegrityLabel, _wrap_mcp_function_for_ifc
 
         source_integrity, confidentiality = mcp_local_label
         function.additional_properties = {
@@ -270,6 +273,8 @@ async def _call_generated_mcp_tool(
             "confidentiality": confidentiality,
             "_mcp_trust_server_ifc": trust_server_ifc,
         }
+        if mcp_local_principals is not None:
+            function.additional_properties[PRINCIPAL_METADATA_KEY] = mcp_local_principals
         _wrap_mcp_function_for_ifc(function, IntegrityLabel(source_integrity))
     return await _auto_invoke_function(
         Content.from_function_call(call_id=f"call-{tool_name}", name=tool_name, arguments=kwargs),
@@ -1741,6 +1746,7 @@ async def test_exhausted_aggregate_budget_preserves_ifc_security_label() -> None
     ],
 )
 async def test_exhausted_aggregate_budget_enforces_ifc_on_detailed_mcp_error(
+    tmp_path: Path,
     server_ifc: dict[str, str],
     expected_integrity: str,
     expected_confidentiality: str,
@@ -1782,7 +1788,20 @@ async def test_exhausted_aggregate_budget_enforces_ifc_on_detailed_mcp_error(
     assert (
         function_result.items[0].additional_properties["security_label"]["confidentiality"] == expected_confidentiality
     )
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
     assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+    store = FileSessionStore(tmp_path / expected_integrity, serialization_format="json")
+    session = AgentSession(session_id=f"mcp-error-{expected_integrity}")
+    session.state["mcp_error_result"] = function_result
+    await store.set(session.session_id, session)
+    restored = await store.get(session.session_id)
+    assert restored is not None
+    restored_result = restored.state["mcp_error_result"]
+    assert isinstance(restored_result, dict)
+    restored_items = restored_result["items"]
+    assert isinstance(restored_items, list)
+    assert restored_items[0]["additional_properties"]["security_label"]["integrity"] == expected_integrity
     context_label = tracker.get_context_label()
     assert context_label.integrity.value == expected_integrity
     assert context_label.confidentiality.value == expected_confidentiality
@@ -1803,6 +1822,140 @@ async def test_exhausted_aggregate_budget_enforces_ifc_on_detailed_mcp_error(
             invocation,
             lambda _context: pytest.fail("MCP error IFC must block the protected public sink"),
         )
+
+
+async def test_retried_mcp_error_does_not_commit_swallowed_label() -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    error_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private failed attempt")],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    success_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="recovered")],
+        is_error=False,
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(side_effect=[error_result, success_result])
+
+    class RetryOnceMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Any]) -> None:
+            del context
+            try:
+                await call_next()
+            except ToolExecutionException:
+                await call_next()
+
+    tracker = LabelTrackingFunctionMiddleware()
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(RetryOnceMiddleware(), tracker),
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.result == "recovered"
+    context_label = tracker.get_context_label()
+    assert context_label.integrity.value == "trusted"
+    assert context_label.confidentiality.value == "public"
+
+    executed = False
+
+    def public_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    sink_tool = FunctionTool(
+        func=public_sink,
+        name="public_after_retry_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=sink_tool, arguments={})
+
+    async def execute_public_sink(_: FunctionInvocationContext) -> str:
+        return public_sink()
+
+    await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+        invocation,
+        execute_public_sink,
+    )
+    assert executed is True
+
+
+async def test_mcp_error_without_ifc_preserves_local_identity_principals() -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped failure")],
+        is_error=True,
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "user_identity"),
+        mcp_local_principals=principals,
+        include_detailed_errors=True,
+    )
+
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "user_identity"
+    assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == principals
+    context_label = tracker.get_context_label()
+    assert context_label.metadata[PRINCIPAL_METADATA_KEY] == principals
+
+    executed = False
+
+    def identity_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    sink_tool = FunctionTool(
+        func=identity_sink,
+        name="identity_after_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+    invocation = FunctionInvocationContext(function=sink_tool, arguments={})
+
+    async def execute_identity_sink(_: FunctionInvocationContext) -> str:
+        return identity_sink()
+
+    await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+        invocation,
+        execute_identity_sink,
+    )
+    assert executed is True
 
 
 async def test_oversized_identity_ifc_fails_closed_without_confidentiality_downgrade() -> None:

@@ -313,6 +313,7 @@ class _FunctionResultCarrier:
     additional_properties: dict[str, Any]
     item_additional_properties: dict[str, Any]
     private_metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    error_result_finalizer: Callable[[], None] | None = None
     exclusive_outer_keys: frozenset[str] = frozenset()
     exclusive_item_keys: frozenset[str] = frozenset()
     result_already_parsed: bool = False
@@ -2163,25 +2164,26 @@ def _finalize_function_result(
         exception=exception,
         additional_properties=additional_properties,
     )
-    if carrier is None or function_result.items is None:
-        return function_result
-
-    updated_items = list(function_result.items)
-    for index, item in enumerate(updated_items):
-        updated_item = copy.copy(item)
-        updated_item.additional_properties = dict(updated_item.additional_properties)
-        for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
-            updated_item.additional_properties.pop(key, None)
-        is_hidden_variable_reference = (
-            updated_item.type == "text" and updated_item.additional_properties.get("_variable_reference") is True
-        )
-        if not is_hidden_variable_reference:
-            updated_item.additional_properties = merge_additional_properties(
-                updated_item.additional_properties,
-                carrier.item_additional_properties,
+    if carrier is not None and function_result.items is not None:
+        updated_items = list(function_result.items)
+        for index, item in enumerate(updated_items):
+            updated_item = copy.copy(item)
+            updated_item.additional_properties = dict(updated_item.additional_properties)
+            for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
+                updated_item.additional_properties.pop(key, None)
+            is_hidden_variable_reference = (
+                updated_item.type == "text" and updated_item.additional_properties.get("_variable_reference") is True
             )
-        updated_items[index] = updated_item
-    function_result.items = updated_items
+            if not is_hidden_variable_reference:
+                updated_item.additional_properties = merge_additional_properties(
+                    updated_item.additional_properties,
+                    carrier.item_additional_properties,
+                )
+            updated_items[index] = updated_item
+        function_result.items = updated_items
+
+    if exception is not None and carrier is not None and carrier.error_result_finalizer is not None:
+        carrier.error_result_finalizer()
     return function_result
 
 
