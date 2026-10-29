@@ -9,7 +9,6 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from typing import Any, cast
-from uuid import uuid4
 
 from ..exceptions import WorkflowCheckpointException
 from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
@@ -67,7 +66,6 @@ class EdgeRunner(ABC):
         """
         self._edge_group = edge_group
         self._executors = executors
-        self._delivery_key = str(uuid4())
 
     async def send_message(
         self,
@@ -86,9 +84,15 @@ class EdgeRunner(ABC):
             bool: True if the message was processed successfully,
                 False if the target executor cannot handle the message.
         """
-        delivery = message._prepared_deliveries.pop(self._delivery_key, None)  # pyright: ignore[reportPrivateUsage]
-        if delivery is None:
-            delivery = await self._select_targets(message)
+        return await self._send_selected_message(message, state, ctx, await self._select_targets(message))
+
+    async def _send_selected_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+        delivery: tuple[bool, list[str]],
+    ) -> bool:
         processed, target_ids = delivery
         source_id = self._edge_group.edges[0].source_id
         if len(target_ids) == 1:
@@ -98,12 +102,6 @@ class EdgeRunner(ABC):
             *(self._execute_on_target(target_id, [source_id], message, state, ctx) for target_id in target_ids)
         )
         return processed
-
-    async def _prepare_message(self, message: WorkflowMessage) -> list[str]:
-        deliveries = message._prepared_deliveries  # pyright: ignore[reportPrivateUsage]
-        if self._delivery_key not in deliveries:
-            deliveries[self._delivery_key] = await self._select_targets(message)
-        return deliveries[self._delivery_key][1]
 
     @abstractmethod
     async def _select_targets(self, message: WorkflowMessage) -> tuple[bool, list[str]]:
@@ -397,6 +395,15 @@ class FanInEdgeRunner(EdgeRunner):
     async def _select_targets(self, message: WorkflowMessage) -> tuple[bool, list[str]]:
         # Fan-in delivers an aggregate rather than the wrapped reply itself.
         return False, []
+
+    async def _send_selected_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+        delivery: tuple[bool, list[str]],
+    ) -> bool:
+        return await self.send_message(message, state, ctx)
 
     def snapshot_state(self) -> dict[str, Any] | None:
         """Capture the buffered messages that are still waiting for the remaining sources.

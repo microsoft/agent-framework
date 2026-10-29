@@ -349,16 +349,17 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   are restored only once. Wrapped origins belong to their binding independently of external requests, even when
   a coordinator relays the same request ID. Origin insertion and removal stage individual mapping entries;
   committed snapshots remain unchanged until commit and discard rolls back pending changes.
-  Mixed-parent-scope response batches are rejected before consuming requests, including
-  across sibling bindings. Validation includes queued wrapped replies and runs before each live message
-  batch is drained, routing wrapped replies to their child's own policy. Preflight uses the edge runner's
-  actual target/type filtering, conditions, and fan-out selection, and dispatch reuses those decisions
-  without evaluating predicates again. Fan-in aggregates are not individual wrapped-reply deliveries.
-  Cancellation preflight combines
-  queued replies with the complete selected cancellation set before consuming any requests.
+  Ordinary response and cancellation batches reject mixed parent scopes before consuming requests.
+  Wrapped child replies select routes immediately before delivery, after preceding handlers on their source
+  have completed, and validate all selected targets together using each child's own policy. Predicates run once
+  per delivery, not during checkpoint or queue preflight. Fan-in aggregates are not individual wrapped replies.
+  Selected replies cannot introduce a different parent scope later in the same superstep. A rejected reply
+  and subsequent messages remain queued, but earlier handlers and child continuations are not rolled back.
+  Recover a partially executed failed run from a known-good checkpoint rather than retrying its remaining queue.
 - **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
   replacing live state or queues. `WorkflowExecutor` delegates its async private validation hook to its child's runner,
-  so each child uses its own response-origin policy and migration metadata stays in the candidate snapshot.
+  so ordinary queued responses use each child's own policy and migration metadata stays in the candidate snapshot.
+  Wrapped-reply policies run only at delivery after executor restoration; rejection does not undo that restoration.
 - **Response policy staging** - Live response validation does not copy request payloads. Policies validate
   without mutation and may return deferred metadata updates; all policies in the workflow tree must succeed
   before those updates are applied. This preserves in-process non-copyable payloads and atomic legacy-scope

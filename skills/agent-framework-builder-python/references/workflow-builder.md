@@ -40,6 +40,9 @@ between stages, final output, intermediate output, session ownership, and approv
 - Sessions are not automatically interchangeable between participants.
 - Tool approval and workflow human input are different suspension mechanisms.
 - Workflow streams include framework events in addition to application output.
+- Wrapped child replies evaluate routing after preceding handlers and checkpoint restoration, then validate the
+  selected children before delivery. A later rejection does not roll back earlier execution or restored state;
+  recover a partially executed failed run from a known-good checkpoint rather than retrying its remaining queue.
 
 ## Validation
 

@@ -9,7 +9,6 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from functools import cached_property
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
 from .._tools import ToolTypes
@@ -52,12 +51,6 @@ class WorkflowMessage:
 
     # For response messages, the original request data
     original_request_info_event: WorkflowEvent[Any] | None = None
-
-    @cached_property
-    def _prepared_deliveries(self) -> dict[str, tuple[bool, list[str]]]:
-        # Lazy initialization also supports messages unpickled from older checkpoints.
-        # Per-runner keys prevent reusing decisions in another workflow instance.
-        return {}
 
     # Backward compatibility properties
     @property

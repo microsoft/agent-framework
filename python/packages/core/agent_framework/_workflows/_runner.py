@@ -90,7 +90,10 @@ class RunnerImpl:
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
         self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
-        self._queued_response_validator: Callable[[], Awaitable[None]] | None = None
+        self._queued_response_validator: Callable[[set[str]], Awaitable[None]] | None = None
+        self._wrapped_response_validator: (
+            Callable[[Mapping[str, Sequence[WorkflowEvent]], set[str]], Awaitable[None]] | None
+        ) = None
 
     @property
     def context(self) -> RunnerContext:
@@ -212,7 +215,13 @@ class RunnerImpl:
           a source by specifying the target, the messages will be delivered to the specified targets
           in the order they were sent. This is because all messages go through the same edge runner instance
           which preserves message order.
+        - Wrapped replies wait for preceding messages from their source, then select and validate all
+          targets before concurrent delivery. Other sources remain concurrent.
         """
+        from ._workflow_executor import SubWorkflowResponseMessage
+
+        scopes: set[str] = set()
+        next_message: dict[str, int] = {}
 
         async def _deliver_messages(source_executor_id: str, source_messages: list[WorkflowMessage]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
@@ -221,10 +230,12 @@ class RunnerImpl:
                 """Inner loop to deliver a single message through an edge runner."""
                 return await edge_runner.send_message(message, self._state, self._ctx)
 
-            async def _deliver_messages_for_edge_runner(edge_runner: EdgeRunner) -> None:
+            async def _deliver_messages_for_edge_runner(
+                edge_runner: EdgeRunner, messages: Sequence[WorkflowMessage]
+            ) -> None:
                 # Preserve message order per edge runner (and therefore per routed target path)
                 # while still allowing parallelism across different edge runners.
-                for message in source_messages:
+                for message in messages:
                     await _deliver_message_inner(edge_runner, message)
 
             # Route all messages through normal workflow edges
@@ -232,20 +243,75 @@ class RunnerImpl:
             if not associated_edge_runners:
                 # This is expected for terminal nodes (e.g., EndWorkflow, last action in workflow)
                 logger.debug(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
+                next_message[source_executor_id] = len(source_messages)
                 return
 
-            tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
-            await gather_cancelling_siblings_on_error(*tasks)
+            start = 0
+            for index, message in enumerate(source_messages):
+                if not isinstance(message.data, SubWorkflowResponseMessage):
+                    continue
+                # Earlier handlers must finish before state-dependent reply routes are selected.
+                next_message[source_executor_id] = index
+                if index > start:
+                    await gather_cancelling_siblings_on_error(
+                        *(
+                            _deliver_messages_for_edge_runner(runner, source_messages[start:index])
+                            for runner in associated_edge_runners
+                        )
+                    )
+                deliveries = [
+                    (runner, await runner._select_targets(message))  # pyright: ignore[reportPrivateUsage]
+                    for runner in associated_edge_runners
+                ]
+                targets = {target for _, (_, target_ids) in deliveries for target in target_ids}
+                if self._wrapped_response_validator is not None:
+                    await self._wrapped_response_validator(
+                        {target: [message.data.source_event] for target in targets}, scopes
+                    )
+                next_message[source_executor_id] = index + 1
+                await gather_cancelling_siblings_on_error(
+                    *(
+                        runner._send_selected_message(  # pyright: ignore[reportPrivateUsage]
+                            message, self._state, self._ctx, delivery
+                        )
+                        for runner, delivery in deliveries
+                    )
+                )
+                start = index + 1
+            next_message[source_executor_id] = len(source_messages)
+            if start < len(source_messages):
+                await gather_cancelling_siblings_on_error(
+                    *(
+                        _deliver_messages_for_edge_runner(runner, source_messages[start:])
+                        for runner in associated_edge_runners
+                    )
+                )
 
         if self._queued_response_validator is not None:
-            await self._queued_response_validator()
+            await self._queued_response_validator(scopes)
         message_batches = await self._ctx.drain_messages()
-        await gather_cancelling_siblings_on_error(
-            *(
-                _deliver_messages(source_executor_id, source_messages)
-                for source_executor_id, source_messages in message_batches.items()
+        try:
+            await gather_cancelling_siblings_on_error(
+                *(
+                    _deliver_messages(source_executor_id, source_messages)
+                    for source_executor_id, source_messages in message_batches.items()
+                )
             )
-        )
+        except BaseException:
+            remaining = [
+                message
+                for source_id, messages in message_batches.items()
+                for message in messages[next_message.get(source_id, 0) :]
+            ]
+            if remaining:
+                # Siblings have stopped; retain undelivered replies ahead of newly emitted messages.
+                queued = await self._ctx.drain_messages()
+                for message in remaining:
+                    await self._ctx.send_message(message)
+                for messages in queued.values():
+                    for message in messages:
+                        await self._ctx.send_message(message)
+            raise
 
     async def _get_queued_messages(self) -> Mapping[str, Sequence[WorkflowMessage]]:
         if isinstance(self._ctx, _SupportsQueuedMessages):
@@ -255,24 +321,6 @@ class RunnerImpl:
             self._workflow_name, self._graph_signature_hash, self._state, None, self._iteration
         )
         return checkpoint.messages
-
-    async def _get_wrapped_response_requests(
-        self, messages: Mapping[str, Sequence[WorkflowMessage]]
-    ) -> dict[str, list[WorkflowEvent]]:
-        from ._workflow_executor import SubWorkflowResponseMessage
-
-        requests: defaultdict[str, list[WorkflowEvent]] = defaultdict(list)
-        for batch in messages.values():
-            for message in batch:
-                if not isinstance(message.data, SubWorkflowResponseMessage):
-                    continue
-                # Wrapped replies retain child-local source IDs; route through the parent graph.
-                targets: set[str] = set()
-                for runner in self._edge_runner_map.get(message.source_id, []):
-                    targets.update(await runner._prepare_message(message))  # pyright: ignore[reportPrivateUsage]
-                for target_id in targets:
-                    requests[target_id].append(message.data.source_event)
-        return dict(requests)
 
     async def _prepare_checkpoint_state(self) -> None:
         """Persist executor snapshots into committed shared state.
@@ -453,7 +501,6 @@ class RunnerImpl:
         ]
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
-        wrapped_requests = await self._get_wrapped_response_requests(checkpoint.messages)
         parent_contexts = checkpoint.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
         validate_request_contexts(
             parent_contexts,
@@ -461,18 +508,16 @@ class RunnerImpl:
             boundary_contexts=[
                 (
                     checkpoint.state.get(request_context_state_key(executor_id), parent_contexts),
-                    wrapped_requests.get(executor_id, []),
+                    (),
                 )
                 for executor_id in self._executors
-                if executor_id in wrapped_requests or request_context_state_key(executor_id) in checkpoint.state
+                if request_context_state_key(executor_id) in checkpoint.state
             ],
         )
         if EXECUTOR_STATE_KEY in checkpoint.state:
             delegated_by_executor: defaultdict[str, list[WorkflowEvent]] = defaultdict(list)
             for request in requests:
                 delegated_by_executor[request.source_executor_id].append(request)
-            for target_id, batch in wrapped_requests.items():
-                delegated_by_executor[target_id].extend(batch)
             for _, executor, state in self._get_executor_states(checkpoint.state[EXECUTOR_STATE_KEY]):
                 await executor._validate_checkpoint_restore(  # pyright: ignore[reportPrivateUsage]
                     state, delegated_by_executor[executor.id]

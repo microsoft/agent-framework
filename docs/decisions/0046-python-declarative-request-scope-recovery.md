@@ -44,9 +44,10 @@ Choose explicit host opt-in through
   it before continuing. Agent requests also retain their own loop configuration.
 - Factory-built workflows validate all submitted request origins before consuming
   responses. Mixed-scope batches are rejected without changing request metadata.
-- Checkpoint restores validate queued response origins before restoring shared or
-  executor state, including embedded child checkpoints. Submitted and already
-  queued responses share the same batch validation before pending requests are consumed.
+- Checkpoint restores validate ordinary queued response origins before restoring
+  shared or executor state, including embedded child checkpoints. Submitted and
+  ordinary queued responses share batch validation before pending requests are consumed.
+  Wrapped child replies validate selected routes at delivery, after executor restoration.
 - Nested restoration preflights a detached copy of the complete embedded tree
   with each child's own policy before applying live state or queues. Migration
   metadata is confined to that candidate; a rejected child leaves earlier
@@ -108,11 +109,11 @@ is checkpointed with its owning workflow, including at every embedded boundary.
 After a child successfully resumes or cancels a request, restore the saved parent
 context before forwarding outputs or capturing the origins of follow-up requests.
 Release completed origins, preserve still-pending origins across new inputs, and
-reject mixed-parent-scope response batches before consuming any requests, including
-batches spanning sibling bindings. Cancellation batches obey the same parent-scope
-rule because cancellation can also produce downstream outputs.
-Checkpoint preflight applies the same validation
-to queued propagated and wrapped replies before replacing live state.
+reject mixed-parent-scope ordinary response batches before consuming any requests,
+including batches spanning sibling bindings. Cancellation batches obey the same
+parent-scope rule because cancellation can also produce downstream outputs.
+Checkpoint preflight applies the same validation to queued propagated replies
+before replacing live state. Wrapped replies use the delivery boundary below.
 
 Older checkpoints without boundary origins cannot reconstruct those ancestors'
 original scopes. A successful child continuation therefore receives a new isolated
@@ -138,11 +139,8 @@ with committed values unchanged until the superstep commits. Discard rolls back
 these entry updates. Full-map validation and detached copies remain checkpoint
 and response-batch operations, not per-request insertion or removal work.
 
-Preflight includes both propagated responses and wrapped child replies already
-queued for delivery. Route wrapped replies through the parent graph to validate
-their child's own policy without treating child scopes as parent-policy scopes.
-Repeat validation before each live message batch is drained, so a rejected batch
-retains its queued replies. Cancellation validates queued replies together with
+Preflight includes propagated responses already queued for delivery. Repeat
+validation before each live message batch is drained. Cancellation validates ordinary queued replies together with
 the complete selected cancellation set before consuming requests or invoking
 cancellation handlers. Legacy runner contexts use a non-persisting snapshot when
 optional queued-message inspection is unavailable.
@@ -153,7 +151,33 @@ response policies validate without mutation and return deferred updates to the
 scope metadata they own. Apply these updates only after every policy in the tree
 has validated. This preserves cross-child rejection atomicity without copying user
 payloads or changing their identity. Stored checkpoint restoration still preflights
-its detached candidate tree before replacing live state.
+ordinary responses in its detached candidate tree before replacing live state.
+
+## State-dependent wrapped-reply routing
+
+Edge callbacks can read executor fields changed by preceding handlers or restored
+from a checkpoint. Evaluating them during queue or detached-checkpoint preflight
+and caching their decisions changes normal routing behavior. Copying executors
+does not rebind arbitrary callback closures, and speculative handler or restore-hook
+execution can have external side effects. An explicit stable/snapshot-aware routing
+API would impose a new contract on existing graphs.
+
+Instead, finish preceding messages from a source before selecting a wrapped
+reply's targets. Evaluate each edge callback once, validate all selected targets
+together against their own child policies, then deliver that reply. Track selected
+parent scopes through the superstep so a later delivery cannot introduce a
+different scope after earlier origins have been released. Normal message batches
+retain concurrent edge delivery; wrapped replies form delivery barriers, with
+their selected targets still executing concurrently.
+
+This deliberately narrows atomicity for wrapped replies: rejection retains the
+rejected and subsequent undelivered messages, but cannot undo earlier handlers,
+child continuations, external effects, or already restored checkpoint state.
+Recover a partially executed failed run from a known-good checkpoint rather than
+retrying its remaining queue. Ordinary response/cancellation batches and detached
+structural and ordinary-response checkpoint validation retain their preflight
+guarantees. No callback is assumed pure, and no executor is cloned or replayed
+speculatively.
 
 The proposed deciders are Python code owners; maintainer and
 engineering-management approval is still required.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any, cast
 
 from ._const import (
@@ -60,9 +60,10 @@ def validate_request_contexts(
     requests: Sequence[WorkflowEvent] = (),
     *,
     boundary_contexts: Sequence[tuple[Any, Sequence[WorkflowEvent]]] = (),
-) -> None:
-    """Preflight all origin owners together before any responses are consumed."""
-    scopes: set[str] = set()
+    previous_scopes: Collection[str] = (),
+) -> set[str]:
+    """Validate selected origins together with earlier deliveries in the same batch."""
+    scopes = set(previous_scopes)
     for pending_contexts, pending_requests in ((contexts, requests), *boundary_contexts):
         if not isinstance(pending_contexts, dict):
             raise ValueError("Invalid parent workflow request contexts.")
@@ -78,6 +79,7 @@ def validate_request_contexts(
         )
     if len(scopes) > 1:
         raise ValueError("Responses span multiple parent workflow scopes; submit each scope in a separate run.")
+    return scopes
 
 
 def capture_request_context(state: State, request_id: str, *, boundary_id: str | None = None) -> None:

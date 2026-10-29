@@ -428,8 +428,11 @@ class Workflow(DictConvertible):
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
         self._response_batch_validator: _ResponseBatchValidator | None = None
         self._runner._response_batch_validator = self._validate_response_batch  # pyright: ignore[reportPrivateUsage]
-        self._runner._queued_response_validator = functools.partial(  # pyright: ignore[reportPrivateUsage]
-            self._validate_response_requests, ()
+        self._runner._queued_response_validator = (  # pyright: ignore[reportPrivateUsage]
+            lambda scopes: self._validate_response_requests((), scopes=scopes)
+        )
+        self._runner._wrapped_response_validator = (  # pyright: ignore[reportPrivateUsage]
+            lambda wrapped, scopes: self._validate_response_requests((), wrapped_requests=wrapped, scopes=scopes)
         )
         self._initial_state_initializer: Callable[[State], None] | None = None
 
@@ -1204,19 +1207,32 @@ class Workflow(DictConvertible):
             if migration is not None:
                 migration()
 
-    async def _validate_response_requests(self, requests: Sequence[WorkflowEvent]) -> None:
-        validations = await self._get_response_validation_batches(requests)
+    async def _validate_response_requests(
+        self,
+        requests: Sequence[WorkflowEvent],
+        *,
+        wrapped_requests: Mapping[str, Sequence[WorkflowEvent]] | None = None,
+        scopes: set[str] | None = None,
+    ) -> None:
+        validations = await self._get_response_validation_batches(
+            requests, wrapped_requests=wrapped_requests, scopes=scopes
+        )
         migrations = [validator(batch) for validator, batch in validations]
         for migration in migrations:
             if migration is not None:
                 migration()
 
     async def _get_response_validation_batches(
-        self, requests: Sequence[WorkflowEvent]
+        self,
+        requests: Sequence[WorkflowEvent],
+        *,
+        wrapped_requests: Mapping[str, Sequence[WorkflowEvent]] | None = None,
+        scopes: set[str] | None = None,
     ) -> list[_ResponseBatchValidation]:
         messages = await self._runner._get_queued_messages()  # pyright: ignore[reportPrivateUsage]
         queued_requests = _get_queued_response_info_events(messages)
-        wrapped_requests = await self._runner._get_wrapped_response_requests(messages)  # pyright: ignore[reportPrivateUsage]
+        if wrapped_requests is None:
+            wrapped_requests = {}
         batch = [*queued_requests, *requests]
         parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
         boundary_contexts = [
@@ -1228,8 +1244,16 @@ class Workflow(DictConvertible):
             if executor_id in wrapped_requests or self._runner.state.has(request_context_state_key(executor_id))
         ]
 
-        def validate_parent_contexts(_requests: Sequence[WorkflowEvent]) -> None:
-            validate_request_contexts(parent_contexts, batch, boundary_contexts=boundary_contexts)
+        def validate_parent_contexts(_requests: Sequence[WorkflowEvent]) -> Callable[[], None] | None:
+            selected_scopes = validate_request_contexts(
+                parent_contexts,
+                batch,
+                boundary_contexts=boundary_contexts,
+                previous_scopes=scopes if scopes is not None else (),
+            )
+            if scopes is not None:
+                return functools.partial(scopes.update, selected_scopes)
+            return None
 
         validations: list[_ResponseBatchValidation] = []
         if self._response_batch_validator is not None:

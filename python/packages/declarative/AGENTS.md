@@ -109,12 +109,17 @@ instructions. Hosts can opt in through
 receives a stable `legacy-request:<framework request ID>` scope. Migration never
 infers an origin from current state or recovers the old MCP session. Resume requests
 separately, preserve their framework IDs, and checkpoint the migrated continuation.
-The same validation and migration run before restoring queued checkpoint responses,
+The same validation and migration run before restoring ordinary queued checkpoint responses,
 including embedded child checkpoints. The complete nested tree is validated on a
 detached snapshot before any parent or child state, executor state, or queue is
 replaced; a rejected descendant does not partially restore earlier siblings.
-Newly submitted responses are validated together with already queued responses
+Newly submitted responses are validated together with ordinary queued responses
 before any pending request is consumed.
+Wrapped child replies instead select and validate their actual routes immediately
+before delivery, after earlier handlers and checkpoint restoration. All selected
+children must validate before that reply is delivered. A later rejected reply does
+not roll back earlier continuations or restored state; recover a partially executed
+failed run from a known-good checkpoint rather than retrying its remaining queue.
 Rejected mixed batches do not mutate request origins. Malformed stored origins
 are rejected even with migration enabled. Legacy agent loop configuration is read
 from the old checkpoint slot; newly emitted requests retain their own snapshot.

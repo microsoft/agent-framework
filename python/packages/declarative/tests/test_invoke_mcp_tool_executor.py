@@ -31,7 +31,6 @@ pytestmark = pytest.mark.skipif(
 
 from agent_framework import AgentSession, CheckpointStorage, Content, Message, Workflow  # noqa: E402
 from agent_framework.exceptions import ToolExecutionException  # noqa: E402
-
 from agent_framework_declarative._workflows import (  # noqa: E402
     DECLARATIVE_STATE_KEY,
     DeclarativeWorkflowError,
@@ -122,7 +121,6 @@ def _build_manual_mcp_workflow(
     mcp_handler: MCPToolHandler, *, depth: int, require_approval: bool = False
 ) -> tuple[Workflow, Workflow]:
     from agent_framework import WorkflowBuilder, WorkflowExecutor
-
     from agent_framework_declarative._workflows._executors_mcp import InvokeMcpToolActionExecutor
 
     leaf = WorkflowBuilder(
@@ -231,7 +229,6 @@ class TestFieldForwarding:
     async def test_manual_approval_continuations_restore_core_scopes(self, streaming: bool, restore: bool) -> None:
         from agent_framework import InMemoryCheckpointStorage, WorkflowEvent
         from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
-
         from agent_framework_declarative._workflows import ToolApprovalResponse
 
         mcp_handler = StubMcpHandler(_ok())
@@ -473,7 +470,6 @@ class TestFieldForwarding:
         self, pause_kind: str, streaming: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
-
         from agent_framework_declarative._workflows import ExternalInputResponse
 
         storage = InMemoryCheckpointStorage()
@@ -548,7 +544,6 @@ class TestFieldForwarding:
         self, pause_kind: str, streaming: bool, restore: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage, WorkflowEvent
-
         from agent_framework_declarative._workflows import ExternalInputResponse
 
         storage = InMemoryCheckpointStorage()
@@ -608,7 +603,6 @@ class TestFieldForwarding:
         self, mixed_approval: bool, streaming: bool, restore: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
-
         from agent_framework_declarative._workflows import ExternalInputResponse, ToolApprovalResponse
 
         storage = InMemoryCheckpointStorage()
@@ -823,7 +817,6 @@ class TestFieldForwarding:
         self, streaming: bool, approved: bool, restore: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
-
         from agent_framework_declarative._workflows import ToolApprovalResponse
 
         storage = InMemoryCheckpointStorage()
@@ -1152,7 +1145,6 @@ class TestFieldForwarding:
         self, restore: bool, agent_sessions: bool, streaming: bool, approved: bool, second_approved: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
-
         from agent_framework_declarative._workflows import ToolApprovalResponse
 
         storage = InMemoryCheckpointStorage()
@@ -1228,7 +1220,6 @@ class TestFieldForwarding:
     @pytest.mark.parametrize("approved", [False, True])
     async def test_same_scope_approval_batch_is_supported(self, streaming: bool, approved: bool) -> None:
         from agent_framework import WorkflowBuilder
-
         from agent_framework_declarative._workflows import InvokeMcpToolActionExecutor, ToolApprovalResponse
         from agent_framework_declarative._workflows._declarative_builder import _validate_response_batch
         from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
@@ -1947,7 +1938,7 @@ class TestRequestScopeContinuations:
     @pytest.mark.parametrize("depth", [1, 2])
     @pytest.mark.parametrize("targeted", [False, True])
     @pytest.mark.parametrize("mode", ["missing", "invalid", "migrate", "valid"])
-    async def test_wrapped_child_response_preflight_preserves_state(
+    async def test_wrapped_child_response_validation_uses_restored_state(
         self, tmp_path: Path, restore_kind: str, depth: int, targeted: bool, mode: str
     ) -> None:
         from copy import deepcopy
@@ -1955,6 +1946,7 @@ class TestRequestScopeContinuations:
         from agent_framework import (
             Executor,
             SubWorkflowRequestMessage,
+            SubWorkflowResponseMessage,
             WorkflowBuilder,
             WorkflowContext,
             WorkflowExecutor,
@@ -1963,7 +1955,6 @@ class TestRequestScopeContinuations:
         from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
         from agent_framework._workflows._const import EXECUTOR_STATE_KEY
         from agent_framework._workflows._runner_context import WorkflowMessage
-        from agent_framework.exceptions import WorkflowCheckpointException
 
         class RestoreRecorder(Executor):
             def __init__(self) -> None:
@@ -2041,48 +2032,38 @@ class TestRequestScopeContinuations:
             workflow._runner.state.set("uncommitted", "keep")
         recorder.value = "live"
 
-        async def snapshots() -> list[Any]:
-            result: list[Any] = []
-            for workflow in workflows:
-                snapshot = await workflow._runner_context.build_checkpoint(
-                    workflow.name, workflow.graph_signature_hash, workflow._runner.state, None, 0
-                )
-                result.append(
-                    encode_checkpoint_value({
-                        "state": snapshot.state,
-                        "messages": snapshot.messages,
-                        "requests": snapshot.pending_request_info_events,
-                    })
-                )
-            return result
-
-        before = await snapshots()
-
         async def restore() -> None:
             if restore_kind == "embedded":
                 await parent._runner.restore_checkpoint(checkpoint)
             else:
                 await parent._runner.restore_from_checkpoint(checkpoint.checkpoint_id)
 
+        await restore()
         if mode in {"missing", "invalid"}:
-            with pytest.raises(WorkflowCheckpointException):
-                await restore()
-            assert await snapshots() == before
-            assert recorder.value == "live"
-            assert recorder.restore_calls == 0
-            assert all(workflow._runner.state.get("uncommitted") == "keep" for workflow in workflows)
+            with pytest.raises(DeclarativeWorkflowError):
+                _ = [event async for event in parent._runner.run_until_convergence()]
+            pending = await leaves[1]._runner_context.get_pending_request_info_events()
+            assert set(pending) == {child_request.request_id}
+            assert pending[child_request.request_id].data.workflow_session_id == (42 if mode == "invalid" else None)
+            queued = await parent._runner._get_queued_messages()
+            assert [
+                message.data.source_event.request_id
+                for messages in queued.values()
+                for message in messages
+                if isinstance(message.data, SubWorkflowResponseMessage)
+            ] == [child_request.request_id]
         else:
-            await restore()
             _ = [event async for event in parent._runner.run_until_convergence()]
-            assert all(workflow._runner.state.get("restore_marker") == "snapshot" for workflow in workflows)
-            assert recorder.value == "snapshot"
-            assert recorder.restore_calls == 1
             assert {invocation.workflow_session_id for invocation in mcp_handler.invocations} == {
                 sibling_scope,
                 f"legacy-request:{child_request.request_id}" if mode == "migrate" else original_scope,
             }
+        assert all(workflow._runner.state.get("restore_marker") == "snapshot" for workflow in workflows)
+        assert all(not workflow._runner.state.has("uncommitted") for workflow in workflows)
+        assert recorder.value == "snapshot"
+        assert recorder.restore_calls == 1
         assert encode_checkpoint_value(checkpoint.to_dict()) == checkpoint_before
-        assert mcp_handler.call_count == (2 if mode in {"migrate", "valid"} else 0)
+        assert mcp_handler.call_count == (2 if mode in {"migrate", "valid"} else 1)
 
     @pytest.mark.parametrize("depth", [1, 2])
     @pytest.mark.parametrize("mode", ["missing", "invalid", "queued"])
@@ -2510,7 +2491,6 @@ class TestApprovalFlow:
     @pytest.mark.asyncio
     async def test_auth_context_binding_survives_workflow_resume(self, restore: bool, change_context: bool) -> None:
         from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
-
         from agent_framework_declarative._workflows import (
             ActionTrigger,
             ExternalInputResponse,

@@ -4,7 +4,6 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-
 from agent_framework import (
     Case,
     Default,
@@ -52,7 +51,8 @@ def selected_reply_workflow() -> Callable[
 
             @handler
             async def start(self, message: str, ctx: WorkflowContext[str]) -> None:
-                await ctx.send_message(message, target_id=message)
+                for target in ("first", "second") if message == "both" else (message,):
+                    await ctx.send_message(target, target_id=target)
 
             @handler
             async def reply(
