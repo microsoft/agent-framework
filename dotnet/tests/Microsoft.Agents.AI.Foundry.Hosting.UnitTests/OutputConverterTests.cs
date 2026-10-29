@@ -305,6 +305,208 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    [Theory]
+    [InlineData("msg_1", "msg_1", "msg_1")]
+    [InlineData(null, null, null)]
+    [InlineData("", "", "")]
+    [InlineData("msg_1", null, "msg_1")]
+    [InlineData(null, "msg_1", "msg_1")]
+    public async Task ConvertUpdatesToEventsAsync_MultipleReasoningUpdates_EmitsOneReasoningItemWithDeltasAsync(
+        string? firstMessageId, string? secondMessageId, string? thirdMessageId)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { MessageId = firstMessageId, Contents = [new TextReasoningContent("Checking")] },
+            new AgentResponseUpdate { MessageId = secondMessageId, Contents = [new TextReasoningContent(" the logs.")] },
+            new AgentResponseUpdate { MessageId = thirdMessageId, Contents = [new TextReasoningContent(" CPU is high.")] },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var added = Assert.IsType<ResponseOutputItemAddedEvent>(events[0]);
+        var addedReasoning = Assert.IsType<OutputItemReasoningItem>(added.Item);
+        Assert.IsType<ResponseReasoningSummaryPartAddedEvent>(events[1]);
+        Assert.Equal("Checking", Assert.IsType<ResponseReasoningSummaryTextDeltaEvent>(events[2]).Delta);
+        Assert.Equal(" the logs.", Assert.IsType<ResponseReasoningSummaryTextDeltaEvent>(events[3]).Delta);
+        Assert.Equal(" CPU is high.", Assert.IsType<ResponseReasoningSummaryTextDeltaEvent>(events[4]).Delta);
+        Assert.Equal("Checking the logs. CPU is high.", Assert.IsType<ResponseReasoningSummaryTextDoneEvent>(events[5]).Text);
+        Assert.IsType<ResponseReasoningSummaryPartDoneEvent>(events[6]);
+        var done = Assert.IsType<ResponseOutputItemDoneEvent>(events[7]);
+        var reasoning = Assert.IsType<OutputItemReasoningItem>(done.Item);
+        Assert.Equal(addedReasoning.Id, reasoning.Id);
+        Assert.Equal("Checking the logs. CPU is high.", Assert.Single(reasoning.Summary).Text);
+        var completed = Assert.IsType<ResponseCompletedEvent>(events[8]);
+        Assert.Equal(reasoning.Id, Assert.IsType<OutputItemReasoningItem>(Assert.Single(completed.Response.Output)).Id);
+        Assert.Equal(9, events.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConvertUpdatesToEventsAsync_ReasoningWithDifferentMessageIds_EmitsSeparateItemsAsync(bool includeNullMessageId)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new List<AgentResponseUpdate>
+        {
+            new() { MessageId = "msg_1", Contents = [new TextReasoningContent("First")] },
+        };
+        if (includeNullMessageId)
+        {
+            updates.Add(new AgentResponseUpdate { Contents = [new TextReasoningContent(" message")] });
+        }
+
+        updates.Add(new AgentResponseUpdate { MessageId = "msg_2", Contents = [new TextReasoningContent("Second")] });
+        updates.Add(new AgentResponseUpdate { MessageId = "msg_2", Contents = [new TextReasoningContent(" message")] });
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var added = events.OfType<ResponseOutputItemAddedEvent>().ToList();
+        Assert.Equal(2, added.Count);
+        Assert.NotEqual(Assert.IsType<OutputItemReasoningItem>(added[0].Item).Id,
+            Assert.IsType<OutputItemReasoningItem>(added[1].Item).Id);
+        Assert.Equal(
+            new[] { includeNullMessageId ? "First message" : "First", "Second message" },
+            events.OfType<ResponseReasoningSummaryTextDoneEvent>().Select(e => e.Text));
+        var done = events.OfType<ResponseOutputItemDoneEvent>().ToList();
+        Assert.Equal(2, done.Count);
+        Assert.True(events.IndexOf(done[0]) < events.IndexOf(added[1]));
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ReasoningTextReasoning_EmitsTwoReasoningItemsAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents =
+                [
+                    new TextReasoningContent("First"),
+                    new TextReasoningContent(" thought"),
+                    new MeaiTextContent("Answer"),
+                    new TextReasoningContent("Second"),
+                    new TextReasoningContent(" thought"),
+                ],
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var added = events.OfType<ResponseOutputItemAddedEvent>().ToList();
+        Assert.Collection(added,
+            e => Assert.IsType<OutputItemReasoningItem>(e.Item),
+            e => Assert.IsType<OutputItemMessage>(e.Item),
+            e => Assert.IsType<OutputItemReasoningItem>(e.Item));
+        Assert.Collection(events.OfType<ResponseReasoningSummaryTextDoneEvent>(),
+            e => Assert.Equal("First thought", e.Text),
+            e => Assert.Equal("Second thought", e.Text));
+        var done = events.OfType<ResponseOutputItemDoneEvent>().ToList();
+        Assert.Equal(3, done.Count);
+        Assert.True(events.IndexOf(done[0]) < events.IndexOf(added[1]));
+        Assert.True(events.IndexOf(done[1]) < events.IndexOf(added[2]));
+    }
+
+    [Theory]
+    [InlineData("function_call")]
+    [InlineData("function_result")]
+    [InlineData("approval")]
+    [InlineData("error")]
+    public async Task ConvertUpdatesToEventsAsync_NonReasoningContent_ClosesReasoningFirstAsync(string contentType)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        AIContent content = contentType switch
+        {
+            "function_call" => new FunctionCallContent("call_1", "search", null),
+            "function_result" => new FunctionResultContent("call_1", "result"),
+            "approval" => new ToolApprovalRequestContent("request_1", new FunctionCallContent("call_1", "search", null)),
+            _ => new ErrorContent("Test failure"),
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate { Contents = [new TextReasoningContent("Thinking")] },
+            new AgentResponseUpdate { Contents = [new TextReasoningContent("...")] },
+            new AgentResponseUpdate { Contents = [content] },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Equal("Thinking...", Assert.Single(events.OfType<ResponseReasoningSummaryTextDoneEvent>()).Text);
+        Assert.IsType<ResponseReasoningSummaryPartDoneEvent>(events[5]);
+        Assert.IsType<OutputItemReasoningItem>(Assert.IsType<ResponseOutputItemDoneEvent>(events[6]).Item);
+        if (contentType == "error")
+        {
+            Assert.IsType<ResponseFailedEvent>(events[7]);
+            Assert.DoesNotContain(events, e => e is ResponseCompletedEvent);
+        }
+        else
+        {
+            var nextItem = Assert.IsType<ResponseOutputItemAddedEvent>(events[7]);
+            Assert.IsNotType<OutputItemReasoningItem>(nextItem.Item);
+            Assert.IsType<ResponseCompletedEvent>(events[^1]);
+        }
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_StreamEndsDuringReasoning_ClosesReasoningBeforeCompletedAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { Contents = [new TextReasoningContent("Thinking")] },
+            new AgentResponseUpdate { Contents = [new UsageContent(new UsageDetails { OutputTokenCount = 2 })] },
+            new AgentResponseUpdate { Contents = [new TextReasoningContent("...")] },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Equal("Thinking...", Assert.Single(events.OfType<ResponseReasoningSummaryTextDoneEvent>()).Text);
+        Assert.IsType<ResponseReasoningSummaryTextDoneEvent>(events[^4]);
+        Assert.IsType<ResponseReasoningSummaryPartDoneEvent>(events[^3]);
+        Assert.IsType<OutputItemReasoningItem>(Assert.IsType<ResponseOutputItemDoneEvent>(events[^2]).Item);
+        var completed = Assert.IsType<ResponseCompletedEvent>(events[^1]);
+        Assert.Equal(2, completed.Response.Usage!.OutputTokens);
+        var reasoning = Assert.IsType<OutputItemReasoningItem>(Assert.Single(completed.Response.Output));
+        Assert.Equal("Thinking...", Assert.Single(reasoning.Summary).Text);
+    }
+
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_CancellationRequested_ThrowsAsync()
     {

@@ -220,6 +220,48 @@ public class OutputConverterWorkflowTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    [Fact]
+    public async Task WorkflowReasoningFromDifferentExecutors_EmitsSeparateItemsAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { RawRepresentation = new ExecutorInvokedEvent("agent_1", "start") },
+            new AgentResponseUpdate { Contents = [new TextReasoningContent("First")] },
+            new AgentResponseUpdate { Contents = [new TextReasoningContent(" thought")] },
+            new AgentResponseUpdate { RawRepresentation = new ExecutorCompletedEvent("agent_1", null) },
+            new AgentResponseUpdate { RawRepresentation = new ExecutorInvokedEvent("agent_2", "start") },
+            new AgentResponseUpdate { Contents = [new TextReasoningContent("Second")] },
+            new AgentResponseUpdate { Contents = [new TextReasoningContent(" thought")] },
+            new AgentResponseUpdate { RawRepresentation = new ExecutorCompletedEvent("agent_2", null) },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var reasoningAdded = events.OfType<ResponseOutputItemAddedEvent>()
+            .Where(e => e.Item is OutputItemReasoningItem).ToList();
+        Assert.Equal(2, reasoningAdded.Count);
+        Assert.Collection(events.OfType<ResponseReasoningSummaryTextDoneEvent>(),
+            e => Assert.Equal("First thought", e.Text),
+            e => Assert.Equal("Second thought", e.Text));
+        foreach (var added in reasoningAdded)
+        {
+            var reasoning = Assert.IsType<OutputItemReasoningItem>(added.Item);
+            var done = Assert.Single(events.OfType<ResponseOutputItemDoneEvent>(),
+                e => e.Item is OutputItemReasoningItem item && item.Id == reasoning.Id);
+            Assert.IsType<ResponseOutputItemAddedEvent>(events[events.IndexOf(done) + 1]);
+        }
+
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
     private static (ResponseEventStream stream, Mock<ResponseContext> mockContext) CreateTestStream()
     {
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
