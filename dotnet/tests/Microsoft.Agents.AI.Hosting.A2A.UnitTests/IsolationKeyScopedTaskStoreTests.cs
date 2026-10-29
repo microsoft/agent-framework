@@ -280,6 +280,48 @@ public sealed class IsolationKeyScopedTaskStoreTests
     }
 
     /// <summary>
+    /// Verifies that a captured isolation key is used in strict mode once the provider can no longer resolve one,
+    /// as happens when execution outlives the request.
+    /// </summary>
+    [Fact]
+    public async Task GetTaskAsync_StrictMode_CapturedKey_UsedWhenProviderReturnsNullAsync()
+    {
+        // Arrange
+        var innerStore = new Mock<ITaskStore>();
+        var store = new IsolationKeyScopedTaskStore(innerStore.Object, CreateKeyProvider(null), strict: true);
+
+        // Act
+        using (IsolationKeyScopedTaskStore.UseCapturedIsolationKey(AliceKey))
+        {
+            await store.GetTaskAsync(TaskId);
+        }
+
+        // Assert
+        innerStore.Verify(s => s.GetTaskAsync($"{AliceKey}::{TaskId}", It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Null(IsolationKeyScopedTaskStore.CapturedIsolationKey);
+    }
+
+    /// <summary>
+    /// Verifies that a captured isolation key takes precedence over the ambient provider.
+    /// </summary>
+    [Fact]
+    public async Task GetTaskAsync_CapturedKey_TakesPrecedenceOverProviderAsync()
+    {
+        // Arrange
+        var innerStore = new Mock<ITaskStore>();
+        var store = new IsolationKeyScopedTaskStore(innerStore.Object, CreateKeyProvider(BobKey), strict: true);
+
+        // Act
+        using (IsolationKeyScopedTaskStore.UseCapturedIsolationKey(AliceKey))
+        {
+            await store.GetTaskAsync(TaskId);
+        }
+
+        // Assert
+        innerStore.Verify(s => s.GetTaskAsync($"{AliceKey}::{TaskId}", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
     /// Verifies that colons in the isolation key are escaped to prevent ID ambiguity.
     /// </summary>
     [Fact]
