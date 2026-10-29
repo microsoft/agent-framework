@@ -64,6 +64,8 @@ from agent_framework._tools import (
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
+from .mcp_approval_helpers import ForwardingMCPTool, approval_request_names, run_function_call
+
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("LOCAL_MCP_URL", "") == "",
@@ -3277,20 +3279,13 @@ def test_mcp_tool_warns_when_never_list_has_no_default(approval_mode: MCPSpecifi
     assert recorded[0].filename == __file__
 
 
-class _ForwardingMCPTool(MCPStreamableHTTPTool):
-    """Transport subclass whose constructor forwards to the transport constructor."""
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(name="docs", url="https://example.com/mcp", **kwargs)
-
-
 def test_mcp_tool_approval_warning_points_at_the_constructing_caller() -> None:
     approval_mode: MCPSpecificApproval = {"never_require_approval": ["tool_one"]}
     with pytest.warns(FutureWarning, match="without `default`") as recorded:
         frame = inspect.currentframe()
         assert frame is not None
         expected_line = frame.f_lineno + 1
-        _ForwardingMCPTool(approval_mode=approval_mode)
+        ForwardingMCPTool(approval_mode=approval_mode)
 
     assert recorded[0].filename == __file__
     assert recorded[0].lineno == expected_line
@@ -3413,46 +3408,14 @@ async def test_mcp_tool_named_in_neither_list_waits_for_approval_with_default(
     )
     await tool.load_tools()
 
-    async def run_with_call(function_name: str) -> ChatResponse:
-        function_call = Content.from_function_call(call_id=f"call-{function_name}", name=function_name, arguments={})
-        if streaming:
-            chat_client_base.streaming_responses = [
-                [ChatResponseUpdate(role="assistant", contents=[function_call], finish_reason="tool_calls")],
-                [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
-            ]
-            stream = chat_client_base.get_response(
-                [Message(role="user", contents=["run"])],
-                stream=True,
-                options={"tools": tool.functions},
-            )
-            async for _ in stream:
-                pass
-            return await stream.get_final_response()
-        chat_client_base.run_responses = [
-            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
-            ChatResponse(messages=Message(role="assistant", contents=["done"])),
-        ]
-        return await chat_client_base.get_response(
-            [Message(role="user", contents=["run"])],
-            options={"tools": tool.functions},
-        )
+    exempt_response = await run_function_call(chat_client_base, tool.functions, "search_docs", streaming=streaming)
 
-    def approval_requests(response: ChatResponse) -> list[str | None]:
-        return [
-            content.function_call.name
-            for message in response.messages
-            for content in message.contents
-            if content.type == "function_approval_request" and content.function_call is not None
-        ]
-
-    exempt_response = await run_with_call("search_docs")
-
-    assert approval_requests(exempt_response) == []
+    assert approval_request_names(exempt_response) == []
     assert mock_session.call_tool.await_count == 1
 
-    gated_response = await run_with_call("delete_records")
+    gated_response = await run_function_call(chat_client_base, tool.functions, "delete_records", streaming=streaming)
 
-    assert approval_requests(gated_response) == ["delete_records"]
+    assert approval_request_names(gated_response) == ["delete_records"]
     assert mock_session.call_tool.await_count == 1
 
 
