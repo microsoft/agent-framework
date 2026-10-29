@@ -164,9 +164,15 @@ API would impose a new contract on existing graphs.
 
 Instead, finish preceding messages from a source before selecting a wrapped
 reply's targets. Evaluate each edge callback once, validate all selected targets
-together against their own child policies, then deliver that reply. Track selected
-parent scopes through the superstep so a later delivery cannot introduce a
-different scope after earlier origins have been released. Normal message batches
+together against their own child policies, then deliver that reply. Retain the
+accepted parent scope in checkpoint-backed shared state while the continuation
+has in-flight messages. Later supersteps and mid-run checkpoint replay cannot
+introduce a different scope after earlier origins have been released. Clear this
+guard at quiescence before capturing the final checkpoint, so a later response-only
+run may resume another origin. An accepted new run with no in-flight work also
+resets the guard; restoring an in-flight checkpoint preserves it. Validate stored
+guard metadata before replacing live state.
+Normal message batches
 retain concurrent edge delivery; wrapped replies form delivery barriers, with
 their selected targets still executing concurrently.
 

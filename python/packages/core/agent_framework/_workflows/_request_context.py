@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, cast
 
 from ._const import (
@@ -12,6 +12,7 @@ from ._const import (
     WORKFLOW_AGENT_SESSION_ID_KEY,
     WORKFLOW_PARENT_SESSION_ID_KEY,
     WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY,
+    WORKFLOW_RESPONSE_SCOPE_KEY,
     WORKFLOW_SESSION_ID_KEY,
 )
 from ._events import WorkflowEvent
@@ -26,6 +27,16 @@ _RUN_CONTEXT_KEYS = (
     WORKFLOW_AGENT_SESSION_ID_KEY,
 )
 _MISSING_ORIGIN = object()
+
+
+def get_response_scopes(state: State | Mapping[str, Any]) -> set[str]:
+    """Read the accepted scope retained while a response continuation has in-flight work."""
+    scope = state.get(WORKFLOW_RESPONSE_SCOPE_KEY)
+    if scope is None:
+        return set()
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Invalid parent workflow response scope.")
+    return {scope}
 
 
 def request_context_state_key(boundary_id: str | None = None) -> str:
@@ -62,7 +73,7 @@ def validate_request_contexts(
     boundary_contexts: Sequence[tuple[Any, Sequence[WorkflowEvent]]] = (),
     previous_scopes: Collection[str] = (),
 ) -> set[str]:
-    """Validate selected origins together with earlier deliveries in the same batch."""
+    """Validate selected origins together with earlier deliveries in the same continuation."""
     scopes = set(previous_scopes)
     for pending_contexts, pending_requests in ((contexts, requests), *boundary_contexts):
         if not isinstance(pending_contexts, dict):

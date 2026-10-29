@@ -40,6 +40,7 @@ from ._const import (
     WORKFLOW_AGENT_SESSION_NAMESPACE_KEY,
     WORKFLOW_PARENT_SESSION_ID_KEY,
     WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY,
+    WORKFLOW_RESPONSE_SCOPE_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
     WORKFLOW_SESSION_ID_KEY,
 )
@@ -60,7 +61,12 @@ from ._executor import (
     _ResponseBatchValidator,  # pyright: ignore[reportPrivateUsage]
 )
 from ._model_utils import DictConvertible
-from ._request_context import request_context_state_key, restore_request_context, validate_request_contexts
+from ._request_context import (
+    get_response_scopes,
+    request_context_state_key,
+    restore_request_context,
+    validate_request_contexts,
+)
 from ._runner import RunnerImpl
 from ._runner_context import (
     RunnerContext,
@@ -1020,7 +1026,8 @@ class Workflow(DictConvertible):
             # NOTE: _validate_run_params already enforces that ``message`` is
             # mutually exclusive with both ``checkpoint_id`` and ``responses``,
             # so we don't need to re-check those here.
-            if message is not None and await self._runner.context.has_messages():
+            has_messages = await self._runner.context.has_messages()
+            if message is not None and has_messages:
                 raise RuntimeError(
                     "Cannot start a new run with 'message' while in-flight executor "
                     "messages remain from a prior run. Resume from a checkpoint "
@@ -1028,6 +1035,9 @@ class Workflow(DictConvertible):
                     "Workflows that need to recover from a mid-run failure must use "
                     "checkpointing; there is no in-process recovery path."
                 )
+
+            if checkpoint_id is None and not has_messages and self._runner.state.has(WORKFLOW_RESPONSE_SCOPE_KEY):
+                self._runner.state.delete(WORKFLOW_RESPONSE_SCOPE_KEY)
 
             # Warn (but don't block) when a fresh message or a checkpoint restore begins while the
             # workflow still has pending request_info events from an unfinished request/response
@@ -1233,6 +1243,8 @@ class Workflow(DictConvertible):
         queued_requests = _get_queued_response_info_events(messages)
         if wrapped_requests is None:
             wrapped_requests = {}
+        if scopes is None:
+            scopes = get_response_scopes(self._runner.state)
         batch = [*queued_requests, *requests]
         parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
         boundary_contexts = [
@@ -1244,16 +1256,20 @@ class Workflow(DictConvertible):
             if executor_id in wrapped_requests or self._runner.state.has(request_context_state_key(executor_id))
         ]
 
-        def validate_parent_contexts(_requests: Sequence[WorkflowEvent]) -> Callable[[], None] | None:
+        def validate_parent_contexts(_requests: Sequence[WorkflowEvent]) -> Callable[[], None]:
             selected_scopes = validate_request_contexts(
                 parent_contexts,
                 batch,
                 boundary_contexts=boundary_contexts,
-                previous_scopes=scopes if scopes is not None else (),
+                previous_scopes=scopes,
             )
-            if scopes is not None:
-                return functools.partial(scopes.update, selected_scopes)
-            return None
+
+            def accept_scope() -> None:
+                scopes.update(selected_scopes)
+                if selected_scopes:
+                    self._runner.state.set(WORKFLOW_RESPONSE_SCOPE_KEY, next(iter(selected_scopes)))
+
+            return accept_scope
 
         validations: list[_ResponseBatchValidation] = []
         if self._response_batch_validator is not None:

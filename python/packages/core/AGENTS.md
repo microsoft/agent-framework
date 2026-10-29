@@ -353,7 +353,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   Wrapped child replies select routes immediately before delivery, after preceding handlers on their source
   have completed, and validate all selected targets together using each child's own policy. Predicates run once
   per delivery, not during checkpoint or queue preflight. Fan-in aggregates are not individual wrapped replies.
-  Selected replies cannot introduce a different parent scope later in the same superstep. A rejected reply
+  Selected replies cannot introduce a different parent scope while a continuation has in-flight messages.
+  The accepted scope is checkpoint-backed across supersteps and clears at quiescence before the final
+  checkpoint, so a later response-only run can select another origin. A rejected reply
   and subsequent messages remain queued, but earlier handlers and child continuations are not rolled back.
   Recover a partially executed failed run from a known-good checkpoint rather than retrying its remaining queue.
 - **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before

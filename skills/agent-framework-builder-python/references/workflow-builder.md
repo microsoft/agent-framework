@@ -43,6 +43,8 @@ between stages, final output, intermediate output, session ownership, and approv
 - Wrapped child replies evaluate routing after preceding handlers and checkpoint restoration, then validate the
   selected children before delivery. A later rejection does not roll back earlier execution or restored state;
   recover a partially executed failed run from a known-good checkpoint rather than retrying its remaining queue.
+- Accepted reply scopes persist across supersteps and in-flight checkpoint replay until messages drain. A later
+  response-only run may resume a different originating scope.
 
 ## Validation
 

@@ -128,3 +128,87 @@ def selected_reply_workflow() -> Callable[
         return builder.build(), children, requests, calls
 
     return build
+
+
+@pytest.fixture
+def staggered_reply_workflow() -> Callable[
+    [], tuple[Workflow, dict[str, Workflow], dict[str, SubWorkflowRequestMessage], list[tuple[str, str]]]
+]:
+    def build() -> tuple[Workflow, dict[str, Workflow], dict[str, SubWorkflowRequestMessage], list[tuple[str, str]]]:
+        requests: dict[str, SubWorkflowRequestMessage] = {}
+        observed: list[tuple[str, str]] = []
+
+        class Requester(Executor):
+            @handler
+            async def start(self, message: str, ctx: WorkflowContext) -> None:
+                await ctx.request_info(message, bool, request_id=message)
+
+            @response_handler
+            async def respond(self, original: str, approved: bool, ctx: WorkflowContext[Any, str]) -> None:
+                await ctx.yield_output(original)
+
+        class Coordinator(Executor):
+            @handler
+            async def start(self, message: str, ctx: WorkflowContext[str]) -> None:
+                for target in ("first", "second") if message == "both" else (message,):
+                    await ctx.send_message(target, target_id=target)
+
+            @handler
+            async def intercept(self, request: SubWorkflowRequestMessage, ctx: WorkflowContext) -> None:
+                requests[request.executor_id] = request
+                await ctx.request_info(request.executor_id, bool, request_id=request.executor_id)
+
+            @response_handler
+            async def respond(
+                self, original: str, approved: bool, ctx: WorkflowContext[SubWorkflowResponseMessage]
+            ) -> None:
+                await ctx.send_message(requests[original].create_response(approved), target_id=original)
+
+            @handler
+            async def stagger(
+                self,
+                replies: list[SubWorkflowResponseMessage],
+                ctx: WorkflowContext[SubWorkflowResponseMessage | tuple[SubWorkflowResponseMessage]],
+            ) -> None:
+                await ctx.send_message(replies[0], target_id="first")
+                await ctx.send_message((replies[1],), target_id="delay")
+
+        class ReplyHop(Executor):
+            @handler
+            async def forward(
+                self, reply: tuple[SubWorkflowResponseMessage], ctx: WorkflowContext[SubWorkflowResponseMessage]
+            ) -> None:
+                await ctx.send_message(reply[0])
+
+        class OutputHop(Executor):
+            @handler
+            async def forward(self, message: str, ctx: WorkflowContext[str]) -> None:
+                await ctx.send_message(message)
+
+        class Recorder(Executor):
+            @handler
+            async def record(self, message: str, ctx: WorkflowContext[Any, str]) -> None:
+                from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+                observed.append((message, ctx.get_state(WORKFLOW_SESSION_ID_KEY)))
+                await ctx.yield_output(message)
+
+        children = {
+            name: WorkflowBuilder(start_executor=Requester(id="requester")).build() for name in ("first", "second")
+        }
+        wrappers = {name: WorkflowExecutor(child, id=name) for name, child in children.items()}
+        coordinator = Coordinator(id="coordinator")
+        delay = ReplyHop(id="delay")
+        output = OutputHop(id="output")
+        recorder = Recorder(id="recorder")
+        builder = WorkflowBuilder(start_executor=coordinator)
+        for wrapper in wrappers.values():
+            builder.add_edge(coordinator, wrapper).add_edge(
+                wrapper, coordinator, condition=lambda message: isinstance(message, SubWorkflowRequestMessage)
+            ).add_edge(wrapper, output)
+        parent = (
+            builder.add_edge(coordinator, delay).add_edge(delay, wrappers["second"]).add_edge(output, recorder).build()
+        )
+        return parent, children, requests, observed
+
+    return build

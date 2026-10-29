@@ -589,6 +589,110 @@ async def test_wrapped_reply_routing_uses_checkpointed_executor_fields(
 
 
 @pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("restore", [False, True])
+async def test_staggered_wrapped_replies_reject_cross_scope_continuation(
+    staggered_reply_workflow, streaming: bool, restore: bool
+) -> None:
+    parent, children, requests, observed = staggered_reply_workflow()
+    await parent.run("first")
+    await parent.run("second")
+    replies = [requests[name].create_response(True) for name in ("first", "second")]
+    checkpoint_id: str | None = None
+    storage: InMemoryCheckpointStorage | None = None
+    if restore:
+        await parent._runner_context.send_message(
+            WorkflowMessage(data=replies[0], source_id="coordinator", target_id="first")
+        )
+        await parent._runner_context.send_message(
+            WorkflowMessage(data=(replies[1],), source_id="coordinator", target_id="delay")
+        )
+        await parent._runner._run_iteration()
+        storage = InMemoryCheckpointStorage()
+        checkpoint_id = await storage.save(await parent._runner.build_checkpoint())
+        parent, children, _, observed = staggered_reply_workflow()
+
+    with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+        if streaming:
+            _ = [
+                event
+                async for event in parent.run(
+                    None if restore else replies,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_storage=storage,
+                    stream=True,
+                )
+            ]
+        else:
+            await parent.run(None if restore else replies, checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+    assert not await children["first"]._runner_context.get_pending_request_info_events()
+    assert set(await children["second"]._runner_context.get_pending_request_info_events()) == {"second"}
+    assert observed == []
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_staggered_wrapped_replies_allow_one_parent_scope(staggered_reply_workflow, streaming: bool) -> None:
+    from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+    parent, children, requests, observed = staggered_reply_workflow()
+    await parent.run("both")
+    scope = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+    replies = [requests[name].create_response(True) for name in ("first", "second")]
+    if streaming:
+        events = [event async for event in parent.run(replies, stream=True)]
+        outputs = [event.data for event in events if event.type == "output"]
+    else:
+        outputs = (await parent.run(replies)).get_outputs()
+    assert sorted(outputs) == ["first", "second"]
+    assert sorted(observed) == [("first", scope), ("second", scope)]
+    for child in children.values():
+        assert not await child._runner_context.get_pending_request_info_events()
+
+
+@pytest.mark.parametrize("restore", [False, True])
+async def test_separate_response_runs_can_restore_different_parent_scopes(
+    staggered_reply_workflow, restore: bool
+) -> None:
+    from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+    parent, children, _, observed = staggered_reply_workflow()
+    scopes: list[str] = []
+    for name in ("first", "second"):
+        await parent.run(name)
+        scopes.append(parent._runner.state.get(WORKFLOW_SESSION_ID_KEY))
+    assert scopes[0] != scopes[1]
+    for name, scope in zip(("first", "second"), scopes, strict=True):
+        if restore and name == "second":
+            storage = InMemoryCheckpointStorage()
+            checkpoint_id = await storage.save(await parent._runner.build_checkpoint())
+            result = await parent.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage, responses={name: True})
+        else:
+            result = await parent.run(responses={name: True})
+        assert result.get_outputs() == [name]
+        assert observed[-1] == (name, scope)
+        assert not await children[name]._runner_context.get_pending_request_info_events()
+
+
+@pytest.mark.parametrize("scope", ["", False, ["first"]])
+async def test_checkpoint_rejects_malformed_response_scope_without_restoring(
+    staggered_reply_workflow, scope: Any
+) -> None:
+    from agent_framework import WorkflowCheckpointException
+    from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
+    from agent_framework._workflows._const import WORKFLOW_RESPONSE_SCOPE_KEY
+
+    parent, _, _, _ = staggered_reply_workflow()
+    await parent.run("first")
+    checkpoint = await parent._runner.build_checkpoint()
+    checkpoint.state[WORKFLOW_RESPONSE_SCOPE_KEY] = scope
+    before = encode_checkpoint_value(parent._runner.state.export_state())
+    with pytest.raises(WorkflowCheckpointException) as error:
+        await parent._runner.restore_checkpoint(checkpoint)
+    assert isinstance(error.value.__cause__, ValueError)
+    assert "Invalid parent workflow response scope" in str(error.value.__cause__)
+    assert encode_checkpoint_value(parent._runner.state.export_state()) == before
+
+
+@pytest.mark.parametrize("streaming", [False, True])
 async def test_response_validation_preserves_noncopyable_request_payload(streaming: bool) -> None:
     from threading import Lock
 

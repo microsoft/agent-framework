@@ -15,12 +15,12 @@ from ..exceptions import (
     WorkflowConvergenceException,
 )
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
-from ._const import EDGE_STATE_KEY, EXECUTOR_STATE_KEY
+from ._const import EDGE_STATE_KEY, EXECUTOR_STATE_KEY, WORKFLOW_RESPONSE_SCOPE_KEY
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner, gather_cancelling_siblings_on_error
 from ._events import WorkflowEvent
 from ._executor import Executor
-from ._request_context import request_context_state_key, validate_request_contexts
+from ._request_context import get_response_scopes, request_context_state_key, validate_request_contexts
 from ._runner_context import (
     RunnerContext,
     WorkflowMessage,
@@ -174,6 +174,9 @@ class RunnerImpl:
 
                 logger.info(f"Completed superstep {self._iteration}")
 
+                # Idle checkpoints must allow a later response run to select a different origin.
+                if not await self._ctx.has_messages() and self._state.has(WORKFLOW_RESPONSE_SCOPE_KEY):
+                    self._state.delete(WORKFLOW_RESPONSE_SCOPE_KEY)
                 # Commit pending state changes at superstep boundary
                 self._state.commit()
                 committed = True
@@ -220,7 +223,7 @@ class RunnerImpl:
         """
         from ._workflow_executor import SubWorkflowResponseMessage
 
-        scopes: set[str] = set()
+        scopes = get_response_scopes(self._state)
         next_message: dict[str, int] = {}
 
         async def _deliver_messages(source_executor_id: str, source_messages: list[WorkflowMessage]) -> None:
@@ -505,6 +508,7 @@ class RunnerImpl:
         validate_request_contexts(
             parent_contexts,
             requests,
+            previous_scopes=get_response_scopes(checkpoint.state),
             boundary_contexts=[
                 (
                     checkpoint.state.get(request_context_state_key(executor_id), parent_contexts),

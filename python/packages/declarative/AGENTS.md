@@ -120,6 +120,8 @@ before delivery, after earlier handlers and checkpoint restoration. All selected
 children must validate before that reply is delivered. A later rejected reply does
 not roll back earlier continuations or restored state; recover a partially executed
 failed run from a known-good checkpoint rather than retrying its remaining queue.
+The accepted parent scope persists across supersteps and mid-run checkpoint replay
+until all in-flight messages drain; later response-only runs may select other origins.
 Rejected mixed batches do not mutate request origins. Malformed stored origins
 are rejected even with migration enabled. Legacy agent loop configuration is read
 from the old checkpoint slot; newly emitted requests retain their own snapshot.
