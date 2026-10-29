@@ -31,7 +31,7 @@ public sealed class A2AIsolationTests : IAsyncDisposable
     private const string Bob = "bob";
     private const string AgentReply = "Detached reply";
 
-    private readonly GatedChatClient _chatClient = new();
+    private readonly RecordingSessionStore _sessionStore = new();
     private WebApplication? _app;
     private HttpClient? _httpClient;
 
@@ -47,21 +47,14 @@ public sealed class A2AIsolationTests : IAsyncDisposable
             Configuration = new SendMessageConfiguration { ReturnImmediately = true },
         };
 
-        // Act: the request returns while the agent is still running, then the run finishes.
+        // Act: the request returns while the agent is still running, and the agent replies once the request has ended.
         using HttpResponseMessage response = await SendAsync(client, HttpMethod.Post, Alice, "/a2a/message:send", request, cts.Token);
         response.EnsureSuccessStatusCode();
         SendMessageResponse sendResponse = (await DeserializeAsync<SendMessageResponse>(response, cts.Token))!;
         string taskId = sendResponse.Task!.Id;
 
-        this._chatClient.Release();
-
         // Assert
-        AgentTask task = await WaitForTerminalTaskAsync(client, Alice, taskId, cts.Token);
-        Assert.Equal(TaskState.Completed, task.Status.State);
-        Assert.Equal(AgentReply, Assert.Single(Assert.Single(task.Artifacts!).Parts!).Text);
-
-        using HttpResponseMessage bobResponse = await SendAsync(client, HttpMethod.Get, Bob, $"/a2a/tasks/{taskId}", body: null, cts.Token);
-        Assert.Equal(HttpStatusCode.NotFound, bobResponse.StatusCode);
+        await this.AssertCompletedForAliceOnlyAsync(client, taskId, cts.Token);
     }
 
     [Fact]
@@ -75,7 +68,7 @@ public sealed class A2AIsolationTests : IAsyncDisposable
             Message = new Message { MessageId = "request", Role = Role.User, Parts = [Part.FromText("Hello")] },
         };
 
-        // Act: read the first event, disconnect, then let the run finish.
+        // Act: read the first event and disconnect, and the agent replies once the request has ended.
         string taskId;
         using (var httpRequest = CreateRequest(HttpMethod.Post, Alice, "/a2a/message:stream", request))
         using (HttpResponseMessage response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cts.Token))
@@ -84,12 +77,25 @@ public sealed class A2AIsolationTests : IAsyncDisposable
             taskId = await ReadFirstStreamedTaskIdAsync(response, cts.Token);
         }
 
-        this._chatClient.Release();
-
         // Assert
-        AgentTask task = await WaitForTerminalTaskAsync(client, Alice, taskId, cts.Token);
+        await this.AssertCompletedForAliceOnlyAsync(client, taskId, cts.Token);
+    }
+
+    // Checks that the run completed for Alice, is hidden from Bob, and saved its session in Alice's partition.
+    private async Task AssertCompletedForAliceOnlyAsync(HttpClient client, string taskId, CancellationToken cancellationToken)
+    {
+        AgentTask task = await WaitForTerminalTaskAsync(client, Alice, taskId, cancellationToken);
         Assert.Equal(TaskState.Completed, task.Status.State);
         Assert.Equal(AgentReply, Assert.Single(Assert.Single(task.Artifacts!).Parts!).Text);
+
+        using HttpResponseMessage bobResponse = await SendAsync(client, HttpMethod.Get, Bob, $"/a2a/tasks/{taskId}", body: null, cancellationToken);
+        Assert.Equal(HttpStatusCode.NotFound, bobResponse.StatusCode);
+
+        // The session is saved after the task completes, so wait for the save before checking its partition.
+        AgentSessionStoreKey savedKey = await this._sessionStore.Saved.Task.WaitAsync(cancellationToken);
+        Assert.Equal(task.ContextId, savedKey.SessionId);
+        Assert.NotNull(savedKey.Partitions);
+        Assert.Equal(Alice, savedKey.Partitions["isolation"]);
     }
 
     private static async Task<AgentTask> WaitForTerminalTaskAsync(HttpClient client, string principal, string taskId, CancellationToken cancellationToken)
@@ -151,9 +157,10 @@ public sealed class A2AIsolationTests : IAsyncDisposable
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
-        builder.Services.AddKeyedSingleton<IChatClient>("chat-client", this._chatClient);
+        builder.Services.AddKeyedSingleton<IChatClient>(
+            "chat-client", (sp, _) => new GatedChatClient(sp.GetRequiredService<IHttpContextAccessor>()));
         builder.AddAIAgent(AgentName, "You are a helpful assistant.", chatClientServiceKey: "chat-client")
-            .WithInMemorySessionStore()
+            .WithSessionStore(this._sessionStore)
             .AddA2AServer(options => options.AgentRunMode = AgentRunMode.ReturnTask);
 
         // The provider resolves the caller from the live request only, like claims-based isolation does.
@@ -174,9 +181,7 @@ public sealed class A2AIsolationTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        this._chatClient.Release();
         this._httpClient?.Dispose();
-        this._chatClient.Dispose();
 
         if (this._app is not null)
         {
@@ -194,24 +199,21 @@ public sealed class A2AIsolationTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// A chat client that holds its reply until released, so the run outlives the request that started it.
+    /// A chat client that holds its reply until the request that started the run has ended,
+    /// so the run continues only once the isolation provider can no longer resolve the caller.
     /// </summary>
-    private sealed class GatedChatClient : IChatClient
+    private sealed class GatedChatClient(IHttpContextAccessor httpContextAccessor) : IChatClient
     {
-        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public void Release() => this._gate.TrySetResult();
-
         public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
-            await this._gate.Task.WaitAsync(cancellationToken);
+            await this.WaitForRequestToEndAsync(cancellationToken);
             return new ChatResponse(new ChatMessage(ChatRole.Assistant, AgentReply));
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            await this._gate.Task.WaitAsync(cancellationToken);
+            await this.WaitForRequestToEndAsync(cancellationToken);
             yield return new ChatResponseUpdate(ChatRole.Assistant, AgentReply) { MessageId = "reply" };
         }
 
@@ -219,5 +221,36 @@ public sealed class A2AIsolationTests : IAsyncDisposable
             serviceType.IsInstanceOfType(this) ? this : null;
 
         public void Dispose() { }
+
+        // The run's async flow shares the request's HttpContext holder, which ASP.NET Core clears when the request ends.
+        private async Task WaitForRequestToEndAsync(CancellationToken cancellationToken)
+        {
+            while (httpContextAccessor.HttpContext is not null)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A session store that records the first saved key, after the isolation layer that wraps it has scoped the key.
+    /// </summary>
+    private sealed class RecordingSessionStore : AgentSessionStore
+    {
+        private readonly InMemoryAgentSessionStore _inner = new();
+
+        public TaskCompletionSource<AgentSessionStoreKey> Saved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ValueTask<AgentSession?> GetSessionAsync(AIAgent agent, AgentSessionStoreKey key, CancellationToken cancellationToken = default) =>
+            this._inner.GetSessionAsync(agent, key, cancellationToken);
+
+        public override async ValueTask SaveSessionAsync(AIAgent agent, AgentSessionStoreKey key, AgentSession session, CancellationToken cancellationToken = default)
+        {
+            await this._inner.SaveSessionAsync(agent, key, session, cancellationToken);
+            this.Saved.TrySetResult(key);
+        }
+
+        public override ValueTask DeleteSessionAsync(AIAgent agent, AgentSessionStoreKey key, CancellationToken cancellationToken = default) =>
+            this._inner.DeleteSessionAsync(agent, key, cancellationToken);
     }
 }
