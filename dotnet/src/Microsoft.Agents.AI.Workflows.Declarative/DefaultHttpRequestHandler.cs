@@ -29,6 +29,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// Host matching is exact and case-insensitive, with internationalized names and trailing DNS dots normalized;
 /// wildcards and implicit subdomains are not supported. Hosts are allowed independently of scheme and port.
 /// The allowlist is copied at construction and applies before invoking the client provider.
+/// Workflow-supplied Host headers are rejected; the transport derives the authority from the request URL.
 /// DNS resolution and network routing are delegated to the HTTP transport, not classified by this handler.
 /// </para>
 /// <para>
@@ -152,6 +153,17 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         }
 
         HttpRequestInfo currentRequest = CreateCanonicalRequestInfo(request, out Uri currentUri);
+
+        if (request.Headers is not null)
+        {
+            foreach (KeyValuePair<string, string> header in request.Headers)
+            {
+                if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HttpRequestException("Request headers must not override the Host header.");
+                }
+            }
+        }
 
         using CancellationTokenSource? timeoutCts = request.Timeout is { } timeout && timeout > TimeSpan.Zero
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)

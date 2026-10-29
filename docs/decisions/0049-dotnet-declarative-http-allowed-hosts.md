@@ -47,7 +47,8 @@ Every constructor requires an explicit list; an empty list denies every request.
 exact host names or IP literals, copy and normalize the list, and authorize the canonical URL before client selection and every
 handler-managed redirect. Matching is case-insensitive with IDN and trailing-dot normalization; wildcards and
 implicit subdomains are not supported. Entries authorize hosts, not individual schemes, ports, or IP ranges.
-Only HTTP(S) URLs are accepted, and existing redirect restrictions remain in effect.
+Only HTTP(S) URLs are accepted, and existing redirect restrictions remain in effect. Workflow-supplied Host
+headers are rejected before client selection; the transport derives the authority from the allowed URL.
 
 The transport handles normal DNS resolution, proxies, and routing. The internally owned client disables
 automatic redirects and cookies on every target framework. Supplied clients remain caller-owned and must

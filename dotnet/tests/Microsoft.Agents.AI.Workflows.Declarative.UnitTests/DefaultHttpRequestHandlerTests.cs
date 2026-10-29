@@ -108,6 +108,38 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Null(messageHandler.LastRequest);
     }
 
+    [Theory]
+    [InlineData("Host", "other.example.test")]
+    [InlineData("hOsT", "api.example.test")]
+    public async Task SendAsyncRejectsWorkflowHostHeaderBeforeProviderAsync(string headerName, string headerValue)
+    {
+        // Arrange
+        int providerCalls = 0;
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        using HttpClient client = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) =>
+        {
+            providerCalls++;
+#pragma warning disable CA2025
+            return Task.FromResult<HttpClient?>(client);
+#pragma warning restore CA2025
+        });
+        HttpRequestInfo request = new()
+        {
+            Url = TestUrl,
+            Headers = new Dictionary<string, string> { [headerName] = headerValue },
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Equal(0, providerCalls);
+        Assert.Null(messageHandler.LastRequest);
+    }
+
     [Fact]
     public async Task SendAsyncWithNullRequestThrowsAsync()
     {
@@ -336,7 +368,10 @@ public sealed class DefaultHttpRequestHandlerTests
                 Content = new StringContent("hello", Encoding.UTF8, "text/plain"),
             }));
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(httpClient));
+#pragma warning restore CA2025
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -359,7 +394,8 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         foreach (string method in new[] { "GET", "POST", "PUT", "PATCH", "DELETE", "CUSTOM" })
         {
@@ -379,7 +415,8 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
         HttpRequestInfo request = new() { Method = "  custom  ", Url = TestUrl };
 
         // Act
@@ -396,7 +433,8 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo request = new()
         {
@@ -421,7 +459,8 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo request = new()
         {
@@ -500,7 +539,8 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo request = new()
         {
@@ -538,7 +578,8 @@ public sealed class DefaultHttpRequestHandlerTests
 #pragma warning restore CA2025
         });
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -619,7 +660,8 @@ public sealed class DefaultHttpRequestHandlerTests
                 Content = new StringContent("bad request", Encoding.UTF8, "text/plain"),
             }));
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -642,7 +684,8 @@ public sealed class DefaultHttpRequestHandlerTests
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
 
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo request = new()
         {
@@ -1349,7 +1392,8 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         TestHttpMessageHandler fake = new(static (req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(string.Empty) }));
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(fake)));
+        using HttpClient httpClient = new(fake);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo info = new()
         {
@@ -1378,7 +1422,8 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         TestHttpMessageHandler fake = new(static (req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(string.Empty) }));
-        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(fake)));
+        using HttpClient httpClient = new(fake);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], httpClient);
 
         HttpRequestInfo info = new()
         {

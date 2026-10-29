@@ -28,7 +28,8 @@ commitments.
   allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"])`. Configure the allowlist in
   trusted application code, not in workflow content. Every constructor requires an explicit allowlist, including
   when supplying a client or client provider; an empty list allows no hosts. The handler copies the list and checks
-  it before invoking the provider and on every handler-managed redirect.
+  it before invoking the provider and on every handler-managed redirect. Workflow-supplied `Host` headers are
+  rejected before provider invocation; the transport derives the authority from the allowed request URL.
 - Allowed hosts are exact DNS names or IP literals, without schemes, ports, paths, or wildcards. Matching is
   case-insensitive, normalizes internationalized names and trailing DNS dots, and does not implicitly include
   subdomains. A host entry permits both HTTP and HTTPS and any port, subject to existing redirect restrictions.
