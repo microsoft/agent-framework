@@ -156,7 +156,7 @@ internal static class AgentResponseExtensions
                 continue;
             }
 
-            // may point to mulitple regions in the AIContent.
+            // may point to multiple regions in the AIContent.
             // we need to unroll another loop for regions then -> chatCompletions only point to single region per annotation
 
             var regions = annotation.AnnotatedRegions?.OfType<TextSpanAnnotatedRegion>().Where(x => x.StartIndex is not null && x.EndIndex is not null);

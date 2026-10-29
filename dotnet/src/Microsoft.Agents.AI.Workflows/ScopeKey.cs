@@ -32,7 +32,7 @@ public sealed class ScopeKey
     { }
 
     /// <summary>
-    /// Iniitalizes a new instance of the <see cref="ScopeKey"/> class.
+    /// Initializes a new instance of the <see cref="ScopeKey"/> class.
     /// </summary>
     /// <param name="scopeId">The <see cref="ScopeId"/> associated with this key.</param>
     /// <param name="key">The unique key within the specified scope.</param>

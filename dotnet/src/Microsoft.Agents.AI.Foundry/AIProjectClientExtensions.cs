@@ -377,7 +377,7 @@ public static partial class AIProjectClientExtensions
                 throw new ArgumentException("The agent definition in-process tools must be provided in the extension method tools parameter.");
             }
 
-            // Agregate all missing tools for a single error message.
+            // Aggregate all missing tools for a single error message.
             List<string>? missingTools = null;
 
             // Check function tools
