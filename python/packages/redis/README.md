@@ -18,7 +18,8 @@ records. Import them from `agent_framework.redis` or `agent_framework_redis`.
 
 ## Install
 
-Requires Python 3.10–3.14. RedisVL currently declares `Requires-Python <3.15`,
+Supports Python 3.11–3.14. Python 3.10 installation remains permitted, but
+compatibility is not guaranteed. RedisVL currently declares `Requires-Python <3.15`,
 so pip cannot install this connector on Python 3.15 yet:
 
 ```bash

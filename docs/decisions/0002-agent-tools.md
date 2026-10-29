@@ -1413,7 +1413,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 </details>
 <details>
   <summary>Google</summary>
-  Source: <a href="https://google.github.io/adk-docs/tools/mcp-tools/#using-mcp-tools-in-your-own-agent-out-of-adk-web">https://google.github.io/adk-docs/tools/mcp-tools/#using-mcp-tools-in-your-own-agent-out-of-adk-web</a>
+  Source: <a href="https://google.github.io/adk-docs/tools-custom/mcp-tools/#direct-mcp-tool-integration-mcptoolset">https://google.github.io/adk-docs/tools-custom/mcp-tools/#direct-mcp-tool-integration-mcptoolset</a>
 
   ```python
   async def get_agent_async():

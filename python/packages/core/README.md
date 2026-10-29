@@ -22,13 +22,15 @@ pip install agent-framework-openai
 
 Supported Platforms:
 
-- Python: 3.10–3.15
+- Python: 3.11–3.15
 - OS: Windows, macOS, Linux
 
-Python 3.10 remains supported and tested for this release, but it is deprecated
-because upstream Python 3.10 has reached end of life. New environments should
-use Python 3.11 or later. Removing Python 3.10 support will be handled in a
-future release rather than by this compatibility update.
+Python 3.10 is no longer supported because it has reached upstream end of life.
+Package metadata still permits Python 3.10 installation, but CI no longer runs
+unit or integration tests on it and compatibility is not guaranteed. Use
+Python 3.11–3.15 for supported environments, subject to
+[integration-specific limits](../../README.md#python-315-limitations). Raising
+the installation minimum will be handled separately.
 
 ## 1. Setup API Keys
 
