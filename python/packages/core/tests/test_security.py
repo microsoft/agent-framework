@@ -4344,7 +4344,12 @@ class TestSecureAgentSessionIsolation:
         assert executed == ["replacement"]
 
     @pytest.mark.parametrize("stream", [False, True])
-    async def test_ordinary_approval_response_executes_through_agent_run(self, stream: bool) -> None:
+    @pytest.mark.parametrize("response_shape", ["full", "occurrence-only"])
+    async def test_ordinary_approval_response_executes_through_agent_run(
+        self,
+        stream: bool,
+        response_shape: str,
+    ) -> None:
         """Core pending approval snapshots authenticate ordinary session-backed resumes."""
         executed: list[str] = []
         responses = [
@@ -4422,9 +4427,19 @@ class TestSecureAgentSessionIsolation:
         else:
             first = await agent.run("Run the ordinary sink", session=session)
         approval_request = first.user_input_requests[0]
+        assert approval_request.function_call is not None
+        assert approval_request.function_call.id is not None
         assert session.state["tool_approval"]["pending_approval_requests"]
 
-        approval_response = approval_request.to_function_approval_response(approved=True)
+        approval_response = (
+            approval_request.to_function_approval_response(approved=True)
+            if response_shape == "full"
+            else Content(
+                "function_approval_response",
+                approved=True,
+                id=approval_request.function_call.id,
+            )
+        )
         if stream:
             result = await agent.run(
                 approval_response,
@@ -4436,6 +4451,56 @@ class TestSecureAgentSessionIsolation:
 
         assert result.text == "done"
         assert executed == ["ordinary"]
+
+    async def test_history_loaded_pending_approval_stays_authenticated_in_chat_middleware(self) -> None:
+        """History authentication survives the later chat-middleware replay pass."""
+        function_call = Content.from_function_call(
+            call_id="history-approval-call",
+            id="history-approval-occurrence",
+            name="history_approval_sink",
+            arguments={"value": "reviewed value"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id="history-approval-occurrence",
+            function_call=function_call,
+        )
+        session = AgentSession(session_id="history-pending-approval")
+        _store_pending_approval_requests(session, [approval_request])
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(
+            history,
+            [Message(role="assistant", contents=[function_call, approval_request])],
+        )
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config, history]),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker, _, replay_middleware = context.get_middleware()
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.TRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+        chat_context = ChatContext(
+            client=cast(Any, SimpleNamespace()),
+            messages=context.get_messages(include_input=True),
+            options={},
+            session=session,
+        )
+
+        async def call_next() -> None:
+            return None
+
+        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.TRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
     async def test_ordinary_pending_approval_rejects_altered_supplied_call_body(self) -> None:
         """Core binding cannot grant replay provenance to an altered supplied call."""
