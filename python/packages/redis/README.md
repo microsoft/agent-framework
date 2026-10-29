@@ -53,6 +53,11 @@ JSON collections additionally require RedisJSON.
 Redis Search indexes require logical database 0, so vector-store URLs and clients
 must select database 0 (the default).
 
+The beta `RedisContextProvider` scope schema is not backward compatible with
+indexes created by earlier releases. Delete the old index and its context
+hashes, let the provider create a new index, and re-ingest the context data.
+Incompatible indexes fail closed; `overwrite_index=True` does not migrate them.
+
 Choose `storage_type="hash"` for non-null records with binary vector storage,
 or `"json"` for nullable fields/vectors and native JSON data. HASH rejects
 `None`, including `vector=None`; JSON preserves explicit null. Both support

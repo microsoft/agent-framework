@@ -18,20 +18,26 @@ from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     Annotation,
+    BaseChatClient,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
     Content,
+    ContextProvider,
+    FunctionInvocationLayer,
     FunctionTool,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     TextSpanRegion,
     ToolMode,
     UsageDetails,
+    agent_middleware,
     detect_media_type_from_base64,
     get_namespaced_value,
     merge_additional_properties,
@@ -48,6 +54,7 @@ from agent_framework._compaction import (
 from agent_framework._types import (
     _MODEL_OUTPUT_KIND_KEY,
     _append_instructions,
+    _get_annotation_text_span_regions,
     _get_data_bytes,
     _get_data_bytes_as_str,
     _get_operation_state,
@@ -4420,7 +4427,13 @@ def test_text_content_with_annotations_serialization():
     # Create multiple citations
     citation1 = Annotation(type="citation", title="Citation 1", url="http://example.com/1", annotated_regions=[region1])
 
-    citation2 = Annotation(type="citation", title="Citation 2", url="http://example.com/2", annotated_regions=[region2])
+    citation2 = Annotation(
+        type="citation",
+        title="Citation 2",
+        url="http://example.com/2",
+        annotated_regions=[region2],
+        annotated_regions_coordinate_space="source",
+    )
 
     # Create TextContent with multiple annotations
     content = Content.from_text(text="Hello world", annotations=[citation1, citation2])
@@ -4432,6 +4445,7 @@ def test_text_content_with_annotations_serialization():
     assert len(content_dict["annotations"]) == 2
     assert content_dict["annotations"][0]["title"] == "Citation 1"
     assert content_dict["annotations"][1]["title"] == "Citation 2"
+    assert content_dict["annotations"][1]["annotated_regions_coordinate_space"] == "source"
 
     # Deserialize
     reconstructed = Content.from_dict(content_dict)
@@ -4443,7 +4457,31 @@ def test_text_content_with_annotations_serialization():
     assert all(isinstance(ann, dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
     assert reconstructed.annotations[0]["title"] == "Citation 1"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
     assert reconstructed.annotations[1]["title"] == "Citation 2"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
+    assert reconstructed.annotations[1]["annotated_regions_coordinate_space"] == "source"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
     assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
+
+
+def test_get_annotation_text_span_regions_filters_coordinate_space_and_invalid_regions() -> None:
+    annotation = cast(
+        Annotation,
+        {
+            "type": "citation",
+            "annotated_regions_coordinate_space": "source",
+            "annotated_regions": [
+                {"type": "text_span", "start_index": 2, "end_index": 7},
+                {"type": "text_span", "start_index": True, "end_index": 7},
+                {"type": "text_span", "start_index": -1, "end_index": 7},
+                {"type": "text_span", "start_index": 8, "end_index": 7},
+                {"type": "source_block", "start_index": 0, "end_index": 1},
+                None,
+            ],
+        },
+    )
+
+    assert _get_annotation_text_span_regions(annotation) == []
+    assert _get_annotation_text_span_regions(annotation, coordinate_space="source") == [
+        {"type": "text_span", "start_index": 2, "end_index": 7}
+    ]
 
 
 # region FunctionTool.parse_result with Pydantic models
@@ -5615,6 +5653,51 @@ class TestResponseStreamCleanupHooks:
                 pass
 
         assert events == ["iterator"]
+
+    @pytest.mark.parametrize("buffered", [False, True])
+    @pytest.mark.parametrize("failure", [RuntimeError("hook failed"), asyncio.CancelledError()])
+    async def test_outer_stream_error_skips_after_run_with_agent_middleware(
+        self, span_exporter: Any, failure: BaseException, buffered: bool
+    ) -> None:
+        """An error in a middleware-wrapped agent stream reaches the inner stream, so after_run does not fire."""
+
+        class StreamingClient(FunctionInvocationLayer, BaseChatClient):
+            def _inner_get_response(self, *, messages: Any, stream: bool, options: Any, **kwargs: Any) -> Any:
+                async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                    for i in range(3):
+                        yield ChatResponseUpdate(contents=[Content.from_text(f"part{i} ")], role="assistant")
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        class RecordingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__("recorder")
+                self.after_run_calls = 0
+
+            async def after_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+                self.after_run_calls += 1
+
+        @agent_middleware
+        async def passthrough(context: Any, call_next: Any) -> None:
+            await call_next()
+
+        def failing_hook(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            raise failure
+
+        recorder = RecordingProvider()
+        history = InMemoryHistoryProvider()
+        agent = Agent(client=StreamingClient(), context_providers=[history, recorder], middleware=[passthrough])
+        session = agent.create_session()
+
+        stream = agent.run("hi", stream=True, session=session).with_transform_hook(failing_hook)
+        if buffered:
+            stream = stream.buffer_updates()
+        with pytest.raises(type(failure)):
+            async for _ in stream:
+                pass
+
+        assert recorder.after_run_calls == 0
+        assert await history.get_messages(session.session_id, state=session.state.get(history.source_id, {})) == []
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""

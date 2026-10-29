@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Net.Http;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.A2A;
@@ -13,6 +14,17 @@ namespace A2A;
 /// </summary>
 /// <remarks>
 /// These extensions bridge the gap between A2A SDK client <see cref="AgentCard"/> and <see cref="AIAgent"/>.
+/// <para>
+/// To select gRPC, also reference the SDK's <c>A2A.Grpc</c> package,
+/// call <c>A2A.Grpc.A2AGrpcClientRegistration.Register()</c> once during application startup,
+/// and include <see cref="ProtocolBindingNames.Grpc"/> in <see cref="A2AClientOptions.PreferredBindings"/>.
+/// gRPC is not registered automatically and is not included in the default bindings.
+/// </para>
+/// <para>
+/// The caller is responsible for disposing any disposable client created by these methods after the agent is no longer
+/// in use. Retrieve it through <see cref="AIAgent.GetService"/> with <see cref="IA2AClient"/> as the service type
+/// and dispose it as an <see cref="IDisposable"/>.
+/// </para>
 /// </remarks>
 public static class A2AAgentCardExtensions
 {

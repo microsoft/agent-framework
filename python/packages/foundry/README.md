@@ -8,6 +8,14 @@ This package supports `azure-ai-projects>=2.2.0,<2.8.0`. Projects 2.5 and later 
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
 
+## Chat client lifecycle
+
+Use `async with FoundryChatClient(...)` or `async with FoundryAgent(...)` to release owned connections, or call
+`await client.close()` explicitly when using a chat client without a context manager. Chat clients close their
+derived OpenAI connection, including when a timeout-configured copy shares its transport. They also close the
+project connection if they created it. A supplied `project_client` and credential remain caller-owned; manage the
+credential's context outside the chat client or agent. Cleanup does not delete remote agents or conversations.
+
 ## Tool ownership for preconfigured Foundry agents
 
 `FoundryAgent` connects to a PromptAgent or HostedAgent whose instructions, tool declarations, and tool-selection

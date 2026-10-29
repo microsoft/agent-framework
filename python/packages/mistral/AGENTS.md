@@ -25,11 +25,9 @@ from agent_framework.mistral import MistralChatClient
 
 # Requires MISTRAL_API_KEY environment variable (or pass api_key= directly)
 client = MistralChatClient(model="mistral-large-latest")
-try:
+async with client:
     agent = Agent(client=client)
     result = await agent.run("Hello!")
-finally:
-    await client.close()
 ```
 
 ```python

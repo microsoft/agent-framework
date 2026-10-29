@@ -11,7 +11,7 @@ Integration with Microsoft Purview for data governance and policy enforcement.
 
 ### Configuration
 
-- **`PurviewSettings`** - Pydantic settings for Purview configuration
+- **`PurviewSettings`** - TypedDict settings for Purview configuration
 - **`PurviewAppLocation`** / **`PurviewLocationType`** - Location configuration
 
 ### Caching
@@ -29,9 +29,10 @@ Integration with Microsoft Purview for data governance and policy enforcement.
 
 ```python
 from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
+from azure.identity import DefaultAzureCredential
 
 settings = PurviewSettings(...)
-middleware = PurviewPolicyMiddleware(settings=settings)
+middleware = PurviewPolicyMiddleware(credential=DefaultAzureCredential(), settings=settings)
 agent = Agent(..., middleware=[middleware])
 ```
 

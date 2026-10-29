@@ -42,7 +42,17 @@ jobs:
       - name: Get changed files
         id: changed-files
         if: github.event_name == 'pull_request'
-        uses: jitterbit/get-changed-files@b17fbb00bdc0c0f63fcf166580804b4d2cdc2a42 # v1
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          diff=$(git diff --name-only --diff-filter=AM "$BASE_SHA..HEAD")
+          if [[ "$diff" == *[[:blank:]]* || "$diff" == *'"'* ]]; then
+            echo "Changed paths cannot be safely space-delimited; falling back to the whole solution." >&2
+            exit 1
+          fi
+          diff=$(printf '%s' "$diff" | tr '\n' ' ')
+          echo "added_modified=$diff" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       - name: No C# files changed
