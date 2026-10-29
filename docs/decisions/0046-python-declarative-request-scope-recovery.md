@@ -130,6 +130,14 @@ including for queued checkpoint replies. Core cancellation handlers restore the
 same metadata. Propagated child responses use this path once; wrapped child
 messages retain their boundary-specific capture and restoration.
 
+Wrapped origins are owned independently by each child binding, not by the
+coordinator's external-request ID. Relaying a child request with that same ID
+therefore retains two independently consumable origins across checkpoints.
+Capturing or releasing an origin stages only that mapping entry in shared state,
+with committed values unchanged until the superstep commits. Discard rolls back
+these entry updates. Full-map validation and detached copies remain checkpoint
+and response-batch operations, not per-request insertion or removal work.
+
 Preflight includes both propagated responses and wrapped child replies already
 queued for delivery. Route wrapped replies through the parent graph to validate
 their child's own policy without treating child scopes as parent-policy scopes.

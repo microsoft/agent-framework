@@ -726,7 +726,7 @@ class WorkflowExecutor(Executor):
             else:
                 # In a workflow where the parent workflow has an executor that may intercept the
                 # request and handle it directly, a message should be sent.
-                capture_request_context(ctx.state, request_id)
+                capture_request_context(ctx.state, request_id, boundary_id=self.id)
                 await ctx.send_message(SubWorkflowRequestMessage(source_event=event, executor_id=self.id))
 
         # Handle final state
@@ -786,6 +786,6 @@ class WorkflowExecutor(Executor):
         )
         # Propagated replies already restored their context before their response handler.
         if ctx.request_id != request_id:
-            restore_request_context(ctx.state, request_id)
+            restore_request_context(ctx.state, request_id, boundary_id=self.id)
         self._remove_reemitted_pending_requests(result, pending_requests)
         await self._process_workflow_result(result, ctx)

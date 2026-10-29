@@ -9,6 +9,7 @@ No real MCP server or network is exercised. See
 """
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -28,7 +29,7 @@ pytestmark = pytest.mark.skipif(
     reason="PowerFx engine not available (requires dotnet runtime)",
 )
 
-from agent_framework import AgentSession, Content, Message, Workflow  # noqa: E402
+from agent_framework import AgentSession, CheckpointStorage, Content, Message, Workflow  # noqa: E402
 from agent_framework.exceptions import ToolExecutionException  # noqa: E402
 
 from agent_framework_declarative._workflows import (  # noqa: E402
@@ -303,6 +304,57 @@ class TestFieldForwarding:
         assert handler.invocations[0].workflow_session_id
         assert handler.invocations[1].workflow_session_id
         assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore_kind", ["memory", "file", "queued"])
+    async def test_same_id_coordinator_relay_preserves_downstream_mcp_scope(
+        self,
+        tmp_path: Path,
+        streaming: bool,
+        restore_kind: str,
+        coordinator_relay_workflow: Callable[[Workflow, CheckpointStorage], Workflow],
+    ) -> None:
+        mcp_handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=mcp_handler)
+        storage = _scope_checkpoint_storage(tmp_path)
+
+        parent = coordinator_relay_workflow(factory.create_workflow_from_definition(_yaml(_action())), storage)
+        requests = []
+        for message in (1, 2):
+            if streaming:
+                result = await parent.run(message, stream=True).get_final_response()
+            else:
+                result = await parent.run(message)
+            [request] = [event for event in result.get_request_info_events() if event.request_id not in requests]
+            requests.append(request.request_id)
+        scopes = [invocation.workflow_session_id for invocation in mcp_handler.invocations]
+        assert len(scopes) == 2
+        assert scopes[0] and scopes[1] and scopes[0] != scopes[1]
+        if restore_kind == "file":
+            checkpoint_id = parent.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            parent = coordinator_relay_workflow(factory.create_workflow_from_definition(_yaml(_action())), storage)
+            await parent.run(checkpoint_id=checkpoint_id)
+
+        for request_id, scope in reversed(list(zip(requests, scopes, strict=True))):
+            resume_checkpoint_id: str | None = None
+            responses: dict[str, str] | None = {request_id: "continue"}
+            if restore_kind == "queued":
+                await parent._runner_context.send_request_info_response(request_id, "continue")
+                await parent._runner.create_checkpoint_if_enabled()
+                resume_checkpoint_id = parent.get_last_checkpoint_id()
+                assert resume_checkpoint_id is not None
+                parent = coordinator_relay_workflow(factory.create_workflow_from_definition(_yaml(_action())), storage)
+                responses = None
+            if streaming:
+                await parent.run(
+                    responses=responses, checkpoint_id=resume_checkpoint_id, stream=True
+                ).get_final_response()
+            else:
+                await parent.run(responses=responses, checkpoint_id=resume_checkpoint_id)
+            assert mcp_handler.invocations[-1].workflow_session_id == scope
+        assert len(mcp_handler.invocations) == 4
+        assert not await parent._runner_context.get_pending_request_info_events()
 
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("restore_kind", ["memory", "file", "queued"])

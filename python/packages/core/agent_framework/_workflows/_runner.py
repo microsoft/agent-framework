@@ -20,7 +20,7 @@ from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner, gather_cancelling_siblings_on_error
 from ._events import WorkflowEvent
 from ._executor import Executor
-from ._request_context import validate_request_contexts
+from ._request_context import request_context_state_key, validate_request_contexts
 from ._runner_context import (
     RunnerContext,
     WorkflowMessage,
@@ -458,11 +458,17 @@ class RunnerImpl:
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
         wrapped_requests = self._get_wrapped_response_requests(checkpoint.messages)
+        parent_contexts = checkpoint.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
         validate_request_contexts(
-            checkpoint.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {}),
-            [
-                *requests,
-                *(request for batch in wrapped_requests.values() for request in batch),
+            parent_contexts,
+            requests,
+            boundary_contexts=[
+                (
+                    checkpoint.state.get(request_context_state_key(executor_id), parent_contexts),
+                    wrapped_requests.get(executor_id, []),
+                )
+                for executor_id in self._executors
+                if executor_id in wrapped_requests or request_context_state_key(executor_id) in checkpoint.state
             ],
         )
         if EXECUTOR_STATE_KEY in checkpoint.state:

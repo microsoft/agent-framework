@@ -2,12 +2,142 @@
 
 """Unit tests for the State class superstep caching behavior."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agent_framework import SecretString
 from agent_framework._workflows._state import State
+
+
+def test_request_origin_fan_out_copies_only_incremental_entries() -> None:
+    import copy
+
+    from agent_framework._workflows._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, WORKFLOW_SESSION_ID_KEY
+    from agent_framework._workflows._request_context import capture_request_context, restore_request_context
+
+    state = State()
+    state.set(WORKFLOW_SESSION_ID_KEY, "origin")
+    request_count = 200
+    with patch("agent_framework._workflows._state.copy.deepcopy", wraps=copy.deepcopy) as deepcopy:
+        for index in range(request_count):
+            capture_request_context(state, str(index))
+        state.commit()
+        for index in range(request_count):
+            restore_request_context(state, str(index))
+            assert state.get(WORKFLOW_SESSION_ID_KEY) == "origin"
+        copied_entries = sum(len(call.args[0]) for call in deepcopy.call_args_list if isinstance(call.args[0], dict))
+
+    assert state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == {}
+    assert copied_entries < 40 * request_count
+
+
+def test_incremental_mapping_updates_preserve_snapshots_and_rollback() -> None:
+    state = State()
+    state.set("origins", {"first": {"scope": "A"}, "second": {"scope": "B"}})
+    state.commit()
+    snapshot = state.export_state()
+    update = {"scope": "C"}
+
+    state._set_mapping_item("origins", "third", update)
+    update["scope"] = "mutated"
+    removed = state._pop_mapping_item("origins", "first")
+    removed["scope"] = "mutated"
+    assert state._get_mapping_item("origins", "third") == {"scope": "C"}
+    assert state.get("origins") == {"second": {"scope": "B"}, "third": {"scope": "C"}}
+    assert state.export_state() == snapshot
+
+    state.discard()
+    assert state.get("origins") == snapshot["origins"]
+    state._pop_mapping_item("origins", "first")
+    state._set_mapping_item("origins", "second", {"scope": "D"})
+    state.commit()
+    assert state.export_state()["origins"] == {"second": {"scope": "D"}}
+    assert snapshot["origins"]["second"] == {"scope": "B"}
+
+
+@pytest.mark.parametrize("operation", ["set", "delete", "clear"])
+def test_whole_value_operations_replace_pending_mapping_updates(operation: str) -> None:
+    state = State()
+    state.set("origins", {"first": 1})
+    state.commit()
+    state._set_mapping_item("origins", "second", 2)
+
+    if operation == "set":
+        state.set("origins", {"replacement": 3})
+        expected = {"replacement": 3}
+    elif operation == "delete":
+        state.delete("origins")
+        expected = None
+    else:
+        state.clear()
+        expected = None
+    assert state.get("origins") == expected
+    state.commit()
+    assert state.get("origins") == expected
+
+
+def test_incremental_mapping_updates_support_new_deleted_and_null_entries() -> None:
+    state = State()
+    state._set_mapping_item("origins", "first", None)
+    assert state.has("origins")
+    state._pop_mapping_item("origins", "first")
+    assert state.get("origins") == {}
+    state.commit()
+    state.delete("origins")
+    state._set_mapping_item("origins", "second", {"scope": "B"})
+    state.commit()
+    assert state.export_state()["origins"] == {"second": {"scope": "B"}}
+
+
+def test_request_origin_owners_remain_independent_for_the_same_request_id() -> None:
+    from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+    from agent_framework._workflows._request_context import capture_request_context, restore_request_context
+
+    state = State()
+    state.set(WORKFLOW_SESSION_ID_KEY, "child-boundary")
+    capture_request_context(state, "same-id", boundary_id="child")
+    state.set(WORKFLOW_SESSION_ID_KEY, "coordinator-relay")
+    capture_request_context(state, "same-id")
+    state.commit()
+
+    restore_request_context(state, "same-id")
+    assert state.get(WORKFLOW_SESSION_ID_KEY) == "coordinator-relay"
+    state.commit()
+    restore_request_context(state, "same-id", boundary_id="child")
+    assert state.get(WORKFLOW_SESSION_ID_KEY) == "child-boundary"
+
+
+def test_wrapped_request_restores_legacy_checkpoint_origin() -> None:
+    from agent_framework._workflows._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, WORKFLOW_SESSION_ID_KEY
+    from agent_framework._workflows._request_context import capture_request_context, restore_request_context
+
+    legacy = State()
+    legacy.set(WORKFLOW_SESSION_ID_KEY, "legacy-boundary")
+    capture_request_context(legacy, "request")
+    legacy.commit()
+    restored = State()
+    restored.import_state(legacy.export_state())
+    restored.set(WORKFLOW_SESSION_ID_KEY, "later-run")
+
+    restore_request_context(restored, "request", boundary_id="child")
+
+    assert restored.get(WORKFLOW_SESSION_ID_KEY) == "legacy-boundary"
+    assert restored.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == {}
+
+
+@pytest.mark.parametrize("operation", ["capture", "restore"])
+def test_incremental_request_origin_operations_reject_malformed_entries(operation: str) -> None:
+    from agent_framework._workflows._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY
+    from agent_framework._workflows._request_context import capture_request_context, restore_request_context
+
+    state = State()
+    state.set(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {"request": None})
+    state.commit()
+    action = capture_request_context if operation == "capture" else restore_request_context
+    with pytest.raises(ValueError, match="Invalid parent workflow request context"):
+        action(state, "request")
+    assert state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY) == {"request": None}
 
 
 class TestStateBasicOperations:

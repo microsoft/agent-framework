@@ -346,7 +346,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   retains its run context in checkpointed shared state, including ordinary Core requests before a child binding.
   Core restores and releases that context before invoking response or cancellation handlers, including queued
   checkpoint replies. Wrapped child replies use the same helpers at their message boundary; propagated replies
-  are restored only once. Mixed-parent-scope response batches are rejected before consuming requests, including
+  are restored only once. Wrapped origins belong to their binding independently of external requests, even when
+  a coordinator relays the same request ID. Origin insertion and removal stage individual mapping entries;
+  committed snapshots remain unchanged until commit and discard rolls back pending changes.
+  Mixed-parent-scope response batches are rejected before consuming requests, including
   across sibling bindings. Validation includes queued wrapped replies and runs before each live message
   batch is drained, routing wrapped replies to their child's own policy. Cancellation preflight combines
   queued replies with the complete selected cancellation set before consuming any requests.

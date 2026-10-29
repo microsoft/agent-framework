@@ -60,7 +60,7 @@ from ._executor import (
     _ResponseBatchValidator,  # pyright: ignore[reportPrivateUsage]
 )
 from ._model_utils import DictConvertible
-from ._request_context import restore_request_context, validate_request_contexts
+from ._request_context import request_context_state_key, restore_request_context, validate_request_contexts
 from ._runner import RunnerImpl
 from ._runner_context import (
     RunnerContext,
@@ -1218,11 +1218,18 @@ class Workflow(DictConvertible):
         queued_requests = _get_queued_response_info_events(messages)
         wrapped_requests = self._runner._get_wrapped_response_requests(messages)  # pyright: ignore[reportPrivateUsage]
         batch = [*queued_requests, *requests]
-        origin_requests = [*batch, *(request for wrapped in wrapped_requests.values() for request in wrapped)]
         parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
+        boundary_contexts = [
+            (
+                self._runner.state.get(request_context_state_key(executor_id), parent_contexts),
+                wrapped_requests.get(executor_id, []),
+            )
+            for executor_id in self.executors
+            if executor_id in wrapped_requests or self._runner.state.has(request_context_state_key(executor_id))
+        ]
 
         def validate_parent_contexts(_requests: Sequence[WorkflowEvent]) -> None:
-            validate_request_contexts(parent_contexts, origin_requests)
+            validate_request_contexts(parent_contexts, batch, boundary_contexts=boundary_contexts)
 
         validations: list[_ResponseBatchValidation] = []
         if self._response_batch_validator is not None:
