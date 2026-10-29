@@ -21,7 +21,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 /// <see cref="ChatMessage"/><c>[]</c>, and <see cref="TurnToken"/> so that the workflow
 /// satisfies <see cref="ChatProtocolExtensions.IsChatProtocol"/>. This makes the workflow
 /// usable both for direct <c>Run.SendMessageAsync(input)</c> invocations and for hosting
-/// via <see cref="WorkflowHostingExtensions.AsAIAgent(Workflow, string?, string?, string?, IWorkflowExecutionEnvironment?, bool, bool)"/>.
+/// via <see cref="WorkflowHostingExtensions.AsAIAgent(Workflow, string?, string?, string?, IWorkflowExecutionEnvironment?, bool, bool, ChatHistoryProvider?)"/>.
 ///
 /// <para>
 /// Each non-<see cref="TurnToken"/> input drives the declarative graph forward

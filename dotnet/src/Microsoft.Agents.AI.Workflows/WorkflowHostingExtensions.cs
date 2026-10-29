@@ -25,6 +25,8 @@ public static class WorkflowHostingExtensions
     /// in the <see cref="ErrorContent"/> representing the workflow error.</param>
     /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, will transform outgoing workflow outputs
     /// into content in <see cref="AgentResponseUpdate"/>s or the <see cref="AgentResponse"/> as appropriate.</param>
+    /// <param name="chatHistoryProvider">An optional <see cref="ChatHistoryProvider"/> used to store the conversation history
+    /// of the hosting <see cref="AIAgent"/>. See <see cref="WorkflowAgentOptions.ChatHistoryProvider"/> for details.</param>
     /// <returns></returns>
     public static AIAgent AsAIAgent(
         this Workflow workflow,
@@ -33,9 +35,32 @@ public static class WorkflowHostingExtensions
         string? description = null,
         IWorkflowExecutionEnvironment? executionEnvironment = null,
         bool includeExceptionDetails = false,
-        bool includeWorkflowOutputsInResponse = false)
+        bool includeWorkflowOutputsInResponse = false,
+        ChatHistoryProvider? chatHistoryProvider = null)
     {
-        return new WorkflowHostAgent(workflow, id, name, description, executionEnvironment, includeExceptionDetails, includeWorkflowOutputsInResponse);
+        return workflow.AsAIAgent(new WorkflowAgentOptions
+        {
+            Id = id,
+            Name = name,
+            Description = description,
+            ExecutionEnvironment = executionEnvironment,
+            IncludeExceptionDetails = includeExceptionDetails,
+            IncludeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse,
+            ChatHistoryProvider = chatHistoryProvider,
+        });
+    }
+
+    /// <summary>
+    /// Convert a workflow with the appropriate primary input type to an <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="workflow">The workflow to be hosted by the resulting <see cref="AIAgent"/></param>
+    /// <param name="options">The options used to configure the hosting <see cref="AIAgent"/>.</param>
+    /// <returns>An <see cref="AIAgent"/> that hosts the workflow.</returns>
+    public static AIAgent AsAIAgent(this Workflow workflow, WorkflowAgentOptions options)
+    {
+        Throw.IfNull(options);
+
+        return new WorkflowHostAgent(workflow, options);
     }
 
     /// <summary>

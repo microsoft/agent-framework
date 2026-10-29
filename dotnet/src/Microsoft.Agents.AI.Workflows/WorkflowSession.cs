@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -469,10 +468,10 @@ internal sealed class WorkflowSession : AgentSession
 
     internal async
     IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
+        List<ChatMessage> messages,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         this.LastResponseId = Guid.NewGuid().ToString("N");
-        List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
 
         ResumeRunResult resumeResult =
             await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
