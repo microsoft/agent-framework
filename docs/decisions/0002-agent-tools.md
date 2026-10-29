@@ -1413,7 +1413,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 </details>
 <details>
   <summary>Google</summary>
-  Source: <a href="https://google.github.io/adk-docs/tools/mcp-tools/#using-mcp-tools-in-your-own-agent-out-of-adk-web">https://google.github.io/adk-docs/tools/mcp-tools/#using-mcp-tools-in-your-own-agent-out-of-adk-web</a>
+  Source: <a href="https://google.github.io/adk-docs/tools-custom/mcp-tools/#direct-mcp-tool-integration-mcptoolset">https://google.github.io/adk-docs/tools-custom/mcp-tools/#direct-mcp-tool-integration-mcptoolset</a>
 
   ```python
   async def get_agent_async():
@@ -1632,7 +1632,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 <details>
   <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/openapi-spec-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/openapi-spec-samples?pivots=rest-api</a><br>
-  Source: <a href="https://learn.microsoft.com/en-us/rest/api/aifoundry/aiagents/run-steps/get-run-step?view=rest-aifoundry-aiagents-v1&tabs=HTTP#runstepopenapitoolcall">https://learn.microsoft.com/en-us/rest/api/aifoundry/aiagents/run-steps/get-run-step?view=rest-aifoundry-aiagents-v1&tabs=HTTP#runstepopenapitoolcall</a>
+  Source: <a href="https://learn.microsoft.com/en-us/python/api/azure-ai-agents/azure.ai.agents.models.runstepopenapitoolcall?view=azure-python">https://learn.microsoft.com/en-us/python/api/azure-ai-agents/azure.ai.agents.models.runstepopenapitoolcall?view=azure-python</a>
 
   Message Request:
   ```json

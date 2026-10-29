@@ -340,7 +340,10 @@ package/bound and re-run before committing.
 
 Do not substitute the workspace-wide `validate-dependency-bounds-test` command here. That command runs every
 package's full tests and Pyright in separate isolated environments and is intentionally reserved for CI or an
-explicit dependency-range audit. If the release itself changes an external dependency range, also run
+explicit dependency-range audit. The `Dependency Bounds Validation` check in `python-dependency-bounds.yml` runs that
+full matrix for version-bump and new-workspace-package PRs and merge groups, while ordinary PRs skip it.
+The bounded local release probes remain separate and do not replace that regression coverage.
+If the release itself changes an external dependency range, also run
 `validate-dependency-bounds-project --mode both --package <pkg> --dependency <name>` for that dependency.
 
 If only prereleases changed (no `core` bump, no floor changes), release validation is still required because the

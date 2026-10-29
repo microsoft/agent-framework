@@ -11,7 +11,10 @@ describes the connection and pool settings resolved through Agent Framework.
 pip install agent-framework-oracle --pre
 ```
 
-Requires Python 3.10+, Oracle AI Database 26ai with `COMPATIBLE` set to
+Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
+compatibility is not guaranteed.
+
+Requires Oracle AI Database 26ai with `COMPATIBLE` set to
 **23.4.0 or higher**, `python-oracledb` 2.2.x or 3.x, and permission to
 create/drop tables in the connected user's schema. The connector uses the
 driver's async Thin-mode API; it does not initialize the Thick client or

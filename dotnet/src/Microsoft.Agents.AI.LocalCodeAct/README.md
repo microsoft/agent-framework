@@ -40,7 +40,8 @@ using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
 ## What the Package Controls
 
 - **AST validation** (default on): Validates generated code against allow-lists
-  before execution.
+  before execution. OS-derived aliases and containers are collected before
+  their uses are checked, including references in helpers and later loop iterations.
 - **Subprocess execution**: Runs generated code in a child Python process.
 - **Explicit Python path**: the provider and standalone function constructors require a Python executable path (no default).
 - **Isolated environment**: Does not inherit host environment variables unless
@@ -56,6 +57,14 @@ These are defense-in-depth controls, not a containment boundary. The AST
 validator blocks common dangerous operations (`eval`, `exec`,
 `import subprocess`, attribute access for `os.system`, `__class__`, etc.) but
 does not make Python execution safe on an unsandboxed host.
+
+OS provenance collection uses a finite set of permitted chains and a forbidden
+state so cyclic aliases cannot grow the analysis indefinitely. A dependency
+worklist revisits only assignments that depend on newly discovered provenance.
+Tracking is conservative across scopes and assignments; reusing a name for
+unrelated values can cause validation to reject otherwise benign code. Capability restrictions
+also apply to private asyncio process transports and Windows process helpers,
+including aliases and from-imports.
 
 ## What the Package Does NOT Protect
 

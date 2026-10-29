@@ -12,6 +12,7 @@ import pytest
 from agent_framework import SecretString, SupportsGetEmbeddings
 from agent_framework._telemetry import get_feature_token
 from agent_framework.exceptions import SettingNotFoundError
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
@@ -200,6 +201,54 @@ async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: 
     assert call_kwargs["encoding_format"] == "base64"
 
 
+async def test_openai_does_not_forward_unknown_options(openai_unit_test_env: dict[str, str]) -> None:
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=_make_openai_response(embeddings=[[0.1]]))
+
+    await client.get_embeddings(["test"], options=cast(Any, {"input_type": "query"}))
+
+    call_kwargs = client.client.embeddings.create.call_args[1]
+    assert set(call_kwargs) == {"input", "model"}
+
+
+async def test_subclass_extra_request_options_are_forwarded(openai_unit_test_env: dict[str, str]) -> None:
+    class CompatibleEmbeddingClient(OpenAIEmbeddingClient):
+        def _prepare_extra_request_options(self, options: Any) -> dict[str, Any]:
+            return {"extra_body": {"input_type": options["input_type"]}}
+
+    client = CompatibleEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=_make_openai_response(embeddings=[[0.1]]))
+
+    await client.get_embeddings(["test"], options=cast(Any, {"input_type": "query", "dimensions": 8}))
+
+    call_kwargs = client.client.embeddings.create.call_args[1]
+    assert call_kwargs["extra_body"] == {"input_type": "query"}
+    assert call_kwargs["dimensions"] == 8
+
+
+async def test_rejected_extra_request_options_send_nothing(openai_unit_test_env: dict[str, str]) -> None:
+    class CompatibleEmbeddingClient(OpenAIEmbeddingClient):
+        def _prepare_extra_request_options(self, options: Any) -> dict[str, Any]:
+            raise ValueError("unsupported option")
+
+    client = CompatibleEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=_make_openai_response(embeddings=[[0.1]]))
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    with pytest.raises(ValueError, match="unsupported option"):
+        await client.get_embeddings(["test"])
+
+    client.client.embeddings.create.assert_not_awaited()
+    assert get_feature_token() is None
+
+
 async def test_openai_base64_decoding(openai_unit_test_env: dict[str, str]) -> None:
     import base64
     import struct
@@ -272,6 +321,38 @@ async def test_openai_base64_misaligned_payload_raises_descriptive_error(openai_
     assert "input index 1" in message
     assert "decoded to 5 bytes" in message
     assert "cannot be split into 4-byte little-endian floats" in message
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param("!!!not-base64!!!", id="invalid-characters"),
+        pytest.param("\u00e9", id="non-ascii"),
+    ],
+)
+async def test_openai_base64_decoding_rejects_undecodable_payload(
+    payload: str,
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A payload that cannot be decoded must name the input rather than raise binascii.Error."""
+    mock_item = MagicMock()
+    mock_item.embedding = payload
+    mock_item.index = 1
+
+    mock_response = MagicMock()
+    mock_response.data = [mock_item]
+    mock_response.model = "text-embedding-3-small"
+    mock_response.usage = MagicMock(prompt_tokens=3, total_tokens=3)
+
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    with pytest.raises(IntegrationInvalidResponseException, match="input index 1") as exc_info:
+        await client.get_embeddings(["test"], options={"encoding_format": "base64"})
+
+    assert exc_info.value.__cause__ is not None
 
 
 async def test_openai_error_when_no_model() -> None:

@@ -34,6 +34,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    Annotation,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
@@ -82,6 +83,7 @@ from azure.ai.agentserver.responses.models import (
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import MCPError
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai.types.responses import ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
@@ -94,6 +96,7 @@ from agent_framework_foundry_hosting._responses import (
     CONSENT_ERROR_CODE,
     ConsentError,
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
+    _annotations_to_output_text,  # pyright: ignore[reportPrivateUsage]
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _container_file_citations_from_function_result,  # pyright: ignore[reportPrivateUsage]
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
@@ -241,6 +244,65 @@ def _expected_container_file_citation(
     }
 
 
+def _url_citation(
+    *,
+    url: str = "https://www.python.org/downloads/release/python-31315/",
+    title: str = "Python 3.13.15",
+    start_index: int = 0,
+    end_index: int = 6,
+) -> Annotation:
+    return Annotation(
+        type="citation",
+        url=url,
+        title=title,
+        annotated_regions=[{"type": "text_span", "start_index": start_index, "end_index": end_index}],
+    )
+
+
+def _expected_url_citation(
+    *,
+    url: str = "https://www.python.org/downloads/release/python-31315/",
+    title: str = "Python 3.13.15",
+    start_index: int = 0,
+    end_index: int = 6,
+) -> dict[str, Any]:
+    return {
+        "type": "url_citation",
+        "url": url,
+        "title": title,
+        "start_index": start_index,
+        "end_index": end_index,
+    }
+
+
+def _file_citation(
+    *,
+    file_id: str = "file_123",
+    filename: str = "brambleglass-kestrel-st731.txt",
+    index: int = 0,
+) -> Annotation:
+    return Annotation(
+        type="citation",
+        file_id=file_id,
+        url=filename,
+        additional_properties={"index": index},
+    )
+
+
+def _expected_file_citation(
+    *,
+    file_id: str = "file_123",
+    filename: str = "brambleglass-kestrel-st731.txt",
+    index: int = 0,
+) -> dict[str, Any]:
+    return {
+        "type": "file_citation",
+        "file_id": file_id,
+        "filename": filename,
+        "index": index,
+    }
+
+
 @pytest.mark.parametrize(
     "raw_citations",
     [
@@ -272,6 +334,177 @@ def test_container_file_citations_ignore_recursive_json() -> None:
 
     with patch("agent_framework_foundry_hosting._responses.json.loads", side_effect=RecursionError):
         assert _container_file_citations_from_function_result(function_result) == []
+
+
+def test_framework_annotations_convert_all_responses_citation_variants() -> None:
+    annotations = [
+        Annotation(
+            type="citation",
+            title="Source",
+            url="https://example.com/source",
+            annotated_regions=[
+                {"type": "text_span", "start_index": 0, "end_index": 6},
+                {"type": "text_span", "start_index": 12, "end_index": 18},
+            ],
+        ),
+        _file_citation(),
+        Annotation(
+            type="citation",
+            file_id="file_path_123",
+            additional_properties={"index": 7},
+        ),
+        Annotation(
+            type="citation",
+            file_id="container_file_123",
+            url="report.csv",
+            annotated_regions=[{"type": "text_span", "start_index": 20, "end_index": 30}],
+            additional_properties={"container_id": "container_123"},
+        ),
+    ]
+
+    assert _annotations_to_output_text(annotations) == [
+        {
+            "type": "url_citation",
+            "url": "https://example.com/source",
+            "title": "Source",
+            "start_index": 0,
+            "end_index": 6,
+        },
+        {
+            "type": "url_citation",
+            "url": "https://example.com/source",
+            "title": "Source",
+            "start_index": 12,
+            "end_index": 18,
+        },
+        _expected_file_citation(),
+        {
+            "type": "file_path",
+            "file_id": "file_path_123",
+            "index": 7,
+        },
+        {
+            "type": "container_file_citation",
+            "container_id": "container_123",
+            "file_id": "container_file_123",
+            "filename": "report.csv",
+            "start_index": 20,
+            "end_index": 30,
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("coordinate_space", "expected"),
+    [
+        pytest.param(None, [_expected_url_citation()], id="unmarked"),
+        pytest.param("content", [_expected_url_citation()], id="content"),
+        pytest.param("source", [], id="source"),
+    ],
+)
+def test_framework_annotations_respect_coordinate_space_without_raw_representation(
+    coordinate_space: Literal["content", "source"] | None, expected: list[dict[str, Any]]
+) -> None:
+    annotation = _url_citation()
+    if coordinate_space is not None:
+        annotation["annotated_regions_coordinate_space"] = coordinate_space
+    annotations = json.loads(json.dumps([annotation]))
+    original_annotations = copy.deepcopy(annotations)
+
+    assert _annotations_to_output_text(annotations) == expected
+    assert annotations == original_annotations
+
+
+def test_framework_annotations_preserve_file_citations_with_source_regions() -> None:
+    annotation = _file_citation()
+    annotation["annotated_regions"] = [{"type": "text_span", "start_index": 1, "end_index": 3}]
+    annotation["annotated_regions_coordinate_space"] = "source"
+    original_annotation = copy.deepcopy(annotation)
+
+    assert _annotations_to_output_text([annotation]) == [_expected_file_citation()]
+    assert annotation == original_annotation
+
+
+def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
+    annotations = cast(
+        Any,
+        [
+            None,
+            "not-an-annotation",
+            {
+                "type": "citation",
+                "url": "https://example.com/mixed",
+                "title": "Mixed",
+                "additional_properties": "not-a-mapping",
+                "annotated_regions": [
+                    None,
+                    "not-a-region",
+                    {"type": "source_block", "start_index": 0, "end_index": 5},
+                    {"type": "text_span", "start_index": True, "end_index": 5},
+                    {"type": "text_span", "start_index": -1, "end_index": 5},
+                    {"type": "text_span", "start_index": 8, "end_index": 7},
+                    {"type": "text_span", "start_index": 2, "end_index": 7},
+                ],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/non-string-title",
+                "title": 42,
+                "annotated_regions": [{"type": "text_span", "start_index": 8, "end_index": 9}],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/string-regions",
+                "annotated_regions": "not-a-sequence-of-regions",
+            },
+        ],
+    )
+
+    assert _annotations_to_output_text(annotations) == [
+        _expected_url_citation(
+            url="https://example.com/mixed",
+            title="Mixed",
+            start_index=2,
+            end_index=7,
+        ),
+        _expected_url_citation(
+            url="https://example.com/non-string-title",
+            title="",
+            start_index=8,
+            end_index=9,
+        ),
+    ]
+    assert _annotations_to_output_text(cast(Any, "not-an-annotation-sequence")) == []
+
+
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        pytest.param(42, id="integer"),
+        pytest.param(True, id="boolean"),
+        pytest.param(object(), id="object"),
+    ],
+)
+def test_framework_annotations_ignore_non_sequence_inputs(annotations: Any) -> None:
+    assert _annotations_to_output_text(annotations) == []
+
+
+def test_framework_annotations_ignore_unsupported_or_incomplete_values() -> None:
+    annotations = [
+        Annotation(type="citation", url="https://example.com/no-span"),
+        Annotation(
+            type="citation",
+            url="https://example.com/invalid-span",
+            annotated_regions=[{"type": "text_span", "start_index": 0}],
+        ),
+        Annotation(type="citation", file_id="file-without-index"),
+        Annotation(type="citation", file_id="file-without-index", url="document.txt"),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": True}}),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": -1}}),
+        cast(Annotation, {"type": "other", "url": "https://example.com/unsupported"}),
+    ]
+
+    assert _annotations_to_output_text(annotations) == []
 
 
 # region Helpers
@@ -2015,6 +2248,69 @@ class TestAgentSessionPersistence:
         assert len(updates) == 1
         assert updates[0].contents == []
         assert updates[0].finish_reason == "content_filter"
+
+    @pytest.mark.parametrize("annotate_prefix", [False, True])
+    async def test_provider_background_preserves_completed_text_part_citation_offsets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, annotate_prefix: bool
+    ) -> None:
+        response = AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text(
+                            "See ", annotations=[_url_citation(end_index=3)] if annotate_prefix else None
+                        ),
+                        Content.from_text("Python", annotations=[_url_citation()]),
+                    ],
+                )
+            ],
+            finish_reason="stop",
+        )
+        original_response = copy.deepcopy(response.to_dict())
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(messages: Any = None, *, session: AgentSession, **kwargs: Any) -> AgentResponse:
+            del messages, kwargs
+            session.service_session_id = "private-service-conversation"
+            return response
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="service",
+            background_source="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_response(request, context, asyncio.Event())
+                if isinstance(event, Mapping)
+            ]
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        message = next(item for item in completed["output"] if item["type"] == "message")
+        parts = [part for part in message["content"] if part["type"] == "output_text"]
+        assert len(parts) == len(message["content"])
+        assert [part["text"] for part in parts] == ["See ", "Python"]
+        assert parts[0]["annotations"] == ([_expected_url_citation(end_index=3)] if annotate_prefix else [])
+        assert parts[1]["annotations"] == [_expected_url_citation()]
+        annotation_events = [event for event in events if event["type"] == "response.output_text.annotation.added"]
+        assert [event["content_index"] for event in annotation_events] == ([0, 1] if annotate_prefix else [1])
+        assert annotation_events[-1]["annotation"] == _expected_url_citation()
+        content_done = next(
+            event for event in events if event["type"] == "response.content_part.done" and event["content_index"] == 1
+        )
+        assert content_done["part"] == parts[1]
+        output_done = next(event for event in events if event["type"] == "response.output_item.done")
+        assert output_done["item"] == message
+        assert response.to_dict() == original_response
 
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3835,6 +4131,33 @@ class TestNonStreaming:
         assert preparing["annotations"] == []
         assert final["annotations"] == [_expected_container_file_citation()]
 
+    async def test_framework_url_and_file_citations_are_added_to_output_text(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["annotated_regions_coordinate_space"] = "source"
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "Python sources",
+                            annotations=[source_citation, _url_citation(), _file_citation()],
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citations",
+                )
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        message = next(item for item in resp.json()["output"] if item["type"] == "message")
+        assert message["content"][0]["annotations"] == [
+            _expected_url_citation(),
+            _expected_file_citation(),
+        ]
+
     async def test_latest_pending_container_file_citation_replaces_same_filename(self) -> None:
         agent = _make_agent(
             stream_updates=[
@@ -4656,6 +4979,60 @@ class TestStreaming:
             for item in completed["output"]
             if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
         )
+        assert final_message["content"][0]["annotations"] == [expected_annotation]
+
+    async def test_framework_url_citation_is_consistent_across_stream_events(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["annotated_regions_coordinate_space"] = "source"
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("See ", annotations=[source_citation])],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "Python",
+                            annotations=[_url_citation(start_index=4, end_index=10)],
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("", annotations=[_url_citation(start_index=4, end_index=10)])],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "See Python",
+                            annotations=[_url_citation(start_index=4, end_index=10)],
+                            merge_mode="replace",
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        expected_annotation = _expected_url_citation(start_index=4, end_index=10)
+        annotation_events = [event for event in events if event["event"] == "response.output_text.annotation.added"]
+        assert [event["data"]["annotation"] for event in annotation_events] == [expected_annotation]
+
+        content_done = next(event for event in events if event["event"] == "response.content_part.done")
+        assert content_done["data"]["part"]["annotations"] == [expected_annotation]
+
+        completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        final_message = next(item for item in completed["output"] if item["type"] == "message")
         assert final_message["content"][0]["annotations"] == [expected_annotation]
 
     async def test_pending_container_file_citation_survives_tracker_recovery(self) -> None:
@@ -7459,9 +7836,34 @@ class TestFunctionApprovalRoundTrip:
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
 
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+    @pytest.mark.parametrize("with_preamble", [False, True])
+    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self, with_preamble: bool) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
-        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[request_content], role="assistant")])
+        updates: list[AgentResponseUpdate] = []
+        preambles = ("Checking the refund policy.", "The refund requires approval.")
+        if with_preamble:
+            client = OpenAIChatClient(model="test-model", api_key="test-key")
+            for output_index, text in enumerate(preambles):
+                event_args: dict[str, Any] = {
+                    "content_index": 0,
+                    "item_id": f"message_{output_index}",
+                    "output_index": output_index,
+                    "sequence_number": output_index * 2,
+                }
+                for event in (
+                    ResponseTextDeltaEvent(type="response.output_text.delta", delta=text, logprobs=[], **event_args),
+                    ResponseTextDoneEvent(type="response.output_text.done", text=text, logprobs=[], **event_args),
+                ):
+                    update = client._parse_chunk_from_openai(event, {}, {})
+                    updates.append(
+                        AgentResponseUpdate(
+                            contents=update.contents,
+                            message_id=update.message_id,
+                            role="assistant",
+                        )
+                    )
+        updates.append(AgentResponseUpdate(contents=[request_content], role="assistant"))
+        agent = _make_agent(stream_updates=updates)
         server = _make_server(agent)
 
         resp = await _post(server, stream=True)
@@ -7471,6 +7873,11 @@ class TestFunctionApprovalRoundTrip:
         types = _sse_event_types(events)
         assert types[0] == "response.created"
         assert types[-1] == "response.completed"
+
+        if with_preamble:
+            assert [event["data"]["text"] for event in events if event["event"] == "response.output_text.done"] == list(
+                preambles
+            )
 
         approval_request_id: str | None = None
         for e in events:

@@ -1062,6 +1062,23 @@ async def test_bad_request_error_non_content_filter() -> None:
     assert "failed to complete the prompt" in str(exc_info.value)
 
 
+def test_get_mcp_tool_merges_both_approval_lists() -> None:
+    """Both approval lists must survive: overwriting the first with the second would
+    silently auto-approve tools the caller asked to gate."""
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="MCP",
+        url="https://mcp.example",
+        approval_mode={
+            "always_require_approval": ["dangerous_tool"],
+            "never_require_approval": ["safe_tool"],
+        },
+    )
+    assert tool_config["require_approval"] == {
+        "always": {"tool_names": ["dangerous_tool"]},
+        "never": {"tool_names": ["safe_tool"]},
+    }
+
+
 def test_get_mcp_tool_with_project_connection_id() -> None:
     tool_config = FoundryChatClient.get_mcp_tool(
         name="Docs MCP",
