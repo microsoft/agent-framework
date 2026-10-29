@@ -892,10 +892,21 @@ def _mcp_approval_names(names: Collection[str] | None) -> Collection[str]:
     return names
 
 
-def _mcp_approval_default(approval_mode: MCPSpecificApproval) -> Literal["always_require", "never_require"] | None:
-    """Return the validated ``default`` of an approval policy, or ``None`` when it is not set."""
+def _mcp_approval_default(
+    approval_mode: MCPSpecificApproval,
+    *,
+    warn_stacklevel: int | None = None,
+) -> Literal["always_require", "never_require"] | None:
+    """Return the validated ``default`` of an approval policy, or ``None`` when it is not set.
+
+    The per-tool resolver calls this for every discovered tool and prompt, so it stays silent unless asked.
+    Constructors pass ``warn_stacklevel``, counted as for ``warnings.warn`` from the caller of this function, to warn
+    once, at the code that built the tool, when ``never_require_approval`` is used without ``default``.
+    """
     default = approval_mode.get("default")
     if default is None:
+        if warn_stacklevel is not None and approval_mode.get("never_require_approval") is not None:
+            warnings.warn(_MCP_APPROVAL_DEFAULT_WARNING, FutureWarning, stacklevel=warn_stacklevel + 1)
         return None
     if default not in _MCP_APPROVAL_MODES:
         raise ValueError(f"approval_mode `default` must be 'always_require' or 'never_require', got {default!r}.")
@@ -1210,11 +1221,7 @@ class MCPTool:
                 f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
             )
         if isinstance(approval_mode, dict):
-            default_approval = _mcp_approval_default(approval_mode)
-            if approval_mode.get("never_require_approval") is not None and default_approval is None:
-                warnings.warn(
-                    _MCP_APPROVAL_DEFAULT_WARNING, FutureWarning, stacklevel=_mcp_constructor_stacklevel(self)
-                )
+            _mcp_approval_default(approval_mode, warn_stacklevel=_mcp_constructor_stacklevel(self))
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode

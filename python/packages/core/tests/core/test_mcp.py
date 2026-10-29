@@ -3291,6 +3291,41 @@ def test_mcp_tool_approval_warning_points_at_the_constructing_caller() -> None:
     assert recorded[0].lineno == expected_line
 
 
+async def test_mcp_tool_approval_warning_is_not_repeated_during_discovery() -> None:
+    with pytest.warns(FutureWarning, match="without `default`"):
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="docs",
+            approval_mode={"never_require_approval": ["search_docs"]},
+        )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name="search_docs", input_schema={"type": "object"}),
+                types.Tool(name="delete_records", input_schema={"type": "object"}),
+            ]
+        )
+    )
+    mock_session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summarize")])
+    )
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        await tool.load_tools()
+        await tool.load_prompts()
+        await tool.message_handler(types.ToolListChangedNotification())
+        await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert [warning for warning in recorded if issubclass(warning.category, FutureWarning)] == []
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "search_docs": "never_require",
+        "delete_records": "never_require",
+        "summarize": "never_require",
+    }
+
+
 @pytest.mark.parametrize(
     "approval_mode",
     [
