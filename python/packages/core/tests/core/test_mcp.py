@@ -249,6 +249,7 @@ async def _call_generated_mcp_tool(
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
     mcp_local_label: tuple[str, str] | None = None,
     mcp_local_principals: list[dict[str, str]] | None = None,
+    invocation_session: AgentSession | None = None,
     trust_server_ifc: bool = False,
     include_detailed_errors: bool = False,
     **kwargs: Any,
@@ -282,6 +283,7 @@ async def _call_generated_mcp_tool(
             "include_detailed_errors": include_detailed_errors,
         }),
         tool_map={tool_name: function},
+        invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
         host_payload_budget=host_payload_budget,
     )
@@ -1892,6 +1894,59 @@ async def test_retried_mcp_error_does_not_commit_swallowed_label() -> None:
         execute_public_sink,
     )
     assert executed is True
+
+
+async def test_mcp_error_finalizer_updates_invocation_session_scope() -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="session-private failure")],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+    session = AgentSession(session_id="mcp-error-session-scope")
+
+    await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "public"),
+        invocation_session=session,
+        trust_server_ifc=True,
+        include_detailed_errors=True,
+    )
+
+    session_label = tracker.get_context_label(session)
+    assert session_label.integrity.value == "trusted"
+    assert session_label.confidentiality.value == "private"
+    default_label = tracker.get_context_label()
+    assert default_label.integrity.value == "trusted"
+    assert default_label.confidentiality.value == "public"
+
+    protected_tool = FunctionTool(
+        func=lambda: "must not run",
+        name="session_public_after_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=protected_tool, arguments={}, session=session)
+
+    with pytest.raises(MiddlewareTermination):
+        await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+            invocation,
+            lambda _context: pytest.fail("The invocation session must retain the MCP error restriction"),
+        )
 
 
 async def test_mcp_error_without_ifc_preserves_local_identity_principals() -> None:

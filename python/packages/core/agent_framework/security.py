@@ -2080,7 +2080,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         )
         logger.info("Context label reset to TRUSTED + PUBLIC")
 
-    def _update_context_label(self, new_content_label: ContentLabel) -> None:
+    def _update_context_label(
+        self,
+        new_content_label: ContentLabel,
+        *,
+        scope: _SecurityScope | None = None,
+    ) -> None:
         """Update the context label based on new content added to the context.
 
         The context label is updated using the most restrictive policy:
@@ -2089,21 +2094,24 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
         Args:
             new_content_label: The label of the new content being added to context.
+            scope: Exact security scope to update after task-local activation has unwound.
         """
-        old_label = self._context_label
-        self._context_label = combine_labels(self._context_label, new_content_label)
+        target_scope = scope if scope is not None else self._scope
+        old_label = target_scope.context_label
+        target_scope.context_label = combine_labels(target_scope.context_label, new_content_label)
+        updated_label = target_scope.context_label
 
-        if old_label != self._context_label:
+        if old_label != updated_label:
             logger.info(
                 f">>> CONTEXT TAINT: [{old_label.integrity.value}, {old_label.confidentiality.value}] "
-                f"-> [{self._context_label.integrity.value}, {self._context_label.confidentiality.value}] "
+                f"-> [{updated_label.integrity.value}, {updated_label.confidentiality.value}] "
                 f"(new content: [{new_content_label.integrity.value}, {new_content_label.confidentiality.value}])"
             )
         else:
             logger.debug(
                 "Context label unchanged: [%s, %s]",
-                self._context_label.integrity.value,
-                self._context_label.confidentiality.value,
+                updated_label.integrity.value,
+                updated_label.confidentiality.value,
             )
 
     @staticmethod
@@ -5708,11 +5716,13 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
                 ):
                     raw_carrier = invocation_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
                     if isinstance(raw_carrier, _FunctionResultCarrier):
+                        active_scope = active_middleware._scope  # pyright: ignore[reportPrivateUsage]
 
                         def commit_error_label() -> None:
                             invocation_context.metadata["result_label"] = error_label
                             active_middleware._update_context_label(  # pyright: ignore[reportPrivateUsage]
-                                error_label
+                                error_label,
+                                scope=active_scope,
                             )
 
                         raw_carrier.error_result_finalizer = commit_error_label
