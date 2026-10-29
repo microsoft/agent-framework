@@ -4260,13 +4260,14 @@ class SecureAgentConfig(ContextProvider):
         """
         reconstruct_history_unstamped = state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
         context.metadata[self._approval_history_metadata_key()] = reconstruct_history_unstamped
+        restored_context_label = _STATE_CONTEXT_LABEL in state
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
         history_source_ids = self._history_source_ids(agent)
         input_labels = [
             _replayed_message_label(
                 message,
-                reconstruct_unstamped=not _is_replay_state_covered(message),
+                reconstruct_unstamped=not restored_context_label or not _is_replay_state_covered(message),
                 scope=scope,
             )
             for message in context.input_messages

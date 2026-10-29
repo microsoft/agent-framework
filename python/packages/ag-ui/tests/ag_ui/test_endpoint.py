@@ -5614,6 +5614,119 @@ async def test_endpoint_fides_synthetic_skipped_result_keeps_snapshot_provenance
     assert context_label["confidentiality"] == "public"
 
 
+async def test_endpoint_fides_normal_continuation_reconstructs_missing_context_label(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A normal continuation reconstructs backend history when FIDES state is absent."""
+    thread_id = "thread-fides-normal-missing-state"
+    executed: list[str] = []
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        assert any(
+            content.type == "function_result"
+            and content.call_id == "external-call"
+            and content.result == "stored external result"
+            for message in messages
+            for content in message.contents
+        )
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Look up the external record."},
+                {
+                    "id": "assistant-external-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "external-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "id": "external-result",
+                    "role": "tool",
+                    "toolCallId": "external-call",
+                    "content": "stored external result",
+                },
+            ],
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-normal-missing-state",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/fides-normal-missing-state",
+            json={
+                "runId": "run-fides-normal-missing-state",
+                "threadId": thread_id,
+                "messages": [{"id": "user-2", "role": "user", "content": "Run the protected action."}],
+            },
+        )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in events if event["type"] == "TOOL_CALL_RESULT"])
+    snapshot = await store.get(scope="test", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+    assert context_label["integrity"] == "untrusted"
+    assert context_label["confidentiality"] == "private"
+
+
 async def test_endpoint_fides_confirm_changes_folds_fresh_client_result(
     streaming_chat_client_stub: Any,
 ) -> None:
