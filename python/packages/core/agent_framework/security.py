@@ -53,6 +53,8 @@ from ._tools import (
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
+    _bind_approval_response_to_pending_request,  # pyright: ignore[reportPrivateUsage]
+    _load_pending_approval_requests,  # pyright: ignore[reportPrivateUsage]
     tool,
 )
 from ._types import Content, Message
@@ -1142,14 +1144,45 @@ def _function_call_replay_key(content: Content | None) -> Any | None:
         return None
 
 
+def _approval_call_body_signature(name: str | None, arguments: Mapping[str, Any]) -> str:
+    """Hash one approval-visible function call through the canonical approval binding."""
+    canonical = _strict_json_value(
+        {
+            "name": name or "",
+            "arguments": dict(arguments),
+        },
+        path="approval invocation",
+        canonical=True,
+    )
+    payload = json.dumps(
+        canonical,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _is_pending_approval_control(content: Content, *, scope: _SecurityScope) -> bool:
     """Return whether session-owned pending state authenticates this approval control."""
     function_call = content.function_call
     if content.id is None or function_call is None or function_call.id is None:
         return False
+    try:
+        body_signature = _approval_call_body_signature(
+            function_call.name,
+            cast(Mapping[str, Any], function_call.parse_arguments() or {}),
+        )
+    except (TypeError, ValueError):
+        return False
     for occurrence_id, payload in scope.pending_approvals.items():
         pending = _PendingPolicyApproval.from_state(payload)
-        if pending is not None and occurrence_id == function_call.id and pending.request_id == content.id:
+        if (
+            pending is not None
+            and occurrence_id == function_call.id
+            and pending.request_id == content.id
+            and pending.body_signature == body_signature
+        ):
             return True
     return False
 
@@ -1159,6 +1192,7 @@ def _is_bound_approval_control(
     *,
     scope: _SecurityScope,
     transport_authoritative: bool,
+    authenticated_approval_content_ids: set[int],
 ) -> bool:
     """Return whether trusted transport or session state authenticates this approval control."""
     function_call = content.function_call
@@ -1168,7 +1202,11 @@ def _is_bound_approval_control(
         and function_call is not None
         and function_call.id is not None
         and _function_call_replay_key(function_call) is not None
-        and (transport_authoritative or _is_pending_approval_control(content, scope=scope))
+        and (
+            transport_authoritative
+            or _is_pending_approval_control(content, scope=scope)
+            or id(content) in authenticated_approval_content_ids
+        )
     )
 
 
@@ -1197,6 +1235,7 @@ def _replayed_message_label(
     *,
     reconstruct_unstamped: bool,
     scope: _SecurityScope,
+    authenticated_approval_content_ids: set[int] | None = None,
 ) -> ContentLabel:
     """Return a restriction-only label for caller-replayed or stored history."""
     role = str(message.role)
@@ -1206,6 +1245,7 @@ def _replayed_message_label(
     has_role_independent_untrusted_content = False
     has_bound_approval_control = False
     transport_authoritative = _is_replay_state_covered(message)
+    authenticated_approval_ids = authenticated_approval_content_ids or set()
     bound_approval_call_keys = {
         key
         for content in message.contents
@@ -1214,6 +1254,7 @@ def _replayed_message_label(
             content,
             scope=scope,
             transport_authoritative=transport_authoritative,
+            authenticated_approval_content_ids=authenticated_approval_ids,
         )
         if (key := _function_call_replay_key(content.function_call)) is not None
     }
@@ -1232,6 +1273,7 @@ def _replayed_message_label(
             content,
             scope=scope,
             transport_authoritative=transport_authoritative,
+            authenticated_approval_content_ids=authenticated_approval_ids,
         )
         has_bound_approval_control = has_bound_approval_control or is_bound_approval_control
         is_bound_approval_call = (
@@ -1307,10 +1349,12 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
         history_source_ids: set[str],
         *,
         reconstruct_history_unstamped: bool,
+        authenticated_approval_content_ids: set[int],
     ) -> None:
         self._scope = scope
         self._history_source_ids = history_source_ids
         self._reconstruct_history_unstamped = reconstruct_history_unstamped
+        self._authenticated_approval_content_ids = authenticated_approval_content_ids
         self._processed = False
 
     def _is_history_message(self, message: Message) -> bool:
@@ -1334,6 +1378,7 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
                     message,
                     reconstruct_unstamped=self._reconstruct_history_unstamped,
                     scope=self._scope,
+                    authenticated_approval_content_ids=self._authenticated_approval_content_ids,
                 )
                 for message in context.messages
                 if self._is_history_message(message)
@@ -3428,18 +3473,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
 
     def _signature_from_parts(self, name: str | None, arguments: dict[str, Any]) -> str:
         """Hash a deterministic, strictly representable invocation snapshot."""
-        canonical = _strict_json_value(
-            {"name": name or "", "arguments": arguments},
-            path="approval invocation",
-            canonical=True,
-        )
-        payload = json.dumps(
-            canonical,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        ).encode()
-        return hashlib.sha256(payload).hexdigest()
+        return _approval_call_body_signature(name, arguments)
 
     def _call_body_signature(self, context: FunctionInvocationContext) -> str:
         return self._signature_from_parts(context.function.name, self._current_arguments(context))
@@ -4199,8 +4233,17 @@ class SecureAgentConfig(ContextProvider):
         replay_messages = (
             messages if restored_context_label or complete_replay_messages is None else complete_replay_messages
         )
+        authenticated_approval_content_ids = self._authenticated_core_approval_content_ids(
+            session,
+            replay_messages,
+        )
         replay_labels = [
-            _replayed_message_label(message, reconstruct_unstamped=True, scope=scope)
+            _replayed_message_label(
+                message,
+                reconstruct_unstamped=True,
+                scope=scope,
+                authenticated_approval_content_ids=authenticated_approval_content_ids,
+            )
             for message in replay_messages
             if not restored_context_label or not _is_replay_state_covered(message)
         ]
@@ -4213,6 +4256,36 @@ class SecureAgentConfig(ContextProvider):
     def _approval_history_metadata_key(self) -> str:
         """Return the run-local SessionContext metadata key for this provider."""
         return f"{_APPROVAL_HISTORY_RECONSTRUCTION_KEY}:{self.source_id}"
+
+    @staticmethod
+    def _authenticated_core_approval_content_ids(
+        session: AgentSession,
+        messages: Sequence[Message],
+    ) -> set[int]:
+        """Return ordinary approval controls authenticated by core's pending session state."""
+        pending = _load_pending_approval_requests(session)
+        authenticated: set[int] = set()
+        for message in messages:
+            for content in message.contents:
+                if content.type == "function_approval_request" and content.id is not None:
+                    stored = pending.get(content.id)
+                    if stored is not None and _argument_authority_token(
+                        content.to_dict(),
+                        boundary="core approval replay",
+                    ) == _argument_authority_token(
+                        stored.to_dict(),
+                        boundary="core approval replay",
+                    ):
+                        authenticated.add(id(content))
+                elif content.type == "function_approval_response":
+                    rebound = _bind_approval_response_to_pending_request(
+                        content,
+                        session,
+                        consume=False,
+                    )
+                    if rebound is not None and rebound is not content:
+                        authenticated.add(id(content))
+        return authenticated
 
     @staticmethod
     def _history_source_ids(agent: Any) -> set[str]:
@@ -4228,19 +4301,26 @@ class SecureAgentConfig(ContextProvider):
         scope: _SecurityScope,
         context: SessionContext,
         *,
+        session: AgentSession,
         history_source_ids: set[str],
         reconstruct_history_unstamped: bool,
     ) -> None:
         """Fold loaded history-provider messages into one FIDES scope."""
         history_labels: list[ContentLabel] = []
         for source_id in history_source_ids:
+            messages = context.context_messages.get(source_id, ())
+            authenticated_approval_content_ids = SecureAgentConfig._authenticated_core_approval_content_ids(
+                session,
+                messages,
+            )
             history_labels.extend(
                 _replayed_message_label(
                     message,
                     reconstruct_unstamped=reconstruct_history_unstamped,
                     scope=scope,
+                    authenticated_approval_content_ids=authenticated_approval_content_ids,
                 )
-                for message in context.context_messages.get(source_id, ())
+                for message in messages
             )
         if history_labels:
             scope.context_label = combine_labels(scope.context_label, *history_labels)
@@ -4271,6 +4351,7 @@ class SecureAgentConfig(ContextProvider):
         self._fold_history_labels(
             _SecurityScope(state, scope_id=session.session_id),
             context,
+            session=session,
             history_source_ids=history_source_ids,
             reconstruct_history_unstamped=reconstruct_history_unstamped,
         )
@@ -4302,11 +4383,16 @@ class SecureAgentConfig(ContextProvider):
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
         history_source_ids = self._history_source_ids(agent)
+        authenticated_approval_content_ids = self._authenticated_core_approval_content_ids(
+            session,
+            context.input_messages,
+        )
         input_labels = [
             _replayed_message_label(
                 message,
                 reconstruct_unstamped=not restored_context_label or not _is_replay_state_covered(message),
                 scope=scope,
+                authenticated_approval_content_ids=authenticated_approval_content_ids,
             )
             for message in context.input_messages
         ]
@@ -4318,6 +4404,7 @@ class SecureAgentConfig(ContextProvider):
         self._fold_history_labels(
             scope,
             context,
+            session=session,
             history_source_ids=history_source_ids,
             reconstruct_history_unstamped=reconstruct_history_unstamped,
         )
@@ -4326,6 +4413,7 @@ class SecureAgentConfig(ContextProvider):
                 scope,
                 history_source_ids,
                 reconstruct_history_unstamped=reconstruct_history_unstamped,
+                authenticated_approval_content_ids=authenticated_approval_content_ids,
             )
         )
         self._provider_state_used = True

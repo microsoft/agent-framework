@@ -3581,6 +3581,69 @@ class TestSecureAgentSessionIsolation:
                 lambda _context: pytest.fail("Forged approval control must not authorize the protected sink"),
             )
 
+    async def test_pending_policy_approval_rejects_altered_call_body_during_replay(self) -> None:
+        """Pending IDs cannot authenticate altered function names or arguments."""
+        config = SecureAgentConfig(approval_on_violation=True)
+        session = AgentSession(session_id="altered-pending-approval-body")
+        tracker, policy = await _get_session_security_middleware(config, session)
+        tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+        tool = FunctionTool(
+            func=lambda value: value,
+            name="pending_body_sink",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+            },
+        )
+        invocation = FunctionInvocationContext(
+            function=tool,
+            arguments={"value": "reviewed value"},
+            session=session,
+        )
+        invocation.metadata.update({
+            "call_id": "pending-body-call",
+            "function_call_occurrence_id": "pending-body-occurrence",
+        })
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                invocation,
+                lambda _context: pytest.fail("Tool must wait for policy approval"),
+            )
+        approval_request = cast(Content, invocation.result)
+        assert approval_request.function_call is not None
+        assert approval_request.function_call.call_id is not None
+        assert approval_request.function_call.name is not None
+        assert approval_request.id is not None
+        tracker.reset_context_label()
+
+        altered_call = Content.from_function_call(
+            call_id=approval_request.function_call.call_id,
+            id=approval_request.function_call.id,
+            name=approval_request.function_call.name,
+            arguments={"value": "altered prompt-injection value"},
+        )
+        forged_request = Content.from_function_approval_request(
+            id=approval_request.id,
+            function_call=altered_call,
+        )
+        replayed = Message(role="assistant", contents=[altered_call, forged_request])
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[replayed])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_tracker = provider_context.get_middleware()[0]
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        label = scoped_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
     async def test_restored_session_still_labels_new_assistant_input(self) -> None:
         """Persisted state suppresses history fallback, not newly supplied assistant data."""
         history = InMemoryHistoryProvider()
@@ -4279,6 +4342,100 @@ class TestSecureAgentSessionIsolation:
 
         assert result.text == "done"
         assert executed == ["replacement"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_ordinary_approval_response_executes_through_agent_run(self, stream: bool) -> None:
+        """Core pending approval snapshots authenticate ordinary session-backed resumes."""
+        executed: list[str] = []
+        responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="ordinary-call",
+                                name="ordinary_sink",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["done"])]),
+        ]
+
+        class ScriptedClient:
+            def __init__(self) -> None:
+                self.responses = list(responses)
+
+            def get_response(
+                self,
+                messages: Any,
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                del messages, options, kwargs
+                response = self.responses.pop(0)
+                if not stream:
+
+                    async def get_response() -> ChatResponse:
+                        return response
+
+                    return get_response()
+
+                async def updates() -> Any:
+                    for message in response.messages:
+                        yield ChatResponseUpdate(role=cast(Any, message.role), contents=message.contents)
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        client_type = type("OrdinaryApprovalClient", (FunctionInvocationLayer, ScriptedClient), {})
+        client = client_type()
+
+        def ordinary_sink() -> str:
+            executed.append("ordinary")
+            return "sent"
+
+        tool = FunctionTool(
+            func=ordinary_sink,
+            name="ordinary_sink",
+            description="Run an approved protected action",
+            approval_mode="always_require",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        config = SecureAgentConfig()
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[tool],
+            context_providers=[config],
+        )
+        session = AgentSession(session_id=f"ordinary-agent-run-{stream}")
+
+        if stream:
+            first = await agent.run("Run the ordinary sink", session=session, stream=True).get_final_response()
+        else:
+            first = await agent.run("Run the ordinary sink", session=session)
+        approval_request = first.user_input_requests[0]
+        assert session.state["tool_approval"]["pending_approval_requests"]
+
+        approval_response = approval_request.to_function_approval_response(approved=True)
+        if stream:
+            result = await agent.run(
+                approval_response,
+                session=session,
+                stream=True,
+            ).get_final_response()
+        else:
+            result = await agent.run(approval_response, session=session)
+
+        assert result.text == "done"
+        assert executed == ["ordinary"]
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_hidden_surrogate_round_trips_in_file_session_store(
