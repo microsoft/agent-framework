@@ -414,7 +414,7 @@ async def test_wrapped_reply_preflight_uses_selected_routes(
 ) -> None:
     from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
 
-    parent, children, requests, calls = selected_reply_workflow(routing)
+    parent, children, requests, calls = selected_reply_workflow(routing, False)
     await parent.run("first")
     first_scope = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
     await parent.run("second")
@@ -422,20 +422,23 @@ async def test_wrapped_reply_preflight_uses_selected_routes(
     pending_second = await children["second"]._runner_context.get_pending_request_info_events()
     assert requests["first"].source_event.request_id == requests["second"].source_event.request_id == "shared"
     reply = requests["first"].create_response(True)
+    checkpoint_id: str | None = None
+    storage: InMemoryCheckpointStorage | None = None
     if restore:
         await parent._runner_context.send_message(WorkflowMessage(data=reply, source_id="coordinator"))
         checkpoint = await parent._runner.build_checkpoint()
         storage = InMemoryCheckpointStorage()
         checkpoint_id = await storage.save(checkpoint)
-        run = parent.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=streaming)
-    else:
-        run = parent.run([reply], stream=streaming)
 
+    message = None if restore else [reply]
     if streaming:
-        events = [event async for event in run]
+        events = [
+            event
+            async for event in parent.run(message, checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=True)
+        ]
         outputs = [event.data for event in events if event.type == "output"]
     else:
-        outputs = (await run).get_outputs()
+        outputs = (await parent.run(message, checkpoint_id=checkpoint_id, checkpoint_storage=storage)).get_outputs()
 
     assert outputs == ["first"]
     assert not await children["first"]._runner_context.get_pending_request_info_events()
@@ -474,7 +477,7 @@ async def test_wrapped_reply_selected_mixed_scopes_preserve_queue(
         with pytest.raises(ValueError, match="multiple parent workflow scopes"):
             await parent._runner._run_iteration()
     assert parent._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope
-    assert await parent._runner_context.get_queued_messages() == {"coordinator": [message]}
+    assert await parent._runner._get_queued_messages() == {"coordinator": [message]}
     for name, child in children.items():
         assert await child._runner_context.get_pending_request_info_events() == pending[name]
 
