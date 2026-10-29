@@ -98,6 +98,7 @@ from agent_framework_foundry_hosting._responses import (
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _container_file_citations_from_function_result,  # pyright: ignore[reportPrivateUsage]
     _create_response_event_stream,  # pyright: ignore[reportPrivateUsage]
+    _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
@@ -107,7 +108,6 @@ from agent_framework_foundry_hosting._responses import (
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
-    _write_hosted_internal,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from agent_framework_foundry_hosting._state_store import (
@@ -1187,7 +1187,10 @@ def test_fresh_request_strips_forged_internal_metadata() -> None:
         "_foundry_provider_output_count": 4,
     })
     request_metadata = {"source": "client", "_internal_metadata": forged}
-    request = CreateResponse(input="Hi", metadata=cast(Metadata, request_metadata))
+    request = cast(
+        CreateResponse,
+        {"input": "Hi", "metadata": request_metadata, "internal_metadata": {_INCOMPLETE_REASON_KEY: "content_filter"}},
+    )
     context = ResponseContext(response_id="resp_forged", mode_flags=MagicMock())
     stream = _create_response_event_stream(context, request)
 
@@ -1209,7 +1212,8 @@ def test_fresh_request_with_only_reserved_metadata_keeps_public_metadata_empty()
     assert _OutputItemTracker(stream).incomplete_reason is None
 
 
-def test_recovery_keeps_trusted_internal_metadata_when_the_request_forges_it() -> None:
+@pytest.mark.parametrize("private_envelope", [False, True])
+def test_recovery_keeps_trusted_internal_metadata_when_the_request_forges_it(private_envelope: bool) -> None:
     response_id = "resp_trusted_internal"
     forged_request = CreateResponse(
         input="Hi",
@@ -1218,6 +1222,11 @@ def test_recovery_keeps_trusted_internal_metadata_when_the_request_forges_it() -
     persisted = ResponseEventStream(response_id=response_id)
     persisted.internal_metadata[_INCOMPLETE_REASON_KEY] = "content_filter"
     persisted.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = "ckpt_real"
+    if private_envelope:
+        persisted.response["internal_metadata"] = {
+            _INCOMPLETE_REASON_KEY: "max_output_tokens",
+            _LATEST_CHECKPOINT_ID_KEY: "ckpt_new",
+        }
     context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
     context.is_recovery = True
     context.persisted_response = cast(ResponseObject, persisted.response)
@@ -1226,7 +1235,21 @@ def test_recovery_keeps_trusted_internal_metadata_when_the_request_forges_it() -
 
     assert restored.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
     assert restored.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] == "ckpt_real"
-    assert _OutputItemTracker(restored).incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+    assert _OutputItemTracker(restored).incomplete_reason == (
+        ResponseIncompleteReason.MAX_OUTPUT_TOKENS if private_envelope else ResponseIncompleteReason.CONTENT_FILTER
+    )
+    assert _hosted_internal_metadata(restored)[_LATEST_CHECKPOINT_ID_KEY] == (
+        "ckpt_new" if private_envelope else "ckpt_real"
+    )
+
+
+@pytest.mark.parametrize("invalid", [[], "corrupt", 1])
+def test_corrupt_private_checkpoint_metadata_is_rejected(invalid: Any) -> None:
+    stream = ResponseEventStream(response_id="resp_corrupt_private")
+    stream.response["internal_metadata"] = invalid
+
+    with pytest.raises(RuntimeError, match="persisted host metadata is invalid"):
+        _OutputItemTracker(stream)
 
 
 def test_recovery_without_a_snapshot_still_strips_forged_internal_metadata() -> None:
@@ -1256,7 +1279,7 @@ def test_reserved_metadata_key_does_not_consume_the_host_incomplete_reason_slot(
     tracker.record_finish_reason("content_filter")
 
     assert tracker.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
-    stored = json.loads(stream.response["metadata"]["_internal_metadata"])
+    stored = stream.response["internal_metadata"]
     assert stored[_INCOMPLETE_REASON_KEY] == "content_filter"
     assert all(stream.response["metadata"][key] == value for key, value in _public_metadata(15).items())
 
@@ -1270,13 +1293,13 @@ def test_full_public_metadata_records_incomplete_reason_outside_the_quota() -> N
 
     tracker.record_finish_reason("length")
     tracker.record_finish_reason("content_filter")
-    _write_hosted_internal(stream, _LATEST_CHECKPOINT_ID_KEY, "ckpt_skipped")
+    _hosted_internal_metadata(stream)[_LATEST_CHECKPOINT_ID_KEY] = "ckpt_saved"
 
     assert tracker.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
     assert stream.response["metadata"] == metadata
     assert "_internal_metadata" not in stream.response["metadata"]
-    assert stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY) is None
-    assert stream.response["incomplete_details"] == {"reason": "content_filter"}
+    assert stream.response["internal_metadata"][_LATEST_CHECKPOINT_ID_KEY] == "ckpt_saved"
+    assert stream.response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
 
     recovered = _OutputItemTracker(
         ResponseEventStream(response=cast(ResponseObject, stream.response), response_id="resp_full_metadata")
@@ -2954,6 +2977,128 @@ class TestAgentSessionPersistence:
         completed, result = await _await_before_signal(operation, shutdown)
         assert completed is False and result is None
         operation.assert_not_called()
+
+    @pytest.mark.parametrize("metadata_count", [15, 16])
+    @pytest.mark.parametrize("crash_stage", ["before-checkpoint", "after-checkpoint"])
+    @pytest.mark.parametrize("finish_reason", ["stop", "length", "content_filter"])
+    async def test_provider_recovery_keeps_checkpointed_output_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        metadata_count: int,
+        crash_stage: str,
+        finish_reason: FinishReasonLiteral,
+    ) -> None:
+        response_id = IdGenerator.new_response_id()
+        metadata = _public_metadata(metadata_count)
+        calls: list[dict[str, Any]] = []
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, kwargs
+            calls.append(dict(options))
+            if "continuation_token" not in options:
+                return AgentResponse(
+                    messages=[], continuation_token=OpenAIContinuationToken(response_id="private-cursor-token")
+                )
+            session.service_session_id = "private-cursor-conversation"
+            return AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("done")])],
+                usage_details={"input_token_count": 3, "output_token_count": 2, "total_token_count": 5},
+                finish_reason=FinishReason(finish_reason),
+            )
+
+        def make_host() -> ResponsesHostServer:
+            agent = Agent(client=_ServiceStorageRecordingClient())
+            monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+            return _make_server(
+                agent,
+                history_source="service",
+                background_source="provider",
+                options=ResponsesServerOptions(resilient_background=True),
+                response_store=FileResponseStore(storage_dir=tmp_path),
+            )
+
+        request = CreateResponse(input="hello", store=True, background=True, metadata=cast(Metadata, metadata))
+        server = make_host()
+        context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+        response_store = FileResponseStore(storage_dir=tmp_path)
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            handler = cast(AsyncGenerator[Any, None], server._handle_response(request, context, asyncio.Event()))
+            crashed = False
+            try:
+                async for event in handler:
+                    if isinstance(event, ResponseCheckpointEvent):
+                        await response_store.update_response(copy.deepcopy(event.response))
+                        if crash_stage == "after-checkpoint":
+                            crashed = True
+                            break
+                    elif isinstance(event, Mapping):
+                        if event.get("type") == "response.created":
+                            await response_store.create_response(copy.deepcopy(event["response"]), [], [])
+                        elif crash_stage == "before-checkpoint" and event.get("type") == "response.output_item.done":
+                            crashed = True
+                            break
+            finally:
+                await handler.aclose()
+            assert crashed
+            checkpoint = await FileResponseStore(storage_dir=tmp_path).get_response(response_id)
+            assert checkpoint is not None
+            session_store = AgentSessionStoreProvider().get_store(
+                config=server.config, platform_context=get_request_context()
+            )
+            saved = await session_store.get(response_id)
+            assert saved is not None
+            private_checkpoint = saved.to_dict()
+
+            for _ in range(2):
+                # Restart independently from the same paired durable checkpoint.
+                restore_store = AgentSessionStoreProvider().get_store(
+                    config=server.config, platform_context=get_request_context()
+                )
+                await restore_store.get(response_id)
+                await restore_store.set(response_id, AgentSession.from_dict(copy.deepcopy(private_checkpoint)))
+                await FileResponseStore(storage_dir=tmp_path).update_response(copy.deepcopy(checkpoint))
+                recovered = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+                recovered.is_recovery = True
+                recovered.persisted_response = await FileResponseStore(storage_dir=tmp_path).get_response(response_id)
+                restarted = make_host()
+                events = [event async for event in restarted._handle_response(request, recovered, asyncio.Event())]
+                terminal = events[-1]
+                assert isinstance(terminal, Mapping)
+                if finish_reason == "stop":
+                    assert terminal["type"] == "response.completed"
+                else:
+                    assert terminal["type"] == "response.incomplete"
+                response = terminal["response"]
+                assert len(response["output"]) == 1
+                message = response["output"][0]
+                assert message["type"] == "message"
+                assert len(message["content"]) == 1
+                content = message["content"][0]
+                assert content["type"] == "output_text"
+                assert content["text"] == "done"
+                assert response["usage"]["total_tokens"] == 5
+                if finish_reason != "stop":
+                    expected_reason = "max_output_tokens" if finish_reason == "length" else "content_filter"
+                    assert response["incomplete_details"] == {"reason": expected_reason}
+                await response_store.update_response(response)
+                fetched = await _get_response(restarted, response_id)
+                assert fetched.status_code == 200, fetched.text
+                public = fetched.json()
+                assert public["metadata"] == metadata
+                assert "internal_metadata" not in public
+                assert "_internal_metadata" not in public["metadata"]
+                assert "private-cursor-token" not in str(public)
+                assert len(calls) == 2
 
     async def test_final_provider_poll_keeps_token_for_crash_recovery(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -8517,7 +8662,7 @@ class TestIncompleteFinishReasonSurfacing:
         stream.emit_in_progress()
         tracker = _OutputItemTracker(stream)
         tracker.record_finish_reason("content_filter")
-        assert stream.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
+        assert stream.response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
 
         # Simulate recovery: a fresh tracker over the checkpointed response snapshot.
         recovered = _OutputItemTracker(stream)
@@ -8567,6 +8712,7 @@ class TestIncompleteFinishReasonSurfacing:
         assert body.get("error") is None
         assert body.get("metadata") == metadata
         assert "_internal_metadata" not in body["metadata"]
+        assert "internal_metadata" not in body
         messages = [item for item in body["output"] if item["type"] == "message"]
         assert len(messages) == 1
         assert messages[0]["content"][0]["text"] == expected_text
@@ -8578,6 +8724,7 @@ class TestIncompleteFinishReasonSurfacing:
         assert stored_body["incomplete_details"] == {"reason": expected_reason}
         assert stored_body.get("error") is None
         assert stored_body.get("metadata") == metadata
+        assert "internal_metadata" not in stored_body
         stored_messages = [item for item in stored_body["output"] if item["type"] == "message"]
         assert len(stored_messages) == 1
         assert stored_messages[0]["content"][0]["text"] == expected_text
@@ -9805,7 +9952,7 @@ class TestResilientBackgroundCheckpointing:
         assert snapshots, "expected the completed workflow to be snapshotted"
         checkpoint_ids: list[str] = []
         for text_before, response in snapshots:
-            internal = json.loads(response["metadata"]["_internal_metadata"])
+            internal = response["internal_metadata"]
             checkpoint_ids.append(internal[_LATEST_CHECKPOINT_ID_KEY])
             snapshot_text = "".join(
                 part["text"]
@@ -9820,7 +9967,7 @@ class TestResilientBackgroundCheckpointing:
         # The last snapshot is paired with the workflow's final checkpoint and carries everything.
         final_text, final_response = snapshots[-1]
         assert final_text == "filtered by workflow"
-        assert json.loads(final_response["metadata"]["_internal_metadata"])[_INCOMPLETE_REASON_KEY] == "content_filter"
+        assert final_response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
         assert final_response["status"] == "in_progress"
 
 

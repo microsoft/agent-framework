@@ -53,11 +53,11 @@ from ._request import (
 from ._responses import (
     _HOSTED_PROVIDER_USAGE_KEY,  # pyright: ignore[reportPrivateUsage]
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
+    _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
-    _write_hosted_internal,  # pyright: ignore[reportPrivateUsage]
 )
 from ._scope import FoundryRequestScope
 from ._state_store import CheckpointStoreProvider, ContextScopedStoreProvider
@@ -509,7 +509,7 @@ class NativeResponsesWorkflow:
                 for event in buffered:
                     events.extend(await _project(event, draft, next_tracker, approval_projection))
                 events.extend(next_tracker.close())
-                _write_hosted_internal(draft, _HOSTED_PROVIDER_USAGE_KEY, next_tracker.usage_details)
+                _hosted_internal_metadata(draft)[_HOSTED_PROVIDER_USAGE_KEY] = next_tracker.usage_details
                 await run.stage(_snapshot(draft), approvals=next_aliases, checkpoint_id=checkpoint_id)
                 stream, tracker, aliases = draft, next_tracker, next_aliases
                 buffered.clear()
