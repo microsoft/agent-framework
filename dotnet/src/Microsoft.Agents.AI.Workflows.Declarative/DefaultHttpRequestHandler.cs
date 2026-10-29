@@ -6,12 +6,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-#if NET
-using System.IO;
-using System.Net.Security;
-using System.Net.Sockets;
-using System.Security.Cryptography.X509Certificates;
-#endif
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,11 +24,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// is used.
 /// </para>
 /// <para>
-/// Requests must use HTTP or HTTPS. The internally owned client connects directly to public addresses only,
-/// including after redirects, and does not use system proxies. To access other destinations or use a proxy,
-/// supply a client with an explicit destination policy. Caller-supplied clients are responsible for validating
-/// their destinations, resolved addresses, and redirects.
-/// The internally owned client requires .NET 8 or later; other target frameworks require a supplied client.
+/// Requests must use HTTP or HTTPS and target a host explicitly allowed by the application, including after
+/// redirects. The default allowlist is empty, so constructors without an allowlist reject all requests.
+/// Host matching is exact and case-insensitive, with internationalized names and trailing DNS dots normalized;
+/// wildcards and implicit subdomains are not supported. Hosts are allowed independently of scheme and port.
+/// The allowlist is copied at construction and applies before invoking the client provider.
+/// DNS resolution and network routing are delegated to the HTTP transport, not classified by this handler.
 /// </para>
 /// <para>
 /// The handler applies the per-request <see cref="HttpRequestInfo.Timeout"/> using a linked <see cref="CancellationTokenSource"/>
@@ -53,13 +48,14 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 {
     private const int MaxAutomaticRedirections = 50;
 
+    private readonly HashSet<string> _allowedHosts;
     private readonly Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Lazy<HttpClient> _ownedHttpClient;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses an
     /// internally owned <see cref="HttpClient"/> for all requests. The internal client is disposed
-    /// when <see cref="DisposeAsync"/> is called.
+    /// when <see cref="DisposeAsync"/> is called. The allowlist is empty, so all requests are rejected.
     /// </summary>
     public DefaultHttpRequestHandler()
         : this(httpClientProvider: null)
@@ -68,7 +64,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses the
-    /// supplied <see cref="HttpClient"/> for all requests.
+    /// supplied <see cref="HttpClient"/>. The allowlist is empty, so all requests are rejected.
     /// </summary>
     /// <param name="httpClient">
     /// The <see cref="HttpClient"/> to use for all requests. The caller retains ownership of this
@@ -83,7 +79,8 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that selects
     /// an <see cref="HttpClient"/> per request via a caller-supplied callback — for example, to route
-    /// different URLs through differently authenticated clients.
+    /// different URLs through differently authenticated clients. The allowlist is empty, so all requests
+    /// are rejected before invoking the callback.
     /// </summary>
     /// <param name="httpClientProvider">
     /// An optional callback invoked for each request. The callback receives the <see cref="HttpRequestInfo"/>
@@ -110,9 +107,73 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// </para>
     /// </remarks>
     public DefaultHttpRequestHandler(Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
+        : this([], httpClientProvider)
     {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
+    /// and an internally owned HTTP client.
+    /// </summary>
+    /// <param name="allowedHosts">
+    /// The exact DNS names or IP literals the application permits. An empty collection rejects all requests.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="allowedHosts"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
+    public DefaultHttpRequestHandler(IEnumerable<string> allowedHosts)
+        : this(allowedHosts, httpClientProvider: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
+    /// and an optional per-request client provider.
+    /// </summary>
+    /// <param name="allowedHosts">
+    /// The exact DNS names or IP literals the application permits. Supply host names only, without schemes,
+    /// ports, paths, or wildcards. An empty collection rejects all requests. The collection is copied.
+    /// </param>
+    /// <param name="httpClientProvider">
+    /// An optional callback returning a caller-owned client, or <see langword="null"/> to use the internal client.
+    /// Supplied clients must disable automatic redirects or independently enforce the same allowlist on redirects.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="allowedHosts"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
+    public DefaultHttpRequestHandler(
+        IEnumerable<string> allowedHosts,
+        Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
+    {
+        Throw.IfNull(allowedHosts);
+        this._allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string host in allowedHosts)
+        {
+            if (string.IsNullOrWhiteSpace(host) || Uri.CheckHostName(host) == UriHostNameType.Unknown)
+            {
+                throw new ArgumentException("Allowed hosts must be DNS names or IP literals without schemes, ports, paths, or wildcards.", nameof(allowedHosts));
+            }
+
+            this._allowedHosts.Add(NormalizeHost(new UriBuilder(Uri.UriSchemeHttps, host).Uri));
+        }
+
         this._httpClientProvider = httpClientProvider;
         this._ownedHttpClient = new Lazy<HttpClient>(CreateOwnedHttpClient, LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
+    /// and a caller-owned HTTP client.
+    /// </summary>
+    /// <param name="allowedHosts">
+    /// The exact DNS names or IP literals the application permits. An empty collection rejects all requests.
+    /// </param>
+    /// <param name="httpClient">
+    /// The caller-owned client. Disable automatic redirects or independently enforce the same allowlist on redirects.
+    /// </param>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
+    public DefaultHttpRequestHandler(IEnumerable<string> allowedHosts, HttpClient httpClient)
+        : this(allowedHosts, CreateSingleClientProvider(httpClient))
+    {
     }
 
     private static Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>> CreateSingleClientProvider(HttpClient httpClient)
@@ -155,6 +216,11 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         for (int redirectCount = 0; redirectCount <= MaxAutomaticRedirections; redirectCount++)
         {
+            if (!this._allowedHosts.Contains(NormalizeHost(currentUri)))
+            {
+                throw new HttpRequestException("The request host is not in the allowed hosts list.");
+            }
+
             HttpClient? providedClient = null;
             if (this._httpClientProvider is not null)
             {
@@ -163,11 +229,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 {
                     throw new HttpRequestException("Redirects that change the HTTP client are not allowed.");
                 }
-            }
-
-            if (providedClient is null)
-            {
-                ValidateDefaultDestination(currentUri);
             }
 
             HttpClient client = providedClient ?? this._ownedHttpClient.Value;
@@ -313,128 +374,15 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
     private static HttpClient CreateOwnedHttpClient()
     {
-#if NET
-        return new HttpClient(CreateOwnedHttpMessageHandler());
-#else
-        throw new PlatformNotSupportedException(
-            "The internally owned HTTP client requires .NET 8 or later. Supply an HttpClient with an explicit destination policy on this target framework.");
-#endif
-    }
-
-#if NET
-    internal static SocketsHttpHandler CreateOwnedHttpMessageHandler(
-        Func<string, CancellationToken, Task<IPAddress[]>>? resolveAddressesAsync = null,
-        Func<IPAddress[], int, CancellationToken, ValueTask<Stream>>? connectAsync = null)
-    {
-        resolveAddressesAsync ??= Dns.GetHostAddressesAsync;
-        connectAsync ??= ConnectToAddressesAsync;
-
-        return new()
+        return new HttpClient(new HttpClientHandler
         {
             AllowAutoRedirect = false,
             UseCookies = false,
-            UseProxy = false,
-            SslOptions = new SslClientAuthenticationOptions
-            {
-                CertificateRevocationCheckMode = X509RevocationMode.Online,
-            },
-            ConnectCallback = (context, cancellationToken) =>
-                ConnectToPublicAddressAsync(context.DnsEndPoint, resolveAddressesAsync, connectAsync, cancellationToken),
-        };
+            CheckCertificateRevocationList = true,
+        });
     }
 
-    private static async ValueTask<Stream> ConnectToPublicAddressAsync(
-        DnsEndPoint destination,
-        Func<string, CancellationToken, Task<IPAddress[]>> resolveAddressesAsync,
-        Func<IPAddress[], int, CancellationToken, ValueTask<Stream>> connectAsync,
-        CancellationToken cancellationToken)
-    {
-        IPAddress[] addresses = await resolveAddressesAsync(destination.Host, cancellationToken).ConfigureAwait(false);
-        if (addresses.Length == 0)
-        {
-            throw new HttpRequestException("The destination did not resolve to a public address.");
-        }
-
-        foreach (IPAddress address in addresses)
-        {
-            ValidatePublicAddress(address);
-        }
-
-        return await connectAsync(addresses, destination.Port, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<Stream> ConnectToAddressesAsync(
-        IPAddress[] addresses, int port, CancellationToken cancellationToken)
-    {
-        Socket socket = new(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-        try
-        {
-            // Connect to the validated addresses without resolving the hostname again.
-            await socket.ConnectAsync(addresses, port, cancellationToken).ConfigureAwait(false);
-            return new NetworkStream(socket, ownsSocket: true);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
-    }
-#endif
-
-    private static void ValidateDefaultDestination(Uri uri)
-    {
-        if (uri.IsLoopback)
-        {
-            throw new HttpRequestException("The internally owned HTTP client only allows public destinations.");
-        }
-
-        if (IPAddress.TryParse(uri.IdnHost.Trim('[', ']'), out IPAddress? address))
-        {
-            ValidatePublicAddress(address);
-        }
-    }
-
-    private static void ValidatePublicAddress(IPAddress address)
-    {
-        if (address.IsIPv4MappedToIPv6)
-        {
-            address = address.MapToIPv4();
-        }
-
-        byte[] bytes = address.GetAddressBytes();
-        bool isPublic;
-        if (bytes.Length == 4)
-        {
-            // Exclude private and special-use ranges, including the host platform's service address.
-            isPublic = bytes[0] is not (0 or 10 or 127) &&
-                bytes[0] < 224 &&
-                !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127) &&
-                !(bytes[0] == 169 && bytes[1] == 254) &&
-                !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31) &&
-                !(bytes[0] == 192 && bytes[1] == 0 && bytes[2] is 0 or 2) &&
-                !(bytes[0] == 192 && bytes[1] == 88 && bytes[2] == 99) &&
-                !(bytes[0] == 192 && bytes[1] == 168) &&
-                !(bytes[0] == 198 && bytes[1] is 18 or 19) &&
-                !(bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100) &&
-                !(bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113) &&
-                !(bytes[0] == 168 && bytes[1] == 63 && bytes[2] == 129 && bytes[3] == 16);
-        }
-        else
-        {
-            // Allow global unicast except protocol assignments, documentation, and transition ranges.
-            isPublic = address.ScopeId == 0 &&
-                (bytes[0] & 0xE0) == 0x20 &&
-                !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] <= 0x01) &&
-                !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0D && bytes[3] == 0xB8) &&
-                !(bytes[0] == 0x20 && bytes[1] == 0x02) &&
-                !(bytes[0] == 0x3F && bytes[1] == 0xFF && (bytes[2] & 0xF0) == 0);
-        }
-
-        if (!isPublic)
-        {
-            throw new HttpRequestException("The internally owned HTTP client only allows public destinations.");
-        }
-    }
+    private static string NormalizeHost(Uri uri) => uri.IdnHost.TrimEnd('.');
 
     private static Uri CreateAbsoluteUri(string requestUri)
     {

@@ -275,9 +275,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     /// <summary>
     /// The expected ARM endpoint. Only requests whose absolute URL exactly matches
     /// this scheme and host receive the authenticated <see cref="HttpClient"/>; all
-    /// other URLs (including subdomain look-alikes such as
-    /// <c>https://management.azure.com.evil.com</c>) fall through to the handler
-    /// default and never see the bearer token.
+    /// other hosts are rejected by the handler's allowlist before this callback is invoked.
     /// </summary>
     private static readonly Uri s_armEndpoint = new("https://management.azure.com/");
 
@@ -305,12 +303,16 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
                 .GetTokenAsync(new TokenRequestContext([ArmScope]), CancellationToken.None)
                 .ConfigureAwait(false);
 
-        using HttpClient authenticatedClient = new();
+        using HttpClient authenticatedClient = new(new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            CheckCertificateRevocationList = true,
+        });
         authenticatedClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", accessToken.Token);
 
         await using DefaultHttpRequestHandler httpRequestHandler =
-            new(httpClientProvider: (request, _) =>
+            new(allowedHosts: [s_armEndpoint.IdnHost], httpClientProvider: (request, _) =>
             {
                 if (Uri.TryCreate(request.Url, UriKind.Absolute, out Uri? requestUri) &&
                     string.Equals(requestUri.Scheme, s_armEndpoint.Scheme, StringComparison.OrdinalIgnoreCase) &&
@@ -321,7 +323,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
 #pragma warning restore CA2025
                 }
 
-                // Fall back to the handler's internal client for any non-ARM URLs.
+                // Requests to the allowed host with a different scheme do not receive the token.
                 return Task.FromResult<HttpClient?>(null);
             });
 

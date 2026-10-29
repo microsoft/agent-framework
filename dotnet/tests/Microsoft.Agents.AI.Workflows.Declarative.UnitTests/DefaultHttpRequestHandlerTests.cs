@@ -2,9 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-#if NET
 using System.Diagnostics;
-#endif
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -67,7 +65,7 @@ public sealed class DefaultHttpRequestHandlerTests
                 Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
             }));
         using HttpClient suppliedClient = new(messageHandler);
-        await using DefaultHttpRequestHandler handler = new(suppliedClient);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], suppliedClient);
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
         // Act
@@ -88,7 +86,7 @@ public sealed class DefaultHttpRequestHandlerTests
         using HttpClient suppliedClient = new(messageHandler);
 
         // Act
-        DefaultHttpRequestHandler handler = new(suppliedClient);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], suppliedClient);
         await handler.DisposeAsync();
 
         // Assert - supplied client remains usable (not disposed)
@@ -99,6 +97,36 @@ public sealed class DefaultHttpRequestHandlerTests
     #endregion
 
     #region Argument Validation Tests
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendAsyncWithoutAllowedHostsRejectsBeforeTransportAsync(bool useProvider)
+    {
+        // Arrange
+        int providerCalls = 0;
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
+        using HttpClient client = new(messageHandler);
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = useProvider
+            ? new((_, _) =>
+            {
+                providerCalls++;
+                return Task.FromResult<HttpClient?>(client);
+            })
+            : new(client);
+#pragma warning restore CA2025
+        HttpRequestInfo request = new() { Url = TestUrl };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Equal(0, providerCalls);
+        Assert.Null(messageHandler.LastRequest);
+    }
 
     [Fact]
     public async Task SendAsyncWithNullRequestThrowsAsync()
@@ -141,12 +169,14 @@ public sealed class DefaultHttpRequestHandlerTests
         await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
-    [Fact]
-    public async Task SendAsyncWithDefaultClientRejectsLoopbackDestinationAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendAsyncWithoutAllowedHostsDoesNotConnectAsync(bool explicitEmptyAllowlist)
     {
         // Arrange
         await using RawHttpServer server = new();
-        await using DefaultHttpRequestHandler handler = new();
+        await using DefaultHttpRequestHandler handler = explicitEmptyAllowlist ? new([]) : new();
         HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
 
         // Act
@@ -158,102 +188,126 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Theory]
-    [InlineData("http://127.0.0.1/")]
-    [InlineData("http://2130706433/")]
-    [InlineData("http://0x7f000001/")]
-    [InlineData("http://127.1/")]
-    [InlineData("http://10.0.0.1/")]
-    [InlineData("http://172.16.0.1/")]
-    [InlineData("http://192.168.0.1/")]
-    [InlineData("http://169.254.1.1/")]
-    [InlineData("http://[::1]/")]
-    [InlineData("http://[::ffff:127.0.0.1]/")]
-    [InlineData("http://[fc00::1]/")]
-    [InlineData("http://0.0.0.0/")]
-    [InlineData("http://100.64.0.1/")]
-    [InlineData("http://168.63.129.16/")]
-    [InlineData("http://192.0.0.1/")]
-    [InlineData("http://192.0.2.1/")]
-    [InlineData("http://192.88.99.1/")]
-    [InlineData("http://198.18.0.1/")]
-    [InlineData("http://198.51.100.1/")]
-    [InlineData("http://203.0.113.1/")]
-    [InlineData("http://224.0.0.1/")]
-    [InlineData("http://255.255.255.255/")]
-    [InlineData("http://[::]/")]
-    [InlineData("http://[fe80::1]/")]
-    [InlineData("http://[ff02::1]/")]
-    [InlineData("http://[64:ff9b::7f00:1]/")]
-    [InlineData("http://[2001::1]/")]
-    [InlineData("http://[2001:db8::1]/")]
-    [InlineData("http://[2002:7f00:1::1]/")]
-    [InlineData("http://[3fff::1]/")]
-    [InlineData("http://localhost/")]
-    public async Task SendAsyncWithOwnedClientRejectsNonPublicAddressAsync(string url)
-    {
-        // Arrange
-        TestHttpMessageHandler messageHandler = new((_, _) =>
-            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
-        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
-        HttpRequestInfo request = new() { Method = "GET", Url = url };
-
-        // Act
-        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
-
-        // Assert
-        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        Assert.Null(messageHandler.LastRequest);
-    }
-
-    [Fact]
-    public async Task SendAsyncWithOwnedClientRejectsNonPublicRedirectAsync()
-    {
-        // Arrange
-        int requestCount = 0;
-        using HttpResponseMessage redirectResponse = new(HttpStatusCode.Found)
-        {
-            Headers = { Location = new Uri("http://127.0.0.1/next") },
-        };
-        using HttpResponseMessage okResponse = new(HttpStatusCode.OK);
-#pragma warning disable CA2025
-        TestHttpMessageHandler messageHandler = new((_, _) =>
-        {
-            requestCount++;
-            return Task.FromResult(requestCount == 1 ? redirectResponse : okResponse);
-        });
-#pragma warning restore CA2025
-        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
-        HttpRequestInfo request = new() { Method = "GET", Url = "http://api.example.test/resource" };
-
-        // Act
-        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
-
-        // Assert
-        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        Assert.Equal(1, requestCount);
-    }
-
-    [Theory]
-    [InlineData("https://8.8.8.8/")]
-    [InlineData("https://[2606:4700:4700::1111]/")]
-    [InlineData("https://[::ffff:8.8.8.8]/")]
-    public async Task SendAsyncWithOwnedClientAllowsPublicAddressAsync(string url)
+    [InlineData("api.example.test", "https://API.EXAMPLE.TEST/resource")]
+    [InlineData("API.EXAMPLE.TEST.", "https://api.example.test/resource")]
+    [InlineData("api.example.test", "https://api.example.test./resource")]
+    [InlineData("b\u00fccher.example", "https://xn--bcher-kva.example/resource")]
+    [InlineData("xn--bcher-kva.example", "https://b\u00fccher.example/resource")]
+    [InlineData("127.0.0.1", "http://127.1/resource")]
+    [InlineData("10.0.0.1", "http://10.0.0.1:8080/resource")]
+    [InlineData("::1", "http://[::1]/resource")]
+    public async Task SendAsyncAllowsExactConfiguredHostAsync(string allowedHost, string url)
     {
         // Arrange
         using HttpResponseMessage response = new(HttpStatusCode.OK);
 #pragma warning disable CA2025
-        TestHttpMessageHandler messageHandler = new((_, _) =>
-            Task.FromResult(response));
+        TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(response));
 #pragma warning restore CA2025
-        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
-        HttpRequestInfo request = new() { Method = "GET", Url = url };
+        using HttpClient client = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new([allowedHost], client);
 
         // Act
-        HttpRequestResult result = await handler.SendAsync(request, TestContext.Current.CancellationToken);
+        HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = url });
 
         // Assert
         Assert.True(result.IsSuccessStatusCode);
         Assert.NotNull(messageHandler.LastRequest);
+    }
+
+    [Theory]
+    [InlineData("https://other.example.test/")]
+    [InlineData("https://sub.api.example.test/")]
+    [InlineData("https://api.example.test.other.test/")]
+    [InlineData("https://api.example.test@other.test/")]
+    [InlineData("http://127.0.0.1/")]
+    public async Task SendAsyncRejectsUnlistedHostBeforeProviderAsync(string url)
+    {
+        // Arrange
+        int providerCalls = 0;
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) =>
+        {
+            providerCalls++;
+            return Task.FromException<HttpClient?>(new InvalidOperationException("Unexpected provider call."));
+        });
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = url });
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Equal(0, providerCalls);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("*.example.test")]
+    [InlineData("https://api.example.test")]
+    [InlineData("api.example.test:443")]
+    [InlineData("api.example.test/path")]
+    [InlineData("api.example.test?query")]
+    [InlineData("user@api.example.test")]
+    public void ConstructorRejectsInvalidAllowedHost(string? host)
+    {
+        // Act
+        void act() => _ = new DefaultHttpRequestHandler([host!]);
+
+        // Assert
+        Assert.Throws<ArgumentException>(act);
+    }
+
+    [Fact]
+    public void ConstructorRejectsNullAllowlist()
+    {
+        // Act
+        static void act() => _ = new DefaultHttpRequestHandler(allowedHosts: null!);
+
+        // Assert
+        Assert.Throws<ArgumentNullException>(act);
+    }
+
+    [Fact]
+    public async Task SendAsyncUsesAllowlistSnapshotAsync()
+    {
+        // Arrange
+        List<string> allowedHosts = ["api.example.test"];
+        await using DefaultHttpRequestHandler handler = new(allowedHosts, (_, _) =>
+            Task.FromException<HttpClient?>(new InvalidOperationException("Unexpected provider call.")));
+        allowedHosts.Add("other.example.test");
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = "https://other.example.test/" });
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+    }
+
+    [Fact]
+    public async Task SendAsyncRejectsUnlistedRedirectBeforeProviderAsync()
+    {
+        // Arrange
+        int providerCalls = 0;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.Found)
+        {
+            Headers = { Location = new Uri("https://other.example.test/next") },
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(redirectResponse));
+#pragma warning restore CA2025
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler, (_, _) =>
+        {
+            providerCalls++;
+            return Task.FromResult<HttpClient?>(null);
+        }, ["api.example.test"]);
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = TestUrl });
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Equal(1, providerCalls);
+        Assert.Single(messageHandler.RequestMethods);
     }
 
     [Theory]
@@ -265,11 +319,10 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((_, _) =>
             Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         using HttpClient client = new(messageHandler);
-        await using DefaultHttpRequestHandler handler = new(client);
-        HttpRequestInfo request = new() { Method = "GET", Url = url };
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], client);
 
         // Act
-        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = url });
 
         // Assert
         await Assert.ThrowsAsync<HttpRequestException>(actAsync);
@@ -277,152 +330,18 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncWithSuppliedClientAllowsConfiguredDestinationAsync()
+    public async Task SendAsyncWithOwnedClientAllowsConfiguredLocalHostAsync()
     {
         // Arrange
         await using RawHttpServer server = new();
-        using HttpClient client = new(new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            UseProxy = false,
-            CheckCertificateRevocationList = true,
-        });
-        await using DefaultHttpRequestHandler handler = new(client);
-        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
+        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"]);
 
         // Act
-        HttpRequestResult result = await handler.SendAsync(request, TestContext.Current.CancellationToken);
+        HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = server.Url }, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.True(result.IsSuccessStatusCode);
         Assert.NotNull(await server.TryReadRequestAsync());
-    }
-
-#if NET
-    [Fact]
-    public async Task OwnedClientResolvesOnceAndConnectsToValidatedAddressesAsync()
-    {
-        // Arrange
-        await using RawHttpServer server = new();
-        Uri url = new UriBuilder(server.Url) { Host = "api.example.test" }.Uri;
-        IPAddress[] resolvedAddresses = [IPAddress.Parse("8.8.8.8"), IPAddress.Parse("2606:4700:4700::1111")];
-        int resolutionCount = 0;
-        int connectionCount = 0;
-        using HttpClient client = new(DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler(
-            resolveAddressesAsync: (host, _) =>
-            {
-                resolutionCount++;
-                Assert.Equal(url.IdnHost, host);
-                return Task.FromResult(resolvedAddresses);
-            },
-            connectAsync: (addresses, port, cancellationToken) =>
-            {
-                connectionCount++;
-                Assert.Same(resolvedAddresses, addresses);
-                Assert.Equal(url.Port, port);
-                return ConnectToLoopbackAsync(port, cancellationToken);
-            }));
-
-        // Act
-        using HttpResponseMessage response = await client.GetAsync(url, TestContext.Current.CancellationToken);
-
-        // Assert
-        Assert.True(response.IsSuccessStatusCode);
-        Assert.Equal(1, resolutionCount);
-        Assert.Equal(1, connectionCount);
-        string? rawRequest = await server.TryReadRequestAsync();
-        Assert.NotNull(rawRequest);
-        Assert.Contains($"Host: {url.Authority}", rawRequest, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task OwnedClientRejectsMixedResolvedAddressesBeforeConnectingAsync(bool nonPublicAddressFirst)
-    {
-        // Arrange
-        IPAddress publicAddress = IPAddress.Parse("8.8.8.8");
-        IPAddress[] resolvedAddresses = nonPublicAddressFirst
-            ? [IPAddress.Loopback, publicAddress]
-            : [publicAddress, IPAddress.Loopback];
-        int resolutionCount = 0;
-        int connectionCount = 0;
-        using HttpClient client = new(DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler(
-            resolveAddressesAsync: (_, _) =>
-            {
-                resolutionCount++;
-                return Task.FromResult(resolvedAddresses);
-            },
-            connectAsync: (_, _, _) =>
-            {
-                connectionCount++;
-                return ValueTask.FromException<Stream>(new InvalidOperationException("Unexpected connection."));
-            }));
-
-        // Act
-        async Task actAsync() => await client.GetAsync(new Uri(TestUrl), TestContext.Current.CancellationToken);
-
-        // Assert
-        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        Assert.Contains("public destinations", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(1, resolutionCount);
-        Assert.Equal(0, connectionCount);
-    }
-
-    [Fact]
-    public async Task OwnedClientRejectsNonPublicResolvedAddressAsync()
-    {
-        // Arrange
-        await using RawHttpServer server = new();
-        using HttpClient client = new(DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler());
-        Uri url = new UriBuilder(server.Url) { Host = "localhost" }.Uri;
-
-        // Act
-        async Task actAsync() => await client.GetAsync(url, TestContext.Current.CancellationToken);
-
-        // Assert
-        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        Assert.Contains("public destinations", exception.Message, StringComparison.Ordinal);
-        Assert.Null(await server.TryReadRequestAsync());
-    }
-#else
-    [Fact]
-    public async Task SendAsyncWithDefaultClientRequiresSupportedTargetFrameworkAsync()
-    {
-        // Arrange
-        await using DefaultHttpRequestHandler handler = new();
-        HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
-
-        // Act
-        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
-
-        // Assert
-        await Assert.ThrowsAsync<PlatformNotSupportedException>(actAsync);
-    }
-#endif
-
-    [Fact]
-    public async Task SendAsyncWithRejectedLoopbackDestinationDoesNotSendAsync()
-    {
-        // Arrange
-        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        await using RawHttpServer server = new();
-        await using DefaultHttpRequestHandler handler = new((requestInfo, _) =>
-        {
-            Assert.Equal(server.Url, requestInfo.Url);
-            return Task.FromException<HttpClient?>(
-                new ArgumentException("Loopback destinations are not allowed.", nameof(requestInfo)));
-        });
-        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
-
-        // Act
-        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
-
-        // Assert
-        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
-        Assert.Equal("requestInfo", exception.ParamName);
-        Assert.Contains("loopback", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Null(await server.TryReadRequestAsync());
     }
 
     #endregion
@@ -439,7 +358,7 @@ public sealed class DefaultHttpRequestHandlerTests
                 Content = new StringContent("hello", Encoding.UTF8, "text/plain"),
             }));
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -462,7 +381,7 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         foreach (string method in new[] { "GET", "POST", "PUT", "PATCH", "DELETE", "CUSTOM" })
         {
@@ -482,7 +401,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
         HttpRequestInfo request = new() { Method = "  custom  ", Url = TestUrl };
 
         // Act
@@ -499,7 +418,7 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         HttpRequestInfo request = new()
         {
@@ -524,7 +443,7 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         HttpRequestInfo request = new()
         {
@@ -552,7 +471,7 @@ public sealed class DefaultHttpRequestHandlerTests
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using RawHttpServer server = new();
         using HttpClient httpClient = new();
-        await using DefaultHttpRequestHandler handler = new(httpClient);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test", "127.0.0.1"], httpClient);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -579,7 +498,7 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((_, _) =>
             throw new InvalidOperationException("The request should be rejected before transport."));
         using HttpClient httpClient = new(messageHandler);
-        await using DefaultHttpRequestHandler handler = new(httpClient);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test", "127.0.0.1"], httpClient);
         HttpRequestInfo request = new()
         {
             Method = "POST",
@@ -603,7 +522,7 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         HttpRequestInfo request = new()
         {
@@ -641,7 +560,7 @@ public sealed class DefaultHttpRequestHandlerTests
 #pragma warning restore CA2025
         });
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -656,18 +575,17 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Contains("Content-Type", result.Headers!);
     }
 
-#if NET
     [Fact]
     public async Task SendAsyncOwnedClientDoesNotForwardResponseCookiesToRedirectAsync()
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
-        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedConnectionTo(server.SetCookieRedirectUrl);
+        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"]);
         HttpRequestInfo request = new()
         {
             Method = "GET",
-            Url = new UriBuilder(server.SetCookieRedirectUrl) { Host = "api.example.test" }.ToString(),
+            Url = server.SetCookieRedirectUrl,
         };
 
         // Act
@@ -688,17 +606,17 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
-        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedConnectionTo(server.SetCookieUrl);
+        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"]);
         HttpRequestInfo victimRequest = new()
         {
             Method = "GET",
-            Url = new UriBuilder(server.SetCookieUrl) { Host = "api.example.test" }.ToString(),
+            Url = server.SetCookieUrl,
         };
 
         HttpRequestInfo attackerRequest = new()
         {
             Method = "GET",
-            Url = new UriBuilder(server.ReadCookieUrl) { Host = "api.example.test" }.ToString(),
+            Url = server.ReadCookieUrl,
         };
 
         // Act
@@ -712,7 +630,6 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equal(2, requests.Count);
         Assert.DoesNotContain("Cookie: backend-session=victim-session", requests[1], StringComparison.OrdinalIgnoreCase);
     }
-#endif
 
     [Fact]
     public async Task SendAsyncReturnsFailureStatusWithoutThrowingAsync()
@@ -724,7 +641,7 @@ public sealed class DefaultHttpRequestHandlerTests
                 Content = new StringContent("bad request", Encoding.UTF8, "text/plain"),
             }));
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -747,7 +664,7 @@ public sealed class DefaultHttpRequestHandlerTests
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
 
         HttpRequestInfo request = new()
         {
@@ -783,7 +700,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         using HttpClient httpClient = new(messageHandler);
 #pragma warning disable CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(httpClient));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(httpClient));
 #pragma warning restore CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
         HttpRequestInfo request = new()
         {
@@ -1015,21 +932,23 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncFallsBackToOwnedClientWhenProviderReturnsNullAsync()
     {
         // Arrange
+        await using RawHttpServer server = new();
         int providerCallCount = 0;
-        await using DefaultHttpRequestHandler handler = new((_, _) =>
+        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"], (_, _) =>
         {
             providerCallCount++;
             return Task.FromResult<HttpClient?>(null);
         });
 
-        HttpRequestInfo request = new() { Method = "GET", Url = "http://127.0.0.1:1/" };
+        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
 
-        // Act - owned client will attempt real network and fail, but provider path should have been consulted first.
-        async Task actAsync() => await handler.SendAsync(request);
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, TestContext.Current.CancellationToken);
 
         // Assert
-        await Assert.ThrowsAnyAsync<Exception>(actAsync);
+        Assert.True(result.IsSuccessStatusCode);
         Assert.Equal(1, providerCallCount);
+        Assert.NotNull(await server.TryReadRequestAsync());
     }
 
     [Fact]
@@ -1219,7 +1138,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         int providerCallCount = 0;
 #pragma warning disable CA2025
-        await using DefaultHttpRequestHandler handler = new((_, _) =>
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) =>
         {
             providerCallCount++;
             return Task.FromResult<HttpClient?>(providerClient);
@@ -1260,7 +1179,7 @@ public sealed class DefaultHttpRequestHandlerTests
 #pragma warning restore CA2025
         using HttpClient providerClient = new(messageHandler);
 #pragma warning disable CA2025
-        await using DefaultHttpRequestHandler handler = new((info, _) =>
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (info, _) =>
         {
             providerUrls.Add(info.Url);
             return Task.FromResult<HttpClient?>(providerClient);
@@ -1301,7 +1220,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         int providerCallCount = 0;
 #pragma warning disable CA2025
-        await using DefaultHttpRequestHandler handler = new((_, _) =>
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) =>
         {
             providerCallCount++;
             return Task.FromResult<HttpClient?>(primaryClient);
@@ -1452,7 +1371,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         TestHttpMessageHandler fake = new(static (req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(string.Empty) }));
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(fake)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(fake)));
 
         HttpRequestInfo info = new()
         {
@@ -1481,7 +1400,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         TestHttpMessageHandler fake = new(static (req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(string.Empty) }));
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(fake)));
+        await using DefaultHttpRequestHandler handler = new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(new HttpClient(fake)));
 
         HttpRequestInfo info = new()
         {
@@ -1502,36 +1421,12 @@ public sealed class DefaultHttpRequestHandlerTests
 
     #endregion
 
-#if NET
-    private static DefaultHttpRequestHandler CreateHandlerWithOwnedConnectionTo(string serverUrl)
-    {
-        Uri serverUri = new(serverUrl);
-        SocketsHttpHandler messageHandler = DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler();
-        messageHandler.ConnectCallback = (_, cancellationToken) => ConnectToLoopbackAsync(serverUri.Port, cancellationToken);
-        return CreateHandlerWithOwnedMessageHandler(messageHandler);
-    }
-
-    private static async ValueTask<Stream> ConnectToLoopbackAsync(int port, CancellationToken cancellationToken)
-    {
-        Socket socket = new(SocketType.Stream, ProtocolType.Tcp);
-        try
-        {
-            await socket.ConnectAsync(IPAddress.Loopback, port, cancellationToken).ConfigureAwait(false);
-            return new NetworkStream(socket, ownsSocket: true);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
-    }
-#endif
-
     private static DefaultHttpRequestHandler CreateHandlerWithOwnedMessageHandler(
         HttpMessageHandler ownedHttpMessageHandler,
-        Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
+        Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider = null,
+        IEnumerable<string>? allowedHosts = null)
     {
-        DefaultHttpRequestHandler handler = new(httpClientProvider);
+        DefaultHttpRequestHandler handler = new(allowedHosts ?? ["api.example.test", "secondary.example.test"], httpClientProvider);
         FieldInfo? ownedHttpClientField = typeof(DefaultHttpRequestHandler).GetField("_ownedHttpClient", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(ownedHttpClientField);
         ownedHttpClientField.SetValue(handler, new Lazy<HttpClient>(() => new HttpClient(ownedHttpMessageHandler), LazyThreadSafetyMode.ExecutionAndPublication));
@@ -1579,7 +1474,6 @@ public sealed class DefaultHttpRequestHandlerTests
         }
     }
 
-#if NET
     private sealed class CookieCaptureServer : IAsyncDisposable
     {
         private const int ExpectedRequestCount = 2;
@@ -1707,8 +1601,6 @@ public sealed class DefaultHttpRequestHandlerTests
             return Encoding.ASCII.GetString(rawRequest.ToArray());
         }
     }
-
-#endif
 
     private sealed class RawHttpServer : IAsyncDisposable
     {

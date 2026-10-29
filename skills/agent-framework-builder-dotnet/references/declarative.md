@@ -24,11 +24,19 @@ commitments.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
 - When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
   to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
-- `DefaultHttpRequestHandler` accepts HTTP(S) URLs only. Its internal client connects directly to public addresses,
-  validates resolved addresses when connecting, and applies the same policy after redirects. It does not use system
-  proxies. Supply an explicitly configured client for internal destinations or proxies, and enforce the host's
-  destination, address-resolution, and redirect policy in that client. The internal client requires .NET 8 or later;
-  the .NET Standard 2.0 and .NET Framework 4.7.2 targets require a supplied client.
+- `DefaultHttpRequestHandler` accepts HTTP(S) URLs only and denies every request unless the application supplies
+  allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"])`. Configure the allowlist in
+  trusted application code, not in workflow content. Constructors without an allowlist allow no hosts, even with
+  a supplied client or client provider. The handler copies the list and checks it before invoking the provider and
+  on every handler-managed redirect.
+- Allowed hosts are exact DNS names or IP literals, without schemes, ports, paths, or wildcards. Matching is
+  case-insensitive, normalizes internationalized names and trailing DNS dots, and does not implicitly include
+  subdomains. A host entry permits both HTTP and HTTPS and any port, subject to existing redirect restrictions.
+  Explicitly allowed internal hosts are supported on every target framework. Normal DNS resolution, proxy use,
+  and routing are delegated to the HTTP transport; allowing a name trusts the host's DNS and network configuration.
+- To supply a client, use `new DefaultHttpRequestHandler(["api.example.com"], httpClient)` or the corresponding
+  client-provider overload. Supplied clients must disable automatic redirects or independently enforce the same
+  allowlist on redirects, since redirects followed inside a supplied transport are not visible to this handler.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.
