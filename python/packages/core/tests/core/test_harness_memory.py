@@ -28,6 +28,7 @@ from agent_framework import (
     Message,
 )
 from agent_framework import _filesystem as filesystem_module
+from agent_framework._harness._memory import _topic_stem
 
 from .test_filesystem import COLLIDING_IDENTIFIERS
 
@@ -1198,6 +1199,117 @@ def test_memory_explicit_slug_override_is_persisted_and_findable(tmp_path) -> No
     assert record.memories == ["fact"]
     with pytest.raises(FileNotFoundError):
         store.get_topic(session, source_id="src", topic="machine")
+
+
+def test_memory_topic_is_reloadable_by_its_default_slug(tmp_path) -> None:
+    """A normally written topic reloads by its default slug, which callers
+    holding record.slug rely on."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    record = MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["window seat"], updated_at="t")
+    store.write_topic(session, record, source_id="src")
+
+    reloaded = store.get_topic(session, source_id="src", topic=record.slug)
+    assert reloaded.topic == "Travel Preferences"
+    assert reloaded.memories == ["window seat"]
+
+
+def test_memory_topics_colliding_on_the_digest_keep_separate_files(tmp_path) -> None:
+    """Two topics whose normalized names share a short digest must keep separate files.
+
+    主题乚丢一 and 主题亊不七 both digest to 74043f1d in their first eight hex
+    characters and both slugify to memory-topic, so a shorter digest let the
+    second write silently replace the first topic's memories, and reading the
+    first topic returned the second topic's fact.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    first_topic = "主题乚丢一"
+    second_topic = "主题亊不七"
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic=first_topic, summary="a", memories=["fact a"], updated_at="t"),
+        source_id="src",
+    )
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic=second_topic, summary="b", memories=["fact b"], updated_at="t"),
+        source_id="src",
+    )
+
+    assert store.get_topic(session, source_id="src", topic=first_topic).memories == ["fact a"]
+    assert store.get_topic(session, source_id="src", topic=second_topic).memories == ["fact b"]
+    listed = {record.topic: record.memories for record in store.list_topics(session, source_id="src")}
+    assert listed == {first_topic: ["fact a"], second_topic: ["fact b"]}
+
+
+def test_memory_write_extends_the_stem_when_another_topic_owns_the_primary_stem(tmp_path) -> None:
+    """A write must never replace a different topic that already lives at the
+    primary stem; the digest extends until the stem is free."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    alpha = MemoryTopicRecord(topic="Alpha Topic", summary="a", memories=["alpha fact"], updated_at="t")
+    beta = MemoryTopicRecord(topic="Beta Topic", summary="b", memories=["beta fact"], updated_at="t")
+    primary = topics_dir / f"{_topic_stem('Beta Topic')}.md"
+    primary.parent.mkdir(parents=True, exist_ok=True)
+    primary.write_text(f"{alpha.to_markdown()}\n", encoding="utf-8")
+
+    store.write_topic(session, beta, source_id="src")
+
+    reread_alpha = MemoryTopicRecord.from_markdown(primary.read_text(encoding="utf-8"))
+    assert reread_alpha.memories == ["alpha fact"]
+    beta_files = [path for path in sorted(topics_dir.glob("beta-topic-*.md")) if path != primary]
+    assert len(beta_files) == 1
+    assert beta_files[0].stem != primary.stem
+    assert beta.storage_stem == beta_files[0].stem
+    assert store.get_topic(session, source_id="src", topic="Beta Topic").memories == ["beta fact"]
+
+    entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
+    for entry in entries:
+        assert (topics_dir / f"{entry.slug}.md").exists()
+
+
+async def test_memory_consolidation_processes_topics_whose_slug_differs_from_their_name(tmp_path) -> None:
+    """Forced consolidation reloads each topic by exact identity, so a topic
+    whose default slug differs from its name is consolidated rather than
+    silently skipped."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    consolidation_client = _MemoryHarnessClient(
+        consolidation_payload={"summary": "Consolidated summary.", "memories": ["Visit Oslo in June."]}
+    )
+    provider = MemoryContextProvider(
+        store=store,
+        consolidation_client=consolidation_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    )
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[provider],
+        default_options=_no_store_options(),
+    )
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Remember this."])],
+    )
+    write_memory = _tool_by_name(options["tools"], "write_memory")
+    consolidate_memories = _tool_by_name(options["tools"], "consolidate_memories")
+
+    await write_memory.invoke(arguments={"topic": "Travel Preferences", "memory": "Window seat."})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    await consolidate_memories.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    topic = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+    assert topic.summary == "Consolidated summary."
+    assert topic.memories == ["Visit Oslo in June."]
+    assert consolidation_client.calls == ["consolidate"]
 
 
 def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -> None:
