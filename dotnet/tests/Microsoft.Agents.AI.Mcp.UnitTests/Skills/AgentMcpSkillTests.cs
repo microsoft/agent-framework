@@ -42,6 +42,27 @@ public sealed partial class AgentMcpSkillTests
         Assert.Same(frontmatter, skill.Frontmatter);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Constructor_MetadataLifetime_PreservesProvidedLifetimeOrDefaultsToInfiniteAsync(bool provideLifetime)
+    {
+        // Arrange
+        await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, SkillContent)));
+        await using var client = await server.CreateClientAsync();
+        using var loader = CreateLoader();
+        McpCacheLifetime? lifetime = provideLifetime
+            ? new McpCacheLifetime(TimeProvider.System.GetTimestamp(), TimeSpan.FromSeconds(1))
+            : null;
+
+        // Act
+        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
+            [Resource(SkillUri, SkillContent)], client, loader, metadataLifetime: lifetime);
+
+        // Assert
+        Assert.Same(lifetime ?? McpCacheLifetime.Infinite, skill.MetadataLifetime);
+    }
+
     [Fact]
     public async Task GetContentAsync_ResourceList_FindsInstructionsByExactUriAsync()
     {

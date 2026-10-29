@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
@@ -15,19 +16,21 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// <para>
 /// The supplied callbacks fetch the complete skill list or updated details for one skill.
-/// The loader stores the list with its lifetime and returns it until it expires, unless a skill refresh is queued.
+/// The loader stores the list with its lifetime and reuses its skill objects until it expires, unless a skill refresh is queued
+/// or an individual skill's lifetime expires.
 /// A missing or expired cached list is fetched in full on the next <see cref="GetSkillsAsync"/> call.
 /// </para>
 /// <para>
 /// When fetched resource content differs from its expected size or content hash, the owning skill
 /// calls <see cref="QueueSkillRefresh"/>. This records a request; it does not fetch updated details immediately.
-/// On the next <see cref="GetSkillsAsync"/> call, queued skills are refreshed individually if the cached list
+/// On the next <see cref="GetSkillsAsync"/> call, queued or expired skills are refreshed individually if the cached list
 /// has not expired. Otherwise, fetching the complete list replaces the need for individual refreshes.
 /// Resource reads and resource-content caching remain the responsibility of each skill object.
 /// </para>
 /// <para>
 /// An individual refresh replaces the skill object, or removes it if the callback reports that it no longer exists.
-/// The updated list is stored only after all queued refreshes in that batch succeed, without extending the list's lifetime.
+/// The updated list is stored only after all queued refreshes in that batch succeed.
+/// The list keeps its original lifetime; replacement responses control only their own skills' lifetimes.
 /// Failures leave the previous list and pending refresh requests available for retry on a later call.
 /// Previously returned lists and skill objects remain unchanged.
 /// </para>
@@ -53,7 +56,7 @@ internal sealed class McpSkillsLoader : IDisposable
     /// </summary>
     /// <param name="timeProvider">The clock for checking list expiration.</param>
     /// <param name="fetchSkills">Fetches the complete skill list with the lifetime used to cache it.</param>
-    /// <param name="fetchSkill">Fetches updated details for a skill URI and returns a replacement object, or null if the skill no longer exists.</param>
+    /// <param name="fetchSkill">Fetches updated details for a skill URI and returns a replacement object with its lifetime, or null if the skill no longer exists.</param>
     public McpSkillsLoader(
         TimeProvider timeProvider,
         Func<CancellationToken, Task<McpCacheEntry<IList<AgentSkill>>>> fetchSkills,
@@ -66,10 +69,10 @@ internal sealed class McpSkillsLoader : IDisposable
     }
 
     /// <summary>
-    /// Returns the skill list, fetching it if missing or expired, or applying queued skill refreshes otherwise.
+    /// Returns the skill list, fetching it if missing or expired, or refreshing queued and expired skills otherwise.
     /// </summary>
     /// <param name="cancellationToken">The token used to cancel waiting or fetching.</param>
-    /// <returns>The cached or updated skill list.</returns>
+    /// <returns>The shared mutable skill list for the cached or updated catalog.</returns>
     public async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(this._disposed, this);
@@ -79,7 +82,8 @@ internal sealed class McpSkillsLoader : IDisposable
             CatalogKey,
             this.RefreshCatalogAsync,
             cancellationToken,
-            needsRefresh: _ => !this._skillsToRefresh.IsEmpty).ConfigureAwait(false);
+            needsRefresh: cached => !this._skillsToRefresh.IsEmpty ||
+                cached.OfType<AgentMcpSkill>().Any(skill => !skill.MetadataLifetime.IsFresh(this._timeProvider))).ConfigureAwait(false);
 
         this.RemoveObsoleteRefreshRequests();
 
@@ -106,13 +110,13 @@ internal sealed class McpSkillsLoader : IDisposable
     }
 
     /// <summary>
-    /// Fetches the complete list if it is missing or expired, or applies queued skill refreshes to a fresh list.
+    /// Fetches the complete list if it is missing or expired, or refreshes queued and expired skills in a fresh list.
     /// </summary>
     private async ValueTask<McpCacheEntry<IList<AgentSkill>>> RefreshCatalogAsync(McpCacheEntry<IList<AgentSkill>>? cached, CancellationToken cancellationToken)
     {
         if (cached?.Lifetime.IsFresh(this._timeProvider) == true)
         {
-            return await this.RefreshPendingSkillsAsync(cached, cancellationToken).ConfigureAwait(false);
+            return await this.RefreshSkillsAsync(cached, cancellationToken).ConfigureAwait(false);
         }
 
         // Reloading all pages also updates queued skills, so there is no need to refresh them separately.
@@ -120,19 +124,29 @@ internal sealed class McpSkillsLoader : IDisposable
     }
 
     /// <summary>
-    /// Refreshes queued skills and stores the updated list only if every refresh succeeds.
+    /// Queues expired skills and stores the updated list only if every queued refresh succeeds.
     /// </summary>
     /// <remarks>
-    /// Replaces updated skills and removes missing ones in a new list, keeping the cached list's expiration time.
+    /// Replaces updated skills and removes missing ones in a new list, preserving the catalog's lifetime.
     /// If a fetch fails or is canceled, the previous list and pending requests remain available for retry.
     /// </remarks>
-    private async Task<McpCacheEntry<IList<AgentSkill>>> RefreshPendingSkillsAsync(McpCacheEntry<IList<AgentSkill>> cached, CancellationToken cancellationToken)
+    private async Task<McpCacheEntry<IList<AgentSkill>>> RefreshSkillsAsync(McpCacheEntry<IList<AgentSkill>> cached, CancellationToken cancellationToken)
     {
+        // Queue skills whose individual TTL has expired alongside those queued after a resource mismatch.
+        // Skills loaded through listing use Infinite and are refreshed with the catalog instead.
+        foreach (AgentMcpSkill skill in cached.Value.OfType<AgentMcpSkill>())
+        {
+            if (!skill.MetadataLifetime.IsFresh(this._timeProvider))
+            {
+                this._skillsToRefresh.TryAdd(skill, 0);
+            }
+        }
+
         List<AgentSkill>? updated = null;
 
         foreach (AgentMcpSkill skill in this._skillsToRefresh.Keys)
         {
-            // Discard obsolete requests
+            // Remove refresh requests for skill instances that are no longer in the cached catalog.
             if (!cached.Value.Contains(skill))
             {
                 this._skillsToRefresh.TryRemove(skill, out _);
@@ -166,7 +180,6 @@ internal sealed class McpSkillsLoader : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
 
         // Commit only after every refresh succeeds; failures leave the catalog and pending work intact.
-        // Targeted refreshes do not renew the listing-page lifetime.
         return new(updated, cached.Lifetime);
     }
 
