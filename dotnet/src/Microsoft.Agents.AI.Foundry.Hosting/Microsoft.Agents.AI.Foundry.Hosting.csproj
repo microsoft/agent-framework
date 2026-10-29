@@ -10,6 +10,8 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectSharedRedaction>true</InjectSharedRedaction>
     <InjectSharedOriginPinning>true</InjectSharedOriginPinning>
