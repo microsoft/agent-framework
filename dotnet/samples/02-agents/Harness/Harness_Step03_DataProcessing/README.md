@@ -23,8 +23,8 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```bash
-# Required: Your Microsoft Foundry OpenAI endpoint
-export AZURE_FOUNDRY_OPENAI_ENDPOINT="https://your-project.services.ai.azure.com/openai/v1/"
+# Required: Your Microsoft Foundry project endpoint
+export FOUNDRY_PROJECT_ENDPOINT="https://your-resource.services.ai.azure.com/api/projects/your-project"
 
 # Optional: Model deployment name (defaults to gpt-5.4)
 export FOUNDRY_MODEL="gpt-5.4"
