@@ -1156,3 +1156,32 @@ def test_prepare_options_prompt_cleanup_uses_overridden_model_id() -> None:
     assert "inferenceConfig" not in request, "prompt ARN requests must not carry inferenceConfig"
     assert "system" not in request
     assert "toolConfig" not in request
+
+
+@pytest.mark.parametrize("injected", [False, True])
+async def test_bedrock_embedding_client_context_ownership(injected: bool) -> None:
+    """Context exit and close() release only the connector-owned runtime client."""
+    runtime = MagicMock()
+    kwargs: dict[str, Any] = (
+        {"client": cast(BaseClient, runtime)}
+        if injected
+        else {
+            "region": "us-east-1",
+            "access_key": "access",
+            "secret_key": "secret",
+        }
+    )
+
+    if injected:
+        client = BedrockEmbeddingClient(model="amazon.titan-embed-text-v2:0", **kwargs)
+    else:
+        with patch("agent_framework_bedrock._embedding_client.Boto3Session") as session_cls:
+            session_cls.return_value.client.return_value = runtime
+            client = BedrockEmbeddingClient(model="amazon.titan-embed-text-v2:0", **kwargs)
+
+    async with client as entered:
+        assert entered is client
+    await client.close()
+    assert runtime.close.call_count == (0 if injected else 1)
+    assert "_owns_client" not in client.to_dict()
+    assert "_client_closed" not in client.to_dict()

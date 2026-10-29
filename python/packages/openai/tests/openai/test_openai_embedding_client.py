@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import os
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import agent_framework._telemetry as telemetry
 import pytest
@@ -400,3 +400,25 @@ async def test_integration_openai_get_embeddings_with_dimensions() -> None:
 
     assert len(result) == 1
     assert len(result[0].vector) == 256
+
+
+@pytest.mark.parametrize("injected", [False, True])
+async def test_openai_embedding_client_context_ownership(injected: bool) -> None:
+    """Context exit and close() release only the connector-owned SDK client."""
+    from openai import AsyncOpenAI
+
+    sdk_client = AsyncOpenAI(api_key="test-key") if injected else None
+    kwargs: dict[str, Any] = {"async_client": sdk_client} if injected else {"api_key": "test-key"}
+
+    client = OpenAIEmbeddingClient(model="text-embedding-3-small", **kwargs)
+    with patch.object(client.client, "close", wraps=client.client.close) as close:
+        async with client as entered:
+            assert entered is client
+            close.assert_not_awaited()
+        await client.close()
+        assert close.await_count == (0 if injected else 1)
+    assert client.client.is_closed() is not injected
+    assert "_owns_client" not in client.to_dict()
+    assert "_client_closed" not in client.to_dict()
+    if sdk_client is not None:
+        await sdk_client.close()

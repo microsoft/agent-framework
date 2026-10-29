@@ -22,6 +22,10 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # pragma: no cover
+else:
+    from typing_extensions import override  # pragma: no cover
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -228,6 +232,8 @@ class RawOpenAIEmbeddingClient(
         )
 
         self.client = client
+        self._owns_client = async_client is None
+        self._client_closed = False
         resolved_model = settings.get("model")
         self.model: str | None = resolved_model.strip() if isinstance(resolved_model, str) and resolved_model else None
 
@@ -246,6 +252,13 @@ class RawOpenAIEmbeddingClient(
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
         super().__init__(additional_properties=additional_properties)
+
+    @override
+    async def close(self) -> None:
+        """Close the connector-owned SDK connection, not caller-supplied credentials."""
+        if self._owns_client and not self._client_closed:
+            await self.client.close()
+            self._client_closed = True
 
     def service_url(self) -> str:
         """Get the URL of the service."""

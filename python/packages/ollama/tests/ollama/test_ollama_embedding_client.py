@@ -180,3 +180,26 @@ async def test_ollama_embedding_integration() -> None:
         assert isinstance(embedding.vector, list)
         assert len(embedding.vector) > 0
         assert all(isinstance(v, float) for v in embedding.vector)
+
+
+@pytest.mark.parametrize("injected", [False, True])
+async def test_ollama_embedding_client_context_ownership(injected: bool) -> None:
+    """Context exit and close() release only the connector-owned HTTP transport."""
+    sdk_client = AsyncClient(host="http://localhost:11434") if injected else None
+    kwargs: dict[str, Any] = {"client": sdk_client} if injected else {"host": "http://localhost:11434"}
+
+    with patch("agent_framework_ollama._embedding_client.AsyncClient", wraps=AsyncClient) as client_cls:
+        client = OllamaEmbeddingClient(model="nomic-embed-text", **kwargs)
+        if injected:
+            client_cls.assert_not_called()
+        else:
+            client_cls.assert_called_once()
+
+    async with client as entered:
+        assert entered is client
+    await client.close()
+    assert client.client._client.is_closed is not injected
+    assert "_owns_client" not in client.to_dict()
+    assert "_client_closed" not in client.to_dict()
+    if sdk_client is not None:
+        await sdk_client._client.aclose()

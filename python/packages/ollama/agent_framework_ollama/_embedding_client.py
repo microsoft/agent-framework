@@ -25,6 +25,10 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # pragma: no cover
+else:
+    from typing_extensions import override  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.ollama")
@@ -112,8 +116,21 @@ class RawOllamaEmbeddingClient(
 
         self.model = ollama_settings["embedding_model"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
+        self._owns_client = client is None
+        self._client_closed = False
         self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
         super().__init__(additional_properties=additional_properties)
+
+    @override
+    async def close(self) -> None:
+        """Close the owned HTTP transport, leaving caller-supplied clients open.
+
+        ``ollama<0.6`` has no ``AsyncClient.aclose``; the underlying httpx
+        transport is closed directly, matching the constructor's own access.
+        """
+        if self._owns_client and not self._client_closed:
+            await self.client._client.aclose()  # type: ignore[reportPrivateUsage]
+            self._client_closed = True
 
     def service_url(self) -> str:
         """Get the URL of the service."""
