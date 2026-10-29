@@ -322,8 +322,14 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     }
 
 #if NET
-    internal static SocketsHttpHandler CreateOwnedHttpMessageHandler() =>
-        new()
+    internal static SocketsHttpHandler CreateOwnedHttpMessageHandler(
+        Func<string, CancellationToken, Task<IPAddress[]>>? resolveAddressesAsync = null,
+        Func<IPAddress[], int, CancellationToken, ValueTask<Stream>>? connectAsync = null)
+    {
+        resolveAddressesAsync ??= Dns.GetHostAddressesAsync;
+        connectAsync ??= ConnectToAddressesAsync;
+
+        return new()
         {
             AllowAutoRedirect = false,
             UseCookies = false,
@@ -332,13 +338,18 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             {
                 CertificateRevocationCheckMode = X509RevocationMode.Online,
             },
-            ConnectCallback = ConnectToPublicAddressAsync,
+            ConnectCallback = (context, cancellationToken) =>
+                ConnectToPublicAddressAsync(context.DnsEndPoint, resolveAddressesAsync, connectAsync, cancellationToken),
         };
+    }
 
     private static async ValueTask<Stream> ConnectToPublicAddressAsync(
-        SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+        DnsEndPoint destination,
+        Func<string, CancellationToken, Task<IPAddress[]>> resolveAddressesAsync,
+        Func<IPAddress[], int, CancellationToken, ValueTask<Stream>> connectAsync,
+        CancellationToken cancellationToken)
     {
-        IPAddress[] addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
+        IPAddress[] addresses = await resolveAddressesAsync(destination.Host, cancellationToken).ConfigureAwait(false);
         if (addresses.Length == 0)
         {
             throw new HttpRequestException("The destination did not resolve to a public address.");
@@ -349,11 +360,17 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             ValidatePublicAddress(address);
         }
 
+        return await connectAsync(addresses, destination.Port, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<Stream> ConnectToAddressesAsync(
+        IPAddress[] addresses, int port, CancellationToken cancellationToken)
+    {
         Socket socket = new(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
         try
         {
             // Connect to the validated addresses without resolving the hostname again.
-            await socket.ConnectAsync(addresses, context.DnsEndPoint.Port, cancellationToken).ConfigureAwait(false);
+            await socket.ConnectAsync(addresses, port, cancellationToken).ConfigureAwait(false);
             return new NetworkStream(socket, ownsSocket: true);
         }
         catch

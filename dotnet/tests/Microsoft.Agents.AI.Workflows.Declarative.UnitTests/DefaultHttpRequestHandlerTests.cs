@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+#if NET
 using System.Diagnostics;
+#endif
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -291,6 +293,76 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
 #if NET
+    [Fact]
+    public async Task OwnedClientResolvesOnceAndConnectsToValidatedAddressesAsync()
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        Uri url = new UriBuilder(server.Url) { Host = "api.example.test" }.Uri;
+        IPAddress[] resolvedAddresses = [IPAddress.Parse("8.8.8.8"), IPAddress.Parse("2606:4700:4700::1111")];
+        int resolutionCount = 0;
+        int connectionCount = 0;
+        using HttpClient client = new(DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler(
+            resolveAddressesAsync: (host, _) =>
+            {
+                resolutionCount++;
+                Assert.Equal(url.IdnHost, host);
+                return Task.FromResult(resolvedAddresses);
+            },
+            connectAsync: (addresses, port, cancellationToken) =>
+            {
+                connectionCount++;
+                Assert.Same(resolvedAddresses, addresses);
+                Assert.Equal(url.Port, port);
+                return ConnectToLoopbackAsync(port, cancellationToken);
+            }));
+
+        // Act
+        using HttpResponseMessage response = await client.GetAsync(url, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal(1, resolutionCount);
+        Assert.Equal(1, connectionCount);
+        string? rawRequest = await server.TryReadRequestAsync();
+        Assert.NotNull(rawRequest);
+        Assert.Contains($"Host: {url.Authority}", rawRequest, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OwnedClientRejectsMixedResolvedAddressesBeforeConnectingAsync(bool nonPublicAddressFirst)
+    {
+        // Arrange
+        IPAddress publicAddress = IPAddress.Parse("8.8.8.8");
+        IPAddress[] resolvedAddresses = nonPublicAddressFirst
+            ? [IPAddress.Loopback, publicAddress]
+            : [publicAddress, IPAddress.Loopback];
+        int resolutionCount = 0;
+        int connectionCount = 0;
+        using HttpClient client = new(DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler(
+            resolveAddressesAsync: (_, _) =>
+            {
+                resolutionCount++;
+                return Task.FromResult(resolvedAddresses);
+            },
+            connectAsync: (_, _, _) =>
+            {
+                connectionCount++;
+                return ValueTask.FromException<Stream>(new InvalidOperationException("Unexpected connection."));
+            }));
+
+        // Act
+        async Task actAsync() => await client.GetAsync(new Uri(TestUrl), TestContext.Current.CancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("public destinations", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, resolutionCount);
+        Assert.Equal(0, connectionCount);
+    }
+
     [Fact]
     public async Task OwnedClientRejectsNonPublicResolvedAddressAsync()
     {
@@ -1429,21 +1501,23 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         Uri serverUri = new(serverUrl);
         SocketsHttpHandler messageHandler = DefaultHttpRequestHandler.CreateOwnedHttpMessageHandler();
-        messageHandler.ConnectCallback = async (_, cancellationToken) =>
-        {
-            Socket socket = new(SocketType.Stream, ProtocolType.Tcp);
-            try
-            {
-                await socket.ConnectAsync(IPAddress.Loopback, serverUri.Port, cancellationToken).ConfigureAwait(false);
-                return new NetworkStream(socket, ownsSocket: true);
-            }
-            catch
-            {
-                socket.Dispose();
-                throw;
-            }
-        };
+        messageHandler.ConnectCallback = (_, cancellationToken) => ConnectToLoopbackAsync(serverUri.Port, cancellationToken);
         return CreateHandlerWithOwnedMessageHandler(messageHandler);
+    }
+
+    private static async ValueTask<Stream> ConnectToLoopbackAsync(int port, CancellationToken cancellationToken)
+    {
+        Socket socket = new(SocketType.Stream, ProtocolType.Tcp);
+        try
+        {
+            await socket.ConnectAsync(IPAddress.Loopback, port, cancellationToken).ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 #endif
 
