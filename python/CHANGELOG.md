@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > **Redis context index migration:** The beta `RedisContextProvider` now preserves exact scope identity and rejects the legacy raw-scope index schema. Delete the old context index and its context hashes, let the provider create a new index, and re-ingest the context data. `overwrite_index=True` does not migrate incompatible indexes.
 
 > [!IMPORTANT]
-> **Python support:** Python 3.11 or later is now the supported baseline, subject to package-specific upper limits. Python 3.10 installation remains permitted by `Requires-Python`, but compatibility is not guaranteed.
+> **Python support:** Python 3.11 or later is now the supported baseline, subject to package-specific upper limits. Python 3.10 installation remains permitted by `Requires-Python` in this release, but compatibility is not guaranteed. The next release will also remove Python 3.10 installation eligibility from `Requires-Python`. Upgrade to Python 3.11 or later as soon as possible.
 
 ### Added
 - **agent-framework-core**: Add experimental agent-triggered in-run compaction and skill unloading with `AgentTriggeredCompactionStrategy` and `UnloadSkillsCompactionStrategy` ([#9384](https://github.com/microsoft/agent-framework/pull/9384))
