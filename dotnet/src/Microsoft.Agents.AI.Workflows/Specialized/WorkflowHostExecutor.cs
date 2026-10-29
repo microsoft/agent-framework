@@ -20,6 +20,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     private readonly Workflow _workflow;
     private readonly ProtocolDescriptor _workflowProtocol;
     private readonly object _ownershipToken;
+    private string? _workflowSessionId;
 
     private InProcessRunner? _activeRunner;
     private InMemoryCheckpointManager? _checkpointManager;
@@ -56,6 +57,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
     private async ValueTask QueueExternalMessageAsync(PortableValue portableValue, IWorkflowContext context, CancellationToken cancellationToken)
     {
+        this.SetWorkflowSessionId(context);
         if (portableValue.Is(out ExternalResponse? response))
         {
             response = this.CheckAndUnqualifyResponse(response);
@@ -95,7 +97,8 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                                                                          this._checkpointManager,
                                                                          this._sessionId,
                                                                          this._ownershipToken,
-                                                                         this.JoinContext.ConcurrentRunsEnabled);
+                                                                         this.JoinContext.ConcurrentRunsEnabled,
+                                                                         workflowSessionId: this._workflowSessionId);
         }
 
         return this._activeRunner;
@@ -268,6 +271,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+        this.SetWorkflowSessionId(context);
 
         InMemoryCheckpointManager manager = await context.ReadStateAsync<InMemoryCheckpointManager>(CheckpointManagerStateKey, cancellationToken: cancellationToken).ConfigureAwait(false) ?? new();
         if (this._checkpointManager == manager)
@@ -291,6 +295,14 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
         }
 
         await this.EnsureRunSendMessageAsync(resume: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private void SetWorkflowSessionId(IWorkflowContext context)
+    {
+        string parentSessionId = context is IWorkflowSessionContext sessionContext
+            ? sessionContext.SessionId
+            : this._sessionId;
+        this._workflowSessionId ??= SubworkflowBinding.CreateSubworkflowSessionId(parentSessionId, this.Id);
     }
 
     private async ValueTask ResetAsync()

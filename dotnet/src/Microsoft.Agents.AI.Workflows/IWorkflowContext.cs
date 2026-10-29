@@ -195,3 +195,18 @@ public interface IWorkflowContext
     /// </summary>
     bool ConcurrentRunsEnabled { get; }
 }
+
+/// <summary>
+/// Exposes the framework-owned identifier for a workflow session.
+/// </summary>
+/// <remarks>
+/// Runtime services can use this identifier to scope stateful resources to one
+/// workflow session without accepting caller-provided cache partition keys.
+/// </remarks>
+public interface IWorkflowSessionContext
+{
+    /// <summary>
+    /// Gets the framework-owned workflow session identifier.
+    /// </summary>
+    string SessionId { get; }
+}
