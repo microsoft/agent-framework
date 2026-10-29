@@ -4840,6 +4840,43 @@ async def test_fides_approval_history_respects_effective_service_history_ownersh
         assert provider.get_calls == 1
 
 
+@pytest.mark.parametrize(
+    ("stores_by_default", "default_options"),
+    [
+        pytest.param(False, cast(ChatOptions, {"store": True}), id="explicit-store"),
+        pytest.param(True, None, id="stores-by-default"),
+    ],
+)
+@_psc_stream_params
+async def test_fides_service_history_without_authoritative_state_fails_closed(
+    stream: bool,
+    stores_by_default: bool,
+    default_options: ChatOptions | None,
+) -> None:
+    """A resumed service conversation cannot bypass FIDES history reconstruction."""
+    provider = _PscWriteOnlyHistoryProvider()
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=stores_by_default,
+        script=[("text", "must not run")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+        require_per_service_call_history_persistence=True,
+        default_options=default_options,
+    )
+    session = agent.create_session()
+    session.service_session_id = "existing-service-history"
+
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        await _psc_run(agent, "Continue", session, stream=stream)
+
+    assert provider.get_calls == 0
+    assert client.call_count == 0
+
+
 @_psc_stream_params
 async def test_psc_flag_on_store_none_treated_as_absent(stream: bool, caplog: pytest.LogCaptureFixture) -> None:
     """Flag on + storing client + explicit store=None: None is "unset", so the storing default applies (Mode B)."""

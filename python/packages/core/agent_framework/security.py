@@ -1142,16 +1142,33 @@ def _function_call_replay_key(content: Content | None) -> Any | None:
         return None
 
 
-def _is_bound_approval_control(content: Content) -> bool:
-    """Return whether an approval control carries one occurrence-bound function call."""
+def _is_pending_approval_control(content: Content, *, scope: _SecurityScope) -> bool:
+    """Return whether session-owned pending state authenticates this approval control."""
+    function_call = content.function_call
+    if content.id is None or function_call is None or function_call.id is None:
+        return False
+    for occurrence_id, payload in scope.pending_approvals.items():
+        pending = _PendingPolicyApproval.from_state(payload)
+        if pending is not None and occurrence_id == function_call.id and pending.request_id == content.id:
+            return True
+    return False
+
+
+def _is_bound_approval_control(
+    content: Content,
+    *,
+    scope: _SecurityScope,
+    transport_authoritative: bool,
+) -> bool:
+    """Return whether trusted transport or session state authenticates this approval control."""
     function_call = content.function_call
     return (
         content.type in {"function_approval_request", "function_approval_response"}
         and content.id is not None
         and function_call is not None
         and function_call.id is not None
-        and content.id == function_call.id
         and _function_call_replay_key(function_call) is not None
+        and (transport_authoritative or _is_pending_approval_control(content, scope=scope))
     )
 
 
@@ -1188,10 +1205,16 @@ def _replayed_message_label(
     has_authenticated_hidden_content = False
     has_role_independent_untrusted_content = False
     has_bound_approval_control = False
+    transport_authoritative = _is_replay_state_covered(message)
     bound_approval_call_keys = {
         key
         for content in message.contents
-        if isinstance(content, Content) and _is_bound_approval_control(content)
+        if isinstance(content, Content)
+        and _is_bound_approval_control(
+            content,
+            scope=scope,
+            transport_authoritative=transport_authoritative,
+        )
         if (key := _function_call_replay_key(content.function_call)) is not None
     }
     for index, content in enumerate(message.contents):
@@ -1205,7 +1228,11 @@ def _replayed_message_label(
         )
         content_labels.extend(replayed_labels)
         has_authenticated_hidden_content = has_authenticated_hidden_content or is_authenticated_hidden
-        is_bound_approval_control = _is_bound_approval_control(content)
+        is_bound_approval_control = _is_bound_approval_control(
+            content,
+            scope=scope,
+            transport_authoritative=transport_authoritative,
+        )
         has_bound_approval_control = has_bound_approval_control or is_bound_approval_control
         is_bound_approval_call = (
             content.type == "function_call" and _function_call_replay_key(content) in bound_approval_call_keys
@@ -4230,10 +4257,21 @@ class SecureAgentConfig(ContextProvider):
         reconstruct_history_unstamped = context.metadata.get(self._approval_history_metadata_key())
         if not isinstance(reconstruct_history_unstamped, bool):
             reconstruct_history_unstamped = state.get(_STATE_HISTORY_RECONSTRUCTION_COMPLETE) is not True
+        history_source_ids = self._history_source_ids(agent)
+        has_local_history = any(context.context_messages.get(source_id) for source_id in history_source_ids)
+        if (
+            reconstruct_history_unstamped
+            and history_source_ids
+            and not has_local_history
+            and (context.service_session_id is not None or context.options.get("conversation_id") is not None)
+        ):
+            raise RuntimeError(
+                "Cannot reconstruct service-managed history without an authoritative FIDES context label."
+            )
         self._fold_history_labels(
             _SecurityScope(state, scope_id=session.session_id),
             context,
-            history_source_ids=self._history_source_ids(agent),
+            history_source_ids=history_source_ids,
             reconstruct_history_unstamped=reconstruct_history_unstamped,
         )
         state[_STATE_HISTORY_RECONSTRUCTION_COMPLETE] = True
