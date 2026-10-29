@@ -743,28 +743,32 @@ class Workflow(DictConvertible):
 
         # Handle initial message
         elif message is not None:
-            # Seed the initial input through the start executor's internal self-edge. If the caller
-            # passed a WorkflowMessage, unwrap it so we don't double-wrap.
-            start_id = self.start_executor_id
-            data = message.data if isinstance(message, WorkflowMessage) else message
-            entry_message = WorkflowMessage(
-                data=data,
-                source_id=INTERNAL_SOURCE_ID(start_id),
-                target_id=start_id,
+            await self._execute_with_message(message)
+
+    async def _execute_with_message(self, message: Any) -> None:
+        """Seed the initial input message to the start executor."""
+        # Seed the initial input through the start executor's internal self-edge. If the caller
+        # passed a WorkflowMessage, unwrap it so we don't double-wrap.
+        start_id = self.start_executor_id
+        data = message.data if isinstance(message, WorkflowMessage) else message
+        entry_message = WorkflowMessage(
+            data=data,
+            source_id=INTERNAL_SOURCE_ID(start_id),
+            target_id=start_id,
+        )
+
+        # Ensure that the start executor can handle the input type.
+        start_executor = self.get_start_executor()
+        if not start_executor.can_handle(entry_message):
+            raise RuntimeError(
+                f"Start executor '{start_id}' cannot handle input of type '{type(data).__name__}'. "
+                f"Expected input types: {start_executor.input_types}."
             )
 
-            # Ensure that the start executor can handle the input type.
-            start_executor = self.get_start_executor()
-            if not start_executor.can_handle(entry_message):
-                raise RuntimeError(
-                    f"Start executor '{start_id}' cannot handle input of type '{type(data).__name__}'. "
-                    f"Expected input types: {start_executor.input_types}."
-                )
-
-            await self._runner.context.send_message(entry_message)
-            # Record the entry checkpoint capturing the seeded input before any
-            # executor runs. The runner only checkpoints after each superstep.
-            await self._runner.create_checkpoint_if_enabled()
+        await self._runner.context.send_message(entry_message)
+        # Record the entry checkpoint capturing the seeded input before any
+        # executor runs. The runner only checkpoints after each superstep.
+        await self._runner.create_checkpoint_if_enabled()
 
     @overload
     def run(
@@ -985,10 +989,24 @@ class Workflow(DictConvertible):
                         ),
                     )
 
-            if responses is not None and checkpoint_id is None:
+            if message is None and checkpoint_id is None and responses is None:
+                raise ValueError("Must provide either 'message' or 'checkpoint_id'")
+
+            if checkpoint_id is not None:
+                has_checkpointing = self._runner.context.has_checkpointing()
+
+                if not has_checkpointing and checkpoint_storage is None:
+                    raise ValueError(
+                        "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                        "or build workflow with WorkflowBuilder(checkpoint_storage=checkpoint_storage)."
+                    )
+
+                await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+
+            if responses is not None:
                 await self._validate_responses_internal(responses)
 
-            initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
+            initial_executor_fn = self._resolve_execution_mode(message, responses)
 
             async with aclosing(
                 self._run_workflow_with_tracing(
@@ -1089,9 +1107,9 @@ class Workflow(DictConvertible):
         self,
         message: Any | None,
         responses: Mapping[str, Any] | None,
-        checkpoint_id: str | None,
-        checkpoint_storage: CheckpointStorage | None,
-    ) -> Callable[[], Awaitable[None]]:
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> Callable[[], Awaitable[None]] | None:
         """Determine the initial executor function based on parameters."""
         if responses is not None:
             if checkpoint_id is not None:
@@ -1103,8 +1121,11 @@ class Workflow(DictConvertible):
                 # Send responses only (requires pending requests in workflow state)
                 initial_executor_fn = functools.partial(self._send_responses_internal, responses)
             return initial_executor_fn
-        # Regular run or checkpoint restoration
-        return functools.partial(self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage)
+        if message is not None:
+            return functools.partial(self._execute_with_message, message)
+        if checkpoint_id is not None:
+            return functools.partial(self._execute_with_message_or_checkpoint, None, checkpoint_id, checkpoint_storage)
+        return None
 
     async def _restore_and_send_responses(
         self,
