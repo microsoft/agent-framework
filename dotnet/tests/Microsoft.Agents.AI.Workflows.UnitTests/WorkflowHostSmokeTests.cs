@@ -205,6 +205,54 @@ internal sealed class TurnTrackingStartExecutor : ChatProtocolExecutor
     }
 }
 
+internal sealed class AttributionTestExecutor : ChatProtocolExecutor
+{
+    private static readonly ChatProtocolExecutorOptions s_options = new()
+    {
+        AutoSendTurnToken = false,
+    };
+
+    private readonly string _responseText;
+    private readonly string? _downstreamExecutorId;
+    private readonly AdditionalPropertiesDictionary _additionalProperties;
+    private readonly object _rawRepresentation;
+
+    public AttributionTestExecutor(
+        string id,
+        string responseText,
+        AdditionalPropertiesDictionary additionalProperties,
+        object rawRepresentation,
+        string? downstreamExecutorId = null)
+        : base(id, s_options)
+    {
+        this._responseText = responseText;
+        this._downstreamExecutorId = downstreamExecutorId;
+        this._additionalProperties = additionalProperties;
+        this._rawRepresentation = rawRepresentation;
+    }
+
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+    {
+        AgentResponseUpdate update = new(ChatRole.Assistant, [new TextContent(this._responseText)])
+        {
+            AdditionalProperties = this._additionalProperties,
+            CreatedAt = DateTimeOffset.UtcNow,
+            MessageId = Guid.NewGuid().ToString("N"),
+            RawRepresentation = this._rawRepresentation,
+            ResponseId = Guid.NewGuid().ToString("N"),
+            Role = ChatRole.Assistant,
+        };
+
+        await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+
+        if (this._downstreamExecutorId is not null && messages.Any(message => message.Role == ChatRole.User))
+        {
+            await context.SendMessageAsync(messages, this._downstreamExecutorId, cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new TurnToken(emitEvents), this._downstreamExecutorId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+}
+
 public class NonChatProtocolExecutor() : Executor<string>(nameof(NonChatProtocolExecutor))
 {
     public override ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -839,6 +887,93 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         Assert.Equal("SECOND ANSWER", Assert.Single(response.Messages).Text);
     }
 
+    [Fact]
+    public async Task Test_AsAgent_ResponseUpdatesIncludeWorkflowExecutorIdAdditionalPropertyAsync()
+    {
+        // Arrange
+        const string ExistingMetadataKey = "provider-metadata";
+        const string StartExecutorId = "start-executor";
+        const string DownstreamExecutorId = "downstream-executor";
+        const string StartResponseText = "from start";
+        const string DownstreamResponseText = "from downstream";
+
+        object startRawRepresentation = new();
+        object downstreamRawRepresentation = new();
+        AttributionTestExecutor downstreamExecutor = new(
+            DownstreamExecutorId,
+            DownstreamResponseText,
+            new AdditionalPropertiesDictionary { [ExistingMetadataKey] = "downstream metadata" },
+            downstreamRawRepresentation);
+        AttributionTestExecutor startExecutor = new(
+            StartExecutorId,
+            StartResponseText,
+            new AdditionalPropertiesDictionary { [ExistingMetadataKey] = "start metadata" },
+            startRawRepresentation,
+            DownstreamExecutorId);
+
+        ExecutorBinding startBinding = startExecutor.BindExecutor();
+        ExecutorBinding downstreamBinding = downstreamExecutor.BindExecutor();
+        Workflow workflow = new WorkflowBuilder(startBinding)
+            .AddEdge<List<ChatMessage>>(startBinding, downstreamBinding, static messages => messages is { Count: > 0 })
+            .AddEdge<TurnToken>(startBinding, downstreamBinding, _ => true)
+            .Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow
+            .AsAIAgent("WorkflowAgent")
+            .RunStreamingAsync(new ChatMessage(ChatRole.User, "start"))
+            .ToListAsync();
+
+        // Assert
+        AgentResponseUpdate startUpdate = Assert.Single(updates, update => update.Text == StartResponseText);
+        Assert.NotNull(startUpdate.AdditionalProperties);
+        Assert.Equal("start metadata", startUpdate.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(StartExecutorId, startUpdate.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        Assert.Same(startRawRepresentation, startUpdate.RawRepresentation);
+
+        AgentResponseUpdate downstreamUpdate = Assert.Single(updates, update => update.Text == DownstreamResponseText);
+        Assert.NotNull(downstreamUpdate.AdditionalProperties);
+        Assert.Equal("downstream metadata", downstreamUpdate.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(DownstreamExecutorId, downstreamUpdate.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        Assert.Same(downstreamRawRepresentation, downstreamUpdate.RawRepresentation);
+    }
+
+    [Fact]
+    public async Task Test_AsAgent_ResponseUpdatesOverwriteProviderExecutorIdAdditionalPropertyAsync()
+    {
+        // Arrange
+        const string ExistingMetadataKey = "provider-metadata";
+        const string ExecutorId = "authoritative-executor";
+        const string ProviderExecutorId = "provider-controlled-executor";
+        const string ResponseText = "from executor";
+
+        object rawRepresentation = new();
+        AttributionTestExecutor executor = new(
+            ExecutorId,
+            ResponseText,
+            new AdditionalPropertiesDictionary
+            {
+                [ExistingMetadataKey] = "provider metadata",
+                [WorkflowAgentAdditionalProperties.ExecutorId] = ProviderExecutorId,
+            },
+            rawRepresentation);
+
+        Workflow workflow = new WorkflowBuilder(executor.BindExecutor()).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow
+            .AsAIAgent("WorkflowAgent")
+            .RunStreamingAsync(new ChatMessage(ChatRole.User, "start"))
+            .ToListAsync();
+
+        // Assert
+        AgentResponseUpdate update = Assert.Single(updates, item => item.Text == ResponseText);
+        Assert.NotNull(update.AdditionalProperties);
+        Assert.Equal("provider metadata", update.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(ExecutorId, update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        Assert.Same(rawRepresentation, update.RawRepresentation);
+    }
+
     // ----- Phase 5: Workflow-as-Agent intermediate forwarding -----------------
 
     [Collection(Futures.FuturesSerialCollection.Name)]
@@ -1039,6 +1174,48 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText);
         }
 
+        [Fact]
+        public async Task Test_WorkflowHostAgent_AgentResponseEventMessagesIncludeWorkflowExecutorIdAdditionalPropertyAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            const string ExecutorId = "response-only-executor";
+            Workflow workflow = new WorkflowBuilder(new ResponseOnlyExecutor(ExecutorId)).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            AgentResponseUpdate update = Assert.Single(updates, u => u.Text == FinalText);
+            Assert.IsType<AgentResponseEvent>(update.RawRepresentation);
+            Assert.NotNull(update.AdditionalProperties);
+            Assert.Equal(ExecutorId, update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_AgentResponseEventObservabilityUpdateIncludesWorkflowExecutorIdAdditionalPropertyAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            const string ExecutorId = "stream-then-complete";
+            const string MessageId = "shared-message";
+            Workflow workflow =
+                new WorkflowBuilder(
+                    new StreamThenCompleteExecutor(
+                        useSameResponseId: true,
+                        streamedMessageId: MessageId,
+                        completedMessageId: MessageId))
+                .Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            Assert.DoesNotContain(updates, u => u.Text == FinalText);
+
+            AgentResponseUpdate update = Assert.Single(updates, u =>
+                u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0);
+            Assert.NotEqual(MessageId, update.MessageId);
+            Assert.NotNull(update.AdditionalProperties);
+            Assert.Equal(ExecutorId, update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        }
+
         private sealed class StreamThenCompleteExecutor(
             bool useSameResponseId = false,
             string streamedMessageId = "streamed-message",
@@ -1126,6 +1303,34 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                         MessageId = "completed-only-message",
                     };
                 return new AgentResponse([streamedMessage, completedOnlyMessage]) { ResponseId = ResponseId };
+            }
+        }
+
+        private sealed class ResponseOnlyExecutor(string id) : Executor(id)
+        {
+            protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+                protocolBuilder.ConfigureRoutes(
+                    routeBuilder =>
+                        routeBuilder
+                            .AddHandler<IEnumerable<ChatMessage>>(this.HandleMessagesAsync)
+                            .AddHandler<TurnToken, AgentResponse>(this.HandleTurnAsync));
+
+            private ValueTask HandleMessagesAsync(
+                IEnumerable<ChatMessage> messages,
+                IWorkflowContext context,
+                CancellationToken cancellationToken) => default;
+
+            private ValueTask<AgentResponse> HandleTurnAsync(
+                TurnToken turnToken,
+                IWorkflowContext context,
+                CancellationToken cancellationToken)
+            {
+                ChatMessage message = new(ChatRole.Assistant, FinalText)
+                {
+                    MessageId = "response-only-message",
+                };
+
+                return new(new AgentResponse([message]) { ResponseId = "response-only-response" });
             }
         }
     }
