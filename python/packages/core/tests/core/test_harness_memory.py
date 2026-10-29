@@ -1095,6 +1095,44 @@ def test_memory_topic_record_round_trips_every_backslash_run_length() -> None:
         assert parsed.memories == [f"{run}# memory"], run_length
 
 
+def test_memory_topic_record_preserves_marker_shaped_summary_text() -> None:
+    """A summary whose content equals the format marker round trips as summary
+    content instead of being consumed as metadata and backfilled from a memory."""
+    record = MemoryTopicRecord(
+        topic="deploy",
+        summary="<!-- agent-framework-memory-escape: v2 -->",
+        memories=["Keep the deployment instructions."],
+        updated_at="2026-10-26T00:00:00+00:00",
+    )
+    parsed = MemoryTopicRecord.from_markdown(record.to_markdown(), fallback_topic="deploy")
+    assert parsed.summary == "<!-- agent-framework-memory-escape: v2 -->"
+    assert parsed.memories == ["Keep the deployment instructions."]
+
+
+def test_memory_topic_record_ignores_marker_text_in_legacy_bodies() -> None:
+    """A legacy memory line that merely mentions the format marker must not
+    select the new decoding for the whole file."""
+    three = chr(92) * 3
+    legacy = "\n".join([
+        "# notes",
+        "",
+        "Updated: 2026-10-26T00:00:00+00:00",
+        "Sessions: -",
+        "",
+        "## Summary",
+        "s",
+        "",
+        "## Memories",
+        "- note about <!-- agent-framework-memory-escape: v2 --> handling",
+        "- " + three + "# heading-ish note",
+    ])
+    parsed = MemoryTopicRecord.from_markdown(legacy, fallback_topic="notes")
+    assert parsed.memories == [
+        "note about <!-- agent-framework-memory-escape: v2 --> handling",
+        three + "# heading-ish note",
+    ]
+
+
 def test_memory_topic_record_preserves_odd_runs_in_unversioned_files() -> None:
     """Odd backslash runs written by the previous implementation are verbatim
     original content, not an encoding, and must survive a load unchanged.

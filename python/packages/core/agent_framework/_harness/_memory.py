@@ -534,14 +534,19 @@ class MemoryTopicRecord:
         summary_lines: list[str] = []
         memories: list[str] = []
         current_section: str | None = None
-        # Files written before the invertible encoding carry no marker and must
-        # be decoded exactly as the previous reader did.
-        unescape = _unescape_markdown_line_legacy if _MEMORY_ESCAPE_MARKER not in markdown else _unescape_markdown_line
+        # The format marker is recognized and consumed only as a standalone
+        # line in the metadata header, before any content section, so the same
+        # text inside a summary or a memory stays content, and a legacy body
+        # line that merely mentions the marker never selects v2 decoding for
+        # the whole file. Files without a header marker were written by the
+        # previous implementation and are decoded exactly as before.
+        escape_v2 = False
 
         for raw_line in markdown.splitlines():
             line = raw_line.rstrip()
             stripped = line.strip()
-            if stripped == _MEMORY_ESCAPE_MARKER:
+            if current_section is None and stripped == _MEMORY_ESCAPE_MARKER:
+                escape_v2 = True
                 continue
             if stripped.startswith("# "):
                 topic = stripped[2:].strip()
@@ -566,9 +571,11 @@ class MemoryTopicRecord:
                 continue
             if current_section == "summary":
                 if stripped:
+                    unescape = _unescape_markdown_line if escape_v2 else _unescape_markdown_line_legacy
                     summary_lines.append(unescape(stripped))
                 continue
             if current_section == "memories" and stripped.startswith("- "):
+                unescape = _unescape_markdown_line if escape_v2 else _unescape_markdown_line_legacy
                 memory_text = unescape(stripped[2:].strip())
                 if memory_text and memory_text != DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
                     memories.append(memory_text)
