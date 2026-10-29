@@ -194,6 +194,46 @@ async def _resolve_function_approval(
 logger = logging.getLogger("agent_framework.github_copilot")
 
 
+def _to_response_schema(response_format: Any) -> Any:
+    """Return a value the Copilot SDK can JSON-serialize as ``response_schema``.
+
+    Pydantic model classes are passed through unchanged. Any other mapping (for example a
+    ``MappingProxyType`` or ``UserDict``) is converted, recursively, to plain ``dict``/``list`` objects.
+    """
+    if response_format is None or isinstance(response_format, type):
+        return response_format
+
+    def _plain(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {key: _plain(item) for key, item in cast(Mapping[Any, Any], value).items()}
+        if isinstance(value, (list, tuple)):
+            return [_plain(item) for item in cast(Sequence[Any], value)]
+        return value
+
+    return _plain(response_format)
+
+
+def _parse_structured_value(text: str, response_format: Any) -> Any:
+    """Parse the root assistant answer the same way the Copilot SDK's typed helpers do.
+
+    Pydantic models are validated using the schema's aliases only, which is what the SDK asks
+    the provider to produce, including for nested models.
+    """
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        return response_format.model_validate_json(text, by_alias=True, by_name=False)
+    return json.loads(text)
+
+
+def _try_parse_structured_value(text: str | None, response_format: Any) -> Any | None:
+    """Parse ``text`` or return ``None`` so the response falls back to its own lazy parsing and error."""
+    if response_format is None or not text:
+        return None
+    try:
+        return _parse_structured_value(text, response_format)
+    except Exception:
+        return None
+
+
 def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
     """Return provider-owned session-state keys declared by the Copilot agent or client."""
     keys: set[str] = set()
@@ -925,7 +965,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
                 response_format = (options or {}).get("response_format") or self._default_options.get("response_format")
-                return AgentResponse.from_updates(updates, output_format_type=response_format)
+                return AgentResponse.from_updates(
+                    updates,
+                    output_format_type=response_format,
+                    value=_try_parse_structured_value(ctx_holder.get("root_text"), response_format),
+                )
 
             return ResponseStream(
                 self._stream_updates(
@@ -996,6 +1040,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             )
         timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
         response_format = opts.get("response_format") or self._default_options.get("response_format")
+        response_schema = _to_response_schema(response_format)
 
         input_messages = normalize_messages(messages)
 
@@ -1051,7 +1096,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 response_event = await copilot_session.send_and_wait(
                     prompt,
                     attachments=attachments,
-                    response_schema=response_format,
+                    response_schema=response_schema,
                     timeout=timeout,
                 )
             except Exception as ex:
@@ -1086,6 +1131,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             usage_details=usage_details,
             additional_properties={"model": model} if model else None,
             response_format=response_format,
+            value=_try_parse_structured_value(
+                response_messages[-1].text if response_messages else None, response_format
+            ),
         )
         session_context._response = response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
@@ -1139,6 +1187,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 "together with on_permission_request instead."
             )
         response_format = opts.get("response_format") or self._default_options.get("response_format")
+        response_schema = _to_response_schema(response_format)
 
         input_messages = normalize_messages(messages)
 
@@ -1157,11 +1206,19 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         attachments = self._prepare_attachments_for_copilot(context_messages)
 
         queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
+        # Text of each root-agent assistant message, so structured output is parsed from the root answer
+        # and never from sub-agent text interleaved in the same stream.
+        root_text: dict[str, str] = {}
+        last_root_message_id: str | None = None
 
         def event_handler(event: SessionEvent) -> None:
+            nonlocal last_root_message_id
             if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
                 data: Any = event.data
                 if data.delta_content:
+                    if not getattr(event, "agent_id", None):
+                        root_text[data.message_id] = root_text.get(data.message_id, "") + data.delta_content
+                        last_root_message_id = data.message_id
                     update = AgentResponseUpdate(
                         role="assistant",
                         contents=[Content.from_text(data.delta_content, merge_mode="append")],
@@ -1256,7 +1313,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
             try:
                 mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-                await copilot_session.send(prompt, attachments=attachments, response_schema=response_format)
+                await copilot_session.send(prompt, attachments=attachments, response_schema=response_schema)
 
                 while (item := await queue.get()) is not None:
                     if isinstance(item, Exception):
@@ -1264,6 +1321,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     yield item
             finally:
                 unsubscribe()
+                if _ctx_holder is not None and last_root_message_id is not None:
+                    _ctx_holder["root_text"] = root_text.get(last_root_message_id)
 
     async def _run_before_providers(
         self,

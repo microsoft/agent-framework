@@ -11,13 +11,13 @@ import unittest.mock
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 copilot = pytest.importorskip("copilot")
 
@@ -1283,6 +1283,84 @@ class TestGitHubCopilotAgentStructuredOutput:
         await agent.run("Hi")
 
         assert mock_session.send_and_wait.call_args.kwargs["response_schema"] is None
+
+    async def test_run_converts_mapping_schema_to_plain_dict(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Non-dict mappings are converted to plain dicts so the SDK can serialize them."""
+        schema = MappingProxyType({
+            "type": "object",
+            "properties": MappingProxyType({"value": MappingProxyType({"type": "integer"})}),
+        })
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"value": 1}', message_id="msg-1"
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run("Hi", options=cast(Any, {"response_format": schema}))
+
+        sent = mock_session.send_and_wait.call_args.kwargs["response_schema"]
+        assert type(sent) is dict
+        assert type(sent["properties"]["value"]) is dict
+        json.dumps(sent)
+
+    async def test_run_parses_aliased_model_by_alias(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Aliased models are validated by alias only, matching the schema sent to the SDK."""
+
+        class Aliased(BaseModel):
+            model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+            item_count: int = Field(alias="itemCount")
+
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"itemCount": 3}', message_id="msg-1"
+        )
+        # Core validation with the model's own settings would fail here.
+        with pytest.raises(ValidationError):
+            Aliased.model_validate_json('{"itemCount": 3}')
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hi", options=cast(Any, {"response_format": Aliased}))
+
+        assert response.value == Aliased(item_count=3)
+
+    async def test_streaming_value_ignores_trailing_subagent_text(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """A sub-agent delta after the root answer does not replace the structured value."""
+        child = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content="child chatter", message_id="child"
+        )
+        child.agent_id = "sub-agent"
+        events = [
+            create_session_event(
+                SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 9}', message_id="root"
+            ),
+            child,
+            create_session_event(SessionEventType.SESSION_IDLE),
+        ]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Answer}))
+        texts = [u.text async for u in stream]
+        response = await stream.get_final_response()
+
+        assert "child chatter" in "".join(texts)
+        assert response.value == self.Answer(value=9)
 
     async def test_streaming_passes_response_format_and_parses_value(
         self,
