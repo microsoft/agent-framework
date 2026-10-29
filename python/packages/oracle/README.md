@@ -11,7 +11,7 @@ describes the connection and pool settings resolved through Agent Framework.
 pip install agent-framework-oracle --pre
 ```
 
-Supports Python 3.11+. Python 3.10 installation remains permitted, but
+Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
 compatibility is not guaranteed.
 
 Requires Oracle AI Database 26ai with `COMPATIBLE` set to

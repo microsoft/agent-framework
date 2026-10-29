@@ -78,7 +78,8 @@ uv run poe prek-install
 Python 3.10 is no longer supported because it has reached upstream end of life.
 Package metadata still permits Python 3.10 installation, and CI retains
 compatibility checks for now, but compatibility is not guaranteed. Use
-Python 3.11 or later for supported development environments.
+Python 3.11–3.15 for supported development environments, subject to the
+workspace and integration-specific limits below.
 
 The checked-in root workspace lock supports the common Python 3.11–3.14
 development range. CI validates the Python 3.10 and 3.15 boundaries by

@@ -11,7 +11,7 @@ An alpha MongoDB integration for [Microsoft Agent Framework](https://learn.micro
 pip install agent-framework-mongodb --pre
 ```
 
-Supports Python 3.11+. Python 3.10 installation remains permitted, but
+Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
 compatibility is not guaranteed.
 
 Requires PyMongo 4.13.2+ and a MongoDB deployment with

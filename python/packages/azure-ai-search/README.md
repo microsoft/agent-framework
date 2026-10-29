@@ -14,7 +14,7 @@ All three classes are available from `agent_framework.azure` or
 
 ## Installation
 
-Supports Python 3.11 or later. Python 3.10 installation remains permitted,
+Supports Python 3.11–3.15. Python 3.10 installation remains permitted,
 but compatibility is not guaranteed.
 
 ```bash
