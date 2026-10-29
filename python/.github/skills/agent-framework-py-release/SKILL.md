@@ -470,8 +470,9 @@ trigger and do not create per-package tags. Release notes must be complete **bef
 the draft, tag, or selected source while a release run is in progress.
 
 Azure DevOps discovery polls eligible existing drafts and tags. It has a disabled-by-default activation switch,
-an explicit first eligible release ID, and durable Azure Blob compare-and-swap claims to admit one run for the
-whole batch. No GitHub workflow calls or queues Azure DevOps.
+an explicit first eligible release ID, and durable claims on one retained ADO ledger run. A shared exclusive-lock
+environment serializes discovery, authorization and finalization to admit one run for the whole batch. No Azure
+storage account is needed. No GitHub workflow calls or queues Azure DevOps.
 
 The protected pipeline reads `python/.github/release-<fulltag>.json` from the exact tagged commit, validates the requested names,
 versions and tag, builds once, and runs isolated install/public-import checks against the selected artifacts.
@@ -506,9 +507,12 @@ release assets, publish packages, or request Azure DevOps credentials.
 2. Merge this repository's producer and retirement of the old GitHub build/upload path second.
 3. Reuse the existing Azure DevOps GitHub service connection `github-agent-framework`, already used by the .NET
    release pipeline, and authorize it for the Python pipelines. Verify its repository and release access; do not
-   introduce a separate GitHub App, private key, or Key Vault token-minting setup. Configure and verify the separate
-   Azure identity for durable Blob claims and the protected ESRP approval gates outside GitHub. Verify the merged
-   upstream revision is compatible. Reusing the connection does not authorize a new pipeline automatically.
+   introduce a separate GitHub App, private key, or Key Vault token-minting setup. Configure the shared
+   `agent-framework-python-coordination` environment with an exclusive-lock check, initialize a retained discovery
+   run with `initializeLedger: true`, and set its `releaseLedgerRunId` in both ADO pipelines. Keep ledger and release
+   runs retained indefinitely. Verify the Build Service permissions and protected ESRP approval gates outside GitHub.
+   No separate Azure storage identity is needed. Verify the merged upstream revision is compatible. Reusing the
+   connection does not authorize a new pipeline automatically.
 4. Choose the first eligible draft release ID and activate tag/draft discovery **last**, only after the previous
    steps are confirmed. Do not create production tags/drafts merely to test rollout.
 
