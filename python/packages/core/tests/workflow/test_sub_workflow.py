@@ -414,7 +414,7 @@ async def test_wrapped_reply_preflight_uses_selected_routes(
 ) -> None:
     from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
 
-    parent, children, requests, calls = selected_reply_workflow(routing, False)
+    parent, children, requests, calls = selected_reply_workflow(routing, False, False)
     await parent.run("first")
     first_scope = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
     await parent.run("second")
@@ -460,7 +460,7 @@ async def test_wrapped_reply_selected_mixed_scopes_preserve_queue(
     from agent_framework import WorkflowCheckpointException
     from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
 
-    parent, children, requests, _ = selected_reply_workflow(routing, True)
+    parent, children, requests, _ = selected_reply_workflow(routing, True, False)
     await parent.run("first")
     await parent.run("second")
     pending = {name: await child._runner_context.get_pending_request_info_events() for name, child in children.items()}
@@ -480,6 +480,61 @@ async def test_wrapped_reply_selected_mixed_scopes_preserve_queue(
     assert await parent._runner._get_queued_messages() == {"coordinator": [message]}
     for name, child in children.items():
         assert await child._runner_context.get_pending_request_info_events() == pending[name]
+
+
+@pytest.mark.parametrize("routing", ["condition", "selection"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_wrapped_reply_routing_observes_earlier_same_edge_handler(
+    selected_reply_workflow, routing: str, streaming: bool
+) -> None:
+    parent, children, requests, calls = selected_reply_workflow(routing, False, True)
+    await parent.run("first")
+    coordinator = parent.get_start_executor()
+    await coordinator.on_checkpoint_restore({"target": "second"})
+    message = ("enable-first", requests["first"].create_response(True))
+
+    if streaming:
+        events = [event async for event in parent.run(message, stream=True)]
+        outputs = [event.data for event in events if event.type == "output"]
+    else:
+        outputs = (await parent.run(message)).get_outputs()
+
+    assert await coordinator.on_checkpoint_save() == {"target": "first"}
+    assert outputs == ["first"]
+    assert not await children["first"]._runner_context.get_pending_request_info_events()
+    assert calls == {"condition": ["first"], "selection": ["selection"]}[routing]
+
+
+@pytest.mark.parametrize("routing", ["condition", "selection"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_wrapped_reply_routing_uses_checkpointed_executor_fields(
+    selected_reply_workflow, routing: str, streaming: bool
+) -> None:
+    parent, children, requests, calls = selected_reply_workflow(routing, False, True)
+    await parent.run("first")
+    await parent.run("second")
+    coordinator = parent.get_start_executor()
+    await coordinator.on_checkpoint_restore({"target": "second"})
+    await parent._runner_context.send_message(
+        WorkflowMessage(data=requests["second"].create_response(True), source_id="coordinator")
+    )
+    storage = InMemoryCheckpointStorage()
+    checkpoint_id = await storage.save(await parent._runner.build_checkpoint())
+    await coordinator.on_checkpoint_restore({"target": "first"})
+
+    if streaming:
+        events = [
+            event async for event in parent.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=True)
+        ]
+        outputs = [event.data for event in events if event.type == "output"]
+    else:
+        outputs = (await parent.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)).get_outputs()
+
+    assert await coordinator.on_checkpoint_save() == {"target": "second"}
+    assert outputs == ["second"]
+    assert not await children["second"]._runner_context.get_pending_request_info_events()
+    assert set(await children["first"]._runner_context.get_pending_request_info_events()) == {"shared"}
+    assert sorted(calls) == {"condition": ["first", "second"], "selection": ["selection"]}[routing]
 
 
 @pytest.mark.parametrize("streaming", [False, True])

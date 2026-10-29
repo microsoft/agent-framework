@@ -22,10 +22,10 @@ from agent_framework import (
 
 @pytest.fixture
 def selected_reply_workflow() -> Callable[
-    [str, bool], tuple[Workflow, dict[str, Workflow], dict[str, SubWorkflowRequestMessage], list[str]]
+    [str, bool, bool], tuple[Workflow, dict[str, Workflow], dict[str, SubWorkflowRequestMessage], list[str]]
 ]:
     def build(
-        routing: str, select_both: bool = False
+        routing: str, select_both: bool = False, stateful: bool = False
     ) -> tuple[Workflow, dict[str, Workflow], dict[str, SubWorkflowRequestMessage], list[str]]:
         requests: dict[str, SubWorkflowRequestMessage] = {}
         calls: list[str] = []
@@ -40,6 +40,16 @@ def selected_reply_workflow() -> Callable[
                 await ctx.yield_output(original)
 
         class Coordinator(Executor):
+            def __init__(self) -> None:
+                super().__init__(id="coordinator")
+                self.target = "first"
+
+            async def on_checkpoint_save(self) -> dict[str, Any]:
+                return {"target": self.target}
+
+            async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+                self.target = state["target"]
+
             @handler
             async def start(self, message: str, ctx: WorkflowContext[str]) -> None:
                 await ctx.send_message(message, target_id=message)
@@ -55,22 +65,41 @@ def selected_reply_workflow() -> Callable[
             async def intercept(self, request: SubWorkflowRequestMessage, ctx: WorkflowContext) -> None:
                 requests[request.executor_id] = request
 
+            @handler
+            async def queue_ordered(
+                self,
+                messages: tuple[str, SubWorkflowResponseMessage],
+                ctx: WorkflowContext[str | SubWorkflowResponseMessage],
+            ) -> None:
+                for message in messages:
+                    await ctx.send_message(message, target_id="first")
+
+        class RoutingWorkflowExecutor(WorkflowExecutor):
+            @handler
+            async def apply_routing(self, message: str, ctx: WorkflowContext[Any, Any]) -> None:
+                if message == "enable-first":
+                    coordinator.target = "first"
+                else:
+                    await self.process_workflow(message, ctx)
+
         def select(message: Any, targets: list[str]) -> list[str]:
             if isinstance(message, SubWorkflowResponseMessage):
                 calls.append("selection")
-                return targets if select_both else ["first"]
+                return targets if select_both else [coordinator.target if stateful else "first"]
             return targets
 
         async def first_condition(message: Any) -> bool:
             if isinstance(message, SubWorkflowResponseMessage):
                 calls.append("first")
+                if stateful:
+                    return coordinator.target == "first"
             return True
 
         async def second_condition(message: Any) -> bool:
             if isinstance(message, SubWorkflowResponseMessage):
                 calls.append("second")
-                return select_both
-            return True
+                return select_both or (stateful and coordinator.target == "second")
+            return coordinator.target == "first" if stateful else True
 
         def first_case(message: Any) -> bool:
             if isinstance(message, SubWorkflowResponseMessage):
@@ -81,10 +110,9 @@ def selected_reply_workflow() -> Callable[
         children = {
             name: WorkflowBuilder(start_executor=Requester(id="requester")).build() for name in ("first", "second")
         }
-        wrappers = {
-            name: WorkflowExecutor(child, id=name, allow_direct_output=True) for name, child in children.items()
-        }
-        coordinator = Coordinator(id="coordinator")
+        wrapper_type = RoutingWorkflowExecutor if stateful else WorkflowExecutor
+        wrappers = {name: wrapper_type(child, id=name, allow_direct_output=True) for name, child in children.items()}
+        coordinator = Coordinator()
         builder = WorkflowBuilder(start_executor=coordinator)
         if routing == "condition":
             builder.add_edge(coordinator, wrappers["first"], condition=first_condition)
