@@ -612,10 +612,10 @@ class WorkflowExecutor(Executor):
         ])
 
     @override
-    def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
+    async def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
         sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
         if sub_workflow_checkpoint is not None:
-            self.workflow._runner._validate_checkpoint_tree(sub_workflow_checkpoint, requests)  # pyright: ignore[reportPrivateUsage]
+            await self.workflow._runner._validate_checkpoint_tree(sub_workflow_checkpoint, requests)  # pyright: ignore[reportPrivateUsage]
 
     @override
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:

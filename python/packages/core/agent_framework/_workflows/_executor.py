@@ -549,7 +549,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         del requests
         return []
 
-    def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
+    async def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
         """Validate a checkpoint snapshot without changing live executor state."""
         del state, requests
 

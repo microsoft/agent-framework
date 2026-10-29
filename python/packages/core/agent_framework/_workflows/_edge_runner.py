@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -7,6 +9,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from typing import Any, cast
+from uuid import uuid4
 
 from ..exceptions import WorkflowCheckpointException
 from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
@@ -64,8 +67,8 @@ class EdgeRunner(ABC):
         """
         self._edge_group = edge_group
         self._executors = executors
+        self._delivery_key = str(uuid4())
 
-    @abstractmethod
     async def send_message(
         self,
         message: WorkflowMessage,
@@ -83,6 +86,28 @@ class EdgeRunner(ABC):
             bool: True if the message was processed successfully,
                 False if the target executor cannot handle the message.
         """
+        delivery = message._prepared_deliveries.pop(self._delivery_key, None)  # pyright: ignore[reportPrivateUsage]
+        if delivery is None:
+            delivery = await self._select_targets(message)
+        processed, target_ids = delivery
+        source_id = self._edge_group.edges[0].source_id
+        if len(target_ids) == 1:
+            await self._execute_on_target(target_ids[0], [source_id], message, state, ctx)
+            return processed
+        await gather_cancelling_siblings_on_error(
+            *(self._execute_on_target(target_id, [source_id], message, state, ctx) for target_id in target_ids)
+        )
+        return processed
+
+    async def _prepare_message(self, message: WorkflowMessage) -> list[str]:
+        deliveries = message._prepared_deliveries  # pyright: ignore[reportPrivateUsage]
+        if self._delivery_key not in deliveries:
+            deliveries[self._delivery_key] = await self._select_targets(message)
+        return deliveries[self._delivery_key][1]
+
+    @abstractmethod
+    async def _select_targets(self, message: WorkflowMessage) -> tuple[bool, list[str]]:
+        """Determine delivery targets without executing or buffering the message."""
         raise NotImplementedError
 
     @property
@@ -159,13 +184,8 @@ class SingleEdgeRunner(EdgeRunner):
         super().__init__(edge_group, executors)
         self._edge = edge_group.edges[0]
 
-    async def send_message(
-        self,
-        message: WorkflowMessage,
-        state: State,
-        ctx: RunnerContext,
-    ) -> bool:
-        """Send a message through the single edge."""
+    async def _select_targets(self, message: WorkflowMessage) -> tuple[bool, list[str]]:
+        """Select the single edge's delivery target without executing it."""
         should_execute = False
         target_id: str | None = None
         source_id: str | None = None
@@ -183,7 +203,7 @@ class SingleEdgeRunner(EdgeRunner):
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
                         OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
                     })
-                    return False
+                    return False, []
 
                 if self._can_handle(self._edge.target_id, message):
                     route_result = await self._edge.should_route(message.data)
@@ -202,13 +222,13 @@ class SingleEdgeRunner(EdgeRunner):
                             OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,
                         })
                         # Return True here because message was processed, just condition failed
-                        return True
+                        return True, []
                 else:
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
                         OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
                     })
-                    return False
+                    return False, []
             except Exception as e:
                 span.set_attributes({
                     OtelAttr.EDGE_GROUP_DELIVERED: False,
@@ -216,12 +236,10 @@ class SingleEdgeRunner(EdgeRunner):
                 })
                 raise e
 
-        # Execute outside the span
         if should_execute and target_id and source_id:
-            await self._execute_on_target(target_id, [source_id], message, state, ctx)
-            return True
+            return True, [target_id]
 
-        return False
+        return False, []
 
 
 class FanOutEdgeRunner(EdgeRunner):
@@ -236,13 +254,8 @@ class FanOutEdgeRunner(EdgeRunner):
             Callable[[Any, list[str]], list[str]] | None, getattr(edge_group, "selection_func", None)
         )
 
-    async def send_message(
-        self,
-        message: WorkflowMessage,
-        state: State,
-        ctx: RunnerContext,
-    ) -> bool:
-        """Send a message through all edges in the fan-out edge group."""
+    async def _select_targets(self, message: WorkflowMessage) -> tuple[bool, list[str]]:
+        """Select fan-out delivery targets without executing them."""
         deliverable_edges: list[Edge] = []
         single_target_edge: Edge | None = None
         # Process routing logic within span
@@ -269,14 +282,14 @@ class FanOutEdgeRunner(EdgeRunner):
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
                         OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
                     })
-                    return False
+                    return False, []
 
                 if not any(self._can_handle(target_id, message) for target_id in self._target_ids):
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
                         OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
                     })
-                    return False
+                    return False, []
 
                 selection_results = (
                     self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
@@ -313,21 +326,21 @@ class FanOutEdgeRunner(EdgeRunner):
                                     OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,  # ruff:ignore[line-too-long]
                                 })
                                 # For targeted messages with condition failure, return True (message was processed)
-                                return True
+                                return True, []
                         else:
                             span.set_attributes({
                                 OtelAttr.EDGE_GROUP_DELIVERED: False,
                                 OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,  # ruff:ignore[line-too-long]
                             })
                             # For targeted messages that can't be handled, return False
-                            return False
+                            return False, []
                     else:
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: False,
                             OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
                         })
                         # For targeted messages not in selection, return False
-                        return False
+                        return False, []
                 else:
                     # If no target ID, send the message to the selected targets
                     for target_id in selection_results:
@@ -355,27 +368,14 @@ class FanOutEdgeRunner(EdgeRunner):
                 })
                 raise e
 
-        # Execute outside the span
         if single_target_edge:
-            await self._execute_on_target(
-                single_target_edge.target_id,
-                [single_target_edge.source_id],
-                message,
-                state,
-                ctx,
-            )
-            return True
+            return True, [single_target_edge.target_id]
 
         if deliverable_edges:
-
-            async def send_to_edge(edge: Edge) -> None:
-                await self._execute_on_target(edge.target_id, [edge.source_id], message, state, ctx)
-
-            await gather_cancelling_siblings_on_error(*(send_to_edge(edge) for edge in deliverable_edges))
-            return True
+            return True, [edge.target_id for edge in deliverable_edges]
 
         # If we get here, it's a broadcast message with no deliverable edges
-        return False
+        return False, []
 
     def _validate_selection_result(self, selection_results: list[str]) -> bool:
         """Validate the selection results to ensure all IDs are valid target executor IDs."""
@@ -393,6 +393,10 @@ class FanInEdgeRunner(EdgeRunner):
         # Buffer to hold messages before sending them to the target executor
         # Key is the source executor ID, value is a list of messages
         self._buffer: dict[str, list[WorkflowMessage]] = defaultdict(list)
+
+    async def _select_targets(self, message: WorkflowMessage) -> tuple[bool, list[str]]:
+        # Fan-in delivers an aggregate rather than the wrapped reply itself.
+        return False, []
 
     def snapshot_state(self) -> dict[str, Any] | None:
         """Capture the buffered messages that are still waiting for the remaining sources.

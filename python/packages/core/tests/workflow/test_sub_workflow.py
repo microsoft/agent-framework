@@ -406,6 +406,79 @@ async def test_wrapped_reply_preflight_applies_child_policy(delivery: str) -> No
     ]
 
 
+@pytest.mark.parametrize("routing", ["condition", "selection", "switch"])
+@pytest.mark.parametrize("restore", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_wrapped_reply_preflight_uses_selected_routes(
+    selected_reply_workflow, routing: str, restore: bool, streaming: bool
+) -> None:
+    from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+    parent, children, requests, calls = selected_reply_workflow(routing)
+    await parent.run("first")
+    first_scope = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+    await parent.run("second")
+    assert parent._runner.state.get(WORKFLOW_SESSION_ID_KEY) != first_scope
+    pending_second = await children["second"]._runner_context.get_pending_request_info_events()
+    assert requests["first"].source_event.request_id == requests["second"].source_event.request_id == "shared"
+    reply = requests["first"].create_response(True)
+    if restore:
+        await parent._runner_context.send_message(WorkflowMessage(data=reply, source_id="coordinator"))
+        checkpoint = await parent._runner.build_checkpoint()
+        storage = InMemoryCheckpointStorage()
+        checkpoint_id = await storage.save(checkpoint)
+        run = parent.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=streaming)
+    else:
+        run = parent.run([reply], stream=streaming)
+
+    if streaming:
+        events = [event async for event in run]
+        outputs = [event.data for event in events if event.type == "output"]
+    else:
+        outputs = (await run).get_outputs()
+
+    assert outputs == ["first"]
+    assert not await children["first"]._runner_context.get_pending_request_info_events()
+    remaining = await children["second"]._runner_context.get_pending_request_info_events()
+    assert {key: event.to_dict() for key, event in remaining.items()} == {
+        key: event.to_dict() for key, event in pending_second.items()
+    }
+    assert parent._runner.state.get(WORKFLOW_SESSION_ID_KEY) == first_scope
+    assert (
+        sorted(calls) == {"condition": ["first", "second"], "selection": ["selection"], "switch": ["switch"]}[routing]
+    )
+
+
+@pytest.mark.parametrize("routing", ["condition", "selection"])
+@pytest.mark.parametrize("restore", [False, True])
+async def test_wrapped_reply_selected_mixed_scopes_preserve_queue(
+    selected_reply_workflow, routing: str, restore: bool
+) -> None:
+    from agent_framework import WorkflowCheckpointException
+    from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+    parent, children, requests, _ = selected_reply_workflow(routing, True)
+    await parent.run("first")
+    await parent.run("second")
+    pending = {name: await child._runner_context.get_pending_request_info_events() for name, child in children.items()}
+    message = WorkflowMessage(data=requests["first"].create_response(True), source_id="coordinator")
+    await parent._runner_context.send_message(message)
+    scope = parent._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+    if restore:
+        checkpoint = await parent._runner.build_checkpoint()
+        with pytest.raises(WorkflowCheckpointException) as error:
+            await parent._runner.restore_checkpoint(checkpoint)
+        assert isinstance(error.value.__cause__, ValueError)
+        assert "multiple parent workflow scopes" in str(error.value.__cause__)
+    else:
+        with pytest.raises(ValueError, match="multiple parent workflow scopes"):
+            await parent._runner._run_iteration()
+    assert parent._runner.state.get(WORKFLOW_SESSION_ID_KEY) == scope
+    assert await parent._runner_context.get_queued_messages() == {"coordinator": [message]}
+    for name, child in children.items():
+        assert await child._runner_context.get_pending_request_info_events() == pending[name]
+
+
 @pytest.mark.parametrize("streaming", [False, True])
 async def test_response_validation_preserves_noncopyable_request_payload(streaming: bool) -> None:
     from threading import Lock

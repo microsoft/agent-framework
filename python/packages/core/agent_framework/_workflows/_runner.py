@@ -256,7 +256,7 @@ class RunnerImpl:
         )
         return checkpoint.messages
 
-    def _get_wrapped_response_requests(
+    async def _get_wrapped_response_requests(
         self, messages: Mapping[str, Sequence[WorkflowMessage]]
     ) -> dict[str, list[WorkflowEvent]]:
         from ._workflow_executor import SubWorkflowResponseMessage
@@ -267,13 +267,9 @@ class RunnerImpl:
                 if not isinstance(message.data, SubWorkflowResponseMessage):
                     continue
                 # Wrapped replies retain child-local source IDs; route through the parent graph.
-                targets = {
-                    edge.target_id
-                    for runner in self._edge_runner_map.get(message.source_id, [])
-                    for edge in runner._edge_group.edges  # pyright: ignore[reportPrivateUsage]
-                    if edge.source_id == message.source_id
-                    and (message.target_id is None or edge.target_id == message.target_id)
-                }
+                targets: set[str] = set()
+                for runner in self._edge_runner_map.get(message.source_id, []):
+                    targets.update(await runner._prepare_message(message))  # pyright: ignore[reportPrivateUsage]
                 for target_id in targets:
                     requests[target_id].append(message.data.source_event)
         return dict(requests)
@@ -361,7 +357,7 @@ class RunnerImpl:
                 raise WorkflowCheckpointException(f"Checkpoint {checkpoint_id} not found")
 
             checkpoint = copy.deepcopy(checkpoint)
-            self._validate_checkpoint_tree(checkpoint)
+            await self._validate_checkpoint_tree(checkpoint)
 
             # Restore state. Clear first so import_state (which merges) does
             # not leak stale keys from a prior run on this Workflow instance.
@@ -421,7 +417,7 @@ class RunnerImpl:
         """
         try:
             checkpoint = copy.deepcopy(checkpoint)
-            self._validate_checkpoint_tree(checkpoint)
+            await self._validate_checkpoint_tree(checkpoint)
 
             # Clear first so import_state (which merges) does not leak stale keys from a
             # prior run on this Workflow instance.
@@ -437,7 +433,7 @@ class RunnerImpl:
             logger.error(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}") from e
 
-    def _validate_checkpoint_tree(
+    async def _validate_checkpoint_tree(
         self, checkpoint: WorkflowCheckpoint, delegated_requests: Sequence[WorkflowEvent] = ()
     ) -> None:
         from ._const import WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY
@@ -457,7 +453,7 @@ class RunnerImpl:
         ]
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
-        wrapped_requests = self._get_wrapped_response_requests(checkpoint.messages)
+        wrapped_requests = await self._get_wrapped_response_requests(checkpoint.messages)
         parent_contexts = checkpoint.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
         validate_request_contexts(
             parent_contexts,
@@ -478,7 +474,7 @@ class RunnerImpl:
             for target_id, batch in wrapped_requests.items():
                 delegated_by_executor[target_id].extend(batch)
             for _, executor, state in self._get_executor_states(checkpoint.state[EXECUTOR_STATE_KEY]):
-                executor._validate_checkpoint_restore(  # pyright: ignore[reportPrivateUsage]
+                await executor._validate_checkpoint_restore(  # pyright: ignore[reportPrivateUsage]
                     state, delegated_by_executor[executor.id]
                 )
 

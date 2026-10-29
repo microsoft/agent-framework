@@ -1216,7 +1216,7 @@ class Workflow(DictConvertible):
     ) -> list[_ResponseBatchValidation]:
         messages = await self._runner._get_queued_messages()  # pyright: ignore[reportPrivateUsage]
         queued_requests = _get_queued_response_info_events(messages)
-        wrapped_requests = self._runner._get_wrapped_response_requests(messages)  # pyright: ignore[reportPrivateUsage]
+        wrapped_requests = await self._runner._get_wrapped_response_requests(messages)  # pyright: ignore[reportPrivateUsage]
         batch = [*queued_requests, *requests]
         parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
         boundary_contexts = [
