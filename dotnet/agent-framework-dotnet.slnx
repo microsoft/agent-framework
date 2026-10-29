@@ -139,6 +139,9 @@
     <Project Path="samples/02-agents/AgentProviders/anthropic/Agent_Anthropic_Step03_UsingFunctionTools/Agent_Anthropic_Step03_UsingFunctionTools.csproj" />
     <Project Path="samples/02-agents/AgentProviders/anthropic/Agent_Anthropic_Step04_UsingSkills/Agent_Anthropic_Step04_UsingSkills.csproj" />
   </Folder>
+  <Folder Name="/Samples/02-agents/AgentProviders/copilot-studio/">
+    <Project Path="samples/02-agents/AgentProviders/copilot-studio/Agent_With_CopilotStudio/Agent_With_CopilotStudio.csproj" />
+  </Folder>
   <Folder Name="/Samples/02-agents/AgentProviders/foundry/">
     <File Path="samples/02-agents/AgentProviders/foundry/README.md" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step00_FoundryAgentLifecycle/Agent_Step00_FoundryAgentLifecycle.csproj" />
