@@ -3,6 +3,7 @@
 """Unit tests for prompt injection defense system."""
 
 import asyncio
+import builtins
 import json
 import logging
 import math
@@ -17,6 +18,7 @@ from unittest.mock import AsyncMock, call
 import pytest
 from pydantic import AfterValidator, BaseModel, field_validator
 
+import agent_framework.security as security_module
 from agent_framework import (
     Agent,
     AgentSession,
@@ -4452,7 +4454,11 @@ class TestSecureAgentSessionIsolation:
         assert result.text == "done"
         assert executed == ["ordinary"]
 
-    async def test_history_loaded_pending_approval_stays_authenticated_in_chat_middleware(self) -> None:
+    @pytest.mark.parametrize("control_shape", ["request", "full-response", "occurrence-only-response"])
+    async def test_history_loaded_pending_approval_stays_authenticated_in_chat_middleware(
+        self,
+        control_shape: str,
+    ) -> None:
         """History authentication survives the later chat-middleware replay pass."""
         function_call = Content.from_function_call(
             call_id="history-approval-call",
@@ -4469,9 +4475,27 @@ class TestSecureAgentSessionIsolation:
         history = InMemoryHistoryProvider()
         config = SecureAgentConfig()
         context = SessionContext(session_id=session.session_id, input_messages=[])
+        if control_shape == "request":
+            history_message = Message(role="assistant", contents=[function_call, approval_request])
+        elif control_shape == "full-response":
+            history_message = Message(
+                role="user",
+                contents=[approval_request.to_function_approval_response(approved=True)],
+            )
+        else:
+            history_message = Message(
+                role="user",
+                contents=[
+                    Content(
+                        "function_approval_response",
+                        approved=True,
+                        id=function_call.id,
+                    )
+                ],
+            )
         context.extend_messages(
             history,
-            [Message(role="assistant", contents=[function_call, approval_request])],
+            [history_message],
         )
 
         await config.before_run(
@@ -4486,9 +4510,12 @@ class TestSecureAgentSessionIsolation:
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
+        fresh_history_messages = [
+            Message.from_dict(message.to_dict()) for message in context.context_messages[history.source_id]
+        ]
         chat_context = ChatContext(
             client=cast(Any, SimpleNamespace()),
-            messages=context.get_messages(include_input=True),
+            messages=fresh_history_messages,
             options={},
             session=session,
         )
@@ -4501,6 +4528,109 @@ class TestSecureAgentSessionIsolation:
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_history_replay_rejects_recycled_identity_for_changed_approval(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A recycled numeric identity cannot authenticate a changed history control."""
+        function_call = Content.from_function_call(
+            call_id="recycled-approval-call",
+            id="recycled-approval-occurrence",
+            name="recycled_approval_sink",
+            arguments={"value": "reviewed value"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id="recycled-approval-occurrence",
+            function_call=function_call,
+        )
+        session = AgentSession(session_id="recycled-pending-approval")
+        _store_pending_approval_requests(session, [approval_request])
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(
+            history,
+            [Message(role="assistant", contents=[function_call, approval_request])],
+        )
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config, history]),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker, policy, replay_middleware = context.get_middleware()
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.TRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+        authenticated_control_id = builtins.id(approval_request)
+        monkeypatch.setattr(
+            security_module,
+            "id",
+            lambda value: authenticated_control_id if isinstance(value, Content) else builtins.id(value),
+            raising=False,
+        )
+        altered_call = Content.from_function_call(
+            call_id="recycled-approval-call",
+            id="recycled-approval-occurrence",
+            name="recycled_approval_sink",
+            arguments={"value": "changed prompt-injection value"},
+        )
+        altered_request = Content.from_function_approval_request(
+            id="recycled-approval-occurrence",
+            function_call=altered_call,
+        )
+        original_message = context.context_messages[history.source_id][0]
+        altered_message = Message(
+            role="assistant",
+            contents=[altered_call, altered_request],
+            additional_properties=dict(original_message.additional_properties),
+        )
+        chat_context = ChatContext(
+            client=cast(Any, SimpleNamespace()),
+            messages=[altered_message],
+            options={},
+            session=session,
+        )
+
+        async def call_next() -> None:
+            return None
+
+        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+        executed = False
+
+        def protected_sink() -> str:
+            nonlocal executed
+            executed = True
+            return "must not run"
+
+        protected_tool = FunctionTool(
+            func=protected_sink,
+            name="protected_recycled_approval_sink",
+            input_model={"type": "object", "properties": {}},
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        invocation = FunctionInvocationContext(function=protected_tool, arguments={}, session=session)
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                invocation,
+                lambda _context: pytest.fail("Changed history control must not authorize the protected sink"),
+            )
+        assert executed is False
 
     async def test_ordinary_pending_approval_rejects_altered_supplied_call_body(self) -> None:
         """Core binding cannot grant replay provenance to an altered supplied call."""
