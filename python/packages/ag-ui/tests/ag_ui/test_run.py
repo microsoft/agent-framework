@@ -758,6 +758,23 @@ def test_emit_text_rebases_delta_annotation_spans_and_deduplicates_full_replay()
     assert replay_events == []
 
 
+def test_emit_text_does_not_rebase_source_coordinate_annotation_spans() -> None:
+    """Source-document locations remain independent of accumulated response text."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/source",
+        annotated_regions=[{"type": "text_span", "start_index": 2, "end_index": 5}],
+        annotated_regions_coordinate_space="source",
+    )
+    _emit_text(Content.from_text("Prefix "), flow)
+
+    events = _emit_text(Content.from_text("target", annotations=[annotation]), flow)
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0] == annotation
+
+
 def test_emit_text_preserves_annotation_only_spans() -> None:
     """Annotation-only updates already use complete-message span indices."""
     flow = FlowState()

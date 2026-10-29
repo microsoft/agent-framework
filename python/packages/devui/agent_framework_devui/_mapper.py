@@ -1432,7 +1432,7 @@ class MessageMapper:
         """Map TextReasoningContent to ResponseReasoningTextDeltaEvent."""
         return ResponseReasoningTextDeltaEvent(
             type="response.reasoning_text.delta",
-            delta=content.text,
+            delta=content.text or "",
             item_id=context["item_id"],
             output_index=context["output_index"],
             content_index=context["content_index"],

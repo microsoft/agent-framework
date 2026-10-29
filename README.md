@@ -70,6 +70,7 @@ Explore new MAF capabilities and real implementation patterns on the [official b
   - [Quickstart](#quickstart)
     - [Basic Agent - Python](#basic-agent---python)
     - [Basic Agent - .NET](#basic-agent---net)
+- [Agent Skills for Coding Agents](#agent-skills-for-coding-agents)
 - [More Examples & Samples](#more-examples--samples)
 - [Community & Feedback](#community--feedback)
 - [Troubleshooting](#troubleshooting)
@@ -160,6 +161,25 @@ AIAgent agent =
 // Once you have the agent, you can invoke it like any other AIAgent.
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
+
+## Agent Skills for Coding Agents
+
+Install the Python Agent Framework builder skill to give a compatible coding agent current guidance for choosing and
+building agents, harnesses, workflows, evaluations, integrations, and hosting:
+
+```bash
+gh skill install microsoft/agent-framework agent-framework-builder-python@main
+```
+
+The explicit `@main` ref is required until a tagged Agent Framework release includes the skill.
+
+The cross-agent `skills` CLI is also supported:
+
+```bash
+npx skills add microsoft/agent-framework --skill agent-framework-builder-python
+```
+
+See the [consumer skills catalog](./skills/) for details.
 
 ## More Examples & Samples
 

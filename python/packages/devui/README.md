@@ -360,6 +360,8 @@ devui ./agents --mode user --host 0.0.0.0 --auth-token "<secure-dev-token>"
 ```
 
 Do not use `--no-auth` with `0.0.0.0`, LAN IPs, or hostnames. That configuration fails closed before startup.
+Even on loopback, `--no-auth` removes protection against HTTP requests sent by hostile websites to local DevUI.
+Use it only in an isolated loopback development environment.
 
 **Security features:**
 

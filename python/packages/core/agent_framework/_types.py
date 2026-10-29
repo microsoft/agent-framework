@@ -459,6 +459,8 @@ _MERGEABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "code_interpreter_tool_call",
     "code_interpreter_tool_result",
 })
+APPROVAL_REJECTION_RESULT_KEY = "_approval_rejection_result"
+SKILL_CONTEXT_NAME_KEY = "_skill_context_name"
 
 _CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
 
@@ -481,8 +483,54 @@ class Annotation(TypedDict, total=False):
     tool_name: str
     snippet: str
     annotated_regions: Sequence[TextSpanRegion]
+    annotated_regions_coordinate_space: Literal["content", "source"]
     additional_properties: dict[str, Any]
     raw_representation: Any
+
+
+class _ValidatedTextSpanRegion(TypedDict):
+    type: Literal["text_span"]
+    start_index: int
+    end_index: int
+
+
+def _get_annotation_text_span_regions(  # pyright: ignore[reportUnusedFunction]
+    annotation: Mapping[str, Any],
+    *,
+    coordinate_space: Literal["content", "source"] = "content",
+) -> list[_ValidatedTextSpanRegion]:
+    """Return validated text spans in the requested coordinate space.
+
+    An absent coordinate space retains the legacy meaning that regions refer to the
+    annotated ``Content.text``. Source-coordinate regions refer to the cited source
+    and must not be interpreted as generated-content offsets.
+    """
+    if annotation.get("annotated_regions_coordinate_space", "content") != coordinate_space:
+        return []
+
+    raw_regions = annotation.get("annotated_regions")
+    if not isinstance(raw_regions, Sequence) or isinstance(raw_regions, (str, bytes, bytearray)):
+        return []
+
+    regions: list[_ValidatedTextSpanRegion] = []
+    for raw_region in cast(Sequence[Any], raw_regions):
+        if not isinstance(raw_region, Mapping):
+            continue
+        region = cast(Mapping[str, Any], raw_region)
+        if region.get("type") != "text_span":
+            continue
+        start_index = region.get("start_index")
+        end_index = region.get("end_index")
+        if type(start_index) is not int or type(end_index) is not int or start_index < 0 or end_index < start_index:
+            continue
+        regions.append(
+            _ValidatedTextSpanRegion(
+                type="text_span",
+                start_index=start_index,
+                end_index=end_index,
+            )
+        )
+    return regions
 
 
 @experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
@@ -984,7 +1032,7 @@ class Content:
                 content = Content.from_data(data=image_bytes, media_type="image/png")
 
                 # If you have a base64 string and need to detect media type
-                base64_string = "iVBORw0KGgo..."
+                base64_string = "iVBORw0KGgo="
                 media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
@@ -1023,7 +1071,7 @@ class Content:
         """Create content from a URI, can be both data URI or external URI.
 
         Use this when you already have a properly formed data URI
-        (e.g., "data:image/png;base64,iVBORw0KGgo...").
+        (e.g., "data:image/png;base64,iVBORw0KGgo=").
         Or when you receive a link to a online resource (e.g., "https://example.com/image.png").
 
         Args:
@@ -1049,10 +1097,10 @@ class Content:
         Examples:
             .. code-block:: python
 
-                from agent_framework import Content
+                from agent_framework import Content, detect_media_type_from_base64
 
                 # Create from a data URI
-                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo...", media_type="image/png")
+                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo=", media_type="image/png")
                 assert content.type == "data"
 
                 # Create from an external URI
@@ -1060,12 +1108,9 @@ class Content:
                 assert content.type == "uri"
 
                 # When receiving a raw already encode data string, you can do this:
-                raw_base64_string = "iVBORw0KGgo..."
-                content = Content.from_uri(
-                    uri=f"data:{(detect_media_type_from_base64(data_str=raw_base64_string) or 'image/png')};base64,{
-                        raw_base64_string
-                    }"
-                )
+                raw_base64_string = "iVBORw0KGgo="
+                media_type = detect_media_type_from_base64(data_str=raw_base64_string) or "image/png"
+                content = Content.from_uri(uri=f"data:{media_type};base64,{raw_base64_string}")
         """
         return cls(
             **_validate_uri(uri, media_type),
@@ -3297,13 +3342,16 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse, ChatResponseUpdate, ChatClient
+                from agent_framework import ChatResponse, ChatResponseUpdate, Content
 
-                client = ChatClient()  # should be a concrete implementation
-                response = await ChatResponse.from_update_generator(
-                    client.get_streaming_response("Hello, how are you?")
-                )
-                print(response.text)
+
+                async def updates():
+                    yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
+                    yield ChatResponseUpdate(contents=[Content.from_text(text=" How can I help you?")])
+
+
+                response = await ChatResponse.from_update_generator(updates())
+                print(response.text)  # "Hello How can I help you?"
 
         Args:
             updates: An async iterable of ChatResponseUpdate objects to combine.
@@ -3335,9 +3383,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse
+                from agent_framework import ChatResponse, Message
 
-                response = ChatResponse.from_updates(updates)
+                response = ChatResponse(messages=[Message("assistant", ["Hello"])])
                 assert response.text == ChatResponse.from_updates(response.to_updates()).text
         """
         updates = [
@@ -3826,9 +3874,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import AgentResponse
+                from agent_framework import AgentResponse, Message
 
-                response = AgentResponse.from_updates(updates)
+                response = AgentResponse(messages=[Message("assistant", ["Hello"])])
                 assert response.text == AgentResponse.from_updates(response.to_updates()).text
         """
         updates = [
@@ -4594,7 +4642,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._stream_error = exc
         try:
             # close() also runs the hooks if releasing the iterator fails.
-            await self.close()
+            await self.close(exc)
         finally:
             self._stream_error = None
 
@@ -4780,22 +4828,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 logger.warning("Stream cleanup hook failed while handling an existing exception.", exc_info=True)
             finally:
                 try:
-                    await self.close()
+                    await self.close(exc)
                 except Exception:
                     logger.warning("Stream cleanup failed while handling an existing exception.", exc_info=True)
             raise
 
-    async def close(self) -> None:
+    async def close(self, exc: BaseException | None = None) -> None:
         """Close the active iterator and run cleanup hooks.
 
         This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+
+        Args:
+            exc: The error that ended the stream, recorded on this and nested streams while cleanup hooks run.
         """
         iterator_failed = False
         try:
             iterator: AsyncIterator[UpdateT] | None = self._iterator
             if iterator is not None:
                 if isinstance(iterator, ResponseStream):
-                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                    await cast(ResponseStream[UpdateT, Any], iterator).close(exc)
                 else:
                     close = getattr(iterator, "aclose", None)
                     if close is not None:
@@ -4806,7 +4857,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         finally:
             self._consumed = True
             try:
-                await self._run_cleanup_hooks()
+                if exc is None:
+                    await self._run_cleanup_hooks()
+                else:
+                    await self._handle_stream_error(exc)
             except Exception:
                 if not iterator_failed:
                     raise
