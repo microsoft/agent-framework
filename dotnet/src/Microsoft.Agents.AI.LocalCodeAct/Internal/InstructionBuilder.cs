@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.LocalCodeAct.Internal;
@@ -40,6 +41,24 @@ internal static class InstructionBuilder
                 }
 
                 sb.AppendLine();
+
+                JsonElement schema = tool.JsonSchema;
+                if (schema.ValueKind is JsonValueKind.Object
+                    && schema.TryGetProperty("properties", out var properties)
+                    && properties.ValueKind is JsonValueKind.Object)
+                {
+                    if (properties.EnumerateObject().MoveNext())
+                    {
+                        sb.AppendLine("  Parameters (JSON Schema):");
+                        sb.Append("  ");
+                        sb.Append(schema.GetRawText());
+                        sb.AppendLine();
+                    }
+                    else
+                    {
+                        sb.AppendLine("  Parameters: none.");
+                    }
+                }
             }
         }
 
