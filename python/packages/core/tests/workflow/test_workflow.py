@@ -1434,7 +1434,7 @@ async def test_workflow_abandoned_stream_finalizes_without_context_errors(
         if "Failed to detach context" in rec.getMessage() or "was created in a different Context" in rec.getMessage()
     ]
     assert otel_errors == [], f"Abandoned stream leaked OpenTelemetry errors: {otel_errors!r}"
-    assert any(span.name == "workflow.run" for span in span_exporter.get_finished_spans())
+    assert any(span.name == "invoke_workflow" for span in span_exporter.get_finished_spans())
 
 
 async def test_workflow_unawaited_run_coroutine_releases_run_lock() -> None:

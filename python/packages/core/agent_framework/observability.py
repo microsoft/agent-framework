@@ -299,7 +299,7 @@ class OtelAttr(str, Enum):
     WORKFLOW_DESCRIPTION = "workflow.description"
     WORKFLOW_DEFINITION = "workflow.definition"
     WORKFLOW_BUILD_SPAN = "workflow.build"
-    WORKFLOW_RUN_SPAN = "workflow.run"
+    WORKFLOW_RUN_SPAN = "invoke_workflow"
     WORKFLOW_STARTED = "workflow.started"
     WORKFLOW_COMPLETED = "workflow.completed"
     WORKFLOW_ERROR = "workflow.error"

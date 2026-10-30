@@ -601,7 +601,7 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
             "ag-ui-workflow-thread",
         ]
 
-    workflow_spans = [span for span in exporter.get_finished_spans() if span.name == "workflow.run"]
+    workflow_spans = [span for span in exporter.get_finished_spans() if span.name == "invoke_workflow"]
     assert len(workflow_spans) == 2
     workflow_conversation_ids = []
     for span in workflow_spans:
@@ -631,7 +631,7 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
     assert fallback_agent_span.attributes is not None
     assert fallback_agent_span.attributes.get("gen_ai.conversation.id") == "provider-conversation"
 
-    fallback_workflow_span = next(span for span in exporter.get_finished_spans() if span.name == "workflow.run")
+    fallback_workflow_span = next(span for span in exporter.get_finished_spans() if span.name == "invoke_workflow")
     assert fallback_workflow_span.attributes is not None
     assert "gen_ai.conversation.id" not in fallback_workflow_span.attributes
 
