@@ -6,4 +6,5 @@ internal static class MagenticConstants
 {
     public const string MagenticTaskContextKey = nameof(MagenticTaskContextKey);
     public const string CurrentSpeakerStateKey = nameof(CurrentSpeakerStateKey);
+    public const string AwaitingPlanReviewStateKey = nameof(AwaitingPlanReviewStateKey);
 }

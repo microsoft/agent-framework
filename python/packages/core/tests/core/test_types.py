@@ -54,6 +54,7 @@ from agent_framework._compaction import (
 from agent_framework._types import (
     _MODEL_OUTPUT_KIND_KEY,
     _append_instructions,
+    _get_annotation_text_span_regions,
     _get_data_bytes,
     _get_data_bytes_as_str,
     _get_operation_state,
@@ -4426,7 +4427,13 @@ def test_text_content_with_annotations_serialization():
     # Create multiple citations
     citation1 = Annotation(type="citation", title="Citation 1", url="http://example.com/1", annotated_regions=[region1])
 
-    citation2 = Annotation(type="citation", title="Citation 2", url="http://example.com/2", annotated_regions=[region2])
+    citation2 = Annotation(
+        type="citation",
+        title="Citation 2",
+        url="http://example.com/2",
+        annotated_regions=[region2],
+        annotated_regions_coordinate_space="source",
+    )
 
     # Create TextContent with multiple annotations
     content = Content.from_text(text="Hello world", annotations=[citation1, citation2])
@@ -4438,6 +4445,7 @@ def test_text_content_with_annotations_serialization():
     assert len(content_dict["annotations"]) == 2
     assert content_dict["annotations"][0]["title"] == "Citation 1"
     assert content_dict["annotations"][1]["title"] == "Citation 2"
+    assert content_dict["annotations"][1]["annotated_regions_coordinate_space"] == "source"
 
     # Deserialize
     reconstructed = Content.from_dict(content_dict)
@@ -4449,7 +4457,31 @@ def test_text_content_with_annotations_serialization():
     assert all(isinstance(ann, dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
     assert reconstructed.annotations[0]["title"] == "Citation 1"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
     assert reconstructed.annotations[1]["title"] == "Citation 2"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
+    assert reconstructed.annotations[1]["annotated_regions_coordinate_space"] == "source"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
     assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
+
+
+def test_get_annotation_text_span_regions_filters_coordinate_space_and_invalid_regions() -> None:
+    annotation = cast(
+        Annotation,
+        {
+            "type": "citation",
+            "annotated_regions_coordinate_space": "source",
+            "annotated_regions": [
+                {"type": "text_span", "start_index": 2, "end_index": 7},
+                {"type": "text_span", "start_index": True, "end_index": 7},
+                {"type": "text_span", "start_index": -1, "end_index": 7},
+                {"type": "text_span", "start_index": 8, "end_index": 7},
+                {"type": "source_block", "start_index": 0, "end_index": 1},
+                None,
+            ],
+        },
+    )
+
+    assert _get_annotation_text_span_regions(annotation) == []
+    assert _get_annotation_text_span_regions(annotation, coordinate_space="source") == [
+        {"type": "text_span", "start_index": 2, "end_index": 7}
+    ]
 
 
 # region FunctionTool.parse_result with Pydantic models

@@ -22,6 +22,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._telemetry import IS_TELEMETRY_ENABLED, USER_AGENT_KEY, get_user_agent, mark_feature_used
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from agent_framework.observability import EmbeddingTelemetryLayer
 from azure.ai.inference.aio import EmbeddingsClient, ImageEmbeddingsClient
 from azure.ai.inference.models import ImageEmbeddingInput
@@ -428,7 +429,22 @@ class RawFoundryEmbeddingClient(
                 for item in sorted(openai_response.data, key=lambda value: value.index):
                     original_idx = text_items[item.index][0]
                     if encoding == "base64" and isinstance(item.embedding, str):
-                        raw = base64.b64decode(item.embedding)
+                        # base64.b64decode raises binascii.Error for bad padding/alphabet and
+                        # UnicodeEncodeError for non-ASCII input; both are ValueError subclasses.
+                        try:
+                            raw = base64.b64decode(item.embedding)
+                        except ValueError as exc:
+                            raise IntegrationInvalidResponseException(
+                                f"The base64 embedding returned for input index {original_idx} could not be "
+                                f"decoded: {exc}"
+                            ) from exc
+                        if len(raw) % 4 != 0:
+                            # struct.unpack would fail with a bare "unpack requires a buffer of N bytes",
+                            # which says nothing about which input broke or why.
+                            raise IntegrationInvalidResponseException(
+                                f"The base64 embedding returned for input index {original_idx} decoded to "
+                                f"{len(raw)} bytes, which is not a multiple of the 4 bytes a float32 value occupies."
+                            )
                         vector = list(struct.unpack(f"<{len(raw) // 4}f", raw))
                     else:
                         vector = [float(value) for value in item.embedding]

@@ -290,6 +290,30 @@ def test_foundry_chat_client_init_uses_explicit_parameters() -> None:
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
+def test_init_applies_timeout_to_openai_client() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    timeout_client = _make_mock_openai_client()
+    mock_openai_client.with_options.return_value = timeout_client
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL, timeout=12.5)
+
+    mock_openai_client.with_options.assert_called_once_with(timeout=12.5)
+    assert client.client is timeout_client
+
+
+def test_init_without_timeout_keeps_openai_client() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL)
+
+    mock_openai_client.with_options.assert_not_called()
+    assert client.client is mock_openai_client
+
+
 def test_init_with_default_header() -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
     mock_openai_client = _make_mock_openai_client()
@@ -1036,6 +1060,23 @@ async def test_bad_request_error_non_content_filter() -> None:
         )
 
     assert "failed to complete the prompt" in str(exc_info.value)
+
+
+def test_get_mcp_tool_merges_both_approval_lists() -> None:
+    """Both approval lists must survive: overwriting the first with the second would
+    silently auto-approve tools the caller asked to gate."""
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="MCP",
+        url="https://mcp.example",
+        approval_mode={
+            "always_require_approval": ["dangerous_tool"],
+            "never_require_approval": ["safe_tool"],
+        },
+    )
+    assert tool_config["require_approval"] == {
+        "always": {"tool_names": ["dangerous_tool"]},
+        "never": {"tool_names": ["safe_tool"]},
+    }
 
 
 def test_get_mcp_tool_with_project_connection_id() -> None:

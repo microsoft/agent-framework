@@ -17,7 +17,10 @@ Mongo-compatible `$search.cosmosSearch` dialect.
 pip install agent-framework-azure-documentdb --pre
 ```
 
-Requires Python 3.10+, PyMongo 4.13+, and an Azure DocumentDB cluster. IVF
+Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
+compatibility is not guaranteed.
+
+Requires PyMongo 4.13+ and an Azure DocumentDB cluster. IVF
 indexes are intended for smaller datasets and M10/M20 tiers. HNSW and DiskANN
 require M30 or higher; consult the current service documentation before choosing
 a production tier.

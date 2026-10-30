@@ -170,7 +170,7 @@ AG-UI is a protocol that enables:
 
 Before you begin, ensure you have the following:
 
-- Python 3.10 or later
+- Python 3.11–3.15
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for DefaultAzureCredential)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource
