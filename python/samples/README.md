@@ -54,6 +54,11 @@ pip install agent-framework-foundry
 Install only the specific Agent Framework distributions required by the sample you want to run.
 Individual sample READMEs and PEP 723 metadata list any additional packages.
 
+An explicit provider option type, such as
+`Agent[FoundryChatOptions](client=client, default_options={"store": False})`,
+keeps provider-specific options type checked without relying on type-checker inference.
+See [typed options](./02-agents/typed_options.py) for OpenAI and Anthropic examples.
+
 ### Environment Variables
 
 Environment setup varies by sample. The [getting-started samples](./01-get-started/README.md#prerequisites) pass

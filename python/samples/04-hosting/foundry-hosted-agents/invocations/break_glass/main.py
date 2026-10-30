@@ -5,7 +5,7 @@ import os
 from collections.abc import AsyncGenerator
 
 from agent_framework import Agent, AgentSession
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from azure.identity import DefaultAzureCredential
@@ -28,7 +28,7 @@ client = FoundryChatClient(
     credential=DefaultAzureCredential(),
 )
 
-agent = Agent(
+agent = Agent[FoundryChatOptions](
     client=client,
     instructions="You are a friendly assistant. Keep your answers brief.",
     # History will be managed by the hosting infrastructure, thus there

@@ -6,7 +6,7 @@ import os
 from typing import Any
 
 from agent_framework import Agent, InMemoryHistoryProvider
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -46,7 +46,7 @@ def main() -> None:
         credential=DefaultAzureCredential(),
     )
 
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,
         instructions="You are a friendly assistant. Keep your answers brief.",
         context_providers=[InMemoryHistoryProvider()],
