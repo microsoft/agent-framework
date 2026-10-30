@@ -5,7 +5,7 @@ import os
 from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions, ResponsesHostServer
 from agent_framework.hyperlight import HyperlightCodeActProvider
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -72,7 +72,7 @@ def main():
 
     # 3. Build the agent. History is managed by the hosting infrastructure, so
     #    request the model not to persist server-side conversation state.
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,
         instructions="You are a helpful assistant. Keep your answers brief.",
         context_providers=[codeact],

@@ -4284,7 +4284,7 @@ class MCPStreamableHTTPTool(MCPTool):
         attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
         attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
         try:
-            from httpx import URL
+            from httpx2 import URL
 
             parsed = URL(self.url)
             if parsed.host:
