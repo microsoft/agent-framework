@@ -22,6 +22,9 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 [Collection("ObservabilityTests")]
 public sealed class ObservabilityTests : IDisposable
 {
+    private static readonly string[] s_genericPayloadTags =
+        [Tags.ExecutorInput, Tags.ExecutorOutput, Tags.MessageContent];
+
     private readonly ActivityListener _activityListener;
     private readonly ConcurrentBag<Activity> _capturedActivities = [];
 
@@ -92,6 +95,78 @@ public sealed class ObservabilityTests : IDisposable
             "Concurrent" => InProcessExecution.Concurrent,
             _ => throw new ArgumentException($"Unknown execution environment name: {name}")
         };
+
+    private static ExecutorBinding CreateEchoExecutor(string name) =>
+        new TestEchoAgent(id: name, name: name).BindAsExecutor(
+            new AIAgentHostOptions { EmitAgentResponseEvents = true });
+
+    private static Workflow CreateAgentWorkflow(
+        string name,
+        bool includeSensitiveDataWhenHostedAsAgent = false,
+        bool enableSensitiveData = true,
+        bool twoExecutors = false)
+    {
+        ExecutorBinding first = CreateEchoExecutor($"{name}Agent1");
+        WorkflowBuilder builder = new(first);
+        ExecutorBinding output = first;
+        if (twoExecutors)
+        {
+            output = CreateEchoExecutor($"{name}Agent2");
+            builder.AddEdge(first, output);
+        }
+
+        return builder
+            .WithOutputFrom(output)
+            .WithOpenTelemetry(configure: options =>
+            {
+                options.EnableSensitiveData = enableSensitiveData;
+                options.IncludeSensitiveDataWhenHostedAsAgent =
+                    includeSensitiveDataWhenHostedAsAgent;
+            })
+            .Build();
+    }
+
+    private static async Task<AgentResponse> RunAsAgentAsync(
+        Workflow workflow,
+        bool streaming = false,
+        IWorkflowExecutionEnvironment? executionEnvironment = null)
+    {
+        AIAgent agent = workflow.AsAIAgent(
+            executionEnvironment: executionEnvironment,
+            includeWorkflowOutputsInResponse: true);
+        ChatMessage input = new(ChatRole.User, "sensitive workflow input");
+        return streaming
+            ? await agent.RunStreamingAsync(input).ToAgentResponseAsync()
+            : await agent.RunAsync(input);
+    }
+
+    private List<Activity> GetActivities(Activity testActivity) =>
+        this._capturedActivities.Where(activity => activity.RootId == testActivity.RootId).ToList();
+
+    private static List<Activity> GetActivitiesFor(IEnumerable<Activity> activities, string name) =>
+        activities.Where(activity =>
+            activity.OperationName.Contains(name, StringComparison.Ordinal) ||
+            activity.Tags.Any(tag =>
+                string.Equals(tag.Key, Tags.MessageSourceId, StringComparison.Ordinal) &&
+                tag.Value?.Contains(name, StringComparison.Ordinal) == true))
+        .ToList();
+
+    private static void AssertGenericPayloadTags(IEnumerable<Activity> activities, bool expected)
+    {
+        HashSet<string> tagNames = activities
+            .SelectMany(activity => activity.Tags)
+            .Select(tag => tag.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (expected)
+        {
+            Assert.True(tagNames.Contains(Tags.ExecutorInput) || tagNames.Contains(Tags.ExecutorOutput));
+            Assert.Contains(Tags.MessageContent, tagNames);
+            return;
+        }
+
+        Assert.DoesNotContain(s_genericPayloadTags, tagNames.Contains);
+    }
 
     public void Dispose()
     {
@@ -482,6 +557,120 @@ public sealed class ObservabilityTests : IDisposable
         var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
         Assert.DoesNotContain(Tags.MessageContent, tags);
         Assert.Contains(Tags.MessageSourceId, tags);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task EnableSensitiveData_HostedAsAgent_ControlsGenericPayloadTagsAsync(
+        bool includeSensitiveDataWhenHostedAsAgent,
+        bool streaming)
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        Workflow workflow = CreateAgentWorkflow(
+            "Echo",
+            includeSensitiveDataWhenHostedAsAgent);
+
+        // Act
+        AgentResponse response = await RunAsAgentAsync(workflow, streaming);
+
+        // Assert
+        Assert.Contains("sensitive workflow input", response.Text);
+        AssertGenericPayloadTags(
+            this.GetActivities(testActivity),
+            includeSensitiveDataWhenHostedAsAgent);
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_HostedAsAgent_StreamingLockstepSuppressesPayloadTagsAcrossSuperstepsAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        Workflow workflow = CreateAgentWorkflow("Lockstep", twoExecutors: true);
+
+        // Act
+        AgentResponse response = await RunAsAgentAsync(
+            workflow,
+            streaming: true,
+            executionEnvironment: InProcessExecution.Lockstep);
+
+        // Assert
+        Assert.Contains("sensitive workflow input", response.Text);
+        List<Activity> activities = this.GetActivities(testActivity);
+        Assert.NotEmpty(GetActivitiesFor(activities, "LockstepAgent2"));
+        AssertGenericPayloadTags(activities, expected: false);
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, true)]
+    public async Task EnableSensitiveData_HostedAsAgent_ControlsNestedWorkflowPayloadTagsAsync(
+        bool parentEnableSensitiveData,
+        bool includeSensitiveDataWhenHostedAsAgent,
+        bool expectChildPayloadTags)
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        ExecutorBinding child = CreateAgentWorkflow("Child", twoExecutors: true)
+            .BindAsExecutor("ChildWorkflow");
+        Workflow parentWorkflow = new WorkflowBuilder(child)
+            .WithOutputFrom(child)
+            .WithOpenTelemetry(configure: options =>
+            {
+                options.EnableSensitiveData = parentEnableSensitiveData;
+                options.IncludeSensitiveDataWhenHostedAsAgent =
+                    includeSensitiveDataWhenHostedAsAgent;
+            })
+            .Build();
+
+        // Act
+        AgentResponse response = await RunAsAgentAsync(parentWorkflow);
+
+        // Assert
+        Assert.Contains("sensitive workflow input", response.Text);
+        List<Activity> childActivities =
+            GetActivitiesFor(this.GetActivities(testActivity), "ChildAgent");
+        Assert.NotEmpty(childActivities);
+        AssertGenericPayloadTags(childActivities, expectChildPayloadTags);
+        if (!parentEnableSensitiveData)
+        {
+            AssertGenericPayloadTags(
+                GetActivitiesFor(this.GetActivities(testActivity), "ChildWorkflow"),
+                expected: false);
+        }
+    }
+
+    [Fact]
+    public async Task HostedAsAgent_OuterSuppressionOverridesNestedHostedAgentOptInAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        AIAgent innerHostedAgent = CreateAgentWorkflow(
+            "Inner",
+            includeSensitiveDataWhenHostedAsAgent: true)
+            .AsAIAgent(
+                name: "InnerHostedWorkflow",
+                includeWorkflowOutputsInResponse: true);
+        ExecutorBinding innerHosted = innerHostedAgent.BindAsExecutor(
+            new AIAgentHostOptions { EmitAgentResponseEvents = true });
+
+        Workflow outerWorkflow = new WorkflowBuilder(innerHosted)
+            .WithOutputFrom(innerHosted)
+            .WithOpenTelemetry(configure: options => options.EnableSensitiveData = true)
+            .Build();
+
+        // Act
+        AgentResponse response = await RunAsAgentAsync(outerWorkflow);
+
+        // Assert
+        Assert.Contains("sensitive workflow input", response.Text);
+        List<Activity> activities = this.GetActivities(testActivity);
+        Assert.NotEmpty(GetActivitiesFor(activities, "InnerAgent"));
+        AssertGenericPayloadTags(activities, expected: false);
     }
 
     [Fact]

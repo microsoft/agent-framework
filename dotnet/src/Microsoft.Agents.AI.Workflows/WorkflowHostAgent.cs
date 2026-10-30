@@ -159,6 +159,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
         ResponseMergeState mergeState = new();
+        using IDisposable? sensitiveDataScope = this._workflow.TelemetryContext.SuppressSensitiveDataForHostedAgent();
 
         await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
                                                                      .ConfigureAwait(false)
@@ -185,13 +186,37 @@ internal sealed class WorkflowHostAgent : AIAgent
 
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
         ResponseMergeState mergeState = new();
-
-        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
-                                                                      .ConfigureAwait(false)
-                                                                      .WithCancellation(cancellationToken))
+        // Re-enter suppression for every MoveNext because async iterators resume in the consumer's context after a yield.
+        var updates = workflowSession.InvokeStageAsync(cancellationToken)
+                                     .ConfigureAwait(false)
+                                     .WithCancellation(cancellationToken)
+                                     .GetAsyncEnumerator();
+        try
         {
-            mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
-            yield return update;
+            while (true)
+            {
+                bool hasNext;
+                using (this._workflow.TelemetryContext.SuppressSensitiveDataForHostedAgent())
+                {
+                    hasNext = await updates.MoveNextAsync();
+                }
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                AgentResponseUpdate update = updates.Current;
+                mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
+                yield return update;
+            }
+        }
+        finally
+        {
+            using (this._workflow.TelemetryContext.SuppressSensitiveDataForHostedAgent())
+            {
+                await updates.DisposeAsync();
+            }
         }
 
         AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
