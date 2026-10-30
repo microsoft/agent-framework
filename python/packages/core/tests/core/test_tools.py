@@ -593,6 +593,29 @@ async def test_tool_decorator_with_json_schema_invoke_invalid_type():
         await search.invoke(arguments={"query": "hello", "max_results": "three"})
 
 
+async def test_tool_json_schema_integer_accepts_whole_number_float():
+    """JSON Schema "integer" accepts whole-number floats like 3.0 (#9843)."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer"},
+        },
+        "required": ["count"],
+    }
+
+    @tool(name="counter", description="Count tool", schema=json_schema)
+    def counter(count: int) -> str:
+        return str(count)
+
+    # 3.0 is a valid JSON Schema integer; should not raise.
+    await counter.invoke(arguments={"count": 3.0})
+
+    # 3.5 is not a valid integer.
+    with pytest.raises(TypeError, match="Invalid type for 'count'"):
+        await counter.invoke(arguments={"count": 3.5})
+
+
 def test_tool_decorator_with_json_schema_preserves_custom_properties():
     """Test schema passthrough keeps custom JSON schema properties."""
 

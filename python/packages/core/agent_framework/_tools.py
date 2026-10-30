@@ -1599,7 +1599,11 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
         case "string":
             return isinstance(value, str)
         case "integer":
-            return isinstance(value, int) and not isinstance(value, bool)
+            # JSON Schema "integer" is a number without a fraction, so 3.0
+            # is valid (#9843). bool is not an integer here.
+            return (
+                isinstance(value, int) and not isinstance(value, bool)
+            ) or (isinstance(value, float) and value.is_integer())
         case "number":
             return (isinstance(value, int | float)) and not isinstance(value, bool)
         case "boolean":
