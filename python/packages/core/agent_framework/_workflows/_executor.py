@@ -53,6 +53,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             @handler
             async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
                 # This executor can handle 'str' input types
+                ...
     Access via the `input_types` property.
 
     ### Output Types
@@ -64,6 +65,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             @handler
             async def handle_data(self, message: str, ctx: WorkflowContext[int | bool]) -> None:
                 # This executor can send 'int' or 'bool' messages
+                ...
     Access via the `output_types` property.
 
     ### Workflow Output Types
@@ -75,6 +77,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             @handler
             async def process(self, message: str, ctx: WorkflowContext[int, str]) -> None:
                 # Can send 'int' messages AND yield 'str' workflow outputs
+                ...
     Access via the `workflow_output_types` property.
 
     ## Handler Discovery
