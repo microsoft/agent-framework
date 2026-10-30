@@ -104,6 +104,44 @@ class TestPowerFxBuiltinFunctions:
         result = state.eval('=If(IsBlank(Workflow.Inputs.name), "World", Workflow.Inputs.name)')
         assert result == "Alice"
 
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '=If(IsBlank(inputs.name), "World", inputs.name)',
+            '=If(IsBlank(Workflow.Inputs.name), "World", Workflow.Inputs.name)',
+            "=If(IsBlank(inputs.'name'), \"World\", inputs.'name')",
+            "=If(IsBlank(Workflow.Inputs.'name'), \"World\", Workflow.Inputs.'name')",
+            '=If(IsBlank(inputs . name), "World", inputs /* field */ . name)',
+            '=If(IsBlank(Workflow . Inputs . name), "World", Workflow // root\n.Inputs.name)',
+            '=$"{If(IsBlank(inputs.name), "World", inputs.name)}"',
+        ],
+    )
+    async def test_if_with_isblank_when_input_is_missing(self, mock_state, expression):
+        """Test that an input the caller did not supply is blank, so IsBlank defaults apply."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) == "World"
+        assert state.eval("=IsBlank(inputs.name)") is True
+        # The missing input is only bound for evaluation, not written to state.
+        assert "name" not in state.get_state_data()["Inputs"]
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "=inputs /* inputs.name */",
+            "=inputs // Workflow.Inputs.name",
+            '=If(Len("inputs.name") > 0, inputs, inputs)',
+            '=If(Len($"Workflow.Inputs.name") > 0, inputs, inputs)',
+        ],
+    )
+    async def test_input_references_in_comments_and_literals_are_not_bound(self, mock_state, expression):
+        """Test that input-like text in comments and string literals does not add blank inputs."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) == {"other": 1}
+
     async def test_not_function(self, mock_state):
         """Test Not function."""
         state = DeclarativeWorkflowState(mock_state)

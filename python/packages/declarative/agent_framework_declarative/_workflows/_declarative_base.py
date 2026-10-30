@@ -47,7 +47,9 @@ from agent_framework._workflows._state import State
 
 from ._errors import DeclarativeWorkflowError
 from ._powerfx_functions import (
+    _after_trailing_trivia,  # pyright: ignore[reportPrivateUsage]
     _iter_powerfx_expression_indices,  # pyright: ignore[reportPrivateUsage]
+    _skip_powerfx_opaque_token,  # pyright: ignore[reportPrivateUsage]
     whole_call_args,
 )
 from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
@@ -70,6 +72,76 @@ logger = logging.getLogger(__name__)
 
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
+_POWERFX_IDENTIFIER_RE = re.compile(r"[^\W\d]\w*")
+
+
+def _read_powerfx_identifier(formula: str, start: int) -> tuple[str, int] | None:
+    """Read a plain or single-quoted PowerFx identifier at ``start``.
+
+    Returns the identifier name and the index after it, or ``None`` when no
+    identifier starts there.
+    """
+    if formula.startswith("'", start):
+        end = _skip_powerfx_opaque_token(formula, start)
+        if end - start < 3 or formula[end - 1] != "'":
+            return None
+        return formula[start + 1 : end - 1].replace("''", "'"), end
+    match = _POWERFX_IDENTIFIER_RE.match(formula, start)
+    return (match.group(), match.end()) if match else None
+
+
+def _read_member_access(formula: str, start: int) -> tuple[str, int] | None:
+    """Read ``.<identifier>`` at ``start``, allowing whitespace and comments around the dot."""
+    dot = _after_trailing_trivia(formula, start)
+    if not formula.startswith(".", dot):
+        return None
+    return _read_powerfx_identifier(formula, _after_trailing_trivia(formula, dot + 1))
+
+
+def _referenced_input_names(formula: str) -> set[str]:
+    """Return the field names of ``inputs.<name>`` / ``Workflow.Inputs.<name>`` references in code.
+
+    String literals and comments are skipped, so input-like text inside them is not a reference.
+    """
+    names: set[str] = set()
+    for cursor in _iter_powerfx_expression_indices(formula):
+        if cursor > 0 and (formula[cursor - 1].isalnum() or formula[cursor - 1] in "_."):
+            continue
+        root = _read_powerfx_identifier(formula, cursor)
+        if root is None:
+            continue
+        root_name, after_root = root
+        if root_name == "Workflow":
+            member = _read_member_access(formula, after_root)
+            if member is None or member[0] != "Inputs":
+                continue
+            after_root = member[1]
+        elif root_name != "inputs":
+            continue
+        field_reference = _read_member_access(formula, after_root)
+        if field_reference is not None:
+            names.add(field_reference[0])
+    return names
+
+
+def _bind_missing_input_references(formula: str, symbols: dict[str, Any]) -> dict[str, Any]:
+    """Expose inputs the formula references but the caller did not supply as blank.
+
+    PowerFx rejects ``inputs.name`` at compile time when ``name`` is not a field of the
+    inputs record, which turns the whole expression into ``None`` and defeats defaults
+    such as ``If(IsBlank(inputs.name), "World", inputs.name)``. Binding the missing
+    fields to blank only for this evaluation makes them behave like an explicit ``None``
+    input without changing the workflow state.
+    """
+    inputs = symbols.get("inputs")
+    if not isinstance(inputs, Mapping):
+        return symbols
+    input_values = cast(Mapping[str, Any], inputs)
+    missing = {name for name in _referenced_input_names(formula) if name not in input_values}
+    if not missing:
+        return symbols
+    bound_inputs: dict[str, Any] = {**input_values, **dict.fromkeys(sorted(missing))}
+    return {**symbols, "Workflow": {**symbols["Workflow"], "Inputs": bound_inputs}, "inputs": bound_inputs}
 
 
 @dataclass(frozen=True)
@@ -605,7 +677,7 @@ class DeclarativeWorkflowState:
                     f"Install dotnet and the powerfx package for full PowerFx support."
                 )
 
-            symbols = self._to_powerfx_symbols()
+            symbols = _bind_missing_input_references(formula, self._to_powerfx_symbols())
             # Use setlocale(category) query form so we can restore the exact prior value.
             # getlocale() returns a normalized tuple and is not always a lossless
             # round-trip for setlocale across platforms/locales.
