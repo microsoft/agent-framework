@@ -10,7 +10,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, Message
+from agent_framework import AgentResponse, Content, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from redis.asyncio import Redis
 
@@ -619,6 +619,25 @@ class TestRedisHistoryProviderRedisKey:
         mock_redis_client.delete.assert_awaited_once_with(expected_key)
         assert expected_key != "chat_messages:session"
 
+    async def test_trim_does_not_orphan_tool_result(self, mock_redis_client: MagicMock) -> None:
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=2,
+            )
+        call = Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")])
+        result = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="ok")])
+        user = Message(role="user", contents=["hi"])
+        mock_redis_client.llen = AsyncMock(return_value=3)
+        await provider.save_messages("s", [call, result, user])
+        # Post-append history is [call, result, user] (3 > 2). Keeping the last two would leave
+        # [result, user] with a function_result whose call was trimmed, which the model rejects on
+        # every later turn. The trim must advance past the orphaned result and keep [user].
+        key = provider._redis_key("s")
+        mock_redis_client.ltrim.assert_awaited_once_with(key, 2, -1)
+
     def test_legacy_format_warns_and_preserves_historical_keys(self, mock_redis_client: MagicMock):
         with (
             patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client),
@@ -734,17 +753,24 @@ class TestRedisHistoryProviderSaveMessages:
         mock_redis_client.pipeline.assert_not_called()
 
     async def test_max_messages_trimming(self, mock_redis_client: MagicMock):
-        mock_redis_client.llen = AsyncMock(return_value=15)
-
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
             provider = RedisHistoryProvider(
-                "mem", redis_url="redis://localhost:6379", application_id="test-app", max_messages=10
+                "mem", redis_url="redis://localhost:6379", application_id="test-app", max_messages=2
             )
 
-        await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
+        # Three plain messages over a limit of two. With no tool call/result pair to protect, the
+        # retained window is simply the last two, starting at index 1.
+        await provider.save_messages(
+            "s1",
+            [
+                Message(role="user", contents=["a"]),
+                Message(role="user", contents=["b"]),
+                Message(role="user", contents=["c"]),
+            ],
+        )
 
-        mock_redis_client.ltrim.assert_called_once_with(provider._redis_key("s1"), -10, -1)
+        mock_redis_client.ltrim.assert_called_once_with(provider._redis_key("s1"), 1, -1)
 
     async def test_no_trim_when_under_limit(self, mock_redis_client: MagicMock):
         mock_redis_client.llen = AsyncMock(return_value=3)

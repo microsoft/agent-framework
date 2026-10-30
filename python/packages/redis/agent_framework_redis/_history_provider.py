@@ -25,6 +25,53 @@ from ._feature_usage import FeatureIndex
 
 _T = TypeVar("_T")
 
+# Content types that carry a tool output and therefore require a matching earlier call (or
+# approval request) in the same history. A message holding only such a content cannot start a
+# retained window: its source would already have been trimmed away, leaving a dangling output the
+# model rejects (``role='tool'`` without a preceding ``tool_calls``, or a function-call output
+# without its call).
+_DEFERRED_OUTPUT_SUFFIX = "_result"
+_DEFERRED_OUTPUT_TYPES = frozenset({"function_approval_response"})
+
+
+def _is_deferred_output_content(content_type: str) -> bool:
+    return content_type.endswith(_DEFERRED_OUTPUT_SUFFIX) or content_type in _DEFERRED_OUTPUT_TYPES
+
+
+def _is_source_content(content_type: str) -> bool:
+    return content_type.endswith("_call") or content_type == "function_approval_request"
+
+
+def _begins_orphaned_output(message: Message) -> bool:
+    """Return True when ``message`` starts a tool output whose source is not inside ``message``.
+
+    Such a message is only valid when an earlier message in the same history carries the matching
+    call. If it lands at the front of a trimmed window that earlier message has been dropped, so the
+    window would be rejected by the model.
+    """
+    if message.role == "tool":
+        return True
+    contents = message.contents
+    has_output = any(_is_deferred_output_content(content.type) for content in contents)
+    has_source = any(_is_source_content(content.type) for content in contents)
+    return has_output and not has_source
+
+
+def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
+    """Return the index to keep from so the retained window is valid and at most ``max_messages``.
+
+    The window keeps the most recent ``max_messages`` messages, then advances past any leading
+    orphaned tool output so the retained history never begins with a dangling tool result or
+    approval response.
+    """
+    count = len(messages)
+    if count <= max_messages:
+        return 0
+    start = count - max_messages
+    while start < count and _begins_orphaned_output(messages[start]):
+        start += 1
+    return start
+
 
 async def _redis_result(value: Awaitable[_T] | _T) -> _T:
     """Await a redis-py command result that is annotated as the sync/async union.
@@ -316,9 +363,17 @@ class RedisHistoryProvider(HistoryProvider):
             await pipe.execute()
 
         if self.max_messages is not None:
-            current_count: int = await _redis_result(self._redis_client.llen(key))
-            if current_count > self.max_messages:
-                await _redis_result(self._redis_client.ltrim(key, -self.max_messages, -1))
+            # Retention trims the oldest messages. The cut must not split a tool call/result pair:
+            # keeping a ``function_result`` whose call was trimmed leaves a dangling output the model
+            # rejects, permanently breaking the session. Derive the start from the full post-append
+            # history and advance past any leading orphaned tool output so the retained window is
+            # always model-valid. ``existing_messages`` plus ``new_messages`` is exactly the list just
+            # written (existing entries followed by the appended ones), so its indices line up with
+            # the Redis list.
+            full_messages: list[Message] = list(existing_messages) + list(new_messages)
+            if len(full_messages) > self.max_messages:
+                start = _trim_start_index(full_messages, self.max_messages)
+                await _redis_result(self._redis_client.ltrim(key, start, -1))
 
     @staticmethod
     def _serialize_json(message: Message) -> str:
