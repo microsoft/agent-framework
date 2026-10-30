@@ -1462,4 +1462,240 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
                     x.InvokeException == null),
                 ItExpr.IsAny<CancellationToken>());
     }
+
+    /// <summary>
+    /// Verifies that a background run (<see cref="ChatOptions.AllowBackgroundResponses"/>) persists the same
+    /// history as end-of-run persistence. The agent forces end-of-run persistence for these runs, so the
+    /// decorator must not notify the providers per service call as well.
+    /// See https://github.com/microsoft/agent-framework/issues/9793.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DoesNotDuplicateMessages_WhenAllowBackgroundResponsesAsync()
+    {
+        await AssertSameHistoryAsEndOfRunPersistenceAsync(
+            () => CreateNonStreamingService("done"),
+            async (agent, session) =>
+                await agent.RunAsync([new(ChatRole.User, "Hello")], session, new AgentRunOptions { AllowBackgroundResponses = true }));
+
+        // The scenario itself must persist each message exactly once.
+        await AssertHistoryAsync(
+            () => CreateNonStreamingService("done"),
+            async (agent, session) =>
+                await agent.RunAsync([new(ChatRole.User, "Hello")], session, new AgentRunOptions { AllowBackgroundResponses = true }),
+            (ChatRole.User, "Hello"),
+            (ChatRole.Assistant, "done"));
+    }
+
+    /// <summary>
+    /// Verifies that a streaming background run (<see cref="ChatOptions.AllowBackgroundResponses"/>) persists
+    /// the same history as end-of-run persistence.
+    /// See https://github.com/microsoft/agent-framework/issues/9793.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_DoesNotDuplicateMessages_WhenAllowBackgroundResponsesAsync()
+    {
+        await AssertSameHistoryAsEndOfRunPersistenceAsync(
+            () => CreateStreamingService(("done", null)),
+            async (agent, session) =>
+            {
+                await foreach (var _ in agent.RunStreamingAsync(
+                    [new(ChatRole.User, "Hello")],
+                    session,
+                    new AgentRunOptions { AllowBackgroundResponses = true }))
+                {
+                    // Consume all updates.
+                }
+            });
+
+        await AssertHistoryAsync(
+            () => CreateStreamingService(("done", null)),
+            async (agent, session) =>
+            {
+                await foreach (var _ in agent.RunStreamingAsync(
+                    [new(ChatRole.User, "Hello")],
+                    session,
+                    new AgentRunOptions { AllowBackgroundResponses = true }))
+                {
+                    // Consume all updates.
+                }
+            },
+            (ChatRole.User, "Hello"),
+            (ChatRole.Assistant, "done"));
+    }
+
+    /// <summary>
+    /// Verifies that a run resumed with a continuation token persists the same history as end-of-run
+    /// persistence instead of persisting the input messages a second time.
+    /// See https://github.com/microsoft/agent-framework/issues/9793.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DoesNotDuplicateMessages_WhenResumedWithContinuationTokenAsync()
+    {
+        await AssertSameHistoryAsEndOfRunPersistenceAsync(
+            () => CreateNonStreamingService("done", ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })),
+            async (agent, session) =>
+            {
+                var response = await agent.RunAsync([new(ChatRole.User, "Hello")], session, new AgentRunOptions { AllowBackgroundResponses = true });
+                await agent.RunAsync(session, new AgentRunOptions { ContinuationToken = response.ContinuationToken });
+            });
+    }
+
+    /// <summary>
+    /// Verifies that stopping a stream on the update that carries a continuation token, and then resuming it,
+    /// persists the same history as end-of-run persistence. Before the fix the input messages were persisted
+    /// by the decorator on the abandoned run and again by the resumed run.
+    /// See https://github.com/microsoft/agent-framework/issues/9793.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_DoesNotDuplicateMessages_WhenResumedWithContinuationTokenAsync()
+    {
+        await AssertSameHistoryAsEndOfRunPersistenceAsync(
+            () => CreateStreamingService(("partial", ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })), (" rest", null)),
+            ResumeStreamingAfterContinuationTokenAsync);
+
+        await AssertHistoryAsync(
+            () => CreateStreamingService(("partial", ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })), (" rest", null)),
+            ResumeStreamingAfterContinuationTokenAsync,
+            (ChatRole.User, "Hello"),
+            (ChatRole.Assistant, "partial rest"));
+    }
+
+    /// <summary>
+    /// Verifies that a stream abandoned after an update carrying a continuation token does not persist the
+    /// input messages: they are persisted by the resumed run instead, so persisting them here would
+    /// duplicate them. See https://github.com/microsoft/agent-framework/issues/9793.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_DoesNotPersistInputMessages_WhenContinuationTokenWasEmittedAsync()
+    {
+        await AssertHistoryAsync(
+            () => CreateStreamingService(("partial", ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }))),
+            async (agent, session) =>
+            {
+                // Consumer abandons the stream right after the continuation-token update.
+                await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "Hello")], session))
+                {
+                    break;
+                }
+            });
+    }
+
+    /// <summary>
+    /// Stops a streaming run on the update carrying the continuation token and resumes it with that token.
+    /// </summary>
+    private static async Task ResumeStreamingAfterContinuationTokenAsync(ChatClientAgent agent, AgentSession session)
+    {
+        ResponseContinuationToken? continuationToken = null;
+        await foreach (var update in agent.RunStreamingAsync([new(ChatRole.User, "Hello")], session))
+        {
+            continuationToken = update.ContinuationToken;
+            break;
+        }
+
+        Assert.NotNull(continuationToken);
+
+        await foreach (var _ in agent.RunStreamingAsync(session, new AgentRunOptions { ContinuationToken = continuationToken }))
+        {
+            // Consume all updates.
+        }
+    }
+
+    /// <summary>
+    /// Runs the same scenario with per-service-call persistence and with end-of-run persistence, and asserts
+    /// that both configurations produce exactly the same chat history.
+    /// </summary>
+    private static async Task AssertSameHistoryAsEndOfRunPersistenceAsync(
+        Func<IChatClient> createChatClient,
+        Func<ChatClientAgent, AgentSession, Task> scenario)
+    {
+        string perServiceCallHistory = await RunAsync(requirePerServiceCallPersistence: true);
+        string endOfRunHistory = await RunAsync(requirePerServiceCallPersistence: false);
+
+        Assert.Equal(endOfRunHistory, perServiceCallHistory);
+
+        async Task<string> RunAsync(bool requirePerServiceCallPersistence)
+        {
+            ChatClientAgent agent = new(createChatClient(), options: new()
+            {
+                RequirePerServiceCallChatHistoryPersistence = requirePerServiceCallPersistence,
+            });
+
+            var session = await agent.CreateSessionAsync();
+            await scenario(agent, session);
+
+            return DescribeHistory(agent, session);
+        }
+    }
+
+    /// <summary>
+    /// Asserts that the agent's chat history contains exactly the specified messages, in order.
+    /// </summary>
+    private static async Task AssertHistoryAsync(
+        Func<IChatClient> createChatClient,
+        Func<ChatClientAgent, AgentSession, Task> scenario,
+        params (ChatRole Role, string Text)[] expected)
+    {
+        ChatClientAgent agent = new(createChatClient(), options: new()
+        {
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        var session = await agent.CreateSessionAsync();
+        await scenario(agent, session);
+
+        var expectedDescription = string.Join(", ", expected.Select(e => $"{e.Role}:\"{e.Text}\""));
+        Assert.Equal(expectedDescription, DescribeHistory(agent, session));
+    }
+
+    private static string DescribeHistory(ChatClientAgent agent, AgentSession? session)
+    {
+        var provider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
+        return string.Join(", ", provider.GetMessages(session).Select(m => $"{m.Role}:\"{m.Text}\""));
+    }
+
+    /// <summary>
+    /// Creates a service that returns a single non-streaming response, optionally with a continuation token.
+    /// </summary>
+    private static IChatClient CreateNonStreamingService(string responseText, ResponseContinuationToken? continuationToken = null)
+    {
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, responseText)])
+            {
+                ContinuationToken = continuationToken,
+            });
+
+        return mockService.Object;
+    }
+
+    /// <summary>
+    /// Creates a service that streams one response per call, returning the specified text and continuation
+    /// token for each successive call. All updates share the same message id so that resumed responses are
+    /// coalesced into a single message.
+    /// </summary>
+    private static IChatClient CreateStreamingService(params (string Text, ResponseContinuationToken? ContinuationToken)[] responses)
+    {
+        int callCount = 0;
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                var (text, continuationToken) = responses[Math.Min(callCount++, responses.Length - 1)];
+                return CreateAsyncEnumerableAsync(new ChatResponseUpdate(ChatRole.Assistant, text)
+                {
+                    MessageId = "m1",
+                    ContinuationToken = continuationToken,
+                });
+            });
+
+        return mockService.Object;
+    }
 }
