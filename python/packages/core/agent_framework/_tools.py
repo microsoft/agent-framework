@@ -138,6 +138,9 @@ _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
+_SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[contextvars.ContextVar[tuple[Any, Callable[[Any], None]] | None]] = (
+    contextvars.ContextVar("_security_argument_materialization_context", default=None)
+)
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
@@ -1137,6 +1140,13 @@ class FunctionTool(SerializationMixin):
         from ._middleware import FunctionInvocationContext
         from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
+
+        security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
+        if security_materialization is not None:
+            active_context, materialize = security_materialization
+            if context is not None and context is active_context:
+                materialize(context)
+                arguments = context.arguments
 
         configured_parser = self.result_parser
         skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
