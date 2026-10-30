@@ -673,7 +673,10 @@ class RawAnthropicClient(
                 # Anthropic streams cumulative usage snapshots (message_start seeds it,
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
+                # raw_usage_carry keeps last-seen input/cache components when a later
+                # snapshot omits them (cache_* often only appear on message_start).
                 emitted_usage: dict[str, int] = {}
+                raw_usage_carry: dict[str, int] = {}
                 local_function_call_started = False
                 open_local_function_call_blocks: set[int] = set()
                 message_stop_received = False
@@ -683,6 +686,7 @@ class RawAnthropicClient(
                             chunk,
                             emitted_usage,
                             request_state=turn_request_state,
+                            raw_usage_carry=raw_usage_carry,
                         )
                         if chunk.type == "content_block_start" and parsed_chunk is not None:
                             if any(
@@ -1487,6 +1491,7 @@ class RawAnthropicClient(
         event: BetaRawMessageStreamEvent,
         emitted_usage: dict[str, int] | None = None,
         request_state: _AnthropicRequestState | None = None,
+        raw_usage_carry: dict[str, int] | None = None,
     ) -> ChatResponseUpdate | None:
         """Process a streaming event from the Anthropic client.
 
@@ -1497,6 +1502,10 @@ class RawAnthropicClient(
                 increments (see ``_incremental_usage``). Pass ``None`` for a one-off
                 event to keep the snapshot unchanged.
             request_state: State used to parse this stream.
+            raw_usage_carry: Per-stream last-seen Anthropic input/cache token
+                components. Streaming deltas often omit ``cache_*`` fields that were
+                only present on ``message_start``; carrying them forward keeps
+                ``input_token_count`` inclusive of cache tokens across the stream.
 
         Returns:
             A ChatResponseUpdate object containing the processed update.
@@ -1504,7 +1513,11 @@ class RawAnthropicClient(
         match event.type:
             case "message_start":
                 usage_details: list[Content] = []
-                if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
+                if event.message.usage and (
+                    details := self._parse_usage_from_anthropic(
+                        event.message.usage, raw_usage_carry=raw_usage_carry
+                    )
+                ):
                     usage_details.append(
                         Content.from_usage(
                             usage_details=self._incremental_usage(details, emitted_usage),
@@ -1529,7 +1542,7 @@ class RawAnthropicClient(
                     raw_representation=event,
                 )
             case "message_delta":
-                usage = self._parse_usage_from_anthropic(event.usage)
+                usage = self._parse_usage_from_anthropic(event.usage, raw_usage_carry=raw_usage_carry)
                 return ChatResponseUpdate(
                     contents=[
                         Content.from_usage(
@@ -1571,19 +1584,60 @@ class RawAnthropicClient(
                 logger.debug(f"Ignoring unsupported event type: {event.type}")
         return None
 
-    def _parse_usage_from_anthropic(self, usage: BetaUsage | BetaMessageDeltaUsage | None) -> UsageDetails | None:
-        """Parse usage details from the Anthropic message usage."""
+    def _parse_usage_from_anthropic(
+        self,
+        usage: BetaUsage | BetaMessageDeltaUsage | None,
+        *,
+        raw_usage_carry: dict[str, int] | None = None,
+    ) -> UsageDetails | None:
+        """Parse usage details from the Anthropic message usage.
+
+        When ``raw_usage_carry`` is provided (streaming), last-seen ``input_tokens`` /
+        ``cache_*`` components are reused if the current snapshot omits them. Anthropic
+        often reports cache tokens only on ``message_start``; without the carry,
+        a later ``message_delta`` with a higher ``input_tokens`` and omitted cache
+        fields would under-count ``input_token_count`` after incremental conversion.
+        """
         if not usage:
             return None
         usage_details = UsageDetails(output_token_count=usage.output_tokens)
-        if usage.input_tokens is not None:
-            usage_details["input_token_count"] = usage.input_tokens
-        if usage.cache_creation_input_tokens is not None:
-            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
-            usage_details["cache_creation_input_token_count"] = usage.cache_creation_input_tokens
-        if usage.cache_read_input_tokens is not None:
-            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
-            usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
+        # Anthropic's input_tokens excludes cache_creation and cache_read; total
+        # input (and gen_ai.usage.input_tokens) must include them, matching other
+        # connectors and the GenAI semconv.
+        input_tokens = usage.input_tokens
+        cache_creation = usage.cache_creation_input_tokens
+        cache_read = usage.cache_read_input_tokens
+        if raw_usage_carry is not None:
+            if input_tokens is not None:
+                raw_usage_carry["input_tokens"] = input_tokens
+            else:
+                input_tokens = raw_usage_carry.get("input_tokens")
+            if cache_creation is not None:
+                raw_usage_carry["cache_creation_input_tokens"] = cache_creation
+            else:
+                cache_creation = raw_usage_carry.get("cache_creation_input_tokens")
+            if cache_read is not None:
+                raw_usage_carry["cache_read_input_tokens"] = cache_read
+            else:
+                cache_read = raw_usage_carry.get("cache_read_input_tokens")
+
+        input_total = input_tokens if input_tokens is not None else None
+        if cache_creation is not None:
+            usage_details["anthropic.cache_creation_input_tokens"] = cache_creation
+            usage_details["cache_creation_input_token_count"] = cache_creation
+            if input_total is not None:
+                input_total += cache_creation
+            else:
+                input_total = cache_creation
+        if cache_read is not None:
+            usage_details["anthropic.cache_read_input_tokens"] = cache_read
+            usage_details["cache_read_input_token_count"] = cache_read
+            if input_total is not None:
+                input_total += cache_read
+            else:
+                input_total = cache_read
+        if input_total is not None:
+            usage_details["input_token_count"] = input_total
         return usage_details
 
     @staticmethod

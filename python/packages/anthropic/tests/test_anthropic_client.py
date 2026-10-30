@@ -3203,7 +3203,13 @@ def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_c
     assert result.role == "assistant"
 
 
-def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> MagicMock:
+def _usage_message_start_event(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_input_tokens: int | None = None,
+    cache_read_input_tokens: int | None = None,
+) -> MagicMock:
     event = MagicMock()
     event.type = "message_start"
     event.message.id = "msg_usage"
@@ -3211,7 +3217,12 @@ def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> Magi
     event.message.model = "claude-3-5-sonnet-20241022"
     event.message.content = []
     event.message.stop_reason = None
-    event.message.usage = BetaUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    event.message.usage = BetaUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )
     return event
 
 
@@ -3280,6 +3291,48 @@ def test_streaming_usage_delta_input_not_double_counted(mock_anthropic_client: M
     assert response.usage_details is not None
     assert response.usage_details["output_token_count"] == 25
     assert response.usage_details["input_token_count"] == 12
+
+
+def test_streaming_usage_preserves_cache_tokens_across_delta(mock_anthropic_client: MagicMock) -> None:
+    """message_delta omitting cache_* must keep cache tokens in input_token_count.
+
+    Anthropic often reports cache_creation/cache_read only on message_start. A later
+    message_delta with a higher input_tokens and omitted cache fields must still include
+    the last-seen cache components so incremental conversion reconstructs
+    input + cache_creation + cache_read (e.g. 120+20+30=170), not bare input (120).
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    emitted: dict[str, int] = {}
+    raw_carry: dict[str, int] = {}
+    updates = [
+        u
+        for u in (
+            client._process_stream_event(
+                _usage_message_start_event(
+                    input_tokens=100,
+                    output_tokens=1,
+                    cache_creation_input_tokens=20,
+                    cache_read_input_tokens=30,
+                ),
+                emitted,
+                raw_usage_carry=raw_carry,
+            ),
+            client._process_stream_event(
+                _usage_message_delta_event(input_tokens=120, output_tokens=25),
+                emitted,
+                raw_usage_carry=raw_carry,
+            ),
+        )
+        if u is not None
+    ]
+
+    response = ChatResponse.from_updates(updates)
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 25
+    assert response.usage_details["input_token_count"] == 170
+    assert response.usage_details["cache_creation_input_token_count"] == 20
+    assert response.usage_details["cache_read_input_token_count"] == 30
 
 
 def test_process_stream_event_message_start_role_prevents_tool_use_collapse() -> None:
@@ -4886,7 +4939,8 @@ def test_parse_usage_with_cache_tokens(mock_anthropic_client: MagicMock) -> None
     assert result is not None
     result_dict = cast("dict[str, Any]", result)
     assert result["output_token_count"] == 50
-    assert result["input_token_count"] == 100
+    # 100 input + 20 cache_creation + 30 cache_read
+    assert result["input_token_count"] == 150
     assert result_dict["anthropic.cache_creation_input_tokens"] == 20
     assert result_dict["anthropic.cache_read_input_tokens"] == 30
     assert result["cache_creation_input_token_count"] == 20
