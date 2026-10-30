@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
-from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import partial
@@ -51,6 +51,7 @@ from ._sessions import (
 )
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
+    _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
@@ -60,6 +61,8 @@ from ._types import (
     ResponseStream,
     _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
+    _capture_evaluation_tools,  # pyright: ignore[reportPrivateUsage]
+    _copy_operation_state,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
 )
@@ -275,6 +278,7 @@ class _RunContext(TypedDict):
     agent_name: str
     suppress_response_id: bool
     chat_options: MutableMapping[str, Any]
+    evaluation_tools: dict[str, dict[str, Any]]
     compaction_strategy: CompactionStrategy | None
     tokenizer: TokenizerProtocol | None
     client_kwargs: Mapping[str, Any]
@@ -396,7 +400,8 @@ class SupportsAgentRun(Protocol):
             messages: The message(s) to send to the agent.
 
         Keyword Args:
-            stream: Whether to stream the response. Defaults to False.
+            stream: Whether to stream the response. Defaults to False. Streams
+                may include response metadata updates without message contents.
             session: The conversation session associated with the message(s).
             function_invocation_kwargs: Keyword arguments forwarded to tool invocation.
             client_kwargs: Additional client-specific keyword arguments.
@@ -1406,6 +1411,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             response_format=context["chat_options"].get("response_format"),
             suppress_response_id=context["suppress_response_id"],
         )
+        agent_response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = context["evaluation_tools"]
         session_context = context["session_context"]
         session_context._response = agent_response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
@@ -1442,6 +1448,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session_context = context["session_context"]
             if context["suppress_response_id"]:
                 response.response_id = None
+            response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = context["evaluation_tools"]
             session_context._response = response  # type: ignore[assignment]
             # Result hooks run during finalization, outside the per-pull identity
             # scope registered below, so re-stamp this run's identity around its
@@ -1482,7 +1489,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # carries this run's identity; nested runs re-stamp their own within theirs.
         stream = stream.with_pull_context_manager(partial(_run_identity_scope, run_identity))
 
-        return stream.with_transform_hook(_propagate_conversation_id).with_result_hook(_post_hook)
+        stream = stream.with_transform_hook(_propagate_conversation_id).with_result_hook(_post_hook)
+
+        async def _with_evaluation_metadata() -> AsyncIterable[AgentResponseUpdate]:
+            async with stream:
+                async for update in stream:
+                    yield update
+                response = await stream.get_final_response()
+                metadata_update = AgentResponseUpdate(
+                    continuation_token=response.continuation_token,
+                    additional_properties={
+                        _EVALUATION_TOOLS_METADATA_KEY: deepcopy(
+                            response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
+                        )
+                    },
+                )
+                _copy_operation_state(response, metadata_update)
+                yield metadata_update
+
+        async def _finalize_with_metadata(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+            return await stream.get_final_response()
+
+        return ResponseStream(_with_evaluation_metadata(), finalizer=_finalize_with_metadata)
 
     def _finalize_response_updates(
         self,
@@ -1760,6 +1788,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 per_service_call_history_middleware,
             ]
 
+        evaluation_tools: dict[str, dict[str, Any]] = {}
+        if isinstance(self.client, BaseChatClient):
+            effective_client_kwargs["_evaluation_tool_capture"] = partial(_capture_evaluation_tools, evaluation_tools)
+        else:
+            _capture_evaluation_tools(evaluation_tools, co.get("tools"))
+
         return {
             "session": active_session,
             "session_context": session_context,
@@ -1768,6 +1802,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             "agent_name": agent_name,
             "suppress_response_id": bool(per_service_call_history_providers) and not service_stores_history,
             "chat_options": co,
+            "evaluation_tools": evaluation_tools,
             "compaction_strategy": compaction_strategy or self.compaction_strategy,
             "tokenizer": tokenizer or self.tokenizer,
             "client_kwargs": effective_client_kwargs,

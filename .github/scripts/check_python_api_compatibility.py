@@ -1,6 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Check Python API compatibility against a pull request's base commit."""
+"""Check Python API compatibility against a pull request's base commit.
+
+Compare public enum member value expressions statically, without importing packages.
+Leave other attribute values to Griffe's compatibility policy.
+"""
 
 from __future__ import annotations
 
@@ -18,8 +22,12 @@ from pathlib import Path
 from griffe import (
     Alias,
     AliasResolutionError,
+    Attribute,
     AttributeChangedValueBreakage,
+    Breakage,
+    Class,
     ExplanationStyle,
+    ExprCall,
     Object,
     find_breaking_changes,
     load,
@@ -144,6 +152,88 @@ def _unreleased_owner(obj: Object | Alias) -> str | None:
     return None
 
 
+def _is_enum(cls: Class, seen: set[str] | None = None) -> bool:
+    seen = set() if seen is None else seen
+    if cls.path in seen:
+        return False
+    seen.add(cls.path)
+    if any(
+        (base if isinstance(base, str) else base.canonical_path)
+        in {
+            "enum.Enum",
+            "enum.IntEnum",
+            "enum.StrEnum",
+            "enum.Flag",
+            "enum.IntFlag",
+            "enum.ReprEnum",
+        }
+        for base in cls.bases
+    ):
+        return True
+    return any(
+        _is_enum(base, seen) for base in cls.resolved_bases if isinstance(base, Class)
+    )
+
+
+def _enum_value_changes(
+    old: Object | Alias,
+    new: Object | Alias,
+    seen: set[tuple[str, str]] | None = None,
+) -> Iterator[tuple[Object, AttributeChangedValueBreakage]]:
+    old_obj, new_obj = _resolved(old), _resolved(new)
+    if (
+        old_obj is None
+        or new_obj is None
+        or old_obj.kind != new_obj.kind
+        or not (old_obj.is_module or old_obj.is_class)
+    ):
+        return
+    seen = set() if seen is None else seen
+    paths = (old_obj.path, new_obj.path)
+    if paths in seen:
+        return
+    seen.add(paths)
+    is_enum = isinstance(old_obj, Class) and _is_enum(old_obj)
+    new_members = new_obj.all_members
+    for name, old_member in old_obj.all_members.items():
+        if not old_member.is_public or name not in new_members:
+            continue
+        new_member = new_members[name]
+        old_attribute, new_attribute = _resolved(old_member), _resolved(new_member)
+        if (
+            is_enum
+            and isinstance(old_attribute, Attribute)
+            and isinstance(new_attribute, Attribute)
+            and "class-attribute" in old_attribute.labels
+            and old_attribute.value is not None
+            and not (
+                isinstance(old_attribute.value, ExprCall)
+                and old_attribute.value.function.canonical_path == "enum.nonmember"
+            )
+            and str(old_attribute.value) != str(new_attribute.value)
+        ):
+            yield (
+                old_attribute,
+                AttributeChangedValueBreakage(
+                    new_attribute, old_attribute.value, new_attribute.value
+                ),
+            )
+        yield from _enum_value_changes(old_member, new_member, seen)
+
+
+def _published_breaking_changes(old: Object, new: Object) -> Iterator[Breakage]:
+    for breakage in find_breaking_changes(old, new):
+        try:
+            old_breakage_obj = old.modules_collection.get_member(breakage.obj.path)
+        except KeyError:
+            old_breakage_obj = breakage.obj
+        if _unreleased_owner(old_breakage_obj) is None:
+            yield breakage
+    for old_member, breakage in _enum_value_changes(old, new):
+        if _unreleased_owner(old_member) is None:
+            yield breakage
+
+
 def _write_summary(
     *,
     checked: int,
@@ -230,27 +320,11 @@ def main() -> int:
                 print("::endgroup::")
                 continue
 
-            for breakage in find_breaking_changes(old_package, new_package):
-                if (
-                    isinstance(breakage, AttributeChangedValueBreakage)
-                    and "instance-attribute" in breakage.obj.labels
-                    and "class-attribute" not in breakage.obj.labels
-                ):
-                    continue
-
-                try:
-                    old_breakage_obj = old_package.modules_collection.get_member(
-                        breakage.obj.path
-                    )
-                except KeyError:
-                    old_breakage_obj = breakage.obj
-                unreleased_owner = _unreleased_owner(old_breakage_obj)
-
-                if unreleased_owner is None:
-                    breakage_count += 1
-                    explanation = breakage.explain(style=ExplanationStyle.GITHUB)
-                    source_prefix = f"file={current_source.as_posix()}/"
-                    print(explanation.replace(source_prefix, "file=", 1))
+            for breakage in _published_breaking_changes(old_package, new_package):
+                breakage_count += 1
+                explanation = breakage.explain(style=ExplanationStyle.GITHUB)
+                source_prefix = f"file={current_source.as_posix()}/"
+                print(explanation.replace(source_prefix, "file=", 1))
 
             print("::endgroup::")
 

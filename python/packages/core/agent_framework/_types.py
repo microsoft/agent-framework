@@ -55,11 +55,43 @@ logger = logging.getLogger("agent_framework")
 _SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
 _OperationState: TypeAlias = Literal["in_progress", "terminal"]
 _OPERATION_STATE_SERIALIZATION_KEY: Final[str] = "_operation_state"
+_EVALUATION_TOOLS_METADATA_KEY: Final[str] = "agent_framework.evaluation"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ._tools import ToolTypes
+
+
+def _capture_evaluation_tools(  # pyright: ignore[reportUnusedFunction]
+    captured: dict[str, dict[str, Any]], tools: Any
+) -> None:
+    """Retain exposed declarations and flag same-name schema changes."""
+    from ._tools import FunctionTool, normalize_tools
+
+    for tool in normalize_tools(tools or []):
+        if not isinstance(tool, FunctionTool):
+            continue
+        captured[tool.name] = _merge_evaluation_tool_definition(
+            captured.get(tool.name),
+            {
+                "description": tool.description,
+                "input_schema": json.loads(json.dumps(tool.parameters(), allow_nan=False)),
+            },
+        )
+
+
+def _merge_evaluation_tool_definition(
+    previous: Mapping[str, Any] | None, incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    definition = dict(incoming)
+    if previous is not None and (
+        previous.get("schema_changed") is True
+        or json.dumps(previous.get("input_schema"), sort_keys=True, allow_nan=False)
+        != json.dumps(incoming.get("input_schema"), sort_keys=True, allow_nan=False)
+    ):
+        definition["schema_changed"] = True
+    return definition
 
 
 # region Content Parsing Utilities
@@ -459,6 +491,8 @@ _MERGEABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "code_interpreter_tool_call",
     "code_interpreter_tool_result",
 })
+APPROVAL_REJECTION_RESULT_KEY = "_approval_rejection_result"
+SKILL_CONTEXT_NAME_KEY = "_skill_context_name"
 
 _CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
 
@@ -481,8 +515,54 @@ class Annotation(TypedDict, total=False):
     tool_name: str
     snippet: str
     annotated_regions: Sequence[TextSpanRegion]
+    annotated_regions_coordinate_space: Literal["content", "source"]
     additional_properties: dict[str, Any]
     raw_representation: Any
+
+
+class _ValidatedTextSpanRegion(TypedDict):
+    type: Literal["text_span"]
+    start_index: int
+    end_index: int
+
+
+def _get_annotation_text_span_regions(  # pyright: ignore[reportUnusedFunction]
+    annotation: Mapping[str, Any],
+    *,
+    coordinate_space: Literal["content", "source"] = "content",
+) -> list[_ValidatedTextSpanRegion]:
+    """Return validated text spans in the requested coordinate space.
+
+    An absent coordinate space retains the legacy meaning that regions refer to the
+    annotated ``Content.text``. Source-coordinate regions refer to the cited source
+    and must not be interpreted as generated-content offsets.
+    """
+    if annotation.get("annotated_regions_coordinate_space", "content") != coordinate_space:
+        return []
+
+    raw_regions = annotation.get("annotated_regions")
+    if not isinstance(raw_regions, Sequence) or isinstance(raw_regions, (str, bytes, bytearray)):
+        return []
+
+    regions: list[_ValidatedTextSpanRegion] = []
+    for raw_region in cast(Sequence[Any], raw_regions):
+        if not isinstance(raw_region, Mapping):
+            continue
+        region = cast(Mapping[str, Any], raw_region)
+        if region.get("type") != "text_span":
+            continue
+        start_index = region.get("start_index")
+        end_index = region.get("end_index")
+        if type(start_index) is not int or type(end_index) is not int or start_index < 0 or end_index < start_index:
+            continue
+        regions.append(
+            _ValidatedTextSpanRegion(
+                type="text_span",
+                start_index=start_index,
+                end_index=end_index,
+            )
+        )
+    return regions
 
 
 @experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
@@ -570,7 +650,17 @@ def merge_additional_properties(
     for key, value in (second or {}).items():
         current = merged.get(key)
         if isinstance(current, Mapping) and isinstance(value, Mapping):
-            merged[key] = {**current, **value}
+            current = cast("Mapping[str, Any]", current)
+            value = cast("Mapping[str, Any]", value)
+            namespace = {**current, **value}
+            if key == _EVALUATION_TOOLS_METADATA_KEY:
+                for name, definition in value.items():
+                    previous = current.get(name)
+                    if isinstance(previous, Mapping) and isinstance(definition, Mapping):
+                        namespace[name] = _merge_evaluation_tool_definition(
+                            cast("Mapping[str, Any]", previous), cast("Mapping[str, Any]", definition)
+                        )
+            merged[key] = namespace
         else:
             merged[key] = dict(cast("Mapping[str, Any]", value)) if isinstance(value, Mapping) else value
     return merged
@@ -606,8 +696,9 @@ def _has_reasoning_text_marker(additional_properties: Mapping[str, Any]) -> bool
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
     """Add two UsageDetails dictionaries by summing all numeric values.
 
-    If any of the two usage details contains a key with a non-int value, it will be skipped,
-    even if the other contains a int-value on that key.
+    Missing keys and ``None`` values contribute zero. If either dictionary contains
+    a non-integer value other than ``None`` for a key, that key is skipped even if
+    the other value is an integer. Boolean values are also skipped.
 
     Args:
         usage1: First usage details dictionary.
@@ -2498,63 +2589,70 @@ def prepend_instructions_to_messages(
 
 
 def _process_update(response: ChatResponse | AgentResponse, update: ChatResponseUpdate | AgentResponseUpdate) -> None:
-    """Processes a single update and modifies the response in place."""
-    is_new_message = False
+    """Merge an update, creating a message only when it carries message-level data."""
     if (
-        not response.messages
-        or (
-            update.message_id
-            and response.messages[-1].message_id
-            and response.messages[-1].message_id != update.message_id
-        )
-        or (
-            update.author_name
-            and response.messages[-1].author_name
-            and response.messages[-1].author_name != update.author_name
-        )
-        or (update.role and response.messages[-1].role != update.role)
+        update.contents
+        or update.role is not None
+        or update.author_name is not None
+        or update.message_id is not None
+        or update.merge_mode == "replace"
     ):
-        is_new_message = True
+        is_new_message = False
+        if (
+            not response.messages
+            or (
+                update.message_id
+                and response.messages[-1].message_id
+                and response.messages[-1].message_id != update.message_id
+            )
+            or (
+                update.author_name
+                and response.messages[-1].author_name
+                and response.messages[-1].author_name != update.author_name
+            )
+            or (update.role and response.messages[-1].role != update.role)
+        ):
+            is_new_message = True
 
-    if is_new_message:
-        message = Message("assistant", [])
-        response.messages.append(message)
-    else:
-        message = response.messages[-1]
-    if getattr(update, "merge_mode", None) == "replace":
-        message.contents.clear()
-    # Incorporate the update's properties into the message.
-    if update.author_name is not None:
-        message.author_name = update.author_name
-    if update.role is not None:
-        message.role = update.role
-    if update.message_id:
-        message.message_id = update.message_id
-    for content in update.contents:
-        # Fast path: get type attribute (most content will have it)
-        content_type = getattr(content, "type", None)
-        # Slow path: only check for dict if type is None
-        if content_type is None and isinstance(content, (dict, MutableMapping)):
-            try:
-                content = Content.from_dict(content)
-                content_type = content.type
-            except ContentError as exc:
-                logger.warning(f"Skipping unknown content type or invalid content: {exc}")
-                continue
-        match content_type:
-            case "function_call":
-                _merge_function_call_content(message, content)
-            case "usage":
-                if content.merge_mode == "replace":
-                    response.usage_details = deepcopy(content.usage_details)
-                elif response.usage_details is None:
-                    response.usage_details = UsageDetails()
-                    response.usage_details = add_usage_details(response.usage_details, content.usage_details)
-                else:
-                    # mypy doesn't narrow type based on match/case, but we know this is UsageContent
-                    response.usage_details = add_usage_details(response.usage_details, content.usage_details)
-            case _:
-                message.contents.append(content)
+        if is_new_message:
+            message = Message("assistant", [])
+            response.messages.append(message)
+        else:
+            message = response.messages[-1]
+        if update.merge_mode == "replace":
+            message.contents.clear()
+        # Incorporate the update's properties into the message.
+        if update.author_name is not None:
+            message.author_name = update.author_name
+        if update.role is not None:
+            message.role = update.role
+        if update.message_id:
+            message.message_id = update.message_id
+        for content in update.contents:
+            # Fast path: get type attribute (most content will have it)
+            content_type = getattr(content, "type", None)
+            # Slow path: only check for dict if type is None
+            if content_type is None and isinstance(content, (dict, MutableMapping)):
+                try:
+                    content = Content.from_dict(content)
+                    content_type = content.type
+                except ContentError as exc:
+                    logger.warning(f"Skipping unknown content type or invalid content: {exc}")
+                    continue
+            match content_type:
+                case "function_call":
+                    _merge_function_call_content(message, content)
+                case "usage":
+                    if content.merge_mode == "replace":
+                        response.usage_details = deepcopy(content.usage_details)
+                    elif response.usage_details is None:
+                        response.usage_details = UsageDetails()
+                        response.usage_details = add_usage_details(response.usage_details, content.usage_details)
+                    else:
+                        # mypy doesn't narrow type based on match/case, but we know this is UsageContent
+                        response.usage_details = add_usage_details(response.usage_details, content.usage_details)
+                case _:
+                    message.contents.append(content)
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id
@@ -3335,9 +3433,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse
+                from agent_framework import ChatResponse, Message
 
-                response = ChatResponse.from_updates(updates)
+                response = ChatResponse(messages=[Message("assistant", ["Hello"])])
                 assert response.text == ChatResponse.from_updates(response.to_updates()).text
         """
         updates = [
@@ -3568,6 +3666,10 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         The `author_name` attribute is available on the `Message` objects inside `messages`,
         not on the `AgentResponse` itself. Use `response.messages[0].author_name` to access
         the author name of individual messages.
+
+        Agent runs retain schema-only tool snapshots, keyed by tool name, under
+        ``additional_properties["agent_framework.evaluation"]``. These snapshots survive
+        JSON and pickle serialization and contain no executable implementations.
 
     Examples:
         .. code-block:: python
@@ -3826,9 +3928,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import AgentResponse
+                from agent_framework import AgentResponse, Message
 
-                response = AgentResponse.from_updates(updates)
+                response = AgentResponse(messages=[Message("assistant", ["Hello"])])
                 assert response.text == AgentResponse.from_updates(response.to_updates()).text
         """
         updates = [

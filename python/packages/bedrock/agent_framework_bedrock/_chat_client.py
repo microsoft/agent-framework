@@ -326,7 +326,9 @@ class BedrockChatClient(
         region = settings.get("region") or session_region or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
-        if client:
+        self._owns_client = client is None
+        self._client_closed = False
+        if client is not None:
             self._bedrock_client = client
         else:
             session = boto3_session or self._create_session(settings)
@@ -343,6 +345,13 @@ class BedrockChatClient(
         )
         self.model = chat_model
         self.region = region
+
+    @override
+    async def close(self) -> None:
+        """Close the owned runtime connection without closing caller-owned sessions."""
+        if self._owns_client and not self._client_closed:
+            await asyncio.to_thread(self._bedrock_client.close)
+            self._client_closed = True
 
     @staticmethod
     def _create_session(settings: BedrockSettings) -> Boto3Session:

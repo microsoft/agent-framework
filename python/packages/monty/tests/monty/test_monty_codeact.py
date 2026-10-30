@@ -17,7 +17,8 @@ import stat
 import subprocess
 import sys
 import types
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -730,6 +731,8 @@ def test_instruction_builders_describe_write_caps_and_visible_tools(tmp_path: Pa
 
     assert "write cap 128 bytes" in description
     assert "Files written to `/work` are returned" in description
+    assert "Capture file-count and byte limits apply across all mounts per execution" in description
+    assert "Capture file-count and byte limits apply across all mounts per execution" in instructions
     assert "Some tools may also appear directly" in instructions
 
 
@@ -1017,7 +1020,8 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
         "/work/existing.txt",
         "/work/nested/report.txt",
     }
-    assert any("large.txt" in (item.text or "") and "omitted" in (item.text or "") for item in text_items)
+    assert len(text_items) == 1
+    assert "omitted" in (text_items[0].text or "")
     assert any(
         _decode_content_bytes(item) == b"after"
         for item in data_items
@@ -1025,6 +1029,178 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
     )
     assert all(not item.additional_properties["path"].startswith("/readonly/") for item in data_items)
     assert all(item.additional_properties["path"] != "/work/unchanged.txt" for item in data_items)
+
+
+def test_capture_written_files_default_limits() -> None:
+    assert execute_code_module.MAX_CAPTURED_FILES == 20
+    assert execute_code_module.MAX_CAPTURED_FILE_BYTES == 5 * 1024 * 1024
+    assert execute_code_module.MAX_CAPTURED_TOTAL_BYTES == 20 * 1024 * 1024
+
+
+@pytest.mark.parametrize("file_count", [0, 19, 20, 21])
+@pytest.mark.parametrize("mount_count", [1, 2])
+def test_capture_written_files_bounds_empty_attachment_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    file_count: int,
+    mount_count: int,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    mounts = []
+    for index in range(mount_count):
+        root = tmp_path / str(index)
+        root.mkdir()
+        mounts.append(FileMount(host_path=root, mount_path=f"/work{index}", mode="read-write"))
+    for index in range(file_count):
+        (Path(mounts[index % mount_count].host_path) / f"{index:02}.bin").write_bytes(b"")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 8)
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files(mounts, {})
+    data_items = [item for item in captured if item.type == "data"]
+    text_items = [item for item in captured if item.type == "text"]
+
+    expected_count = min(file_count, 20)
+    assert len(data_items) == expected_count
+    assert all(_decode_content_bytes(item) == b"" for item in data_items)
+    assert len(text_items) == int(file_count > 20)
+    assert read_file.call_count == expected_count
+    assert encode.call_count == expected_count
+
+
+@pytest.mark.parametrize(
+    ("sizes", "expected_sizes", "omitted"),
+    [
+        ([4, 3], [4, 3], False),
+        ([4, 4], [4, 4], False),
+        ([4, 5, 4], [4, 4], True),
+        ([8, 1, 0], [8, 0], True),
+        ([3, 0, 6, 5], [3, 0, 5], True),
+    ],
+)
+def test_capture_written_files_bounds_total_bytes_across_mounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sizes: list[int],
+    expected_sizes: list[int],
+    omitted: bool,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    roots = [tmp_path / "first", tmp_path / "second"]
+    for root in roots:
+        root.mkdir()
+    mounts = [
+        FileMount(host_path=root, mount_path=f"/work{index}", mode="read-write") for index, root in enumerate(roots)
+    ]
+    for index, size in enumerate(sizes):
+        (roots[min(index, 1)] / f"{index:02}.bin").write_bytes(b"x" * size)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 8)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 8)
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files(mounts, {})
+    data_items = [item for item in captured if item.type == "data"]
+    text_items = [item for item in captured if item.type == "text"]
+
+    assert [len(_decode_content_bytes(item)) for item in data_items] == expected_sizes
+    assert len(text_items) == int(omitted)
+    assert read_file.call_count == len(expected_sizes)
+    assert encode.call_count == len(expected_sizes)
+    remaining = 8
+    for call, size in zip(read_file.call_args_list, expected_sizes, strict=True):
+        assert call.kwargs["max_bytes"] == min(8, remaining)
+        remaining -= size
+
+
+@pytest.mark.parametrize("skipped_kind", ["unchanged", "unsafe", "unreadable"])
+def test_capture_written_files_does_not_charge_skipped_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    skipped_kind: str,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    ignored = tmp_path / "a-ignored.bin"
+    ignored.write_bytes(b"xx")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    before = execute_code_module._snapshot_writable_mounts([mount]) if skipped_kind == "unchanged" else {}
+    (tmp_path / "z-safe.bin").write_bytes(b"ok")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILES", 1)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 2)
+
+    if skipped_kind == "unsafe":
+        original_stat = execute_code_module._safe_capture_file_stat
+
+        def safe_stat(*, root: Path, entry: Path) -> os.stat_result | None:
+            return None if entry == ignored else original_stat(root=root, entry=entry)
+
+        monkeypatch.setattr(execute_code_module, "_safe_capture_file_stat", safe_stat)
+    elif skipped_kind == "unreadable":
+        original_read = execute_code_module._read_validated_file
+
+        def read_file(*, root: Path, entry: Path, expected: os.stat_result, max_bytes: int) -> bytes | None:
+            if entry == ignored:
+                return None
+            return original_read(root=root, entry=entry, expected=expected, max_bytes=max_bytes)
+
+        monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+
+    captured = execute_code_module._capture_written_files([mount], before)
+
+    assert len(captured) == 1
+    assert _decode_content_bytes(captured[0]) == b"ok"
+
+
+def test_capture_written_files_bounds_omission_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    for index in range(32):
+        (tmp_path / f"{index:02}-{'x' * 100}.bin").write_bytes(b"xxx")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 2)
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files([mount], {})
+
+    assert len(captured) == 1
+    assert captured[0].type == "text"
+    assert "omitted" in (captured[0].text or "")
+    assert len(captured[0].text or "") < 200
+    read_file.assert_not_called()
+    encode.assert_not_called()
+
+
+def test_capture_written_files_resets_budgets_between_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    (tmp_path / "first.bin").write_bytes(b"ok")
+    (tmp_path / "second.bin").write_bytes(b"no")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILES", 1)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 2)
+
+    for _ in range(2):
+        captured = execute_code_module._capture_written_files([mount], {})
+        assert len(captured) == 2
+        assert _decode_content_bytes(captured[0]) == b"ok"
+        assert captured[1].type == "text"
 
 
 def _create_junction_or_skip(*, link: Path, target: Path) -> None:
@@ -1323,6 +1499,101 @@ def test_capture_written_files_does_not_follow_parent_link_swapped_in_after_vali
     captured = execute_code_module._capture_written_files([mount], {"/input": {}})
 
     assert not any(item.type == "data" for item in captured)
+
+
+@pytest.mark.parametrize("limit_kind", ["per-file", "total"])
+def test_capture_written_files_rejects_growth_before_opening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_kind: str,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    artifact = tmp_path / "a-growing.bin"
+    artifact.write_bytes(b"xxxx")
+    (tmp_path / "z-safe.bin").write_bytes(b"ok")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILES", 1)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 5 if limit_kind == "per-file" else 8)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 5 if limit_kind == "total" else 8)
+
+    def grow() -> None:
+        artifact.write_bytes(b"x" * 6)
+
+    _swap_after_first_validation(monkeypatch, grow)
+    open_reader = MagicMock(wraps=os.fdopen)
+    close = MagicMock(wraps=os.close)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(os, "fdopen", open_reader)
+    monkeypatch.setattr(os, "close", close)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files([mount], {})
+
+    assert len(captured) == 2
+    assert _decode_content_bytes(captured[0]) == b"ok"
+    assert captured[1].type == "text"
+    assert open_reader.call_count == 1
+    assert close.call_count == 2
+    assert encode.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("initial_size", "grown_size", "safe_size", "total_limit", "expected_sizes", "omitted"),
+    [
+        (4, 0, 8, 8, [0, 8], False),
+        (4, 5, 4, 8, [5], True),
+        (4, 8, 1, 8, [8], True),
+        (4, 9, 4, 8, [4], True),
+        (0, 1, 0, 0, [0], True),
+    ],
+)
+def test_capture_written_files_bounds_reads_and_charges_actual_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    initial_size: int,
+    grown_size: int,
+    safe_size: int,
+    total_limit: int,
+    expected_sizes: list[int],
+    omitted: bool,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    artifact = tmp_path / "a-growing.bin"
+    artifact.write_bytes(b"x" * initial_size)
+    (tmp_path / "z-safe.bin").write_bytes(b"s" * safe_size)
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 8)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", total_limit)
+    original_fdopen = os.fdopen
+    readers: list[MagicMock] = []
+
+    @contextmanager
+    def growing_reader(fd: int, mode: str, *, closefd: bool) -> Generator[MagicMock]:
+        if not readers:
+            artifact.write_bytes(b"g" * grown_size)
+        with original_fdopen(fd, mode, closefd=closefd) as handle:
+            reader = MagicMock(wraps=handle)
+            readers.append(reader)
+            yield reader
+
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(os, "fdopen", growing_reader)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files([mount], {})
+    data_items = [item for item in captured if item.type == "data"]
+    text_items = [item for item in captured if item.type == "text"]
+
+    assert [len(_decode_content_bytes(item)) for item in data_items] == expected_sizes
+    assert len(text_items) == int(omitted)
+    assert encode.call_count == len(expected_sizes)
+    assert len(readers) == read_file.call_count
+    for reader, call in zip(readers, read_file.call_args_list, strict=True):
+        reader.read.assert_called_once_with(call.kwargs["max_bytes"] + 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1625,3 +1896,124 @@ async def test_provider_runs_share_registered_tool_invocation_limit() -> None:
             assert payload["exc_type"] == "ToolException"
             assert "maximum invocation limit" in payload["message"]
         assert limited.invocation_count == 1
+
+
+def test_run_snapshot_does_not_repeat_unchanged_fides_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." not in caplog.text
+
+
+def test_run_snapshot_warns_when_fides_metadata_keys_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["confidentiality"] = "private"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert codeact.get_tools()[0] is annotated_tool
+
+
+def test_run_snapshot_warns_when_fides_metadata_value_changes(caplog: pytest.LogCaptureFixture) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+
+    caplog.clear()
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+
+
+def test_fides_warning_cache_pruned_on_tool_removal() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+    assert any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+    codeact.remove_tool(first.name)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_warning_cache_pruned_on_clear() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+    codeact.clear_tools()
+
+    assert codeact._fides_warned_metadata == []
+
+
+def test_fides_warning_cache_pruned_on_replacement() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+
+    @tool(
+        name=first.name,
+        additional_properties={"source_integrity": "trusted"},
+    )
+    def replacement(value: int) -> int:
+        return value
+
+    codeact.add_tools(replacement)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+    assert any(obj is replacement for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_metadata_change_warns_once_across_run_snapshots(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    warnings = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.getMessage()
+    ]
+    assert len(warnings) == 1

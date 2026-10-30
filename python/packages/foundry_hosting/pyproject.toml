@@ -4,7 +4,7 @@ description = "Foundry Hosting integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -24,13 +23,20 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.23.0,<2",
+    "agent-framework-core>=1.24.0,<2",
     "azure-ai-agentserver-core>=2.1.0,<3",
     "azure-ai-agentserver-responses>=2.2.0b1,<3",
     "azure-ai-agentserver-invocations>=1.1.0,<2",
     "httpx>=0.28,<1",
     "httpx2>=2.0.0,<3",
     "mcp>=2.2.0,<3",
+    "tenacity>=9.1.4,<9.2.0",
+]
+
+[dependency-groups]
+test = [
+    "agent-framework-ag-ui>=1.7.1,<2",
+    "agent-framework-foundry>=1.16.0,<2",
 ]
 
 [tool.uv]

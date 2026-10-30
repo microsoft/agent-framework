@@ -1087,6 +1087,100 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
+    public async Task CreateAsync_HarnessLocalHistory_CompletesBothTurnsWithoutServiceStorageAsync()
+    {
+        // Arrange
+        var requests = new List<(List<ChatMessage> Messages, ChatOptions? Options)>();
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken _) =>
+            {
+                requests.Add((messages.ToList(), options));
+                return ToAsyncEnumerableUpdatesAsync(new ChatResponseUpdate(ChatRole.Assistant, "answer")
+                {
+                    MessageId = "resp_msg_1",
+                });
+            });
+
+        var agent = CreateHarnessAgent(client.Object);
+        var store = new InMemoryAgentSessionStore();
+        var handler = BuildHandlerWith(agent, new FakeHostedSessionIsolationKeyProvider(), store);
+
+        // Act
+        var firstEvents = new List<ResponseStreamEvent>();
+        await foreach (var evt in handler.CreateAsync(
+            NewConversationRequest("conv-harness-local", "first question", store: true),
+            NewContextServing("resp_" + new string('a', 46), []),
+            CancellationToken.None))
+        {
+            firstEvents.Add(evt);
+        }
+
+        var storageAgent = new FoundryHostingAgent(
+            agent,
+            FoundryHostingAgent.ResolveSessionStorageIdentity(agent, registrationKey: null, defaultAgent: agent));
+        var storageKey = new AgentSessionStoreKey("conv-harness-local")
+            .WithPartition("user", FakeHostedSessionIsolationKeyProvider.DefaultUserId);
+        var savedSession = Assert.IsType<ChatClientAgentSession>(
+            await store.GetSessionAsync(storageAgent, storageKey, CancellationToken.None));
+
+        var secondEvents = new List<ResponseStreamEvent>();
+        await foreach (var evt in handler.CreateAsync(
+            NewConversationRequest("conv-harness-local", "second question", store: true),
+            NewContextServing("resp_" + new string('b', 46), []),
+            CancellationToken.None))
+        {
+            secondEvents.Add(evt);
+        }
+
+        // Assert: the local marker survives the session round-trip, but is never sent to the model.
+        Assert.Contains(firstEvents, evt => evt is ResponseCompletedEvent);
+        Assert.Contains(secondEvents, evt => evt is ResponseCompletedEvent);
+        Assert.Equal("_agent_local_chat_history", savedSession.ConversationId);
+        Assert.Equal(2, requests.Count);
+        Assert.Single(requests[1].Messages, message => message.Text.Contains("first question", StringComparison.Ordinal));
+        Assert.Single(requests[1].Messages, message => message.Text.Contains("answer", StringComparison.Ordinal));
+        Assert.Null(requests[1].Options?.ConversationId);
+
+        // The default host still disables storage in each underlying service request.
+        foreach (var (_, options) in requests)
+        {
+            Assert.NotNull(options?.RawRepresentationFactory);
+            var raw = Assert.IsType<CreateResponseOptions>(options.RawRepresentationFactory(client.Object));
+            Assert.False(raw.StoredOutputEnabled);
+        }
+    }
+
+    [Fact]
+    public async Task CreateAsync_HarnessServiceStoredConversationId_StillFailsTheRequestAsync()
+    {
+        // Arrange
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ToAsyncEnumerableUpdatesAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "answer")
+                {
+                    MessageId = "resp_msg_1",
+                    ConversationId = "conv-downstream",
+                }));
+
+        var agent = CreateHarnessAgent(client.Object);
+        var handler = BuildHandlerWith(agent, new FakeHostedSessionIsolationKeyProvider(), new InMemoryAgentSessionStore());
+
+        // Act
+        var failure = await Assert.ThrowsAsync<ResponsesApiException>(() => DrainEventsAsync(handler.CreateAsync(
+            NewConversationRequest("conv-harness-rejected", "first question", store: true),
+            NewContextServing("resp_" + new string('c', 46), []),
+            CancellationToken.None)));
+
+        // Assert: a real service conversation ID remains a hosting misconfiguration.
+        Assert.Equal(HostedStoredOutputCompatibility.MisconfiguredAgentErrorCode, failure.Error.Code);
+        Assert.Equal(HostedStoredOutputCompatibility.MisconfiguredAgentStatusCode, failure.StatusCode);
+    }
+
+    [Fact]
     public async Task CreateAsync_AgentWhoseChatClientStoredTheTurn_NeverReportsTheTurnCompletedAsync()
     {
         // Arrange: a chat client whose service keeps the conversation, on an agent that does not object
@@ -1484,6 +1578,18 @@ public class AgentFrameworkResponseHandlerTests
             });
         return mock.Object;
     }
+
+    private static HarnessAgent CreateHarnessAgent(IChatClient client) =>
+        new(client, new HarnessAgentOptions
+        {
+            DisableToolAutoApproval = true,
+            DisableOpenTelemetry = true,
+            DisableFileMemory = true,
+            DisableWebSearch = true,
+            DisableTodoProvider = true,
+            DisableAgentModeProvider = true,
+            DisableAgentSkillsProvider = true,
+        });
 
     private static async IAsyncEnumerable<ChatResponseUpdate> ToAsyncEnumerableUpdatesAsync(params ChatResponseUpdate[] updates)
     {

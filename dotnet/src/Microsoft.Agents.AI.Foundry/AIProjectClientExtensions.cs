@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
@@ -14,6 +13,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
+using OpenAIAgentReference = Azure.AI.Extensions.OpenAI.AgentReference;
 
 namespace Azure.AI.Projects;
 
@@ -23,10 +23,10 @@ namespace Azure.AI.Projects;
 public static partial class AIProjectClientExtensions
 {
     /// <summary>
-    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentReference"/>.
+    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="OpenAIAgentReference"/>.
     /// </summary>
     /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to create the <see cref="ChatClientAgent"/> with. Cannot be <see langword="null"/>.</param>
-    /// <param name="agentReference">The <see cref="AgentReference"/> representing the name and version of the server side agent to create a <see cref="ChatClientAgent"/> for. Cannot be <see langword="null"/>.</param>
+    /// <param name="agentReference">The <see cref="OpenAIAgentReference"/> representing the name and version of the server side agent to create a <see cref="ChatClientAgent"/> for. Cannot be <see langword="null"/>.</param>
     /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
@@ -34,12 +34,12 @@ public static partial class AIProjectClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentReference"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
     /// <remarks>
-    /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
+    /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="OpenAIAgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
     /// on <see cref="AIAgent.GetService{TService}(object?)"/> to retrieve information about the agent like <see cref="ProjectsAgentVersion" /> will receive <see langword="null"/> as the result.
     /// </remarks>
     public static FoundryAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
-        AgentReference agentReference,
+        OpenAIAgentReference agentReference,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         IServiceProvider? services = null)
@@ -83,7 +83,7 @@ public static partial class AIProjectClientExtensions
     /// <remarks>
     /// Agent version selection is controlled by the Foundry administrator through the endpoint's
     /// version selector and cannot be overridden by the caller. Use the
-    /// <see cref="AsAIAgent(AIProjectClient, AgentReference, IList{AITool}?, Func{IChatClient, IChatClient}?, IServiceProvider?)"/>
+    /// <see cref="AsAIAgent(AIProjectClient, OpenAIAgentReference, IList{AITool}?, Func{IChatClient, IChatClient}?, IServiceProvider?)"/>
     /// overload when an explicit agent version pin is required.
     /// </remarks>
     public static FoundryAgent AsAIAgent(
@@ -305,7 +305,7 @@ public static partial class AIProjectClientExtensions
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
     private static ChatClientAgent AsChatClientAgent(
         AIProjectClient aiProjectClient,
-        AgentReference agentReference,
+        OpenAIAgentReference agentReference,
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)

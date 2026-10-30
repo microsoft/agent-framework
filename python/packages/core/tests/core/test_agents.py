@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import inspect
@@ -21,6 +23,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    AgentTriggeredCompactionStrategy,
     ChatContext,
     ChatOptions,
     ChatResponse,
@@ -28,9 +31,12 @@ from agent_framework import (
     Content,
     ContextProvider,
     Embedding,
+    FunctionMiddleware,
     FunctionTool,
     GeneratedEmbeddings,
     HistoryProvider,
+    InlineSkill,
+    InlineSkillResource,
     InMemoryHistoryProvider,
     InMemoryStore,
     Message,
@@ -39,12 +45,15 @@ from agent_framework import (
     ResponseStream,
     ServiceSessionId,
     SessionContext,
+    SkillFrontmatter,
+    SkillsProvider,
     SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
     ToolApprovalMiddleware,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    UnloadSkillsCompactionStrategy,
     VectorStoreHistoryProvider,
     chat_middleware,
     enqueue_messages,
@@ -54,6 +63,7 @@ from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_ag
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY
+from agent_framework._types import SKILL_CONTEXT_NAME_KEY
 from agent_framework.exceptions import (
     AgentInvalidRequestException,
     ChatClientInvalidResponseException,
@@ -101,7 +111,7 @@ class _LifecycleClient(MockBaseChatClient):
         self.events = events
         self.exit_exception_type: type[BaseException] | None = None
 
-    async def __aenter__(self) -> "_LifecycleClient":
+    async def __aenter__(self) -> _LifecycleClient:
         self.events.append("client.enter")
         return self
 
@@ -117,7 +127,7 @@ class _LifecycleMCPTool(_ConnectedMCPTool):
         self.fail_on_enter = fail_on_enter
         self.exit_exception_type: type[BaseException] | None = None
 
-    async def __aenter__(self) -> "_LifecycleMCPTool":
+    async def __aenter__(self) -> _LifecycleMCPTool:
         self.events.append(f"{self.name}.enter")
         if self.fail_on_enter:
             raise RuntimeError("MCP entry failed")
@@ -218,6 +228,51 @@ async def test_agent_explicit_open_close(agent_type: type[RawAgent]) -> None:
     await agent.close()
 
     assert events == ["client.enter", "mcp.enter", "mcp.exit", "client.exit"]
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+@pytest.mark.parametrize("fail_on_enter", [False, True])
+async def test_agent_manages_inherited_client_context(
+    agent_type: type[RawAgent], fail_on_enter: bool, chat_client_base: MockBaseChatClient
+) -> None:
+    events: list[str] = []
+    mcp_tool = _LifecycleMCPTool("mcp", events, fail_on_enter=fail_on_enter)
+    agent = agent_type(client=chat_client_base, tools=[mcp_tool])
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        if fail_on_enter:
+            with pytest.raises(RuntimeError, match="MCP entry failed"):
+                await agent.open()
+        else:
+            async with agent:
+                close.assert_not_awaited()
+        close.assert_awaited_once_with()
+        await agent.close()
+        close.assert_awaited_once_with()
+
+
+async def test_agent_still_accepts_client_without_lifecycle(client: SupportsChatGetResponse) -> None:
+    assert not hasattr(client, "__aenter__")
+    async with RawAgent(client=client) as agent:
+        response = await agent.run("Hello")
+        assert response.text == "test response"
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
+async def test_agent_context_accepts_client_with_sync_close(
+    agent_type: type[RawAgent], chat_client_base: MockBaseChatClient, error: RuntimeError | None
+) -> None:
+    with patch.object(chat_client_base, "close", new_callable=MagicMock, return_value=None) as close:
+        agent = agent_type(client=chat_client_base)
+        if error is None:
+            async with agent:
+                close.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError) as raised:
+                async with agent:
+                    raise error
+            assert raised.value is error
+        close.assert_called_once_with()
 
 
 @pytest.mark.parametrize("agent_type", [Agent, RawAgent])
@@ -1544,7 +1599,10 @@ async def test_context_provider_receives_full_agent_response_non_streaming(
     assert response.usage_details == {"input_token_count": 3, "output_token_count": 2, "total_token_count": 5}
     assert response.value == {"answer": "ok"}
     assert response.continuation_token == {"token": "next"}
-    assert response.additional_properties == {"provider": "test"}
+    assert response.additional_properties == {
+        "provider": "test",
+        "agent_framework.evaluation": {},
+    }
     assert response.raw_representation is raw_response
 
 
@@ -1633,7 +1691,10 @@ async def test_context_provider_receives_full_agent_response_streaming(
     assert response.usage_details == {"input_token_count": 4, "output_token_count": 3, "total_token_count": 7}
     assert response.value == {"answer": "ok"}
     assert response.continuation_token == {"token": "stream-next"}
-    assert response.additional_properties == {"provider": "stream-test"}
+    assert response.additional_properties == {
+        "provider": "stream-test",
+        "agent_framework.evaluation": {},
+    }
     assert response.raw_representation == [raw_update]
 
 
@@ -3446,6 +3507,275 @@ async def test_chat_agent_compaction_overrides_client_defaults(chat_client_base:
     assert captured_token_counts == [[9, 9]]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_triggered_compaction_applies_before_next_model_call(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    agent_compaction = AgentTriggeredCompactionStrategy(
+        TruncationStrategy(max_n=2, compact_to=2, preserve_first_user_group=True),
+    )
+    function_call = Content.from_function_call(
+        call_id="compact-1",
+        name=agent_compaction.tool.name,
+        arguments={"reason": "planning complete"},
+    )
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(contents=[function_call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    captured_roles: list[list[str]] = []
+    captured_texts: list[list[str | None]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        captured_roles.append([message.role for message in messages])
+        captured_texts.append([message.text for message in messages])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[agent_compaction.tool],
+        compaction_strategy=agent_compaction,
+    )
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        run_messages = [
+            Message(role="user", contents=["original task"]),
+            Message(role="assistant", contents=["obsolete planning detail"]),
+            Message(role="user", contents=["plan"]),
+        ]
+        if stream:
+            result_text = "".join([update.text or "" async for update in agent.run(run_messages, stream=True)])
+        else:
+            result_text = (await agent.run(run_messages)).text
+
+    assert result_text == "done"
+    assert captured_roles == [
+        ["user", "assistant", "user"],
+        ["user", "user", "assistant", "tool"],
+    ]
+    assert "obsolete planning detail" in captured_texts[0]
+    assert "obsolete planning detail" not in captured_texts[1]
+
+
+async def test_unload_skills_uses_middleware_rewritten_selection(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+
+    class RewriteUnloadSelectionMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            if context.function.name == strategy.tool.name:
+                context.arguments = {"skill_name": "excel"}
+            await call_next()
+            if context.function.name == strategy.tool.name:
+                assert isinstance(context.result, list)
+                context.result.append(Content.from_text("middleware note"))
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="unload-1",
+                        name=strategy.tool.name,
+                        arguments={"skill_name": "pdf"},
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    captured_calls: list[list[tuple[str | None, Any]]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        captured_calls.append([
+            (content.name, content.parse_arguments())
+            for message in messages
+            for content in message.contents
+            if content.type == "function_call"
+        ])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[strategy.tool],
+        compaction_strategy=strategy,
+        middleware=[RewriteUnloadSelectionMiddleware()],
+    )
+    run_messages = [
+        Message(role="user", contents=["work"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-pdf",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
+                )
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-excel",
+                    name="load_skill",
+                    arguments={"skill_name": "excel"},
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="load-excel",
+                    result="excel instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "excel"},
+                )
+            ],
+        ),
+        Message(role="user", contents=["unload the selected skill"]),
+    ]
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        result = await agent.run(run_messages)
+
+    assert result.text == "done"
+    assert ("load_skill", {"skill_name": "pdf"}) in captured_calls[1]
+    assert ("load_skill", {"skill_name": "excel"}) not in captured_calls[1]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("tool_name", ["load_skill", "read_skill_resource"])
+@pytest.mark.parametrize("unload_name", ["pdf", "excel"])
+@pytest.mark.parametrize("rewrite_load", [False, True])
+async def test_unload_skills_uses_effective_loaded_skill_identity(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+    tool_name: str,
+    unload_name: str,
+    rewrite_load: bool,
+) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    provider = SkillsProvider(
+        [
+            InlineSkill(
+                frontmatter=SkillFrontmatter(name=skill_name, description=f"{skill_name} skill"),
+                instructions=f"{skill_name} instructions",
+                resources=[
+                    InlineSkillResource(name=f"{skill_name}-reference", content=f"{skill_name} resource content")
+                ],
+            )
+            for skill_name in ("pdf", "excel")
+        ],
+        disable_load_skill_approval=True,
+        disable_read_skill_resource_approval=True,
+    )
+
+    class RewriteLoadedSkillMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            if context.function.name == tool_name:
+                assert isinstance(context.arguments, dict)
+                context.arguments = {**context.arguments, "skill_name": "EXCEL"}
+                if tool_name == "read_skill_resource":
+                    context.arguments["resource_name"] = "excel-reference"
+            await call_next()
+
+    original_arguments = {"skill_name": "pdf"}
+    if tool_name == "read_skill_resource":
+        original_arguments["resource_name"] = "pdf-reference"
+    load_call = Content.from_function_call(call_id="load-1", name=tool_name, arguments=original_arguments)
+    unload_call = Content.from_function_call(
+        call_id="unload-1",
+        name=strategy.tool.name,
+        arguments={"skill_name": unload_name},
+    )
+    chat_client_base.function_invocation_configuration["max_iterations"] = 4
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[load_call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[unload_call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[load_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[unload_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    model_inputs: list[list[Message]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        model_inputs.append([Message.from_dict(message.to_dict()) for message in messages])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[strategy.tool],
+        context_providers=[provider],
+        middleware=[RewriteLoadedSkillMiddleware()] if rewrite_load else [],
+        compaction_strategy=strategy,
+        default_options=ChatOptions(store=False),
+    )
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            response_stream = agent.run("Read a skill, then unload the selected skill.", stream=True)
+            async for _ in response_stream:
+                pass
+            result = await response_stream.get_final_response()
+        else:
+            result = await agent.run("Read a skill, then unload the selected skill.")
+
+    assert result.messages[-1].text == "done"
+    assert len(model_inputs) == 3
+    loaded_contents = [content for message in model_inputs[1] for content in message.contents]
+    captured_load = next(content for content in loaded_contents if content.type == "function_call")
+    captured_result = next(content for content in loaded_contents if content.type == "function_result")
+    assert captured_load.parse_arguments() == original_arguments
+    assert captured_result.exception is None
+    effective_name = "excel" if rewrite_load else "pdf"
+    assert captured_result.additional_properties[SKILL_CONTEXT_NAME_KEY] == effective_name
+    assert (
+        f"{effective_name} instructions" in captured_result.result
+        or f"{effective_name} resource content" in captured_result.result
+    )
+    final_contents = [content for message in model_inputs[2] for content in message.contents]
+    retained_load = any(content.call_id == "load-1" for content in final_contents)
+    assert retained_load is (unload_name != effective_name)
+    assert any(content.type == "function_call" and content.call_id == "unload-1" for content in final_contents)
+    assert any(content.type == "function_result" and content.call_id == "unload-1" for content in final_contents)
+
+
 async def test_chat_agent_uses_client_compaction_defaults_when_agent_unset(chat_client_base: Any) -> None:
     captured_roles: list[list[str]] = []
     original_inner = chat_client_base._inner_get_response
@@ -4276,17 +4606,17 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from agent_framework._sessions import InMemoryHistoryProvider
-    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient, OpenAIChatOptions
 
     @tool(approval_mode="never_require")
     def search_hotels(city: str) -> str:
         return f"Found 3 hotels in {city}"
 
     responses_client = OpenAIChatClient(model="test-model", api_key="test-key")
-    responses_agent = Agent(
+    responses_agent = Agent[OpenAIChatOptions](
         client=responses_client,  # ty: ignore[invalid-argument-type]
         tools=[search_hotels],
-        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": False},
     )
     session = responses_agent.create_session()
 
