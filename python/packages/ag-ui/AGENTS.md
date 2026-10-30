@@ -26,12 +26,15 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 
 ## Protocol Notes
 
-- Outbound custom events are emitted as AG-UI `CUSTOM`.
+- Outbound custom events are emitted as AG-UI `CUSTOM`. Content-free `AgentResponseUpdate` metadata does not
+  produce a workflow-output event.
 - Usage metadata from `Content(type="usage")` is surfaced as `CUSTOM` events with `name="usage"`.
 - Text annotations are surfaced as `CUSTOM` events with `name="annotations"` and
   `value={"messageId": ..., "annotations": [...]}`. Annotation-only updates announce a text message if needed
   without emitting empty text deltas. Provider `raw_representation` is omitted; `AGUIChatClient` restores the
-  annotations on text content. These live custom events are not replayed by `MESSAGES_SNAPSHOT`.
+  annotations on text content. Content-coordinate regions on text deltas are rebased to accumulated-message
+  offsets; source-coordinate regions are preserved unchanged. These live custom events are not replayed by
+  `MESSAGES_SNAPSHOT`.
 - Inbound custom event aliases are accepted: `CUSTOM`, `CUSTOM_EVENT`, and `custom_event`.
 - Multimodal user inputs support both legacy (`text`, `binary`) and draft-style (`image`, `audio`, `video`, `document`) shapes.
 - Interrupted runs complete with `RUN_FINISHED.outcome.type == "interrupt"` and canonical `outcome.interrupts`; do not document or add new flows that depend on the legacy top-level `RUN_FINISHED.interrupt` field.

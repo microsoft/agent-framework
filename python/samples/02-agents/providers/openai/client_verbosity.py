@@ -29,7 +29,7 @@ PROMPT = "Explain in your own words what photosynthesis is and why it matters."
 
 async def run_with_verbosity(level: Verbosity) -> None:
     """Run the same prompt with a different verbosity setting and print the output length."""
-    agent = Agent(
+    agent = Agent[OpenAIChatOptions](
         client=OpenAIChatClient[OpenAIChatOptions](model="gpt-5"),
         name=f"Explainer-{level}",
         instructions="You are a friendly science explainer.",
@@ -45,7 +45,7 @@ async def run_with_verbosity(level: Verbosity) -> None:
 
 async def run_per_call_override() -> None:
     """Show that verbosity can be overridden per ``run`` call."""
-    agent = Agent(
+    agent = Agent[OpenAIChatOptions](
         client=OpenAIChatClient[OpenAIChatOptions](model="gpt-5"),
         name="Explainer-default",
         instructions="You are a friendly science explainer.",

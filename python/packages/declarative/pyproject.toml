@@ -4,7 +4,7 @@ description = "Declarative specification support for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.4.0"
+version = "1.4.1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -31,6 +30,9 @@ dependencies = [
 [dependency-groups]
 dev = [
     "types-PyYaml==6.0.12.20260906"
+]
+test = [
+    "tenacity>=9.1.4,<9.2.0",
 ]
 
 [tool.uv]

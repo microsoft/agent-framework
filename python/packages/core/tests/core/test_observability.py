@@ -16,6 +16,7 @@ from agent_framework import (
     Agent,
     AgentResponse,
     BaseChatClient,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -1482,6 +1483,39 @@ def test_get_exporters_from_env_env_only_headers_unaffected_by_origin_guard(monk
 
 
 # region Test create_resource
+
+
+def test_create_resource_includes_agent_framework_attribute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resources include the Agent Framework marker as a string, not a boolean."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+
+    resource = create_resource()
+
+    assert resource.attributes["microsoft.agent-framework"] == "True"
+    assert "microsoft.foundry" not in resource.attributes
+
+
+def test_create_resource_agent_framework_attribute_preserves_override_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default marker follows existing environment and explicit attribute precedence."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "microsoft.agent-framework=environment")
+
+    assert create_resource().attributes["microsoft.agent-framework"] == "environment"
+    assert (
+        create_resource(attributes={"microsoft.agent-framework": "explicit"}).attributes["microsoft.agent-framework"]
+        == "explicit"
+    )
+    assert (
+        create_resource(
+            attributes={"microsoft.agent-framework": "explicit"}, **{"microsoft.agent-framework": "keyword"}
+        ).attributes["microsoft.agent-framework"]
+        == "keyword"
+    )
 
 
 def test_create_resource_from_env(monkeypatch):
@@ -4432,6 +4466,60 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
 # region Test _configure_providers
 
 
+def test_configure_providers_share_agent_framework_resource() -> None:
+    """Exported logs, spans, and metrics carry the same marked resource."""
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader, MetricExporter
+
+    from agent_framework.observability import ObservabilitySettings
+
+    span_exporter = InMemorySpanExporter()
+    log_exporter = InMemoryLogRecordExporter()
+    metric_reader = InMemoryMetricReader()
+    metric_exporter = Mock(spec=MetricExporter)
+    settings = ObservabilitySettings(
+        service_name="foundry-test",
+        resource_attributes={"deployment.environment": "test"},
+    )
+
+    with (
+        patch("opentelemetry.trace.set_tracer_provider") as set_tracer,
+        patch("opentelemetry._logs.set_logger_provider") as set_logger,
+        patch("opentelemetry.metrics.set_meter_provider") as set_meter,
+        patch("opentelemetry.sdk.metrics.export.PeriodicExportingMetricReader", return_value=metric_reader),
+        patch("agent_framework.observability.logger.addHandler"),
+    ):
+        settings._configure_providers([span_exporter, log_exporter, metric_exporter])
+
+    tracer_provider = set_tracer.call_args.args[0]
+    logger_provider = set_logger.call_args.args[0]
+    meter_provider = set_meter.call_args.args[0]
+    try:
+        with tracer_provider.get_tracer("test").start_as_current_span("test"):
+            pass
+        logger_provider.get_logger("test").emit(body="test log")
+        meter_provider.get_meter("test").create_counter("test_counter").add(1)
+        tracer_provider.force_flush()
+        logger_provider.force_flush()
+
+        metrics_data = metric_reader.get_metrics_data()
+        assert metrics_data is not None
+        resources = [
+            span_exporter.get_finished_spans()[0].resource,
+            log_exporter.get_finished_logs()[0].resource,
+            metrics_data.resource_metrics[0].resource,
+        ]
+        for resource in resources:
+            assert resource is resources[0]
+            assert resource.attributes["microsoft.agent-framework"] == "True"
+            assert resource.attributes["service.name"] == "foundry-test"
+            assert resource.attributes["deployment.environment"] == "test"
+    finally:
+        tracer_provider.shutdown()
+        logger_provider.shutdown()
+        meter_provider.shutdown()
+
+
 def test_configure_providers_with_span_exporters(monkeypatch):
     """Test _configure_providers correctly handles span exporters."""
     from unittest.mock import Mock, patch
@@ -5157,12 +5245,12 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedTelemetryChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
         description="Nested telemetry agent",
-        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "NestedModel"},
     )
 
     span_exporter.clear()
@@ -6692,11 +6780,11 @@ async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExpo
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
-        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "NestedModel"},
     )
 
     span_exporter.clear()
@@ -6810,11 +6898,11 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="tool_agent_id",
         name="tool_agent",
-        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},
     )
 
     span_exporter.clear()
@@ -6914,11 +7002,11 @@ async def test_parallel_function_call_spans_nested_under_agent_span(span_exporte
 
             return _get_final()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=ParallelToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="parallel_tool_agent_id",
         name="parallel_tool_agent",
-        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},
     )
 
     span_exporter.clear()

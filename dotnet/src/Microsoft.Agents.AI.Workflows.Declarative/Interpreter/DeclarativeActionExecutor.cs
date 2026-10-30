@@ -40,6 +40,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         }
 
         this.State = state;
+        this.RegisterCheckpointRestoringCallback(state, state.RestoreCheckpointAsync);
 
         this.Model = model;
     }
@@ -124,13 +125,6 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     }
 
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Restore the state of the executor from a checkpoint.
-    /// This must be overridden to restore any state that was saved during checkpointing.
-    /// </summary>
-    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this.State.RestoreAsync(context, cancellationToken);
 
     protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context, SensitivityLevel sensitivity = SensitivityLevel.None)
     {

@@ -4,7 +4,7 @@ description = "DuckDB vector stores for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a261022"
+version = "1.0.0a261030"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -14,7 +14,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

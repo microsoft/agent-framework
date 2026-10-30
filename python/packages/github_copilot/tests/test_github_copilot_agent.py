@@ -2959,26 +2959,47 @@ class TestGitHubCopilotAgentFunctionApproval:
         hooks = agent._build_session_hooks([dangerous], {"on_pre_tool_use": runtime_hook})  # type: ignore[reportPrivateUsage]
         assert hooks == {"on_pre_tool_use": runtime_hook}
 
-    async def test_default_hook_forwarded_to_create_session(
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_default_hook_forwarded_with_unrelated_hooks(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
         assistant_message_event: SessionEvent,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+        streaming: bool,
     ) -> None:
-        """An always_require tool causes the default hook to be forwarded to the SDK session."""
+        """Unrelated hooks are forwarded without suppressing approval in either run path."""
         mock_session.send_and_wait.return_value = assistant_message_event
+        post_tool_use = MagicMock()
 
         @tool(approval_mode="always_require")
         def dangerous(path: str) -> str:
             """A tool that requires human approval."""
             return f"deleted {path}"
 
-        agent = GitHubCopilotAgent(client=mock_client, tools=[dangerous])
-        await agent.run("hello")
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            tools=[dangerous],
+            default_options=cast(Any, {"hooks": {"on_post_tool_use": post_tool_use}}),
+        )
+        if streaming:
+            events = [assistant_delta_event, session_idle_event]
 
-        hooks = mock_client.create_session.call_args.kwargs["hooks"]
-        assert hooks is not None
-        assert "on_pre_tool_use" in hooks
+            def mock_on(handler: Any) -> Any:
+                for event in events:
+                    handler(event)
+                return lambda: None
+
+            mock_session.on = mock_on
+            await agent.run("hello", stream=True).get_final_response()
+        else:
+            await agent.run("hello")
+
+        session_hooks = mock_client.create_session.call_args.kwargs["hooks"]
+        assert session_hooks["on_post_tool_use"] is post_tool_use
+        decision = session_hooks["on_pre_tool_use"](pre_tool_use_input("dangerous"), {"session_id": "s"})
+        assert decision["permissionDecision"] == "ask"
 
 
 class TestGitHubCopilotAgentDeprecatedFunctionApproval:

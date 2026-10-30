@@ -14,7 +14,7 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from redis.asyncio import Redis
 
-from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework_redis._context_provider import _SCOPE_FIELDS, RedisContextProvider, _scope_token_field
 from agent_framework_redis._feature_usage import FeatureIndex
 from agent_framework_redis._history_provider import RedisHistoryProvider, _redis_result
 
@@ -36,6 +36,9 @@ async def test_empty_history_save_marks_redis_used(mock_redis_client: MagicMock)
 @pytest.fixture
 def mock_index() -> AsyncMock:
     idx = AsyncMock()
+    client = MagicMock()
+    client.aclose = AsyncMock()
+    idx.client = client
     idx.create = AsyncMock()
     idx.load = AsyncMock()
     idx.query = AsyncMock(return_value=[])
@@ -48,7 +51,7 @@ def patch_index_from_dict(mock_index: AsyncMock):
     with patch("agent_framework_redis._context_provider.AsyncSearchIndex") as mock_cls:
         mock_cls.from_dict = MagicMock(return_value=mock_index)
 
-        async def mock_from_existing(index_name: str, redis_url: str):  # noqa: ARG001
+        async def mock_from_existing(*args: Any, **kwargs: Any):  # noqa: ARG001
             mock_existing = AsyncMock()
             mock_existing.schema.to_dict = MagicMock(
                 side_effect=lambda: mock_cls.from_dict.call_args[0][0] if mock_cls.from_dict.call_args else {}
@@ -136,8 +139,11 @@ class TestRedisContextProviderSchema:
         provider = RedisContextProvider(source_id="ctx", user_id="u1")
         schema = provider.schema_dict
         field_names = [f["name"] for f in schema["fields"]]
-        for expected in ("role", "content", "conversation_id", "message_id", "application_id", "agent_id", "user_id"):
+        for expected in ("role", "content", "message_id"):
             assert expected in field_names
+        for scope_field in _SCOPE_FIELDS:
+            assert scope_field not in field_names
+            assert _scope_token_field(scope_field) in field_names
         assert schema["index"]["name"] == "context"
         assert schema["index"]["prefix"] == "context"
 

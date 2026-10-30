@@ -182,8 +182,9 @@ protocol-gated compatibility operations; they are not universal preflights.
 ### Tasks
 
 The supported MCP Python SDK 2.x runtime does not expose the current `io.modelcontextprotocol/tasks` extension.
-Tools that may require Tasks are not presented as ordinary supported calls, and the removed long-running Tasks
-sample remains deferred. An MRTR `InputRequiredResult` is not a Tasks `input_required` status.
+Tools that require Tasks are not presented as ordinary supported calls. Tools with optional Tasks support continue
+through ordinary `tools/call` without task augmentation, and the removed long-running Tasks sample remains deferred.
+An MRTR `InputRequiredResult` is not a Tasks `input_required` status.
 
 ## Consequences
 
