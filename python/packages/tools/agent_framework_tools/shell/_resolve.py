@@ -14,13 +14,56 @@ from ._types import ShellExecutionError
 _ENV_OVERRIDE = "AGENT_FRAMEWORK_SHELL"
 
 
+def _split_shell_override(value: str) -> list[str]:
+    r"""Split a shell override string into argv.
+
+    On POSIX, ``shlex.split`` is correct. On Windows, ``shlex.split`` treats
+    ``\`` as an escape and drops backslashes from unquoted paths such as
+    ``C:\Windows\...\powershell.exe``, which then fails with
+    ``FileNotFoundError``. Parse with CommandLineToArgvW-like rules: keep
+    backslashes literal, honour double quotes, and concatenate adjacent
+    quoted and unquoted fragments (so ``"C:/Program Files"/PowerShell/7/pwsh.exe``
+    stays one argv element).
+    """
+    import shlex
+
+    if sys.platform != "win32":
+        return shlex.split(value)
+
+    args: list[str] = []
+    buf: list[str] = []
+    in_quotes = False
+    i = 0
+    n = len(value)
+    while i < n:
+        c = value[i]
+        if in_quotes:
+            if c == '"':
+                in_quotes = False
+            else:
+                buf.append(c)
+        else:
+            if c == '"':
+                in_quotes = True
+            elif c in " 	":
+                if buf:
+                    args.append("".join(buf))
+                    buf = []
+            else:
+                buf.append(c)
+        i += 1
+    if buf:
+        args.append("".join(buf))
+    return args
+
+
 def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> list[str]:
     """Resolve the shell invocation argv.
 
     Priority:
 
-    1. Explicit ``shell`` argument (string is split via shlex rules; sequence
-       is used verbatim).
+    1. Explicit ``shell`` argument (string is split with platform-aware rules;
+       sequence is used verbatim).
     2. ``AGENT_FRAMEWORK_SHELL`` environment variable.
     3. Platform default.
 
@@ -39,9 +82,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
     """
     if shell is not None:
         if isinstance(shell, str):
-            import shlex
-
-            parts = shlex.split(shell)
+            parts = _split_shell_override(shell)
             if not parts:
                 raise ShellExecutionError("shell override must not be empty")
         else:
@@ -52,9 +93,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
     env_override = os.environ.get(_ENV_OVERRIDE)
     if env_override:
-        import shlex
-
-        parts = shlex.split(env_override)
+        parts = _split_shell_override(env_override)
         if parts:
             return parts if interactive else _ensure_command_flag(parts)
 
@@ -82,12 +121,16 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
 
 def is_powershell(argv: Sequence[str]) -> bool:
-    """Return True when ``argv[0]`` appears to be PowerShell."""
+    """Return True when ``argv[0]`` appears to be PowerShell.
+
+    Normalize backslashes to ``/`` before ``basename`` so win32-style
+    paths still detect correctly when this helper runs on POSIX (unit
+    tests monkeypatch ``sys.platform`` to ``win32`` on Linux CI).
+    """
     if not argv:
         return False
-    name = os.path.basename(argv[0]).lower()
+    name = os.path.basename(argv[0].replace("\\", "/")).lower()
     return name in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
-
 
 def _ensure_command_flag(argv: list[str]) -> list[str]:
     """Append the right ``-c`` / ``-Command`` flag for stateless argv.
