@@ -755,7 +755,7 @@ internal static class OutputConverter
     /// </remarks>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call result payload.")]
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call result payload.")]
-    private static string EncodeFunctionResultAsJsonStringPayload(object? result)
+    internal static string EncodeFunctionResultAsJsonStringPayload(object? result)
     {
         string innerText = result switch
         {

@@ -377,7 +377,7 @@ public class OAuthConsentPolicyHandlerTests
         {
             var state = McpConsentContext.Current.Value
                 ?? throw new InvalidOperationException("The handler did not set the consent state.");
-            state.Pending = new McpConsentInfo("tb", "tb.tool", consentLink);
+            state.AddPendingConsent(new McpConsentInfo("tb", "tb.tool", consentLink));
             state.CancellationSource?.Cancel();
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Threading;
@@ -317,6 +318,14 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
         }
 
+        if (allowStoredOutputEnabled &&
+            agent.GetService<FunctionInvokingChatClient>() is { } functionInvokingClient)
+        {
+            // The FICC instance is shared, so install one AsyncLocal-aware gate rather than
+            // replacing its invoker per request. It is a no-op outside a stored-output consent turn.
+            ConsentBlockingFunctionInvoker.EnsureInstalled(functionInvokingClient);
+        }
+
         var options = new ChatClientAgentRunOptions(chatOptions);
 
         // We only use a volatile provider for the conversation history if the agent is a
@@ -340,14 +349,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 new VolatileChatHistoryProvider(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag)));
         }
 
-        // 6. Set up consent context for -32006 OAuth consent interception.
-        //    We create a linked CTS so the consent-aware tool wrapper can cancel the agent
-        //    run mid-loop when a -32006 error is returned by the proxy. The RequestConsentState
-        //    is a shared mutable object that flows via AsyncLocal to the tool wrapper.
+        // 6. Set up consent context for -32006 OAuth consent interception. When the downstream
+        //    service stores its own history, FICC makes one final no-tools request to persist the
+        //    complete result batch. Otherwise it terminates before that unnecessary request. A
+        //    linked CTS supports agents invoking tools outside the loop, and the shared state flows
+        //    via AsyncLocal to the tool wrapper and the request-aware FICC invoker.
         using var consentCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             context.Shutdown);
-        var consentState = new RequestConsentState { CancellationSource = consentCts };
+        var consentState = new RequestConsentState
+        {
+            CancellationSource = consentCts,
+            ReconcileDownstreamHistory = allowStoredOutputEnabled,
+            InterruptedToolResult = hostingOptions?.OAuthConsentInterruptedToolResult
+                ?? McpConsentResults.NotExecuted,
+        };
 
         // 7. Run the agent and convert output
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
@@ -389,7 +405,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
                 bool shutdownDetected = false;
-                McpConsentInfo? consentInfo = null;
+                IReadOnlyList<McpConsentInfo>? pendingConsents = null;
                 ResponseStreamEvent? failedEvent = null;
                 ResponseStreamEvent? evt = null;
                 try
@@ -443,15 +459,17 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     if (evt is ResponseCompletedEvent)
                     {
                         consentCts.Token.ThrowIfCancellationRequested();
+                        var consents = consentState.GetPendingConsents();
+                        pendingConsents = consents.Length > 0 ? consents : null;
                     }
 
                     shutdownDetected =
                         context.IsShutdownRequested && !emittedTerminal;
                 }
-                catch (OperationCanceledException) when (!emittedTerminal && consentState.Pending is not null)
+                catch (OperationCanceledException) when (!emittedTerminal && consentState.HasPendingConsents)
                 {
                     // -32006 consent error: the tool wrapper cancelled consentCts and stored consent info.
-                    consentInfo = consentState.Pending;
+                    pendingConsents = consentState.GetPendingConsents();
                 }
                 catch (OperationCanceledException) when (context.IsShutdownRequested && !emittedTerminal)
                 {
@@ -476,14 +494,25 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                         ex.Message);
                 }
 
-                if (consentInfo is not null)
+                if (pendingConsents is not null)
                 {
-                    // Emit oauth_consent_request output item + incomplete for the consent URL.
-                    // The tool wrapper records every -32006 and cancels the loop, so a rejected link
-                    // fails the turn here instead of reaching the model as a tool error.
+                    if (evt is ResponseCompletedEvent completed)
+                    {
+                        foreach (var skippedResultEvent in EmitConsentInterruptedToolResults(
+                            stream,
+                            completed.Response.Output,
+                            consentState.InterruptedToolResult))
+                        {
+                            yield return skippedResultEvent;
+                        }
+                    }
+
+                    // The loop has recorded the consent-required result and stopped before another
+                    // model request. Add explicit results for every remaining call, then emit all
+                    // consent requirements. A rejected link fails the turn without exposing it.
                     foreach (var consentEvent in this.EmitConsentRequiredResponse(
                         stream,
-                        [consentInfo],
+                        pendingConsents,
                         context.ResponseId))
                     {
                         // Mark the failure before yielding it, so the finally block below does not keep
@@ -876,6 +905,47 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         }
 
         yield return stream.EmitIncomplete(reason: null);
+    }
+
+    /// <summary>
+    /// Emits explicit not-executed results for function calls left unmatched when OAuth consent
+    /// terminates a sequential function batch.
+    /// </summary>
+    private static IEnumerable<ResponseStreamEvent> EmitConsentInterruptedToolResults(
+        ResponseEventStream stream,
+        IList<OutputItem> output,
+        string interruptedToolResult)
+    {
+        HashSet<string>? completedCallIds = null;
+        foreach (var result in output.OfType<OutputItemFunctionToolCallOutput>())
+        {
+            (completedCallIds ??= new(StringComparer.Ordinal)).Add(result.CallId);
+        }
+
+        List<string>? missingCallIds = null;
+        foreach (var item in output)
+        {
+            if (item is OutputItemFunctionToolCall call &&
+                completedCallIds?.Contains(call.CallId) is not true)
+            {
+                (missingCallIds ??= []).Add(call.CallId);
+            }
+        }
+
+        if (missingCallIds is null)
+        {
+            yield break;
+        }
+
+        foreach (var callId in missingCallIds)
+        {
+            foreach (var evt in stream.OutputItemFunctionCallOutput(
+                callId,
+                BinaryData.FromString(OutputConverter.EncodeFunctionResultAsJsonStringPayload(interruptedToolResult))))
+            {
+                yield return evt;
+            }
+        }
     }
 
     /// <summary>

@@ -226,10 +226,10 @@ public sealed class FoundryToolboxApprovalTests
 
             // Assert
             Assert.True(cancellation.IsCancellationRequested);
-            Assert.NotNull(state.Pending);
-            Assert.Equal("weather", state.Pending.ToolboxName);
-            Assert.Equal("get_weather", state.Pending.ToolName);
-            Assert.EndsWith(ConsentUrl, state.Pending.ConsentUrl, StringComparison.Ordinal);
+            var pendingConsent = Assert.Single(state.GetPendingConsents());
+            Assert.Equal("weather", pendingConsent.ToolboxName);
+            Assert.Equal("get_weather", pendingConsent.ToolName);
+            Assert.EndsWith(ConsentUrl, pendingConsent.ConsentUrl, StringComparison.Ordinal);
             Assert.Equal(1, toolbox.InvocationCount);
         }
         finally
