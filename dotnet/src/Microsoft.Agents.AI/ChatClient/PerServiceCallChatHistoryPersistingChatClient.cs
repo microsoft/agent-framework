@@ -47,6 +47,12 @@ namespace Microsoft.Agents.AI;
 /// </item>
 /// </list>
 /// <para>
+/// Continuation and background-response runs are the exception: for those runs
+/// <see cref="ChatClientAgent"/> forces end-of-run persistence (see the
+/// <c>LogAgentChatClientBackgroundResponseFallback</c> warning), so this decorator neither loads
+/// history nor notifies providers for them — doing so would persist the same messages twice.
+/// </para>
+/// <para>
 /// This chat client must be used within the context of a running <see cref="ChatClientAgent"/>. It retrieves the
 /// current agent and session from <see cref="AIAgent.CurrentRunContext"/>, which is set automatically when an agent's
 /// <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentSession?, AgentRunOptions?, CancellationToken)"/> or
@@ -119,14 +125,17 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
             throw;
         }
 
-        await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, response.Messages, options, cancellationToken).ConfigureAwait(false);
-
         if (isContinuationOrBackground)
         {
-            // Continuation/background run — the agent's forced end-of-run handles
-            // session ConversationId and persistence; the decorator is a no-op.
+            // Continuation/background run — the agent's forced end-of-run handles session
+            // ConversationId and persistence. Notifying the providers here as well would
+            // persist the same messages twice.
+            return response;
         }
-        else if (isServiceManaged || !string.IsNullOrEmpty(response.ConversationId))
+
+        await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, response.Messages, options, cancellationToken).ConfigureAwait(false);
+
+        if (isServiceManaged || !string.IsNullOrEmpty(response.ConversationId))
         {
             // Service manages history — update session with the real ConversationId.
             agent.UpdateSessionConversationId(session, response.ConversationId, cancellationToken);
@@ -185,6 +194,12 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
 
         bool loopExitedNormally = false;
         bool serviceErrorOccurred = false;
+
+        // Tracks whether any update carried a continuation token. When it did, the run can be
+        // resumed later, and that resumed run performs forced end-of-run persistence for the
+        // input messages — so persisting them here on an early exit would duplicate them.
+        bool continuationTokenObserved = false;
+
         try
         {
             bool hasUpdates;
@@ -203,6 +218,11 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
             {
                 var update = enumerator.Current;
                 responseUpdates.Add(update.Clone());
+
+                if (update.ContinuationToken is not null)
+                {
+                    continuationTokenObserved = true;
+                }
 
                 // If the service returned a real ConversationId on any update, remember that.
                 // Otherwise stamp our sentinel so FICC treats this as service-managed —
@@ -240,7 +260,10 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
             // this on the cooperative-pause path; service errors deliberately do NOT persist
             // input messages (history of failed calls is the caller's responsibility, e.g.
             // by retrying or starting from an earlier point).
-            if (!loopExitedNormally && !serviceErrorOccurred)
+            // Continuation/background runs, and runs that handed out a continuation token, are
+            // excluded because the (possibly resumed) run persists these inputs itself at the
+            // end of the run; persisting here too would duplicate them.
+            if (!loopExitedNormally && !serviceErrorOccurred && !isContinuationOrBackground && !continuationTokenObserved)
             {
                 // Prefer the original cancellation token so cleanup remains responsive; fall
                 // back to None only if the caller's token has already been canceled (otherwise
@@ -264,14 +287,17 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
 
         var chatResponse = responseUpdates.ToChatResponse();
 
-        await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, chatResponse.Messages, options, cancellationToken).ConfigureAwait(false);
-
         if (isContinuationOrBackground)
         {
-            // Continuation/background run — the agent's forced end-of-run handles
-            // session ConversationId and persistence; the decorator is a no-op.
+            // Continuation/background run — the agent's forced end-of-run handles session
+            // ConversationId and persistence. Notifying the providers here as well would
+            // persist the same messages twice.
+            yield break;
         }
-        else if (isServiceManaged)
+
+        await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, chatResponse.Messages, options, cancellationToken).ConfigureAwait(false);
+
+        if (isServiceManaged)
         {
             // Service manages history — update session with the real ConversationId.
             agent.UpdateSessionConversationId(session, chatResponse.ConversationId, cancellationToken);
