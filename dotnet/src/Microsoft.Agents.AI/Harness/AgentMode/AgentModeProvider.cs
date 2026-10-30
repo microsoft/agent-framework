@@ -200,7 +200,7 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
         await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return this._sessionState.GetOrInitializeState(session).CurrentMode;
+            return this.GetValidatedMode(session);
         }
         finally
         {
@@ -287,7 +287,7 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
         try
         {
             AgentModeState state = this._sessionState.GetOrInitializeState(context.Session);
-            currentMode = state.CurrentMode;
+            currentMode = this.EnsureConfiguredMode(state, context.Session);
             previousModeForNotification = state.PreviousModeForNotification;
 
             // If the mode was changed externally (e.g., via /mode command), clear the pending
@@ -358,6 +358,32 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
             .ToString();
     }
 
+
+    /// <summary>
+    /// Returns the session mode, resetting to the configured default when a restored mode is no longer valid.
+    /// </summary>
+    private string GetValidatedMode(AgentSession session)
+    {
+        AgentModeState state = this._sessionState.GetOrInitializeState(session);
+        return this.EnsureConfiguredMode(state, session);
+    }
+
+    /// <summary>
+    /// If <paramref name="state"/> holds a mode that is not in the current configuration, rewrite it to the default
+    /// (matching Python <c>get_agent_mode</c> fallback) and persist the correction.
+    /// </summary>
+    private string EnsureConfiguredMode(AgentModeState state, AgentSession? session)
+    {
+        if (this._validModeNames.Contains(state.CurrentMode))
+        {
+            return state.CurrentMode;
+        }
+
+        state.CurrentMode = this._defaultMode;
+        this._sessionState.SaveState(session, state);
+        return state.CurrentMode;
+    }
+
     private void ValidateMode(string mode)
     {
         if (!this._validModeNames.Contains(mode))
@@ -423,7 +449,9 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
                     await sessionLock.WaitAsync().ConfigureAwait(false);
                     try
                     {
-                        return this._sessionState.GetOrInitializeState(session).CurrentMode;
+                        return session is null
+                            ? this._defaultMode
+                            : this.GetValidatedMode(session);
                     }
                     finally
                     {

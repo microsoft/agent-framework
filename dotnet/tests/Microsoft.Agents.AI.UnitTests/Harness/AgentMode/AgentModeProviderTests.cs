@@ -773,6 +773,45 @@ public class AgentModeProviderTests
 
     #region Helper Methods
 
+
+    /// <summary>
+    /// A mode restored from an older provider configuration must fall back to the new default.
+    /// </summary>
+    [Fact]
+    public async Task GetModeAsync_FallsBackWhenRestoredModeNoLongerConfiguredAsync()
+    {
+        // Arrange — persist "review" under the v1 mode set.
+        var v1 = new AgentModeProvider(new AgentModeProviderOptions
+        {
+            Modes =
+            [
+                new AgentModeProviderOptions.AgentMode("draft", "Draft instructions."),
+                new AgentModeProviderOptions.AgentMode("review", "Review instructions."),
+            ],
+            DefaultMode = "draft",
+        });
+        var session = new ChatClientAgentSession();
+        await v1.SetModeAsync(session, "review");
+        JsonElement persisted = session.StateBag.Serialize();
+
+        // Act — restore under a provider that no longer lists "review".
+        var v2 = new AgentModeProvider(new AgentModeProviderOptions
+        {
+            Modes =
+            [
+                new AgentModeProviderOptions.AgentMode("draft", "Draft instructions."),
+                new AgentModeProviderOptions.AgentMode("publish", "Publish instructions."),
+            ],
+            DefaultMode = "draft",
+        });
+        var restored = new ChatClientAgentSession(stateBag: AgentSessionStateBag.Deserialize(persisted));
+        string mode = await v2.GetModeAsync(restored);
+
+        // Assert
+        Assert.Equal("draft", mode);
+        Assert.Equal("draft", await v2.GetModeAsync(restored));
+    }
+
     private static async Task<(IEnumerable<AITool> Tools, AgentModeState State)> CreateToolsWithStateAsync()
     {
         var provider = new AgentModeProvider();
