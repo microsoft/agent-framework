@@ -8,6 +8,7 @@ import base64
 import logging
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any, cast
+from urllib.parse import unquote
 
 from agent_framework import AgentResponse, ChatOptions, Content, Message
 from agent_framework_hosting import AgentRunArgs
@@ -107,6 +108,7 @@ def mcp_from_run(
                     prefix, separator, encoded = content.uri.partition(",")
                     if not separator or not prefix.startswith("data:") or ";base64" not in prefix:
                         raise ValueError("Agent Framework data content must contain a base64 data URI.")
+                    encoded = unquote(encoded)
                     try:
                         base64.b64decode(encoded, validate=True)
                     except ValueError as exc:

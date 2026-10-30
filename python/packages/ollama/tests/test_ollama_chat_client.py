@@ -647,20 +647,25 @@ async def test_cmc_with_dict_tool_passthrough(
     assert call_kwargs["tools"] == [{"type": "function", "function": {"name": "custom_tool", "parameters": {}}}]
 
 
+@pytest.mark.parametrize("escape_payload", [False, True])
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_with_data_content_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
     chat_history: list[Message],
     mock_chat_completion_response: OllamaChatResponse,
+    escape_payload: bool,
 ) -> None:
     image_bytes = b"\x89PNG\r\n\x1a\n"
+    payload = base64.b64encode(image_bytes).decode()
+    if escape_payload:
+        payload = payload.replace("=", "%3D")
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
         Message(
             contents=[
                 Content.from_uri(
-                    uri=f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}",
+                    uri=f"data:image/png;base64,{payload}",
                     media_type="image/png",
                 )
             ],

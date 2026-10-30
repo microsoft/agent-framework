@@ -38,6 +38,7 @@ from typing import (
     get_args,
     overload,
 )
+from urllib.parse import unquote
 
 from typing_extensions import Required, TypedDict
 
@@ -196,7 +197,7 @@ def detect_media_type_from_base64(
             raise ValueError(str(exc)) from exc
         if not parsed.is_base64:
             raise ValueError("Data URI must use base64 encoding.")
-        data_str = parsed.payload
+        data_str = unquote(parsed.payload)
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
@@ -277,7 +278,7 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
     parsed = _parse_data_uri(uri)
     if not parsed.is_base64:
         raise ContentError("Data URI must use base64 encoding")
-    return parsed.payload
+    return unquote(parsed.payload)
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]

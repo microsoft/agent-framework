@@ -18,6 +18,7 @@ from collections.abc import (
 )
 from itertools import chain
 from typing import Any, ClassVar, Generic, Literal, TypedDict
+from urllib.parse import unquote
 
 from agent_framework import (
     BaseChatClient,
@@ -567,7 +568,7 @@ class OllamaChatClient(
             raise ChatClientInvalidRequestException("Ollama image content must be a base64-encoded data:image URI.")
 
         try:
-            return base64.b64decode(payload, validate=True)
+            return base64.b64decode(unquote(payload), validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ChatClientInvalidRequestException("Ollama image content contains invalid base64 data.") from exc
 

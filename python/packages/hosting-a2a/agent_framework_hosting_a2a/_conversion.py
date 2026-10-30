@@ -9,6 +9,7 @@ import json
 import logging
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any, cast
+from urllib.parse import unquote
 
 from a2a.types import Message as A2AMessage
 from a2a.types import Part
@@ -313,7 +314,7 @@ def a2a_from_run(
                     if not separator or not prefix.startswith("data:") or ";base64" not in prefix:
                         raise ValueError("Agent Framework data content must contain a base64 data URI.")
                     try:
-                        raw = base64.b64decode(encoded, validate=True)
+                        raw = base64.b64decode(unquote(encoded), validate=True)
                     except ValueError as exc:
                         raise ValueError("Agent Framework data content contains invalid base64 data.") from exc
                     parts.append(

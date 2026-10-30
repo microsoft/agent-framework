@@ -512,11 +512,12 @@ def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
     assert a2a_message.parts[0].media_type == "application/pdf"
 
 
-def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
+@mark.parametrize("payload", ["SGVsbG8gV29ybGQ=", "SGVsbG8gV29ybGQ%3D"])
+def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent, payload: str) -> None:
     """Test _prepare_message_for_a2a with DataContent."""
 
     # Create Message with DataContent (base64 data URI)
-    data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
+    data_content = Content.from_uri(uri=f"data:text/plain;base64,{payload}", media_type="text/plain")
     message = Message(role="user", contents=[data_content])
 
     # Convert to A2A message

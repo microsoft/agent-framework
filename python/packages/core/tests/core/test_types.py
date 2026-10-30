@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Literal, cast
+from urllib.parse import unquote
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -7721,3 +7722,52 @@ def test_data_uri_readers_agree_on_the_base64_marker():
     payload_marker = f"data:image/png,x;base64,{png_b64}"
     with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
         detect_media_type_from_base64(data_uri=payload_marker)
+
+
+@mark.parametrize("payload", ["+/8=", "%2B%2F8%3D", "+%2F8="])
+def test_data_uri_percent_encoded_payload(payload: str) -> None:
+    uri = f"data:application/octet-stream;name=keep%2Fraw;base64,{payload}"
+    content = Content.from_uri(uri)
+    assert _get_data_bytes_as_str(content) == "+/8="
+    assert _get_data_bytes(content) == b"\xfb\xff"
+    assert content.uri == uri
+
+
+@mark.parametrize("escaped", [False, True])
+def test_detect_media_type_from_percent_encoded_data_uri(escaped: bool) -> None:
+    payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    uri = "data:image/png;base64," + (payload.replace("/", "%2F") if escaped else payload)
+    assert detect_media_type_from_base64(data_uri=uri) == "image/png"
+    assert _get_data_bytes(Content.from_uri(uri)) == base64.b64decode(payload, validate=True)
+
+
+def test_data_uri_metadata_and_serialization_do_not_decode_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def tracked_unquote(payload: str) -> str:
+        calls.append(payload)
+        return unquote(payload)
+
+    monkeypatch.setattr("agent_framework._types.unquote", tracked_unquote, raising=False)
+    uri = "data:application/octet-stream;name=keep%2Fraw;base64,%2B%2F8%3D"
+    content = Content.from_uri(uri)
+    message = Message("user", [content])
+    restored = Message.from_dict(json.loads(json.dumps(message.to_dict())))
+    assert restored.contents[0].uri == uri
+    assert calls == []
+
+    assert _get_data_bytes(restored.contents[0]) == b"\xfb\xff"
+    assert calls == ["%2B%2F8%3D"]
+    assert restored.contents[0].uri == uri
+
+
+def test_data_uri_percent_escapes_are_decoded_only_once() -> None:
+    uri = "data:application/octet-stream;base64,%252B%252F8%253D"
+    assert _get_data_bytes_as_str(Content.from_uri(uri)) == "%2B%2F8%3D"
+    with raises(ValueError, match="Invalid base64"):
+        detect_media_type_from_base64(data_uri=uri)
+
+
+def test_raw_base64_is_not_percent_decoded() -> None:
+    with raises(ValueError, match="Invalid base64"):
+        detect_media_type_from_base64(data_str="iVBORw0KGgo%3D")
