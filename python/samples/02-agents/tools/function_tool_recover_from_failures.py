@@ -13,7 +13,7 @@ load_dotenv()
 """
 Tool exceptions handled by returning the error for the agent to recover from.
 
-Shows how a tool that throws an exception creates gracefull recovery and can keep going.
+Shows how a tool that throws an exception creates graceful recovery and can keep going.
 The LLM decides whether to retry the call or to respond with something else, based on the exception.
 """
 
@@ -37,7 +37,7 @@ def safe_divide(
     try:
         result = a / b  # Will raise ZeroDivisionError
     except ZeroDivisionError as exc:
-        print(f"    Tool failed: with error: {exc}")
+        print(f"    Tool failed with error: {exc}")
         raise
 
     return f"{a} / {b} = {result}"
@@ -79,7 +79,7 @@ async def main():
 Expected Output:
 ============================================================
 Step 1: Call divide(10, 0) - tool raises exception
-    Tool failed: with error: division by zero
+    Tool failed with error: division by zero
 Response: Division by zero is undefined in standard arithmetic, so 10 ÷ 0 has no meaning.
 
 If you’re curious about limits: as x approaches 0 from the positive side, 10/x tends to +∞; from the negative side,
