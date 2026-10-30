@@ -3689,6 +3689,30 @@ class TestSecureAgentSessionIsolation:
 
         assert executed is True
 
+    async def test_transport_marked_replay_uses_restored_state_and_clears_marker(self) -> None:
+        """Trusted transport replay keeps restored confidentiality without leaking its marker."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="transport-covered-history")
+        tracker, _ = await _get_session_security_middleware(config, session)
+        tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        restored_message = Message(role="assistant", contents=["Previously covered history"])
+        config._mark_replay_state_covered_messages([restored_message])
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[restored_message])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_tracker = provider_context.get_middleware()[0]
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        label = scoped_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PUBLIC
+        assert "_agent_framework_fides_replay_state_covered" not in restored_message.additional_properties
+
     async def test_modified_hidden_placeholder_is_not_authenticated_by_client_flag(self) -> None:
         """A real variable ID does not authenticate a client-modified placeholder."""
         config = SecureAgentConfig()
