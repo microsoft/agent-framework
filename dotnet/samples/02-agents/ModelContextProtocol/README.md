@@ -40,7 +40,7 @@ $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace w
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
 ```
 
-If the variables are not set, you will be prompted for the values when running the samples.
+If a required variable is not set, the sample stops with an error that names the missing variable.
 
 Execute the following command to build the sample:
 

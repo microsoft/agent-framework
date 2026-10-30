@@ -27,7 +27,7 @@ $env:FOUNDRY_MODEL="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
 $env:FOUNDRY_EMBEDDING_MODEL="text-embedding-3-large"  # Optional, defaults to text-embedding-3-large
 ```
 
-If the variables are not set, you will be prompted for the values when running the samples.
+If a required variable is not set, the sample stops with an error that names the missing variable.
 
 To use Qdrant in docker locally, start your Qdrant instance using the default port mappings.
 

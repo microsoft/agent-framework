@@ -103,4 +103,4 @@ dotnet run
 ```
 
 Set the required environment variables as documented in each sample's README.
-If the variables are not set, you will be prompted for the values when running the samples.
+If a required variable is not set, the sample stops with an error that names the missing variable.
