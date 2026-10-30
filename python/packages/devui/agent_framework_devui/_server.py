@@ -55,6 +55,24 @@ def _extract_error_details(body: object) -> tuple[str | None, str | None, str | 
     )
 
 
+def _validated_conversation_metadata(request_data: dict[str, Any]) -> dict[str, str]:
+    """Return conversation metadata that is safe for the store and every reader.
+
+    The Conversations API contract for metadata is a map of string keys to string
+    values. Values with any other shape are rejected here so the store can never
+    hold a value that makes the conversation list copy raise for every caller,
+    and an explicit null is treated as an empty map.
+    """
+    raw_metadata = request_data.get("metadata")
+    if raw_metadata is None:
+        return {}
+    if not isinstance(raw_metadata, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in raw_metadata.items()
+    ):
+        raise HTTPException(status_code=400, detail="metadata must be a map of string keys to string values")
+    return dict(raw_metadata)
+
+
 # Get package version
 try:
     __version__ = importlib.metadata.version("agent-framework-devui")
@@ -979,7 +997,7 @@ class DevServer:
                         )
 
                 # Local mode - use DevUI conversation store
-                metadata = request_data.get("metadata")
+                metadata = _validated_conversation_metadata(request_data)
                 executor = await self._ensure_executor()
                 conversation = executor.conversation_store.create_conversation(metadata=metadata)
                 return conversation.model_dump()
@@ -1051,7 +1069,7 @@ class DevServer:
             """Update conversation metadata - OpenAI standard."""
             try:
                 executor = await self._ensure_executor()
-                metadata = request_data.get("metadata", {})
+                metadata = _validated_conversation_metadata(request_data)
                 conversation = executor.conversation_store.update_conversation(conversation_id, metadata=metadata)
                 return conversation.model_dump()
             except ValueError as e:

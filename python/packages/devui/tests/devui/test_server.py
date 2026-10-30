@@ -524,6 +524,32 @@ async def test_api_restrictions_in_user_mode():
     assert user_response.status_code in [200, 400, 404]
 
 
+def test_conversation_metadata_rejects_non_string_shapes_and_keeps_listing_healthy():
+    """Non-map metadata must be rejected at the boundary, not stored until listing crashes."""
+    from fastapi.testclient import TestClient
+
+    server = DevServer(mode="developer", auth_enabled=False)
+    client = TestClient(server.create_app(), base_url="http://127.0.0.1")
+
+    string_metadata = client.post("/v1/conversations", json={"metadata": "oops-not-a-dict"})
+    assert string_metadata.status_code == 400
+
+    created = client.post("/v1/conversations", json={"metadata": {"owner": "alice"}})
+    assert created.status_code == 200
+    conversation_id = created.json()["id"]
+
+    non_string_value = client.post(f"/v1/conversations/{conversation_id}", json={"metadata": {"count": 5}})
+    assert non_string_value.status_code == 400
+
+    cleared = client.post(f"/v1/conversations/{conversation_id}", json={"metadata": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["metadata"] == {}
+
+    listing = client.get("/v1/conversations")
+    assert listing.status_code == 200
+    assert any(item["id"] == conversation_id for item in listing.json()["data"])
+
+
 if __name__ == "__main__":
     # Simple test runner
     async def run_tests():
