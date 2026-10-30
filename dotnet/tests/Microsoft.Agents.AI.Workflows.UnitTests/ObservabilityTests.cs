@@ -158,6 +158,41 @@ public sealed class ObservabilityTests : IDisposable
         await this.TestWorkflowEndToEndActivitiesAsync("Lockstep");
     }
 
+    [Theory]
+    [InlineData("Lockstep", false)]
+    [InlineData("Lockstep", true)]
+    [InlineData("OffThread", false)]
+    [InlineData("OffThread", true)]
+    [InlineData("Concurrent", false)]
+    [InlineData("Concurrent", true)]
+    public async Task WorkflowRunActivity_UsesSemanticConventionNameAsync(string executionEnvironmentName, bool streaming)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowRunSpanNameTest").Start();
+        var workflow = CreateWorkflow();
+        var executionEnvironment = GetExecutionEnvironment(executionEnvironmentName);
+
+        // Act
+        if (streaming)
+        {
+            await using StreamingRun run = await executionEnvironment.RunStreamingAsync(workflow, "Hello, World!");
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                // Drain the stream to complete the workflow invocation.
+            }
+        }
+        else
+        {
+            await using Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!");
+        }
+
+        // Assert
+        var workflowRunActivity = Assert.Single(this._capturedActivities, a =>
+            a.RootId == testActivity.RootId &&
+            a.Events.Any(e => e.Name == EventNames.WorkflowStarted));
+        Assert.Equal("invoke_workflow", workflowRunActivity.OperationName);
+    }
+
     [Fact]
     public async Task CreatesWorkflowActivities_WithCorrectNameAsync()
     {

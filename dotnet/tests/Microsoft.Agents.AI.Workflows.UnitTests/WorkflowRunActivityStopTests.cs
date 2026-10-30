@@ -11,8 +11,8 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 /// <summary>
 /// Regression test for https://github.com/microsoft/agent-framework/issues/4155
-/// Verifies that the workflow_invoke Activity is properly stopped/disposed so it gets exported
-/// to telemetry backends. The ActivityStopped callback must fire for the workflow_invoke span.
+/// Verifies that the invoke_workflow Activity is properly stopped/disposed so it gets exported
+/// to telemetry backends. The ActivityStopped callback must fire for the invoke_workflow span.
 /// </summary>
 [Collection("ObservabilityTests")]
 public sealed class WorkflowRunActivityStopTests : IDisposable
@@ -61,7 +61,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that the workflow_invoke Activity is stopped (and thus exportable) when
+    /// Verifies that the invoke_workflow Activity is stopped (and thus exportable) when
     /// using the Lockstep execution environment.
     /// Bug: The Activity created by LockstepRunEventStream.TakeEventStreamAsync is never
     /// disposed because yield break in async iterators does not trigger using disposal.
@@ -90,7 +90,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .ToList();
         Assert.Single(stoppedSessions ?? []);
 
-        // Assert - workflow_invoke should have been started and stopped
+        // Assert - invoke_workflow should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
@@ -105,7 +105,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that the workflow_invoke Activity is stopped when using the OffThread (Default)
+    /// Verifies that the invoke_workflow Activity is stopped when using the OffThread (Default)
     /// execution environment (StreamingRunEventStream).
     /// </summary>
     [Fact]
@@ -132,7 +132,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .ToList();
         Assert.Single(stoppedSessions ?? []);
 
-        // Assert - workflow_invoke should have been started and stopped
+        // Assert - invoke_workflow should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
@@ -147,7 +147,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that the workflow_invoke Activity is stopped when using the streaming API
+    /// Verifies that the invoke_workflow Activity is stopped when using the streaming API
     /// (StreamingRun.WatchStreamAsync) with the OffThread execution environment.
     /// This matches the exact usage pattern described in the issue.
     /// </summary>
@@ -177,14 +177,14 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .ToList();
         Assert.Single(startedSessions ?? []);
 
-        // Assert - workflow_invoke should have been started
+        // Assert - invoke_workflow should have been started
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         Assert.Single(startedWorkflowRuns ?? []);
 
-        // Assert - workflow_invoke should have been stopped
+        // Assert - invoke_workflow should have been stopped
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
@@ -193,7 +193,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that a new workflow_invoke activity is started and stopped for each
+    /// Verifies that a new invoke_workflow activity is started and stopped for each
     /// streaming invocation, even when using the same workflow in a multi-turn pattern,
     /// and that each session gets its own session activity.
     /// </summary>
@@ -236,7 +236,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .ToList();
         Assert.Equal(2, stoppedSessions.Count);
 
-        // Assert - two workflow_invoke activities should have been started and stopped
+        // Assert - two invoke_workflow activities should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
@@ -251,7 +251,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that all started activities (not just workflow_invoke) are properly stopped.
+    /// Verifies that all started activities (not just invoke_workflow) are properly stopped.
     /// This ensures no spans are "leaked" without being exported.
     /// </summary>
     [Fact]
