@@ -45,6 +45,7 @@
   </Folder>
   <Folder Name="/Samples/02-agents/Agents/">
     <File Path="samples/02-agents/Agents/README.md" />
+    <Project Path="samples/02-agents/Agents/Agent_ContainerAppsDynamicSessions/Agent_ContainerAppsDynamicSessions.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step01_UsingFunctionToolsWithApprovals/Agent_Step01_UsingFunctionToolsWithApprovals.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step02_StructuredOutput/Agent_Step02_StructuredOutput.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step03_PersistedConversations/Agent_Step03_PersistedConversations.csproj" />
