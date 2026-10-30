@@ -28,6 +28,12 @@ dependencies = [
     "agent-framework-openai>=1.18.0,<2",
 ]
 
+[dependency-groups]
+test = [
+    "httpx>=0.28,<1",
+    "httpx2>=2.0.0,<3",
+]
+
 [tool.ruff]
 extend = "../../pyproject.toml"
 

@@ -28,6 +28,11 @@ dependencies = [
     "ollama>=0.5.3,<0.5.4",
 ]
 
+[dependency-groups]
+test = [
+    "openai>=2.25.0,<4",
+]
+
 [tool.uv]
 prerelease = "if-necessary"
 environments = [

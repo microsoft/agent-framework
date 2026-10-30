@@ -76,6 +76,13 @@ dev = [
     "opentelemetry-exporter-otlp>=1.39.0,<2",
     "types-pyyaml>=6.0,<7.0",
 ]
+test = [
+    "agent-framework-azurefunctions>=1.0.0b260922,<2",
+    "agent-framework-durabletask>=1.0.0b260922,<2",
+    "httpx>=0.28,<1",
+    "openai>=2.25.0,<4",
+    "tenacity>=9.1.4,<9.2.0",
+]
 
 [tool.uv]
 prerelease = "if-necessary"

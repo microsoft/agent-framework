@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "oracledb>=2.2.0,<4",
+    "oracledb>=3.0.0,<4",
 ]
 
 [tool.ruff]

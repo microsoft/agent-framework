@@ -27,6 +27,11 @@ dependencies = [
     "openai>=2.25.0,<4",
 ]
 
+[dependency-groups]
+test = [
+    "agent-framework-ag-ui>=1.7.1,<2",
+]
+
 [tool.uv]
 prerelease = "if-necessary"
 environments = [

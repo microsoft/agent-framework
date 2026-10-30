@@ -505,6 +505,13 @@ dev = [
     { name = "opentelemetry-exporter-otlp" },
     { name = "types-pyyaml" },
 ]
+test = [
+    { name = "agent-framework-azurefunctions" },
+    { name = "agent-framework-durabletask" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "tenacity" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -556,6 +563,13 @@ dev = [
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.39.0,<2" },
     { name = "types-pyyaml", specifier = ">=6.0,<7.0" },
 ]
+test = [
+    { name = "agent-framework-azurefunctions", specifier = ">=1.0.0b260922,<2" },
+    { name = "agent-framework-durabletask", specifier = ">=1.0.0b260922,<2" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "openai", specifier = ">=2.25.0,<4" },
+    { name = "tenacity", specifier = ">=9.1.4,<9.2.0" },
+]
 
 [[package]]
 name = "agent-framework-declarative"
@@ -573,6 +587,9 @@ dependencies = [
 dev = [
     { name = "types-pyyaml" },
 ]
+test = [
+    { name = "tenacity" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -585,6 +602,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "types-pyyaml", specifier = "==6.0.12.20260906" }]
+test = [{ name = "tenacity", specifier = ">=9.1.4,<9.2.0" }]
 
 [[package]]
 name = "agent-framework-devui"
@@ -670,6 +688,11 @@ dependencies = [
     { name = "httpx" },
 ]
 
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-ag-ui" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
@@ -679,6 +702,9 @@ requires-dist = [
     { name = "azure-ai-projects", specifier = ">=2.2.0,<2.8.0" },
     { name = "httpx", specifier = ">=0.28,<1" },
 ]
+
+[package.metadata.requires-dev]
+test = [{ name = "agent-framework-ag-ui", editable = "packages/ag-ui" }]
 
 [[package]]
 name = "agent-framework-foundry-hosting"
@@ -692,6 +718,13 @@ dependencies = [
     { name = "httpx" },
     { name = "httpx2" },
     { name = "mcp" },
+    { name = "tenacity" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-ag-ui" },
+    { name = "agent-framework-foundry" },
 ]
 
 [package.metadata]
@@ -703,6 +736,13 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "httpx2", specifier = ">=2.0.0,<3" },
     { name = "mcp", specifier = ">=2.2.0,<3" },
+    { name = "tenacity", specifier = ">=9.1.4,<9.2.0" },
+]
+
+[package.metadata.requires-dev]
+test = [
+    { name = "agent-framework-ag-ui", editable = "packages/ag-ui" },
+    { name = "agent-framework-foundry", editable = "packages/foundry" },
 ]
 
 [[package]]
@@ -931,10 +971,22 @@ dependencies = [
     { name = "agent-framework-openai" },
 ]
 
+[package.dev-dependencies]
+test = [
+    { name = "httpx" },
+    { name = "httpx2" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-openai", editable = "packages/openai" },
+]
+
+[package.metadata.requires-dev]
+test = [
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx2", specifier = ">=2.0.0,<3" },
 ]
 
 [[package]]
@@ -946,11 +998,19 @@ dependencies = [
     { name = "ollama" },
 ]
 
+[package.dev-dependencies]
+test = [
+    { name = "openai" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "ollama", specifier = ">=0.5.3,<0.5.4" },
 ]
+
+[package.metadata.requires-dev]
+test = [{ name = "openai", specifier = ">=2.25.0,<4" }]
 
 [[package]]
 name = "agent-framework-openai"
@@ -961,11 +1021,19 @@ dependencies = [
     { name = "openai" },
 ]
 
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-ag-ui" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "openai", specifier = ">=2.25.0,<4" },
 ]
+
+[package.metadata.requires-dev]
+test = [{ name = "agent-framework-ag-ui", editable = "packages/ag-ui" }]
 
 [[package]]
 name = "agent-framework-oracle"
@@ -979,7 +1047,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "oracledb", specifier = ">=2.2.0,<4" },
+    { name = "oracledb", specifier = ">=3.0.0,<4" },
 ]
 
 [[package]]

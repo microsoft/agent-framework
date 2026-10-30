@@ -31,6 +31,9 @@ dependencies = [
 dev = [
     "types-PyYaml==6.0.12.20260906"
 ]
+test = [
+    "tenacity>=9.1.4,<9.2.0",
+]
 
 [tool.uv]
 prerelease = "if-necessary"

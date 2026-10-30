@@ -978,15 +978,16 @@ class RawFoundryChatClient(
         Older supported SDK releases can still import this client; calling this
         factory on those releases raises ``ImportError`` with upgrade guidance.
         """
-        try:
-            from azure.ai.projects.models import ComputerTool
-        except ImportError as exc:
+        from azure.ai.projects import models
+
+        computer_tool_cls = getattr(models, "ComputerTool", None)
+        if computer_tool_cls is None:
             raise ImportError(
                 "FoundryChatClient.get_computer_tool() requires ComputerTool from azure-ai-projects>=2.3.0. "
                 "Upgrade azure-ai-projects to >=2.3.0 to use this tool."
-            ) from exc
+            )
 
-        return ComputerTool()
+        return computer_tool_cls()
 
     @staticmethod
     @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
