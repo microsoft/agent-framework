@@ -2269,6 +2269,122 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+def test_response_only_update_does_not_create_message(response_type: Any, update_type: Any) -> None:
+    response = response_type()
+    raw = object()
+    update = update_type(
+        response_id="response-1",
+        created_at="2026-10-21T00:00:00Z",
+        finish_reason="stop",
+        additional_properties={"provider": {"key": "value"}},
+        continuation_token={"token": "next"},
+        raw_representation=raw,
+    )
+    _set_operation_state(update, "in_progress")
+    if isinstance(update, ChatResponseUpdate):
+        update.conversation_id = "conversation-1"
+        update.model = "model-1"
+    else:
+        update.agent_id = "agent-1"
+
+    _process_update(response, update)
+
+    assert response.messages == []
+    assert response.response_id == "response-1"
+    assert response.created_at == update.created_at
+    assert response.finish_reason == "stop"
+    assert response.additional_properties == {"provider": {"key": "value"}}
+    assert response.continuation_token == {"token": "next"}
+    assert response.raw_representation == [raw]
+    assert _get_operation_state(response) == "in_progress"
+    if isinstance(response, ChatResponse):
+        assert response.conversation_id == "conversation-1"
+        assert response.model == "model-1"
+    else:
+        assert response.agent_id == "agent-1"
+
+    terminal = update_type()
+    _set_operation_state(terminal, "terminal")
+    _process_update(response, terminal)
+    assert response.messages == []
+    assert response.continuation_token is None
+    assert _get_operation_state(response) == "terminal"
+
+
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+@mark.parametrize("with_content", [False, True])
+@mark.parametrize("from_generator", [False, True])
+async def test_response_only_updates_preserve_reconstructed_messages(
+    response_type: Any, update_type: Any, with_content: bool, from_generator: bool
+) -> None:
+    updates = [update_type(additional_properties={"provider": {"before": True}})]
+    if with_content:
+        updates.extend([
+            update_type(contents=[Content.from_text("Hello ")], role="assistant", message_id="m1"),
+            update_type(additional_properties={"provider": {"between": True}}),
+            update_type(contents=[Content.from_text("world")], message_id="m1"),
+        ])
+    updates.append(update_type(additional_properties={"provider": {"after": True}}, finish_reason="stop"))
+
+    async def generate() -> AsyncIterator[Any]:
+        for update in updates:
+            yield update
+
+    if from_generator:
+        response = await response_type.from_update_generator(generate())
+    else:
+        response = response_type.from_updates(updates)
+
+    assert response.additional_properties == {
+        "provider": {"before": True, "after": True, **({"between": True} if with_content else {})}
+    }
+    assert response.finish_reason == "stop"
+    assert len(response.messages) == int(with_content)
+    if with_content:
+        assert response.messages[0].text == "Hello world"
+        assert response.messages[0].role == "assistant"
+        assert response.messages[0].message_id == "m1"
+
+
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+@mark.parametrize("header", [{"role": "tool"}, {"author_name": "writer"}, {"message_id": "m1"}])
+def test_empty_message_header_is_preserved(response_type: Any, update_type: Any, header: dict[str, str]) -> None:
+    response = response_type()
+    _process_update(response, update_type(**header))
+    assert len(response.messages) == 1
+    for key, value in header.items():
+        assert getattr(response.messages[0], key) == value
+
+
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+def test_empty_replacement_still_clears_message(response_type: Any, update_type: Any) -> None:
+    response = response_type(messages=[Message("assistant", ["old"], message_id="m1")])
+    _process_update(response, update_type(merge_mode="replace"))
+    assert len(response.messages) == 1
+    assert response.messages[0].contents == []
+    assert response.messages[0].message_id == "m1"
+    assert (
+        response_type.from_updates([
+            update_type(contents=[Content.from_text("old")], message_id="m1"),
+            update_type(merge_mode="replace"),
+        ]).messages
+        == []
+    )
+
+
 @pytest.mark.parametrize(
     ("response_type", "update_type"),
     [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],

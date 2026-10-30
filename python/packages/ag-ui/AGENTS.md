@@ -26,7 +26,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 
 ## Protocol Notes
 
-- Outbound custom events are emitted as AG-UI `CUSTOM`.
+- Outbound custom events are emitted as AG-UI `CUSTOM`. Content-free `AgentResponseUpdate` metadata does not
+  produce a workflow-output event.
 - Usage metadata from `Content(type="usage")` is surfaced as `CUSTOM` events with `name="usage"`.
 - Text annotations are surfaced as `CUSTOM` events with `name="annotations"` and
   `value={"messageId": ..., "annotations": [...]}`. Annotation-only updates announce a text message if needed
