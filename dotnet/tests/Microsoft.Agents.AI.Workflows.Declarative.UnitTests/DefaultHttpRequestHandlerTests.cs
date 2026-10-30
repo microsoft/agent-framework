@@ -140,6 +140,32 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Null(messageHandler.LastRequest);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendAsyncRejectsClientDefaultHostHeaderBeforeTransportAsync(bool useProvider)
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
+        using HttpClient client = new(messageHandler);
+        client.DefaultRequestHeaders.Host = "other.example.test";
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = useProvider
+            ? new(["api.example.test"], (_, _) => Task.FromResult<HttpClient?>(client))
+            : new(["api.example.test"], client);
+#pragma warning restore CA2025
+        HttpRequestInfo request = new() { Url = TestUrl };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Equal("Request headers must not override the Host header.", exception.Message);
+        Assert.Null(messageHandler.LastRequest);
+    }
+
     [Fact]
     public async Task SendAsyncWithNullRequestThrowsAsync()
     {

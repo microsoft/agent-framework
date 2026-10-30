@@ -188,6 +188,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 {
                     throw new HttpRequestException("Redirects that change the HTTP client are not allowed.");
                 }
+                if (!string.IsNullOrEmpty(providedClient?.DefaultRequestHeaders.Host))
+                {
+                    throw new HttpRequestException("Request headers must not override the Host header.");
+                }
             }
 
             HttpClient client = providedClient ?? this._ownedHttpClient.Value;
