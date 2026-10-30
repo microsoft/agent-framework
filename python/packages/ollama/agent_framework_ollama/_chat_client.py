@@ -656,7 +656,9 @@ class OllamaChatClient(
     def _get_finish_reason_from_ollama(
         self, response: OllamaChatResponse, *, has_tool_calls: bool = False
     ) -> FinishReason | None:
-        if (response.message and response.message.tool_calls) or has_tool_calls:
+        if response.message and response.message.tool_calls:
+            return FinishReason("tool_calls")
+        if has_tool_calls and (not response.done_reason or response.done_reason == "stop"):
             return FinishReason("tool_calls")
         return FinishReason(response.done_reason) if response.done_reason else None
 
