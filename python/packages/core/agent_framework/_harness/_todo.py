@@ -411,6 +411,37 @@ class TodoFileStore(TodoStore):
         _atomic_write_text(state_path, payload)
 
 
+
+# Locks handed out by ``_todo_mutation_lock``. Values are held weakly, so an entry lasts
+# only while a mutation holds or awaits its lock, and the map never grows with the number
+# of sessions ever mutated.
+_TODO_MUTATION_LOCKS: weakref.WeakValueDictionary[
+    tuple[int, asyncio.AbstractEventLoop, int, str], asyncio.Lock
+] = weakref.WeakValueDictionary()
+
+
+def _todo_mutation_lock(store: TodoStore, session: AgentSession, source_id: str) -> asyncio.Lock:
+    """Return the lock that serializes todo mutations for one store/session/source_id.
+
+    Mutating tools hold it across their read-modify-write. It belongs to the store
+    instance rather than to one provider, so two providers sharing a store cannot both
+    load the same state before either saves and silently drop one of the edits.
+
+    Locks are per event loop, because an :class:`asyncio.Lock` that has had a waiter on
+    one loop raises when a caller has to wait for it on another. The key holds
+    ``id(store)`` and ``id(session)`` rather than the objects, so neither needs to be
+    hashable and is never kept alive by this map; those ids cannot be reused while their
+    lock is in use, because whoever holds or awaits the lock still references the store
+    and session.
+    """
+    key = (id(store), asyncio.get_running_loop(), id(session), source_id)
+    lock = _TODO_MUTATION_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _TODO_MUTATION_LOCKS[key] = lock
+    return lock
+
+
 class TodoProvider(ContextProvider):
     """Provide todo management tools and instructions to an agent.
 
@@ -446,17 +477,10 @@ class TodoProvider(ContextProvider):
         super().__init__(source_id)
         self.instructions = instructions or DEFAULT_TODO_INSTRUCTIONS
         self.store = store or TodoSessionStore()
-        # WeakKeyDictionary so per-session locks are evicted automatically when the session is GC'd
-        # rather than accumulating in long-running services that create many sessions.
-        self._mutation_locks: weakref.WeakKeyDictionary[AgentSession, asyncio.Lock] = weakref.WeakKeyDictionary()
 
     def _mutation_lock(self, session: AgentSession) -> asyncio.Lock:
-        """Return the per-session lock for read-modify-write todo operations."""
-        lock = self._mutation_locks.get(session)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._mutation_locks[session] = lock
-        return lock
+        """Return the store-level lock for read-modify-write todo operations."""
+        return _todo_mutation_lock(self.store, session, self.source_id)
 
     async def before_run(
         self,

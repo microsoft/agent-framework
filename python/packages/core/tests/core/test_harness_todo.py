@@ -199,18 +199,27 @@ async def test_todo_stores_clamp_next_id_to_avoid_collisions(tmp_path: Path) -> 
     assert items == [TodoItem(id=7, title="Seeded")]
 
 
-async def test_todo_provider_evicts_locks_when_session_is_garbage_collected() -> None:
-    """The provider should not retain mutation locks for sessions that have been GC'd."""
-    import gc
+async def test_todo_mutation_locks_are_shared_across_providers() -> None:
+    """Two providers over one store and session should share the mutation lock."""
+    from agent_framework._harness._todo import (  # pyright: ignore[reportPrivateUsage]
+        _TODO_MUTATION_LOCKS,
+        _todo_mutation_lock,
+    )
 
-    provider = TodoProvider()
+    store = TodoSessionStore()
+    provider_a = TodoProvider(store=store)
+    provider_b = TodoProvider(store=store)
+    provider_other_source = TodoProvider(source_id="other", store=store)
     session = AgentSession(session_id="session-1")
-    provider._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
-    assert len(provider._mutation_locks) == 1  # pyright: ignore[reportPrivateUsage]
 
-    del session
-    gc.collect()
-    assert len(provider._mutation_locks) == 0  # pyright: ignore[reportPrivateUsage]
+    lock_a = provider_a._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
+    lock_b = provider_b._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
+    other_lock = provider_other_source._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
+
+    assert lock_a is lock_b
+    assert other_lock is not lock_a
+    assert _todo_mutation_lock(store, session, "todo") is lock_a
+    assert (id(store), asyncio.get_running_loop(), id(session), "todo") in _TODO_MUTATION_LOCKS
 
 
 async def test_todo_file_store_rejects_session_path_traversal(tmp_path: Path) -> None:
@@ -366,6 +375,44 @@ async def test_todo_provider_serializes_concurrent_mutations(
         "Add B2",
     }
     assert {item["id"] for item in payload if item["is_complete"]} == {1, 2, 3, 4, 5}
+
+
+
+async def test_todo_providers_sharing_file_store_serialize_mutations(
+    tmp_path: Path, chat_client_base: SupportsChatGetResponse
+) -> None:
+    """Two providers over one file store must not drop items under concurrent adds."""
+    session = AgentSession(session_id="session-shared")
+    store = TodoFileStore(tmp_path)
+    provider_a = TodoProvider(store=store)
+    provider_b = TodoProvider(store=store)
+    agent_a = Agent(client=chat_client_base, context_providers=[provider_a])
+    agent_b = Agent(client=chat_client_base, context_providers=[provider_b])
+
+    _, options_a = await agent_a._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Track A"])],
+    )
+    _, options_b = await agent_b._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Track B"])],
+    )
+    add_a = _tool_by_name(options_a["tools"], "todos_add")  # type: ignore[index]
+    add_b = _tool_by_name(options_b["tools"], "todos_add")  # type: ignore[index]
+    get_all = _tool_by_name(options_a["tools"], "todos_get_all")  # type: ignore[index]
+
+    await asyncio.gather(
+        add_a.invoke(arguments={"todos": [{"title": "From A"}]}),  # type: ignore[attr-defined]
+        add_b.invoke(arguments={"todos": [{"title": "From B"}]}),  # type: ignore[attr-defined]
+    )
+
+    get_all_result = await get_all.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    payload = json.loads(get_all_result[0].text)
+    titles = {item["title"] for item in payload}
+    ids = [item["id"] for item in payload]
+    assert titles == {"From A", "From B"}
+    assert sorted(ids) == [1, 2]
+    assert len(ids) == len(set(ids))
 
 
 def test_todo_harness_graduated_classes_are_not_experimental() -> None:
