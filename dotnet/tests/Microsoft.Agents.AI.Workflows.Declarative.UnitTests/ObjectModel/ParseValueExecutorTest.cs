@@ -138,6 +138,110 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
         Assert.DoesNotContain(sourceText, warning.Replace(action.Id, string.Empty), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ParseConditionalExpressionContinuesAsync(bool value)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New(value), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        ParseValue.Builder builder = this.CreateModel(
+            nameof(ParseConditionalExpressionContinuesAsync),
+            "Target",
+            new NumberDataType.Builder(),
+            ValueExpression.Expression("")).ToBuilder();
+        builder.Value = new ValueExpression.Builder(ValueExpression.Expression("If(Env.Setting, \"42\", \"x\")"));
+        ParseValueExecutor action = new(builder.Build(), this.State);
+
+        // Act
+        bool continued = false;
+        await this.ExecuteAsync(action, "next_action", (context, message, cancellationToken) =>
+        {
+            continued = true;
+            return default;
+        });
+
+        // Assert
+        Assert.True(continued);
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("Target"));
+        if (value)
+        {
+            this.VerifyState("Target", FormulaValue.New(42));
+        }
+        else
+        {
+            this.VerifyUndefined("Target");
+        }
+    }
+
+    [Theory]
+    [InlineData("Number", "x", true)]
+    [InlineData("Number", "x", false)]
+    [InlineData("Number", "79228162514264337593543950336", true)]
+    [InlineData("Number", "79228162514264337593543950336", false)]
+    [InlineData("Boolean", "x", true)]
+    [InlineData("Boolean", "x", false)]
+    [InlineData("Record", "x", true)]
+    [InlineData("Record", "x", false)]
+    [InlineData("Record", "[]", true)]
+    [InlineData("Record", "[]", false)]
+    [InlineData("Table", "x", true)]
+    [InlineData("Table", "x", false)]
+    [InlineData("Table", "[[1]]", true)]
+    [InlineData("Table", "[[1]]", false)]
+    public async Task ParseInvalidValueAsync(string valueType, string sourceText, bool isSensitive)
+    {
+        // Arrange
+        DataType.Builder typeBuilder = valueType switch
+        {
+            "Number" => new NumberDataType.Builder(),
+            "Boolean" => new BooleanDataType.Builder(),
+            "Record" => new RecordDataType.Builder(),
+            _ => DataType.EmptyTable.ToBuilder(),
+        };
+        this.State.Set("Source", FormulaValue.New(sourceText),
+            sensitivity: isSensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None);
+        ParseValue.Builder builder = this.CreateModel(
+            nameof(ParseInvalidValueAsync), "Target", typeBuilder, ValueExpression.Expression("")).ToBuilder();
+        builder.Value = new ValueExpression.Builder(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
+        ParseValueExecutor action = new(builder.Build(), this.State);
+
+        // Act & Assert
+        if (isSensitive)
+        {
+            await this.ExecuteAsync(action);
+            this.VerifyUndefined("Target");
+            Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("Target"));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ParseUnsupportedTargetTypeFailsAsync(bool isSensitive)
+    {
+        // Arrange
+        this.State.Set("Source", FormulaValue.New("x"),
+            sensitivity: isSensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None);
+        ParseValue.Builder builder = this.CreateModel(
+            nameof(ParseUnsupportedTargetTypeFailsAsync),
+            "Target",
+            DataType.Any.ToBuilder(),
+            ValueExpression.Expression("")).ToBuilder();
+        builder.Value = new ValueExpression.Builder(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
+        ParseValueExecutor action = new(builder.Build(), this.State);
+
+        // Act
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert
+        Assert.IsType<DeclarativeModelException>(exception.InnerException);
+    }
+
     [Fact]
     public async Task ParseValidExpressionPreservesLabelAsync()
     {
