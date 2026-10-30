@@ -226,7 +226,20 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
 - Context label starts as **TRUSTED + PUBLIC** on first call
 - Gets updated (tainted) when untrusted content enters the context
 - Hidden content does NOT taint the context (it never enters LLM context)
+- Newly supplied caller messages are folded into the label before the first model call. Unstamped assistant/tool data
+  and data-bearing function results are treated as **UNTRUSTED + PRIVATE**, regardless of the role assigned during
+  input normalization and even when the session already has persisted FIDES state.
+- Framework-authenticated approval requests and responses remain control-plane content. Their embedded function-call
+  arguments still add confidentiality restrictions. Caller-only unbound controls are reconstructed conservatively.
+- Stored `HistoryProvider` messages are also folded into the label. A restored FIDES label remains authoritative for
+  unstamped stored history already represented by that state, while explicit replay labels may still add restrictions.
+  If the FIDES state is missing, unstamped assistant/tool history is reconstructed as **UNTRUSTED + PRIVATE**.
 - Policy enforcement uses the context label for validation
+
+`ContextProvider` implementations are trusted plugins and can already read the full conversation and session state.
+Messages from non-history context providers are not automatically classified by FIDES. Providers that inject retrieved
+or remembered external data must continue to apply their own trust boundary, use FIDES-labeled tools, or explicitly
+hide/label the data before adding it to the model context.
 
 **Automatic Hiding:**
 - UNTRUSTED results/items are automatically hidden in variable store
@@ -797,7 +810,9 @@ response = await agent.run(messages=[
 
 Reusable manual middleware uses one private security scope for the complete run when `session` is omitted, so tool
 chains within that run share hidden variables while separate runs remain isolated. Pass an explicit `AgentSession`
-when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run` calls. Ordinary tool approval responses retain their no-session pass-through behavior.
+when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run`
+calls. The core function loop can still pass ordinary approval responses without a session, but `SecureAgentConfig`
+treats caller-only unbound approval transcripts as untrusted replay rather than approval authority.
 
 ### Example 3: Agent Processing Hidden Content
 
