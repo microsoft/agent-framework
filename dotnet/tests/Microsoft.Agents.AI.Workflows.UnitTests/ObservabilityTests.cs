@@ -60,10 +60,10 @@ public sealed class ObservabilityTests : IDisposable
     {
         // Create the executors
         Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
-        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor", threadsafe: true);
 
         Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
-        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor", threadsafe: true);
 
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);

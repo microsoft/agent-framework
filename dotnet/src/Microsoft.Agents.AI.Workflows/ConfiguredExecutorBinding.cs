@@ -7,7 +7,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Workflows;
 
 // TODO: Unwrap the Configured object, just like for SubworkflowBinding
-internal record ConfiguredExecutorBinding(Configured<Executor> ConfiguredExecutor, Type ExecutorType)
+internal record ConfiguredExecutorBinding(Configured<Executor> ConfiguredExecutor, Type ExecutorType, bool SupportsConcurrentRuns)
     : ExecutorBinding(Throw.IfNull(ConfiguredExecutor).Id,
                            ConfiguredExecutor.BoundFactoryAsync,
                            ExecutorType,
@@ -27,7 +27,7 @@ internal record ConfiguredExecutorBinding(Configured<Executor> ConfiguredExecuto
     }
 
     /// <inheritdoc/>
-    public override bool SupportsConcurrentSharedExecution => true;
+    public override bool SupportsConcurrentSharedExecution => this.SupportsConcurrentRuns;
 
     /// <inheritdoc/>
     public override bool SupportsResetting => false;
