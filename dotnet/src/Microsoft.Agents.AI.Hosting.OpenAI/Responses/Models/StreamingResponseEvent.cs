@@ -23,6 +23,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 [JsonDerivedType(typeof(StreamingContentPartDone), StreamingContentPartDone.EventType)]
 [JsonDerivedType(typeof(StreamingOutputTextDelta), StreamingOutputTextDelta.EventType)]
 [JsonDerivedType(typeof(StreamingOutputTextDone), StreamingOutputTextDone.EventType)]
+[JsonDerivedType(typeof(StreamingOutputTextAnnotationAdded), StreamingOutputTextAnnotationAdded.EventType)]
 [JsonDerivedType(typeof(StreamingFunctionCallArgumentsDelta), StreamingFunctionCallArgumentsDelta.EventType)]
 [JsonDerivedType(typeof(StreamingFunctionCallArgumentsDone), StreamingFunctionCallArgumentsDone.EventType)]
 [JsonDerivedType(typeof(StreamingReasoningSummaryTextDelta), StreamingReasoningSummaryTextDelta.EventType)]
@@ -45,6 +46,39 @@ internal abstract class StreamingResponseEvent
     /// </summary>
     [JsonPropertyName("sequence_number")]
     public int SequenceNumber { get; init; }
+}
+
+/// <summary>
+/// Reports an annotation added to an output text part.
+/// </summary>
+internal sealed class StreamingOutputTextAnnotationAdded : StreamingResponseEvent
+{
+    /// <summary>The annotation event type.</summary>
+    public const string EventType = "response.output_text.annotation.added";
+
+    /// <inheritdoc/>
+    [JsonIgnore]
+    public override string Type => EventType;
+
+    /// <summary>The message item identifier.</summary>
+    [JsonPropertyName("item_id")]
+    public required string ItemId { get; init; }
+
+    /// <summary>The output item index.</summary>
+    [JsonPropertyName("output_index")]
+    public int OutputIndex { get; init; }
+
+    /// <summary>The content part index.</summary>
+    [JsonPropertyName("content_index")]
+    public int ContentIndex { get; init; }
+
+    /// <summary>The annotation index within the text part.</summary>
+    [JsonPropertyName("annotation_index")]
+    public int AnnotationIndex { get; init; }
+
+    /// <summary>The annotation in OpenAI wire format.</summary>
+    [JsonPropertyName("annotation")]
+    public required JsonElement Annotation { get; init; }
 }
 
 /// <summary>

@@ -72,6 +72,7 @@ internal static class OpenAIHostingJsonUtilities
 [JsonSerializable(typeof(StreamingContentPartDone))]
 [JsonSerializable(typeof(StreamingOutputTextDelta))]
 [JsonSerializable(typeof(StreamingOutputTextDone))]
+[JsonSerializable(typeof(StreamingOutputTextAnnotationAdded))]
 [JsonSerializable(typeof(StreamingFunctionCallArgumentsDelta))]
 [JsonSerializable(typeof(StreamingFunctionCallArgumentsDone))]
 [JsonSerializable(typeof(ReasoningOptions))]
