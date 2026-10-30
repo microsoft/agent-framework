@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using Moq;
 using Moq.Protected;
@@ -761,6 +762,116 @@ public class ChatClientAgent_ChatHistoryManagementTests
             },
             expectedServiceCallCount: 2,
             expectedHistory:
+            [
+                new(ChatRole.User, TextContains: "What's the weather?"),
+                new(ChatRole.Assistant, ContentTypes: [typeof(FunctionCallContent)]),
+                new(ChatRole.Tool, ContentTypes: [typeof(FunctionResultContent)]),
+                new(ChatRole.Assistant, TextContains: "sunny and 22°C"),
+            ]);
+    }
+
+    /// <summary>
+    /// Regression test for https://github.com/microsoft/agent-framework/issues/8441.
+    /// When compaction runs inside the function-calling loop, the opening user message must still be persisted.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_CompactionWithFunctionCallingLoop_PersistsOpeningUserMessageAsync()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create(() => "Sunny, 22°C", "GetWeather", "Gets the weather");
+        ChatResponse toolCallResponse = new([new ChatMessage(ChatRole.Assistant,
+            [new FunctionCallContent("call1", "GetWeather", new Dictionary<string, object?>())])]);
+        ChatResponse finalResponse = new([new ChatMessage(ChatRole.Assistant, "The weather is sunny and 22°C.")]);
+        Mock<IChatClient> mockService = new();
+        List<List<ChatMessage>> serviceInputs = [];
+        mockService
+            .Setup(s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((messages, _, _) => serviceInputs.Add(messages.ToList()))
+            .Returns<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, _, _) =>
+                serviceInputs.Count == 1 ? Task.FromResult(toolCallResponse) : Task.FromResult(finalResponse));
+
+        CompactionProvider compactionProvider = new(new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(100000)));
+        IChatClient chatClient = new ChatClientBuilder(mockService.Object)
+            .UseAIContextProviders(compactionProvider)
+            .Build();
+        ChatClientAgent agent = new(chatClient, options: new()
+        {
+            ChatOptions = new() { Tools = [tool] },
+        });
+
+        // Act
+        ChatClientAgentSession session = (await agent.CreateSessionAsync() as ChatClientAgentSession)!;
+        await agent.RunAsync([new(ChatRole.User, "What's the weather?")], session);
+
+        // Assert — the tool loop made two service calls and the complete conversation was persisted.
+        Assert.Equal(2, serviceInputs.Count);
+        Assert.Contains(serviceInputs[1], message => message.Contents.OfType<FunctionResultContent>().Any());
+
+        InMemoryChatHistoryProvider historyProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
+        List<ChatMessage> history = historyProvider.GetMessages(session);
+        ChatClientAgentTestHelper.AssertMessagesMatch(
+            history,
+            [
+                new(ChatRole.User, TextContains: "What's the weather?"),
+                new(ChatRole.Assistant, ContentTypes: [typeof(FunctionCallContent)]),
+                new(ChatRole.Tool, ContentTypes: [typeof(FunctionResultContent)]),
+                new(ChatRole.Assistant, TextContains: "sunny and 22°C"),
+            ]);
+    }
+
+    /// <summary>
+    /// Regression test for https://github.com/microsoft/agent-framework/issues/8441.
+    /// The streaming function-calling loop must also persist the opening user message when compaction is enabled.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_CompactionWithFunctionCallingLoop_PersistsOpeningUserMessageAsync()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create(() => "Sunny, 22°C", "GetWeather", "Gets the weather");
+        ChatResponseUpdate[] toolCallUpdates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant,
+                [new FunctionCallContent("call1", "GetWeather", new Dictionary<string, object?>())])
+        ];
+        ChatResponseUpdate[] finalUpdates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "The weather is sunny and 22°C.")
+        ];
+        Mock<IChatClient> mockService = new();
+        List<List<ChatMessage>> serviceInputs = [];
+        mockService
+            .Setup(s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((messages, _, _) => serviceInputs.Add(messages.ToList()))
+            .Returns<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, _, _) =>
+                serviceInputs.Count == 1 ? toolCallUpdates.ToAsyncEnumerable() : finalUpdates.ToAsyncEnumerable());
+
+        CompactionProvider compactionProvider = new(new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(100000)));
+        IChatClient chatClient = new ChatClientBuilder(mockService.Object)
+            .UseAIContextProviders(compactionProvider)
+            .Build();
+        ChatClientAgent agent = new(chatClient, options: new()
+        {
+            ChatOptions = new() { Tools = [tool] },
+        });
+
+        // Act
+        ChatClientAgentSession session = (await agent.CreateSessionAsync() as ChatClientAgentSession)!;
+        await agent.RunStreamingAsync([new(ChatRole.User, "What's the weather?")], session).ToListAsync();
+
+        // Assert — the streaming tool loop made two service calls and persisted the complete conversation.
+        Assert.Equal(2, serviceInputs.Count);
+        Assert.Contains(serviceInputs[1], message => message.Contents.OfType<FunctionResultContent>().Any());
+
+        InMemoryChatHistoryProvider historyProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
+        List<ChatMessage> history = historyProvider.GetMessages(session);
+        ChatClientAgentTestHelper.AssertMessagesMatch(
+            history,
             [
                 new(ChatRole.User, TextContains: "What's the weather?"),
                 new(ChatRole.Assistant, ContentTypes: [typeof(FunctionCallContent)]),
