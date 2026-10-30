@@ -50,6 +50,42 @@ internal interface IResponsesService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Validates a create response request that will run with the specified executor.
+    /// </summary>
+    /// <param name="request">The create response request to validate.</param>
+    /// <param name="executor">The executor selected for this request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A ResponseError if validation fails, null if validation succeeds.</returns>
+    ValueTask<ResponseError?> ValidateRequestAsync(
+        CreateResponse request,
+        IResponseExecutor executor,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates a model response for the given input using the specified executor.
+    /// </summary>
+    /// <param name="request">The create response request.</param>
+    /// <param name="executor">The executor selected for this request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The created response.</returns>
+    Task<Response> CreateResponseAsync(
+        CreateResponse request,
+        IResponseExecutor executor,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates a streaming model response for the given input using the specified executor.
+    /// </summary>
+    /// <param name="request">The create response request.</param>
+    /// <param name="executor">The executor selected for this request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An async enumerable of streaming response events.</returns>
+    IAsyncEnumerable<StreamingResponseEvent> CreateResponseStreamingAsync(
+        CreateResponse request,
+        IResponseExecutor executor,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves a response by ID.
     /// </summary>
     /// <param name="responseId">The ID of the response to retrieve.</param>
