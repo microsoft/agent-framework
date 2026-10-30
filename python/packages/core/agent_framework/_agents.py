@@ -1841,6 +1841,24 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
+        approval_history_consumers = [
+            (provider, prepare)
+            for provider in self.context_providers
+            if callable(prepare := getattr(provider, "_prepare_approval_history", None))
+        ]
+        if approval_history_consumers and not per_service_call_history_required:
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when approval history is prepared.")
+            for provider, prepare in approval_history_consumers:
+                prepared = prepare(
+                    agent=self,
+                    session=provider_session,
+                    context=session_context,
+                    state=provider_session.state.setdefault(provider.source_id, {}),
+                )
+                if isawaitable(prepared):
+                    _ = await prepared
+
         # Merge provider-contributed tools into chat_options
         if session_context.tools:
             if chat_options.get("tools") is not None:
