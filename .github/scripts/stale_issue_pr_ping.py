@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Classify open issues and PRs waiting for external authors and ping stale items.
+"""Warn and close stale external-authored pull requests.
 
-When a maintainer leaves the latest conversation comment on an external item,
-the automation adds 'waiting-for-author'. On later runs, inactive items receive
-a reminder and the 'requested-info' label to prevent duplicate pings.
+After a CODEOWNER's latest conversation comment, warn and apply
+'requested-info' after the warning threshold, then close after the closing
+threshold without activity. CODEOWNER-authored pull requests are exempt.
 """
 
 from __future__ import annotations
@@ -14,18 +14,23 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from github import Auth, Github, GithubException
-from github.Issue import Issue
-from github.IssueComment import IssueComment
+from github import Auth, Github
+from github.PullRequest import PullRequest
 from github.Repository import Repository
 
 
-PING_COMMENT = (
-    "@{author}, friendly reminder — this issue is waiting on your response. "
-    "Please share any updates when you get a chance. (This is an automated message.)"
+REQUESTED_INFO_LABEL = "requested-info"
+WARNING_THRESHOLD_DAYS = 4
+CLOSING_THRESHOLD_DAYS = 4
+WARNING_COMMENT = (
+    "@{author}, this pull request is waiting on your response. "
+    "If there is no further activity within {closing_days} days, "
+    "it will be closed automatically. (This is an automated message.)"
 )
-TRIGGER_LABEL = "waiting-for-author"
-PINGED_LABEL = "requested-info"
+CLOSING_COMMENT = (
+    "Closing this pull request because there was no further activity "
+    "after the automated warning. (This is an automated message.)"
+)
 
 
 def get_maintainers(repo: Repository) -> set[str]:
@@ -58,114 +63,68 @@ def get_maintainers(repo: Repository) -> set[str]:
     return owners
 
 
-def find_last_team_comment(
-    comments: list[IssueComment], team_members: set[str]
-) -> IssueComment | None:
-    """Return the most recent comment from a team member, or None."""
-    for comment in reversed(comments):
-        if comment.user and comment.user.login in team_members:
-            return comment
-    return None
-
-
-def author_replied_after(
-    comments: list[IssueComment], author: str, after: datetime
+def should_warn(
+    pull_request: PullRequest,
+    maintainers: set[str],
+    now: datetime,
+    warning_threshold_days: int,
 ) -> bool:
-    """Check if the issue author commented after the given timestamp."""
-    for comment in comments:
-        if (
-            comment.user
-            and comment.user.login == author
-            and comment.created_at > after
-        ):
-            return True
-    return False
-
-
-def should_mark_waiting(issue: Issue, team_members: set[str]) -> bool:
-    """Return whether an external item should gain 'waiting-for-author'.
-
-    Policy: a CODEOWNER's latest conversation comment marks the item, and newly
-    marked items are not pinged until a later scheduled run.
-    """
-    if issue.user.login in team_members:
+    """Return whether an external pull request is ready for its warning."""
+    if pull_request.user.login.lower() in maintainers:
         return False
-    if any(label.name == TRIGGER_LABEL for label in issue.labels):
+    if any(label.name == REQUESTED_INFO_LABEL for label in pull_request.labels):
         return False
-    if issue.comments == 0:
+    days_inactive = (
+        now - pull_request.updated_at.astimezone(timezone.utc)
+    ).days
+    if days_inactive < warning_threshold_days:
         return False
 
-    comments = list(issue.get_comments())
+    comments = list(pull_request.get_issue_comments())
     if not comments:
         return False
 
     latest_comment = comments[-1]
     return bool(
         latest_comment.user
-        and latest_comment.user.login in team_members
+        and latest_comment.user.login.lower() in maintainers
     )
 
 
-def should_ping(
-    issue: Issue,
-    team_members: set[str],
-    days_threshold: int,
+def should_close(
+    pull_request: PullRequest,
+    maintainers: set[str],
     now: datetime,
+    closing_threshold_days: int,
 ) -> bool:
-    """Determine whether this issue/PR should be pinged.
-
-    Only issues/PRs carrying the 'waiting-for-author' label are candidates.
-    """
-    author = issue.user.login
-
-    # Skip if the trigger label is not present
-    if not any(label.name == TRIGGER_LABEL for label in issue.labels):
+    """Return whether a warned external pull request is ready to close."""
+    if pull_request.user.login.lower() in maintainers:
         return False
-    # Skip if author is a team member
-    if author in team_members:
+    if not any(
+        label.name == REQUESTED_INFO_LABEL
+        for label in pull_request.labels
+    ):
         return False
 
-    # Skip if already pinged
-    if any(label.name == PINGED_LABEL for label in issue.labels):
-        return False
-
-    # Check if the issue has been inactive long enough
-    days_since = (now - issue.updated_at.astimezone(timezone.utc)).days
-    return days_since >= days_threshold
+    days_inactive = (
+        now - pull_request.updated_at.astimezone(timezone.utc)
+    ).days
+    return days_inactive >= closing_threshold_days
 
 
-def mark_waiting(issue: Issue, dry_run: bool) -> bool:
-    """Add the 'waiting-for-author' label. Returns True on success."""
-    author = issue.user.login
-    kind = "PR" if issue.pull_request else "Issue"
+def warn(
+    pull_request: PullRequest,
+    dry_run: bool,
+    closing_threshold_days: int,
+) -> bool:
+    """Post the warning and add 'requested-info'. Returns True on success."""
+    author = pull_request.user.login
 
     if dry_run:
         print(
-            f"  [DRY RUN] Would mark {kind} #{issue.number} "
-            f"as waiting for @{author}"
+            f"  [DRY RUN] Would warn PR #{pull_request.number} (@{author}) "
+            f"and add '{REQUESTED_INFO_LABEL}'"
         )
-        return True
-
-    try:
-        issue.add_to_labels(TRIGGER_LABEL)
-    except Exception as exc:
-        print(
-            f"  ERROR: Failed to mark {kind} #{issue.number} "
-            f"as waiting for @{author}: {exc}"
-        )
-        return False
-
-    print(f"  Marked {kind} #{issue.number} as waiting for @{author}")
-    return True
-
-
-def ping(issue: Issue, dry_run: bool) -> bool:
-    """Post a reminder comment and add the 'requested-info' label. Returns True on success."""
-    author = issue.user.login
-    kind = "PR" if issue.pull_request else "Issue"
-
-    if dry_run:
-        print(f"  [DRY RUN] Would ping {kind} #{issue.number} (@{author})")
         return True
 
     max_retries = 3
@@ -174,21 +133,96 @@ def ping(issue: Issue, dry_run: bool) -> bool:
     for attempt in range(1, max_retries + 1):
         try:
             if not commented:
-                issue.create_comment(PING_COMMENT.format(author=author))
+                pull_request.create_issue_comment(
+                    WARNING_COMMENT.format(
+                        author=author,
+                        closing_days=closing_threshold_days,
+                    )
+                )
                 commented = True
             if not labeled:
-                issue.add_to_labels(PINGED_LABEL)
+                pull_request.add_to_labels(REQUESTED_INFO_LABEL)
                 labeled = True
-            print(f"  Pinged {kind} #{issue.number} (@{author})")
+            print(f"  Warned PR #{pull_request.number} (@{author})")
             return True
         except Exception as exc:
             if attempt < max_retries:
                 wait = 2 ** attempt  # 2s, 4s
-                print(f"  WARN: Attempt {attempt}/{max_retries} failed for {kind} #{issue.number}: {exc}. Retrying in {wait}s...")
+                print(
+                    f"  WARN: Warning attempt {attempt}/{max_retries} failed "
+                    f"for PR #{pull_request.number}: {exc}. "
+                    f"Retrying in {wait}s..."
+                )
                 time.sleep(wait)
             else:
-                print(f"  ERROR: Failed to ping {kind} #{issue.number} after {max_retries} attempts: {exc}")
+                print(
+                    f"  ERROR: Failed to warn PR #{pull_request.number} after "
+                    f"{max_retries} attempts: {exc}"
+                )
                 return False
+
+
+def close(pull_request: PullRequest, dry_run: bool) -> bool:
+    """Post the closing message and close the PR. Returns True on success."""
+    author = pull_request.user.login
+
+    if dry_run:
+        print(
+            f"  [DRY RUN] Would comment on and close "
+            f"PR #{pull_request.number} (@{author})"
+        )
+        return True
+
+    max_retries = 3
+    commented = False
+    for attempt in range(1, max_retries + 1):
+        try:
+            if not commented:
+                pull_request.create_issue_comment(CLOSING_COMMENT)
+                commented = True
+            pull_request.edit(state="closed")
+            print(f"  Closed PR #{pull_request.number} (@{author})")
+            return True
+        except Exception as exc:
+            if attempt < max_retries:
+                wait = 2 ** attempt  # 2s, 4s
+                print(
+                    f"  WARN: Closing attempt {attempt}/{max_retries} failed "
+                    f"for PR #{pull_request.number}: {exc}. "
+                    f"Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+            else:
+                print(
+                    f"  ERROR: Failed to close PR #{pull_request.number} after "
+                    f"{max_retries} attempts: {exc}"
+                )
+                return False
+
+
+def get_runtime_thresholds() -> tuple[int, int]:
+    """Return warning and closing thresholds, applying DAYS_THRESHOLD to both."""
+    override = os.environ.get("DAYS_THRESHOLD")
+    if override is None:
+        return WARNING_THRESHOLD_DAYS, CLOSING_THRESHOLD_DAYS
+
+    try:
+        threshold = int(override)
+    except ValueError:
+        print(
+            "ERROR: DAYS_THRESHOLD must be a non-negative integer, "
+            f"got '{override}'"
+        )
+        sys.exit(1)
+
+    if threshold < 0:
+        print(
+            "ERROR: DAYS_THRESHOLD must be a non-negative integer, "
+            f"got '{override}'"
+        )
+        sys.exit(1)
+
+    return threshold, threshold
 
 
 def main() -> None:
@@ -202,63 +236,72 @@ def main() -> None:
         print("ERROR: GITHUB_REPOSITORY environment variable is required")
         sys.exit(1)
 
-    days_threshold_raw = os.environ.get("DAYS_THRESHOLD", "4")
-    try:
-        days_threshold = int(days_threshold_raw)
-    except ValueError:
-        print(f"ERROR: DAYS_THRESHOLD must be a numeric value, got '{days_threshold_raw}'")
-        sys.exit(1)
+    warning_threshold_days, closing_threshold_days = get_runtime_thresholds()
     dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
 
-    org = repository.split("/")[0]
-
     if dry_run:
-        print("Running in DRY RUN mode — no comments or labels will be applied.\n")
+        print("Running in DRY RUN mode — no comments, labels, or closures will be applied.\n")
 
     g = Github(auth=Auth.Token(token))
     repo = g.get_repo(repository)
 
     print("Fetching maintainers...")
-    team_members = get_maintainers(repo)
-    print(f"Found {len(team_members)} team members.\n")
-    for maintainer in sorted(team_members):
+    maintainers = get_maintainers(repo)
+    print(f"Found {len(maintainers)} maintainers.\n")
+    for maintainer in sorted(maintainers):
         print(f"  @{maintainer}")
 
     now = datetime.now(timezone.utc)
-    marked = []
-    pinged = []
+    warned = []
+    closed = []
     failed = []
     scanned = 0
 
     print(
-        "Scanning open issues and PRs "
-        f"(stale threshold: {days_threshold} days)...\n"
+        "Scanning open pull requests "
+        f"(warning: {warning_threshold_days} days, "
+        f"closing: {closing_threshold_days} days)...\n"
     )
 
-    for issue in repo.get_issues(state="open"):
+    for pull_request in repo.get_pulls(state="open"):
         scanned += 1
 
-        if should_mark_waiting(issue, team_members):
-            if mark_waiting(issue, dry_run):
-                marked.append(issue.number)
+        if should_close(
+            pull_request,
+            maintainers,
+            now,
+            closing_threshold_days,
+        ):
+            if close(pull_request, dry_run):
+                closed.append(pull_request.number)
             else:
-                failed.append(issue.number)
+                failed.append(pull_request.number)
             continue
 
-        if should_ping(issue, team_members, days_threshold, now):
-            if ping(issue, dry_run):
-                pinged.append(issue.number)
+        if should_warn(
+            pull_request,
+            maintainers,
+            now,
+            warning_threshold_days,
+        ):
+            if warn(
+                pull_request,
+                dry_run,
+                closing_threshold_days,
+            ):
+                warned.append(pull_request.number)
             else:
-                failed.append(issue.number)
+                failed.append(pull_request.number)
+            continue
 
     print(
-        f"\nDone. Scanned {scanned} items, marked {len(marked)}, "
-        f"pinged {len(pinged)}, failed {len(failed)}."
+        f"\nDone. Scanned {scanned} PRs, warned {len(warned)}, "
+        f"closed {len(closed)}, failed {len(failed)}."
     )
-    if marked:
-        print(f"Marked waiting: {', '.join(f'#{n}' for n in marked)}")
-    if pinged:
-        print(f"Pinged: {', '.join(f'#{n}' for n in pinged)}")
+    if warned:
+        print(f"Warned: {', '.join(f'#{n}' for n in warned)}")
+    if closed:
+        print(f"Closed: {', '.join(f'#{n}' for n in closed)}")
     if failed:
         print(f"Failed: {', '.join(f'#{n}' for n in failed)}")
         sys.exit(1)

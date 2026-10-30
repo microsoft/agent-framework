@@ -6,265 +6,331 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, call, patch
 
 import pytest
+from github import GithubException
 
 # Ensure the script directory is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from stale_issue_pr_ping import (
-    PINGED_LABEL,
-    PING_COMMENT,
-    TRIGGER_LABEL,
-    author_replied_after,
-    find_last_team_comment,
+    CLOSING_COMMENT,
+    CLOSING_THRESHOLD_DAYS,
+    REQUESTED_INFO_LABEL,
+    WARNING_COMMENT,
+    WARNING_THRESHOLD_DAYS,
+    close,
     get_maintainers,
+    get_runtime_thresholds,
     main,
-    mark_waiting,
-    ping,
-    should_mark_waiting,
-    should_ping,
+    should_close,
+    should_warn,
+    warn,
 )
 
-TEAM = {"alice", "bob"}
+MAINTAINERS = {"alice", "bob"}
 NOW = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_comment(login: str | None, created_at: datetime) -> MagicMock:
-    """Create a mock IssueComment."""
-    c = MagicMock()
+def _make_comment(login: str | None) -> MagicMock:
+    comment = MagicMock()
     if login is None:
-        c.user = None
+        comment.user = None
     else:
-        c.user = MagicMock()
-        c.user.login = login
-    c.created_at = created_at
-    return c
+        comment.user = MagicMock()
+        comment.user.login = login
+    return comment
 
 
 def _make_label(name: str) -> MagicMock:
-    lbl = MagicMock()
-    lbl.name = name
-    return lbl
+    label = MagicMock()
+    label.name = name
+    return label
 
 
-def _make_issue(
+def _make_pull_request(
     author: str = "external",
     labels: list[str] | None = None,
-    comment_count: int = 1,
     comments: list[MagicMock] | None = None,
-    pull_request: bool = False,
     number: int = 42,
     updated_at: datetime = NOW,
 ) -> MagicMock:
-    issue = MagicMock()
-    issue.user = MagicMock()
-    issue.user.login = author
-    issue.number = number
-    # Default to having the trigger label, since the API query pre-filters.
-    if labels is None:
-        labels = [TRIGGER_LABEL]
-    issue.labels = [_make_label(n) for n in labels]
-    issue.comments = comment_count
-    issue.pull_request = MagicMock() if pull_request else None
-    issue.updated_at = updated_at
-    if comments is not None:
-        issue.get_comments.return_value = comments
-    return issue
+    pull_request = MagicMock()
+    pull_request.user = MagicMock()
+    pull_request.user.login = author
+    pull_request.number = number
+    pull_request.labels = [
+        _make_label(name)
+        for name in (labels or [])
+    ]
+    pull_request.updated_at = updated_at
+    pull_request.get_issue_comments.return_value = comments or []
+    return pull_request
 
 
-# ---------------------------------------------------------------------------
-# find_last_team_comment
-# ---------------------------------------------------------------------------
+class TestPolicyThresholds:
+    def test_default_constants(self):
+        assert WARNING_THRESHOLD_DAYS == 4
+        assert CLOSING_THRESHOLD_DAYS == 4
 
-class TestFindLastTeamComment:
-    def test_returns_last_team_comment(self):
-        c1 = _make_comment("alice", datetime(2026, 3, 1, tzinfo=timezone.utc))
-        c2 = _make_comment("external", datetime(2026, 3, 2, tzinfo=timezone.utc))
-        c3 = _make_comment("bob", datetime(2026, 3, 3, tzinfo=timezone.utc))
-        assert find_last_team_comment([c1, c2, c3], TEAM) is c3
+    @patch.dict(os.environ, {}, clear=True)
+    def test_runtime_defaults(self):
+        assert get_runtime_thresholds() == (4, 4)
 
-    def test_returns_none_when_no_team_comments(self):
-        c1 = _make_comment("external", datetime(2026, 3, 1, tzinfo=timezone.utc))
-        assert find_last_team_comment([c1], TEAM) is None
+    @patch.dict(os.environ, {"DAYS_THRESHOLD": "7"}, clear=True)
+    def test_runtime_override_applies_to_both_stages(self):
+        assert get_runtime_thresholds() == (7, 7)
 
-    def test_returns_none_for_empty_list(self):
-        assert find_last_team_comment([], TEAM) is None
+    @patch.dict(os.environ, {"DAYS_THRESHOLD": "0"}, clear=True)
+    def test_zero_threshold_is_valid(self):
+        assert get_runtime_thresholds() == (0, 0)
 
-    def test_skips_deleted_user(self):
-        c1 = _make_comment(None, datetime(2026, 3, 1, tzinfo=timezone.utc))
-        c2 = _make_comment("alice", datetime(2026, 3, 2, tzinfo=timezone.utc))
-        assert find_last_team_comment([c1, c2], TEAM) is c2
+    @patch.dict(os.environ, {"DAYS_THRESHOLD": "invalid"}, clear=True)
+    def test_invalid_runtime_override_is_rejected(self, capsys):
+        with pytest.raises(SystemExit):
+            get_runtime_thresholds()
 
-    def test_only_deleted_users(self):
-        c1 = _make_comment(None, datetime(2026, 3, 1, tzinfo=timezone.utc))
-        assert find_last_team_comment([c1], TEAM) is None
+        assert "non-negative integer" in capsys.readouterr().out
 
+    @patch.dict(os.environ, {"DAYS_THRESHOLD": "-1"}, clear=True)
+    def test_negative_runtime_override_is_rejected(self, capsys):
+        with pytest.raises(SystemExit):
+            get_runtime_thresholds()
 
-# ---------------------------------------------------------------------------
-# author_replied_after
-# ---------------------------------------------------------------------------
-
-class TestAuthorRepliedAfter:
-    def test_author_replied(self):
-        after = datetime(2026, 3, 1, tzinfo=timezone.utc)
-        c1 = _make_comment("external", datetime(2026, 3, 2, tzinfo=timezone.utc))
-        assert author_replied_after([c1], "external", after) is True
-
-    def test_author_not_replied(self):
-        after = datetime(2026, 3, 5, tzinfo=timezone.utc)
-        c1 = _make_comment("external", datetime(2026, 3, 2, tzinfo=timezone.utc))
-        assert author_replied_after([c1], "external", after) is False
-
-    def test_different_user_replied(self):
-        after = datetime(2026, 3, 1, tzinfo=timezone.utc)
-        c1 = _make_comment("someone_else", datetime(2026, 3, 2, tzinfo=timezone.utc))
-        assert author_replied_after([c1], "external", after) is False
-
-    def test_deleted_user_comment(self):
-        after = datetime(2026, 3, 1, tzinfo=timezone.utc)
-        c1 = _make_comment(None, datetime(2026, 3, 2, tzinfo=timezone.utc))
-        assert author_replied_after([c1], "external", after) is False
+        assert "non-negative integer" in capsys.readouterr().out
 
 
-# ---------------------------------------------------------------------------
-# should_mark_waiting
-# ---------------------------------------------------------------------------
-
-class TestShouldMarkWaiting:
-    def test_mark_when_latest_comment_is_from_maintainer(self):
-        comments = [
-            _make_comment("external", NOW - timedelta(days=2)),
-            _make_comment("alice", NOW - timedelta(days=1)),
-        ]
-        issue = _make_issue(labels=[], comments=comments, comment_count=2)
-
-        assert should_mark_waiting(issue, TEAM) is True
-
-    def test_skip_maintainer_author(self):
-        issue = _make_issue(
-            author="alice",
-            labels=[],
-            comments=[_make_comment("bob", NOW)],
-        )
-
-        assert should_mark_waiting(issue, TEAM) is False
-        issue.get_comments.assert_not_called()
-
-    def test_skip_already_waiting_item(self):
-        issue = _make_issue(
-            comments=[_make_comment("alice", NOW)],
-        )
-
-        assert should_mark_waiting(issue, TEAM) is False
-        issue.get_comments.assert_not_called()
-
-    def test_skip_item_without_comments(self):
-        issue = _make_issue(labels=[], comment_count=0)
-
-        assert should_mark_waiting(issue, TEAM) is False
-        issue.get_comments.assert_not_called()
-
-    def test_skip_when_latest_comment_is_not_from_maintainer(self):
-        comments = [
-            _make_comment("alice", NOW - timedelta(days=2)),
-            _make_comment("external", NOW - timedelta(days=1)),
-        ]
-        issue = _make_issue(labels=[], comments=comments, comment_count=2)
-
-        assert should_mark_waiting(issue, TEAM) is False
-
-
-# ---------------------------------------------------------------------------
-# should_ping
-# ---------------------------------------------------------------------------
-
-class TestShouldPing:
-    def test_skip_recently_updated_issue(self):
-        issue = _make_issue(updated_at=NOW - timedelta(days=3))
-        assert should_ping(issue, TEAM, 4, NOW) is False
-
-    def test_ping_issue_updated_at_threshold(self):
-        issue = _make_issue(updated_at=NOW - timedelta(days=4))
-        assert should_ping(issue, TEAM, 4, NOW) is True
-
-    def test_skip_maintainer_author(self):
-        issue = _make_issue(author="alice", updated_at=NOW - timedelta(days=4))
-        assert should_ping(issue, TEAM, 4, NOW) is False
-
-    def test_skip_already_warned_issue(self):
-        issue = _make_issue(
-            labels=[TRIGGER_LABEL, PINGED_LABEL],
+class TestShouldWarn:
+    def test_warns_at_threshold_for_latest_maintainer_comment(self):
+        pull_request = _make_pull_request(
+            comments=[
+                _make_comment("external"),
+                _make_comment("alice"),
+            ],
             updated_at=NOW - timedelta(days=4),
         )
-        assert should_ping(issue, TEAM, 4, NOW) is False
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is True
+        pull_request.get_issue_comments.assert_called_once_with()
+
+    def test_recent_activity_resets_warning_clock(self):
+        pull_request = _make_pull_request(
+            comments=[_make_comment("alice")],
+            updated_at=NOW - timedelta(days=3),
+        )
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is False
+        pull_request.get_issue_comments.assert_not_called()
+
+    def test_maintainer_authored_pr_is_exempt(self):
+        pull_request = _make_pull_request(
+            author="Alice",
+            comments=[_make_comment("bob")],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is False
+        pull_request.get_issue_comments.assert_not_called()
+
+    def test_requested_info_pr_is_not_warned_again(self):
+        pull_request = _make_pull_request(
+            labels=[REQUESTED_INFO_LABEL],
+            comments=[_make_comment("alice")],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is False
+        pull_request.get_issue_comments.assert_not_called()
+
+    def test_pr_without_regular_conversation_comments_is_skipped(self):
+        pull_request = _make_pull_request(
+            comments=[],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is False
+        pull_request.get_issue_comments.assert_called_once_with()
+
+    def test_latest_external_comment_is_skipped(self):
+        pull_request = _make_pull_request(
+            comments=[
+                _make_comment("alice"),
+                _make_comment("external"),
+            ],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is False
+
+    def test_deleted_latest_comment_author_is_skipped(self):
+        pull_request = _make_pull_request(
+            comments=[_make_comment(None)],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is False
 
 
-# ---------------------------------------------------------------------------
-# mark_waiting
-# ---------------------------------------------------------------------------
+class TestWarn:
+    def test_dry_run_mutates_nothing(self, capsys):
+        pull_request = _make_pull_request()
 
-class TestMarkWaiting:
-    def test_dry_run_does_not_apply_label(self, capsys):
-        issue = _make_issue(labels=[])
+        assert warn(pull_request, dry_run=True, closing_threshold_days=6) is True
+        pull_request.create_issue_comment.assert_not_called()
+        pull_request.add_to_labels.assert_not_called()
+        output = capsys.readouterr().out
+        assert "DRY RUN" in output
+        assert REQUESTED_INFO_LABEL in output
 
-        assert mark_waiting(issue, dry_run=True) is True
-        issue.add_to_labels.assert_not_called()
-        assert "DRY RUN" in capsys.readouterr().out
+    def test_posts_warning_then_applies_requested_info(self):
+        pull_request = _make_pull_request()
 
-
-# ---------------------------------------------------------------------------
-# ping
-# ---------------------------------------------------------------------------
-
-class TestPing:
-    def test_dry_run(self, capsys):
-        issue = _make_issue()
-        assert ping(issue, dry_run=True) is True
-        issue.create_comment.assert_not_called()
-        assert "DRY RUN" in capsys.readouterr().out
-
-    def test_success(self, capsys):
-        issue = _make_issue()
-        assert ping(issue, dry_run=False) is True
-        issue.create_comment.assert_called_once()
-        issue.add_to_labels.assert_called_once_with(PINGED_LABEL)
+        assert warn(pull_request, dry_run=False, closing_threshold_days=6) is True
+        assert pull_request.method_calls == [
+            call.create_issue_comment(
+                WARNING_COMMENT.format(
+                    author="external",
+                    closing_days=6,
+                )
+            ),
+            call.add_to_labels(REQUESTED_INFO_LABEL),
+        ]
 
     @patch("stale_issue_pr_ping.time.sleep")
-    def test_retry_on_failure(self, mock_sleep):
-        issue = _make_issue()
-        issue.create_comment.side_effect = [Exception("net error"), None]
-        assert ping(issue, dry_run=False) is True
-        assert issue.create_comment.call_count == 2
+    def test_comment_retry_succeeds(self, mock_sleep):
+        pull_request = _make_pull_request()
+        pull_request.create_issue_comment.side_effect = [
+            Exception("network error"),
+            None,
+        ]
+
+        assert warn(pull_request, dry_run=False, closing_threshold_days=4) is True
+        assert pull_request.create_issue_comment.call_count == 2
+        pull_request.add_to_labels.assert_called_once_with(REQUESTED_INFO_LABEL)
         mock_sleep.assert_called_once()
 
     @patch("stale_issue_pr_ping.time.sleep")
-    def test_idempotent_retry_skips_comment_on_label_failure(self, mock_sleep):
-        """If create_comment succeeds but add_to_labels fails, retry should not re-comment."""
-        issue = _make_issue()
-        issue.add_to_labels.side_effect = [Exception("label error"), None]
-        assert ping(issue, dry_run=False) is True
-        # Comment should only be created once even though there were 2 attempts
-        assert issue.create_comment.call_count == 1
-        assert issue.add_to_labels.call_count == 2
+    def test_label_retry_does_not_repeat_warning(self, mock_sleep):
+        pull_request = _make_pull_request()
+        pull_request.add_to_labels.side_effect = [
+            Exception("label error"),
+            None,
+        ]
+
+        assert warn(pull_request, dry_run=False, closing_threshold_days=4) is True
+        pull_request.create_issue_comment.assert_called_once()
+        assert pull_request.add_to_labels.call_count == 2
+        mock_sleep.assert_called_once()
 
     @patch("stale_issue_pr_ping.time.sleep")
-    def test_all_retries_fail(self, mock_sleep):
-        issue = _make_issue()
-        issue.create_comment.side_effect = Exception("permanent error")
-        assert ping(issue, dry_run=False) is False
-        assert issue.create_comment.call_count == 3
+    def test_warning_failure_never_applies_label(self, mock_sleep):
+        pull_request = _make_pull_request()
+        pull_request.create_issue_comment.side_effect = Exception("comment error")
+
+        assert warn(pull_request, dry_run=False, closing_threshold_days=4) is False
+        assert pull_request.create_issue_comment.call_count == 3
+        pull_request.add_to_labels.assert_not_called()
+
+    @patch("stale_issue_pr_ping.time.sleep")
+    def test_final_label_failure_reports_failure_without_repeating_warning(
+        self,
+        mock_sleep,
+    ):
+        pull_request = _make_pull_request()
+        pull_request.add_to_labels.side_effect = Exception("label error")
+
+        assert warn(pull_request, dry_run=False, closing_threshold_days=4) is False
+        pull_request.create_issue_comment.assert_called_once()
+        assert pull_request.add_to_labels.call_count == 3
+        assert mock_sleep.call_count == 2
 
 
-# ---------------------------------------------------------------------------
-# get_maintainers
-# ---------------------------------------------------------------------------
+class TestShouldClose:
+    def test_closes_requested_info_pr_at_threshold(self):
+        pull_request = _make_pull_request(
+            labels=[REQUESTED_INFO_LABEL],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_close(pull_request, MAINTAINERS, NOW, 4) is True
+
+    def test_recent_activity_resets_closing_clock(self):
+        pull_request = _make_pull_request(
+            labels=[REQUESTED_INFO_LABEL],
+            updated_at=NOW - timedelta(days=3),
+        )
+
+        assert should_close(pull_request, MAINTAINERS, NOW, 4) is False
+
+    def test_maintainer_authored_pr_is_exempt(self):
+        pull_request = _make_pull_request(
+            author="Alice",
+            labels=[REQUESTED_INFO_LABEL],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_close(pull_request, MAINTAINERS, NOW, 4) is False
+
+    def test_unlabeled_pr_is_not_closed(self):
+        pull_request = _make_pull_request(
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_close(pull_request, MAINTAINERS, NOW, 4) is False
+
+
+class TestClose:
+    def test_dry_run_mutates_nothing(self, capsys):
+        pull_request = _make_pull_request()
+
+        assert close(pull_request, dry_run=True) is True
+        pull_request.create_issue_comment.assert_not_called()
+        pull_request.edit.assert_not_called()
+        assert "DRY RUN" in capsys.readouterr().out
+
+    def test_posts_closing_comment_then_closes_pr(self):
+        pull_request = _make_pull_request()
+
+        assert close(pull_request, dry_run=False) is True
+        assert pull_request.method_calls == [
+            call.create_issue_comment(CLOSING_COMMENT),
+            call.edit(state="closed"),
+        ]
+
+    @patch("stale_issue_pr_ping.time.sleep")
+    def test_close_retry_does_not_repeat_comment(self, mock_sleep):
+        pull_request = _make_pull_request()
+        pull_request.edit.side_effect = [Exception("close error"), None]
+
+        assert close(pull_request, dry_run=False) is True
+        pull_request.create_issue_comment.assert_called_once_with(CLOSING_COMMENT)
+        assert pull_request.edit.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("stale_issue_pr_ping.time.sleep")
+    def test_comment_failure_never_closes_pr(self, mock_sleep):
+        pull_request = _make_pull_request()
+        pull_request.create_issue_comment.side_effect = Exception("comment error")
+
+        assert close(pull_request, dry_run=False) is False
+        assert pull_request.create_issue_comment.call_count == 3
+        pull_request.edit.assert_not_called()
+
+    @patch("stale_issue_pr_ping.time.sleep")
+    def test_final_close_failure_reports_failure_without_repeating_comment(
+        self,
+        mock_sleep,
+    ):
+        pull_request = _make_pull_request()
+        pull_request.edit.side_effect = Exception("close error")
+
+        assert close(pull_request, dry_run=False) is False
+        pull_request.create_issue_comment.assert_called_once_with(CLOSING_COMMENT)
+        assert pull_request.edit.call_count == 3
+        assert mock_sleep.call_count == 2
+
 
 class TestGetMaintainers:
     def test_fetches_and_parses_unique_python_and_dotnet_owners(self):
@@ -275,7 +341,7 @@ class TestGetMaintainers:
 /python/ @Alice @shared
 /dotnet/ @BOB @Shared
 /docs/ @ignored
-        """
+"""
         repo.get_contents.return_value = codeowners
 
         assert get_maintainers(repo) == {"alice", "bob", "shared"}
@@ -297,77 +363,171 @@ class TestGetMaintainers:
         codeowners.decoded_content = b"""
 /docs/ @docs-owner
 /python/** @python-owner
-        """
+"""
         repo.get_contents.return_value = codeowners
 
         with pytest.raises(RuntimeError, match="No maintainers found in CODEOWNERS"):
             get_maintainers(repo)
 
+    def test_propagates_codeowners_fetch_failure(self):
+        repo = MagicMock()
+        error = GithubException(404, {"message": "Not Found"}, None)
+        repo.get_contents.side_effect = error
 
-# ---------------------------------------------------------------------------
-# main – env var validation
-# ---------------------------------------------------------------------------
+        with pytest.raises(GithubException) as exc_info:
+            get_maintainers(repo)
+
+        assert exc_info.value is error
+
 
 class TestMain:
-    @patch.dict(os.environ, {
-        "GITHUB_TOKEN": "tok",
-        "GITHUB_REPOSITORY": "org/repo",
-        "DAYS_THRESHOLD": "abc",
-    }, clear=True)
-    def test_invalid_days_threshold(self, capsys):
+    @patch.dict(os.environ, {}, clear=True)
+    def test_missing_github_token(self, capsys):
         with pytest.raises(SystemExit):
             main()
-        assert "numeric" in capsys.readouterr().out
 
-    @patch.dict(os.environ, {
-        "GITHUB_TOKEN": "tok",
-        "GITHUB_REPOSITORY": "org/repo",
-    }, clear=True)
-    @patch("stale_issue_pr_ping.get_maintainers", return_value=TEAM)
+        assert "GITHUB_TOKEN" in capsys.readouterr().out
+
+    @patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}, clear=True)
+    def test_missing_github_repository(self, capsys):
+        with pytest.raises(SystemExit):
+            main()
+
+        assert "GITHUB_REPOSITORY" in capsys.readouterr().out
+
+    @patch.dict(
+        os.environ,
+        {
+            "GITHUB_TOKEN": "tok",
+            "GITHUB_REPOSITORY": "org/repo",
+            "DAYS_THRESHOLD": "invalid",
+        },
+        clear=True,
+    )
     @patch("stale_issue_pr_ping.Github")
-    def test_scans_all_open_items_and_defers_newly_marked(
+    def test_invalid_days_threshold_stops_before_github(self, mock_github, capsys):
+        with pytest.raises(SystemExit):
+            main()
+
+        mock_github.assert_not_called()
+        assert "non-negative integer" in capsys.readouterr().out
+
+    @patch.dict(
+        os.environ,
+        {
+            "GITHUB_TOKEN": "tok",
+            "GITHUB_REPOSITORY": "org/repo",
+            "DAYS_THRESHOLD": "7",
+        },
+        clear=True,
+    )
+    @patch("stale_issue_pr_ping.datetime")
+    @patch("stale_issue_pr_ping.get_maintainers", return_value=MAINTAINERS)
+    @patch("stale_issue_pr_ping.Github")
+    def test_scans_only_open_prs_and_defers_new_warning(
         self,
         mock_github,
         mock_get_maintainers,
+        mock_datetime,
         capsys,
     ):
-        issue = _make_issue(
-            labels=[],
-            comments=[_make_comment("alice", NOW)],
+        pull_request = _make_pull_request(
+            comments=[_make_comment("alice")],
+            updated_at=NOW - timedelta(days=7),
         )
         repo = mock_github.return_value.get_repo.return_value
-        repo.get_issues.return_value = [issue]
-
-        main()
-
-        mock_get_maintainers.assert_called_once_with(repo)
-        repo.get_issues.assert_called_once_with(state="open")
-        issue.add_to_labels.assert_called_once_with(TRIGGER_LABEL)
-        issue.create_comment.assert_not_called()
-        assert "marked 1, pinged 0" in capsys.readouterr().out
-
-    @patch.dict(os.environ, {
-        "GITHUB_TOKEN": "tok",
-        "GITHUB_REPOSITORY": "org/repo",
-    }, clear=True)
-    @patch("stale_issue_pr_ping.datetime")
-    @patch("stale_issue_pr_ping.ping", return_value=True)
-    @patch("stale_issue_pr_ping.get_maintainers", return_value=TEAM)
-    @patch("stale_issue_pr_ping.Github")
-    def test_existing_waiting_item_continues_to_ping_check(
-        self,
-        mock_github,
-        mock_get_maintainers,
-        mock_ping,
-        mock_datetime,
-    ):
-        issue = _make_issue(updated_at=NOW - timedelta(days=4))
-        repo = mock_github.return_value.get_repo.return_value
-        repo.get_issues.return_value = [issue]
+        repo.get_pulls.return_value = [pull_request]
         mock_datetime.now.return_value = NOW
 
         main()
 
         mock_get_maintainers.assert_called_once_with(repo)
-        issue.get_comments.assert_not_called()
-        mock_ping.assert_called_once_with(issue, False)
+        repo.get_pulls.assert_called_once_with(state="open")
+        repo.get_issues.assert_not_called()
+        pull_request.create_issue_comment.assert_called_once_with(
+            WARNING_COMMENT.format(
+                author="external",
+                closing_days=7,
+            )
+        )
+        pull_request.add_to_labels.assert_called_once_with(REQUESTED_INFO_LABEL)
+        pull_request.edit.assert_not_called()
+        assert "Scanned 1 PRs, warned 1, closed 0" in capsys.readouterr().out
+
+    @patch.dict(
+        os.environ,
+        {
+            "GITHUB_TOKEN": "tok",
+            "GITHUB_REPOSITORY": "org/repo",
+            "DAYS_THRESHOLD": "7",
+        },
+        clear=True,
+    )
+    @patch("stale_issue_pr_ping.datetime")
+    @patch("stale_issue_pr_ping.get_maintainers", return_value=MAINTAINERS)
+    @patch("stale_issue_pr_ping.Github")
+    def test_existing_requested_info_pr_closes_before_warning_check(
+        self,
+        mock_github,
+        mock_get_maintainers,
+        mock_datetime,
+        capsys,
+    ):
+        pull_request = _make_pull_request(
+            labels=[REQUESTED_INFO_LABEL],
+            updated_at=NOW - timedelta(days=7),
+        )
+        repo = mock_github.return_value.get_repo.return_value
+        repo.get_pulls.return_value = [pull_request]
+        mock_datetime.now.return_value = NOW
+
+        main()
+
+        mock_get_maintainers.assert_called_once_with(repo)
+        pull_request.get_issue_comments.assert_not_called()
+        pull_request.create_issue_comment.assert_called_once_with(CLOSING_COMMENT)
+        pull_request.edit.assert_called_once_with(state="closed")
+        output = capsys.readouterr().out
+        assert "Scanned 1 PRs, warned 0, closed 1, failed 0" in output
+        assert "Closed: #42" in output
+
+    @patch.dict(
+        os.environ,
+        {
+            "GITHUB_TOKEN": "tok",
+            "GITHUB_REPOSITORY": "org/repo",
+        },
+        clear=True,
+    )
+    @patch("stale_issue_pr_ping.datetime")
+    @patch("stale_issue_pr_ping.warn", return_value=False)
+    @patch("stale_issue_pr_ping.get_maintainers", return_value=MAINTAINERS)
+    @patch("stale_issue_pr_ping.Github")
+    def test_failed_warning_is_reported_and_exits(
+        self,
+        mock_github,
+        mock_get_maintainers,
+        mock_warn,
+        mock_datetime,
+        capsys,
+    ):
+        pull_request = _make_pull_request(
+            comments=[_make_comment("alice")],
+            updated_at=NOW - timedelta(days=WARNING_THRESHOLD_DAYS),
+        )
+        repo = mock_github.return_value.get_repo.return_value
+        repo.get_pulls.return_value = [pull_request]
+        mock_datetime.now.return_value = NOW
+
+        with pytest.raises(SystemExit):
+            main()
+
+        mock_get_maintainers.assert_called_once_with(repo)
+        mock_warn.assert_called_once_with(
+            pull_request,
+            False,
+            CLOSING_THRESHOLD_DAYS,
+        )
+        output = capsys.readouterr().out
+        assert "Scanned 1 PRs, warned 0, closed 0, failed 1" in output
+        assert "Failed: #42" in output
