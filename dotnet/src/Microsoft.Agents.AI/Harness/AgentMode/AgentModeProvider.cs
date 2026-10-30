@@ -380,6 +380,11 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
         }
 
         state.CurrentMode = this._defaultMode;
+        // A pending notification from the removed mode must not fire as default→default.
+        if (string.Equals(state.PreviousModeForNotification, this._defaultMode, StringComparison.Ordinal))
+        {
+            state.PreviousModeForNotification = null;
+        }
         this._sessionState.SaveState(session, state);
         return state.CurrentMode;
     }
