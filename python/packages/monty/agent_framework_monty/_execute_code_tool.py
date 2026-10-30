@@ -194,6 +194,40 @@ def _make_tool_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     return partial(tool_obj.invoke, skip_parsing=True)
 
 
+def _fides_metadata_snapshot(tool_obj: FunctionTool) -> dict[str, str]:
+    """Capture FIDES metadata for compatibility-warning deduplication."""
+    properties = tool_obj.additional_properties or {}
+    return {key: repr(value) for key, value in properties.items() if key in _FIDES_TOOL_PROPERTY_KEYS}
+
+
+def _warn_unsupported_fides_tools(
+    tools: Sequence[FunctionTool],
+    warned_metadata: list[tuple[FunctionTool, dict[str, str]]],
+) -> None:
+    """Warn when newly registered or changed FIDES metadata is observed."""
+    for tool_obj in tools:
+        snapshot = _fides_metadata_snapshot(tool_obj)
+        previous = next(
+            (metadata for registered, metadata in warned_metadata if registered is tool_obj),
+            None,
+        )
+
+        if snapshot and snapshot != previous:
+            logger.warning(
+                "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                "through function middleware for calls made inside generated code. "
+                "Keep FIDES-dependent tools as direct agent tools.",
+                tool_obj.name,
+            )
+
+        warned_metadata[:] = [
+            (registered, metadata) for registered, metadata in warned_metadata if registered is not tool_obj
+        ]
+
+        if snapshot:
+            warned_metadata.append((tool_obj, snapshot))
+
+
 class MontyExecuteCodeTool(FunctionTool):
     """Execute Python code inside a Monty interpreter.
 
@@ -237,6 +271,7 @@ class MontyExecuteCodeTool(FunctionTool):
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
     ) -> None:
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
@@ -250,6 +285,7 @@ class MontyExecuteCodeTool(FunctionTool):
             tool_description_format
         )
         self._managed_tools: list[FunctionTool] = []
+        self._fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] = list(_fides_warned_metadata or [])
         self._workspace_root: Path | None = (
             _resolve_existing_directory(workspace_root) if workspace_root is not None else None
         )
@@ -285,16 +321,12 @@ class MontyExecuteCodeTool(FunctionTool):
         """Add Monty-side tools to this execute_code surface."""
         new_tools = _collect_tools(tools)
         self._managed_tools = _collect_tools(self._managed_tools, new_tools)
-        for tool_obj in new_tools:
-            if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
-                tool_obj.additional_properties
-            ):
-                logger.warning(
-                    "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
-                    "through function middleware for calls made inside generated code. "
-                    "Keep FIDES-dependent tools as direct agent tools.",
-                    tool_obj.name,
-                )
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in self._managed_tools)
+        ]
+        _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
         self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -307,11 +339,17 @@ class MontyExecuteCodeTool(FunctionTool):
         if len(remaining_tools) == len(self._managed_tools):
             raise KeyError(f"No managed tool named {name!r} is registered.")
         self._managed_tools = remaining_tools
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in remaining_tools)
+        ]
         self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed Monty tools."""
         self._managed_tools = []
+        self._fides_warned_metadata.clear()
         self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -365,8 +403,11 @@ class MontyExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
+        tools = self.get_tools()
+        _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
         return MontyExecuteCodeTool(
-            tools=self.get_tools(),
+            _fides_warned_metadata=self._fides_warned_metadata,
+            tools=tools,
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
