@@ -62,8 +62,8 @@ async def main() -> None:
         instructions=(
             "You are a programming expert in a workgroup. "
             f"Your job is to review the answer provided by {expert.name} and point "
-            "out statements that are technically true but practically dangerous."
-            "If there is nothing woth pointing out, respond with 'The answer looks good to me.'"
+            "out statements that are technically true but practically dangerous. "
+            "If there is nothing worth pointing out, respond with 'The answer looks good to me.'"
         ),
         client=client,
     )
