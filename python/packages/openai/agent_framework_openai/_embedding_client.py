@@ -229,6 +229,8 @@ class RawOpenAIEmbeddingClient(
         )
 
         self.client = client
+        # Track ownership so close() only releases clients this instance created.
+        self._owns_client = async_client is None
         resolved_model = settings.get("model")
         self.model: str | None = resolved_model.strip() if isinstance(resolved_model, str) and resolved_model else None
 
@@ -251,6 +253,15 @@ class RawOpenAIEmbeddingClient(
     def service_url(self) -> str:
         """Get the URL of the service."""
         return str(self.client.base_url) if self.client else "Unknown"
+
+    async def close(self) -> None:
+        """Close the internally created OpenAI client when this instance owns it.
+
+        A caller-supplied ``async_client`` stays open: its lifecycle belongs to
+        the caller.
+        """
+        if self._owns_client and self.client is not None:
+            await self.client.close()
 
     def _prepare_extra_request_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
         """Return extra keyword arguments for the ``embeddings.create`` request.

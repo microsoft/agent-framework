@@ -1054,6 +1054,29 @@ class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, Embe
         """
         ...
 
+    async def __aenter__(self) -> Self:
+        """Enter the embedding client context without requiring it for ordinary requests."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        """Release resources owned by the embedding client without suppressing exceptions."""
+        result = self.close()
+        if isawaitable(result):
+            await result
+
+    async def close(self) -> None:
+        """Release embedding-client-owned connections and credentials.
+
+        The default implementation does nothing. Resource-owning implementations
+        override this method and must leave caller-supplied resources open.
+        """
+
 
 # endregion
 

@@ -102,3 +102,16 @@ def test_wrong_class_does_not_satisfy_protocol() -> None:
 
     client = NotAnEmbeddingClient()
     assert not isinstance(client, SupportsGetEmbeddings)
+
+
+async def test_base_embedding_client_async_context_manager() -> None:
+    """The base close() is a no-op, but the async context manager protocol works."""
+    client = MockEmbeddingClient()
+
+    async with client as entered:
+        assert entered is client
+
+
+async def test_base_embedding_client_close_default_is_noop() -> None:
+    client = MockEmbeddingClient()
+    await client.close()  # must not raise
