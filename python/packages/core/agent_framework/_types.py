@@ -654,8 +654,9 @@ def _has_reasoning_text_marker(additional_properties: Mapping[str, Any]) -> bool
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
     """Add two UsageDetails dictionaries by summing all numeric values.
 
-    If any of the two usage details contains a key with a non-int value, it will be skipped,
-    even if the other contains a int-value on that key.
+    Missing keys and ``None`` values contribute zero. If either dictionary contains
+    a non-integer value other than ``None`` for a key, that key is skipped even if
+    the other value is an integer. Boolean values are also skipped.
 
     Args:
         usage1: First usage details dictionary.
