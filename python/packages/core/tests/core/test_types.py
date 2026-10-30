@@ -7739,4 +7739,5 @@ def test_agent_response_value_validates_by_alias_only() -> None:
         response_format=Aliased,
     )
 
-    assert response.value == Aliased(item_count=3)
+    assert response.value is not None
+    assert response.value.item_count == 3

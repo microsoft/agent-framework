@@ -1327,7 +1327,8 @@ class TestGitHubCopilotAgentStructuredOutput:
         agent = GitHubCopilotAgent(client=mock_client)
         response = await agent.run("Hi", options=cast(Any, {"response_format": Aliased}))
 
-        assert response.value == Aliased(item_count=3)
+        assert response.value is not None
+        assert response.value.item_count == 3
 
     async def test_streaming_value_ignores_trailing_subagent_text(
         self,
