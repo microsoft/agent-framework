@@ -4405,6 +4405,15 @@ class SecureAgentConfig(ContextProvider):
             else _ApprovalReplayAuthority()
         )
         context.metadata[_APPROVAL_REPLAY_AUTHORITY_KEY] = approval_authority
+        has_local_history = any(context.context_messages.get(source_id) for source_id in history_source_ids)
+        if (
+            reconstruct_history_unstamped
+            and not has_local_history
+            and (context.service_session_id is not None or context.options.get("conversation_id") is not None)
+        ):
+            raise RuntimeError(
+                "Cannot reconstruct service-managed history without an authoritative FIDES context label."
+            )
         self._fold_history_labels(
             _SecurityScope(state, scope_id=session.session_id),
             context,
