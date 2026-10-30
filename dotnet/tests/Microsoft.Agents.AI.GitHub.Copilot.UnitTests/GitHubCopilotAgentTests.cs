@@ -486,6 +486,44 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.ResponseId);
     }
 
+    [Theory]
+    [InlineData(42L, true)]
+    [InlineData(0L, true)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void ConvertToAgentResponseUpdate_AssistantUsageEvent_PreservesReasoningTokens(long? reasoningTokens, bool hasUsageData)
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var usageEvent = new AssistantUsageEvent
+        {
+            Data = hasUsageData ? new AssistantUsageData
+            {
+                Model = "test-model",
+                InputTokens = 100,
+                OutputTokens = 50,
+                CacheReadTokens = 25,
+                ReasoningTokens = reasoningTokens
+            } : null!
+        };
+        MethodInfo method = typeof(GitHubCopilotAgent).GetMethod(
+            "ConvertToAgentResponseUpdate",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            [typeof(AssistantUsageEvent)])!;
+
+        // Act
+        var result = (AgentResponseUpdate)method.Invoke(agent, [usageEvent])!;
+
+        // Assert
+        UsageContent usage = Assert.IsType<UsageContent>(Assert.Single(result.Contents));
+        Assert.Equal(reasoningTokens, usage.Details.ReasoningTokenCount);
+        Assert.Equal(hasUsageData ? 100L : null, usage.Details.InputTokenCount);
+        Assert.Equal(hasUsageData ? 50L : null, usage.Details.OutputTokenCount);
+        Assert.Equal(hasUsageData ? 25L : null, usage.Details.CachedInputTokenCount);
+        Assert.Equal(hasUsageData ? 150L : 0L, usage.Details.TotalTokenCount);
+    }
+
     [Fact]
     public async Task Constructor_WithApprovalRequiredTool_InstallsAskPreToolUseHookAsync()
     {
