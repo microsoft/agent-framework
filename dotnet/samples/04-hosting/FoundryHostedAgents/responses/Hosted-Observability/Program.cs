@@ -14,6 +14,7 @@ using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
+using OpenTelemetry.Resources;
 
 // Load a local .env file when present (local development only). In Foundry the
 // platform injects the required environment variables at runtime.
@@ -70,6 +71,8 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredentia
 // Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]));
 
 var app = builder.Build();
 app.MapFoundryResponses();

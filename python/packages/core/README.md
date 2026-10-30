@@ -71,6 +71,14 @@ carry a documented feature-usage token.
 - `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true` disables the entire Agent Framework
   User-Agent contribution, including the feature token.
 
+OpenTelemetry providers configured through `configure_otel_providers()` share a
+resource containing `"microsoft.agent-framework": "True"` (a string) by default. This
+resource attribute applies to logs, traces, and metrics, including other
+instrumentation using those providers. Existing environment and explicit resource
+attribute overrides retain their precedence. If you configure providers yourself,
+use `agent_framework.observability.create_resource()` for each provider or add the
+attribute to your own shared resource.
+
 See the following [getting started samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started) for more information.
 
 ## 2. Create a Simple Agent
