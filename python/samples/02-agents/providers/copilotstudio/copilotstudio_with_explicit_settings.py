@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-copilotstudio",
-#     "microsoft-agents",
+#     "microsoft-agents-copilotstudio-client",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
