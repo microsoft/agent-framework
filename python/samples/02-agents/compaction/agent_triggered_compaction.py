@@ -16,7 +16,7 @@ from agent_framework import (
     UnloadSkillsCompactionStrategy,
     included_messages,
 )
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -112,7 +112,7 @@ async def main() -> None:
 
     # 3. The trigger tool is registered explicitly. SkillsProvider contributes
     #    load_skill, while disabling approval keeps this sample automatic.
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,
         name="PlanningAgent",
         instructions=dedent("""\

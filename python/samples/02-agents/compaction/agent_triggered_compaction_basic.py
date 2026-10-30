@@ -13,7 +13,7 @@ from agent_framework import (
     included_messages,
     tool,
 )
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -96,7 +96,7 @@ async def main() -> None:
 
     # 3. Register both the ordinary context-producing tool and the explicit
     #    compaction trigger tool.
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,
         name="ResearchAgent",
         instructions=(

@@ -4600,17 +4600,17 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from agent_framework._sessions import InMemoryHistoryProvider
-    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient, OpenAIChatOptions
 
     @tool(approval_mode="never_require")
     def search_hotels(city: str) -> str:
         return f"Found 3 hotels in {city}"
 
     responses_client = OpenAIChatClient(model="test-model", api_key="test-key")
-    responses_agent = Agent(
+    responses_agent = Agent[OpenAIChatOptions](
         client=responses_client,  # ty: ignore[invalid-argument-type]
         tools=[search_hotels],
-        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": False},
     )
     session = responses_agent.create_session()
 

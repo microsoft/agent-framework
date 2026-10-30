@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Agent, Message
-from agent_framework.anthropic import AnthropicClient
+from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from dotenv import load_dotenv
 
@@ -63,7 +63,7 @@ async def demo_anthropic_agent() -> None:
     client = AnthropicClient(model="claude-sonnet-4-5-20250929")
 
     # Create a typed agent for Anthropic - IDE knows Anthropic-specific options!
-    agent = Agent(
+    agent = Agent[AnthropicChatOptions](
         client=client,
         name="claude-assistant",
         instructions="You are a helpful assistant powered by Claude. Be concise.",

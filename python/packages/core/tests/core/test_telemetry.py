@@ -202,7 +202,11 @@ def test_declared_feature_indexes_match_registry() -> None:
 
     declaration_files = [
         repository_root / "python" / "packages" / "core" / "agent_framework" / "_telemetry.py",
-        *repository_root.glob("python/packages/**/_feature_usage.py"),
+        *(
+            path
+            for path in repository_root.glob("python/packages/**/_feature_usage.py")
+            if "site-packages" not in path.relative_to(repository_root).parts
+        ),
     ]
     external_package_roots: dict[Path, Path] = {}
     # Their stable registry rows stay in this repository, but their declarations moved to the durable extension.
@@ -257,7 +261,8 @@ def test_declared_feature_indexes_match_registry() -> None:
         _, member_name = pair
         referenced = False
         for source_file in package_root.rglob("*.py"):
-            if source_file == declaration_file or "tests" in source_file.parts:
+            relative_parts = source_file.relative_to(package_root).parts
+            if source_file == declaration_file or "tests" in relative_parts or "site-packages" in relative_parts:
                 continue
             source_tree = ast.parse(source_file.read_text(encoding="utf-8"))
             if any(
