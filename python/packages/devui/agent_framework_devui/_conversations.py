@@ -8,6 +8,7 @@ with in-memory message storage.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -414,89 +415,10 @@ class InMemoryConversationStore(ConversationStore):
         items: list[ConversationItem] = []
         af_messages = stored_messages
 
-        # Convert each AgentFramework Message to appropriate ConversationItem type(s)
+        # A single Message may produce multiple ConversationItems
+        # (e.g., a message with both text and a function call)
         for i, msg in enumerate(af_messages):
-            item_id = f"item_{i}"
-            role_str = msg.role if hasattr(msg.role, "value") else str(msg.role)
-            role = cast(MessageRole, role_str)  # Safe: Agent Framework roles match OpenAI roles
-
-            # Process each content item in the message
-            # A single Message may produce multiple ConversationItems
-            # (e.g., a message with both text and a function call)
-            message_contents: list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile] = []
-            function_calls: list[ResponseFunctionToolCallItem] = []
-            function_results: list[ResponseFunctionToolCallOutputItem] = []
-
-            for content in msg.contents:
-                content_type = getattr(content, "type", None)
-                mapped_content = self._to_openai_content(content)
-
-                if mapped_content is not None:
-                    message_contents.append(mapped_content)
-                elif content_type == "function_call":
-                    # Function call - create separate ConversationItem
-                    call_id = getattr(content, "call_id", None)
-                    name = getattr(content, "name", "")
-                    arguments = getattr(content, "arguments", "")
-
-                    if call_id and name:
-                        function_calls.append(
-                            ResponseFunctionToolCallItem(
-                                id=f"{item_id}_call_{call_id}",
-                                call_id=call_id,
-                                name=name,
-                                arguments=arguments,
-                                type="function_call",
-                                status="completed",
-                            )
-                        )
-
-                elif content_type == "function_result":
-                    # Function result - create separate ConversationItem
-                    call_id = getattr(content, "call_id", None)
-                    # Output is stored in the 'result' field of FunctionResultContent
-                    result_value = getattr(content, "result", None)
-                    # Convert result to string (it could be dict, list, or other types)
-                    if result_value is None:
-                        output = ""
-                    elif isinstance(result_value, str):
-                        output = result_value
-                    else:
-                        import json
-
-                        try:
-                            output = json.dumps(result_value)
-                        except (TypeError, ValueError):
-                            output = str(result_value)
-
-                    if call_id:
-                        function_results.append(
-                            ResponseFunctionToolCallOutputItem(
-                                id=f"{item_id}_result_{call_id}",
-                                call_id=call_id,
-                                output=output,
-                                type="function_call_output",
-                                status="completed",
-                            )
-                        )
-
-            # Create ConversationItems based on what we found
-            # If message has text/images/files, create a Message item
-            if message_contents:
-                message = OpenAIMessage(
-                    id=item_id,
-                    type="message",
-                    role=role,
-                    content=message_contents,  # type: ignore
-                    status="completed",
-                )
-                items.append(message)
-
-            # Add function call items
-            items.extend(function_calls)
-
-            # Add function result items
-            items.extend(function_results)
+            items.extend(self._items_from_message(index=i, msg=msg))
 
         # Include checkpoints from checkpoint storage as conversation items
         checkpoint_storage = conv_data.get("checkpoint_storage")
@@ -744,6 +666,92 @@ class InMemoryConversationStore(ConversationStore):
 
         return None
 
+    def _items_from_message(self, *, index: int, msg: Message) -> list[ConversationItem]:
+        """Build the ConversationItems for one stored message.
+
+        The list endpoint and item retrieval must agree on ids and content, so
+        both go through this conversion: ``item_<index>`` for text, image, and
+        file content, plus ``item_<index>_call_<call id>`` and
+        ``item_<index>_result_<call id>`` for tool traffic.
+        """
+        item_id = f"item_{index}"
+        role_str = msg.role if hasattr(msg.role, "value") else str(msg.role)
+        role = cast(MessageRole, role_str)  # Safe: Agent Framework roles match OpenAI roles
+
+        message_contents: list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile] = []
+        function_calls: list[ResponseFunctionToolCallItem] = []
+        function_results: list[ResponseFunctionToolCallOutputItem] = []
+
+        for content in msg.contents:
+            content_type = getattr(content, "type", None)
+            mapped_content = self._to_openai_content(content)
+
+            if mapped_content is not None:
+                message_contents.append(mapped_content)
+            elif content_type == "function_call":
+                # Function call - create separate ConversationItem
+                call_id = getattr(content, "call_id", None)
+                name = getattr(content, "name", "")
+                arguments = getattr(content, "arguments", "")
+
+                if call_id and name:
+                    function_calls.append(
+                        ResponseFunctionToolCallItem(
+                            id=f"{item_id}_call_{call_id}",
+                            call_id=call_id,
+                            name=name,
+                            arguments=arguments,
+                            type="function_call",
+                            status="completed",
+                        )
+                    )
+
+            elif content_type == "function_result":
+                # Function result - create separate ConversationItem
+                call_id = getattr(content, "call_id", None)
+                # Output is stored in the 'result' field of FunctionResultContent
+                result_value = getattr(content, "result", None)
+                # Convert result to string (it could be dict, list, or other types)
+                if result_value is None:
+                    output = ""
+                elif isinstance(result_value, str):
+                    output = result_value
+                else:
+                    import json
+
+                    try:
+                        output = json.dumps(result_value)
+                    except (TypeError, ValueError):
+                        output = str(result_value)
+
+                if call_id:
+                    function_results.append(
+                        ResponseFunctionToolCallOutputItem(
+                            id=f"{item_id}_result_{call_id}",
+                            call_id=call_id,
+                            output=output,
+                            type="function_call_output",
+                            status="completed",
+                        )
+                    )
+
+        built: list[ConversationItem] = []
+        # If message has text/images/files, create a Message item
+        if message_contents:
+            built.append(
+                OpenAIMessage(
+                    id=item_id,
+                    type="message",
+                    role=role,
+                    content=message_contents,  # type: ignore
+                    status="completed",
+                )
+            )
+
+        built.extend(function_calls)
+        built.extend(function_results)
+        return built
+
     async def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
         """Get a specific conversation item by ID.
 
@@ -755,6 +763,23 @@ class InMemoryConversationStore(ConversationStore):
         item = conv_items.get(item_id)
         if item:
             return item
+
+        # List ids are positional per message. Resolve them by rebuilding the
+        # addressed message's items with the same conversion the list uses, so
+        # every id the list endpoint returns is retrievable by id.
+        list_id_match = re.fullmatch(r"item_(\d+)(?:_(?:call|result)_.+)?", item_id)
+        if list_id_match:
+            conv_data = self._conversations.get(conversation_id)
+            if not conv_data:
+                return None
+            stored_messages = conv_data["messages"]
+            index = int(list_id_match.group(1))
+            if index >= len(stored_messages):
+                return None
+            for candidate in self._items_from_message(index=index, msg=stored_messages[index]):
+                if candidate.id == item_id:
+                    return candidate
+            return None
 
         # If not found and ID is a checkpoint, load from checkpoint storage
         if item_id.startswith("checkpoint_"):

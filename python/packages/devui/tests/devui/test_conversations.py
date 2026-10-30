@@ -159,6 +159,33 @@ async def test_add_items():
 
 
 @pytest.mark.asyncio
+async def test_get_item_resolves_ids_returned_by_list_items():
+    """Every id the items list returns must be retrievable by id."""
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+    added = await store.add_items(
+        conversation.id,
+        items=[
+            {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "Hi there"}]},
+        ],
+    )
+
+    listed, _ = await store.list_items(conversation.id)
+    assert [item.id for item in listed] == ["item_0", "item_1"]
+
+    for listed_item in listed:
+        retrieved = await store.get_item(conversation.id, listed_item.id)
+        assert retrieved is not None
+        assert retrieved.id == listed_item.id
+        assert retrieved.type == listed_item.type
+
+    # Ids minted by the add path stay retrievable, and an unknown index is not.
+    assert await store.get_item(conversation.id, added[0].id) is not None
+    assert await store.get_item(conversation.id, "item_99") is None
+
+
+@pytest.mark.asyncio
 async def test_add_and_list_items_preserves_marked_refusal_text():
     store = InMemoryConversationStore()
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
