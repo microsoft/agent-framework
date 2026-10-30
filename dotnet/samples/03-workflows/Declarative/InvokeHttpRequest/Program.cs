@@ -50,12 +50,9 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
-        // The default HttpRequestHandler is sufficient for this sample because the
-        // GitHub REST endpoint used here does not require authentication. For
-        // authenticated endpoints, supply a custom Func<HttpRequestInfo, ..., HttpClient?>
-        // to DefaultHttpRequestHandler so each request can be routed through a
-        // pre-configured (cached) HttpClient with the appropriate credentials.
-        await using DefaultHttpRequestHandler httpRequestHandler = new();
+        // Authorize the GitHub API host in application code. The default allowlist is empty.
+        // For authenticated endpoints, also supply a cached client with automatic redirects disabled.
+        await using DefaultHttpRequestHandler httpRequestHandler = new(["api.github.com"]);
 
         // Create the workflow factory with the HTTP request handler
         WorkflowFactory workflowFactory = new("InvokeHttpRequest.yaml", foundryEndpoint)

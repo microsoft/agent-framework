@@ -24,6 +24,25 @@ commitments.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
 - When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
   to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
+- `DefaultHttpRequestHandler` accepts HTTP(S) URLs only and denies every request unless the application supplies
+  allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"])`. Configure the allowlist in
+  trusted application code, not in workflow content. Every constructor requires an explicit allowlist, including
+  when supplying a client or client provider; an empty list allows no hosts. The handler copies the list and checks
+  it before invoking the provider and on every handler-managed redirect. Workflow-supplied `Host` headers are
+  rejected before provider invocation; the transport derives the authority from the allowed request URL.
+- Allowed hosts are exact DNS names or IP literals with optional ports, without schemes, paths, or wildcards. Matching is
+  case-insensitive, normalizes internationalized names and trailing DNS dots, and does not implicitly include
+  subdomains. An omitted port defaults to 443; specify another port explicitly, for example `api.example.com:8443`
+  or `[::1]:8080` (IPv6 requires brackets when specifying a port). Ports must be from 1 to 65535.
+  The request's effective port must match before provider invocation and on every handler-managed redirect.
+  Both HTTP and HTTPS remain supported, subject to existing redirect restrictions; `api.example.com` also
+  permits `http://api.example.com:443`, but not `http://api.example.com` (port 80). Enforce HTTPS separately
+  before supplying an authenticated client if plaintext HTTP must not be allowed.
+  Explicitly allowed internal hosts are supported on every target framework. Normal DNS resolution, proxy use,
+  and routing are delegated to the HTTP transport; allowing a name trusts the host's DNS and network configuration.
+- To supply a client, use `new DefaultHttpRequestHandler(["api.example.com"], httpClient)` or the corresponding
+  client-provider overload. Supplied clients must disable automatic redirects or independently enforce the same
+  allowlist on redirects, since redirects followed inside a supplied transport are not visible to this handler.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.

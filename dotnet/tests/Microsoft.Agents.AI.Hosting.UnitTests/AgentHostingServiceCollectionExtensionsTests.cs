@@ -13,6 +13,10 @@ using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.UnitTests;
 
+[CollectionDefinition(nameof(HostingFeatureUsageTestGroup), DisableParallelization = true)]
+public sealed class HostingFeatureUsageTestGroup;
+
+[Collection(nameof(HostingFeatureUsageTestGroup))]
 public class AgentHostingServiceCollectionExtensionsTests
 {
     [Fact]
