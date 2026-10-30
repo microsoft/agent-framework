@@ -50,6 +50,8 @@ from ._types import (
 )
 from .exceptions import ToolException, ToolExecutionException
 from .observability import (
+    MCP_SERVER_NAME_PROPERTY,
+    MCP_SERVER_URL_PROPERTY,
     OtelAttr,
     create_mcp_client_span,
     set_mcp_span_error,
@@ -806,6 +808,46 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
     if required:
         schema["required"] = required
     return schema
+
+
+def _sanitize_mcp_server_url(url: str | None) -> str | None:
+    """Return an http(s) URL without user info, query string or fragment, else ``None``.
+
+    Query strings and user info commonly carry secrets (API keys, SAS tokens, function keys), so only the
+    scheme, host, port and path are ever copied onto a span.
+    """
+    if not isinstance(url, str) or not url:
+        return None
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url.strip())
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in {"http", "https"} or not host:
+        return None
+    netloc = f"[{host}]" if ":" in host else host
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return f"{parts.scheme}://{netloc}{parts.path}"
+
+
+def _mcp_server_identity_properties(tool: Any) -> dict[str, str]:
+    """Build the ``additional_properties`` entries that identify the MCP server behind an MCP function.
+
+    These feed ``microsoft.tool.server.name`` and ``url.full`` on the ``execute_tool`` span. Values that are
+    unavailable (for example, a stdio server has no URL) are omitted.
+    """
+    properties: dict[str, str] = {}
+    name = getattr(tool, "name", None)
+    if isinstance(name, str) and name:
+        properties[MCP_SERVER_NAME_PROPERTY] = name
+    url = _sanitize_mcp_server_url(getattr(tool, "url", None))
+    if url:
+        properties[MCP_SERVER_URL_PROPERTY] = url
+    return properties
 
 
 def _normalize_mcp_name(name: str) -> str:
@@ -3253,6 +3295,7 @@ class MCPTool:
                         _MCP_REMOTE_NAME_KEY: tool.name,
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
                         _MCP_IS_TOOL_KEY: True,
+                        **_mcp_server_identity_properties(self),
                     },
                 )
                 new_functions.append(func)
