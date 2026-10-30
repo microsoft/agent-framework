@@ -51,13 +51,15 @@ internal static class ToolApprovalHelpers
     /// Both approval decorators use this because <see cref="FunctionInvokingChatClient"/> inserts tool results
     /// at the last approval message; an automatic response appended after a new question would put the
     /// tool results after that question.
+    /// Additional generated call/result messages follow the decisions at the same insertion point.
     /// </summary>
     /// <remarks>
-    /// Returns the original list when there are no function-approval responses to move or add.
+    /// Returns the original list when there are no function-approval responses to move or messages to add.
     /// Other input sequences are materialized once.
     /// </remarks>
     internal static List<ChatMessage> PrepareApprovalMessages(
-        IEnumerable<ChatMessage> messages, List<AIContent>? additionalResponses, HashSet<string>? settledCallIds = null)
+        IEnumerable<ChatMessage> messages, List<AIContent>? additionalResponses, HashSet<string>? settledCallIds = null,
+        List<ChatMessage>? additionalMessages = null)
     {
         List<ChatMessage> messageList = messages as List<ChatMessage> ?? new List<ChatMessage>(messages);
         if (settledCallIds is null)
@@ -151,6 +153,11 @@ internal static class ToolApprovalHelpers
         if (additionalResponses is { Count: > 0 })
         {
             (decisions ??= []).Add(new ChatMessage(ChatRole.User, additionalResponses));
+        }
+
+        if (additionalMessages is { Count: > 0 })
+        {
+            (decisions ??= []).AddRange(additionalMessages);
         }
 
         if (decisions is null)

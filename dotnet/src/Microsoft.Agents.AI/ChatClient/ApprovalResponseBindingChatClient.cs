@@ -47,7 +47,7 @@ namespace Microsoft.Agents.AI;
 /// changes their <see cref="FunctionCallContent.InformationalOnly"/> flags while processing approvals.
 /// </para>
 /// <para>
-/// Generated rejection responses are returned to the caller before the tool-result messages, allowing
+/// Generated rejection decisions and their tool results are returned to the caller, allowing
 /// end-of-run history saving to record the decision as well as its result. Caller-supplied responses are not
 /// returned again. In streaming runs, a generated rejection can be emitted before a later service call fails;
 /// receiving that decision does not mean the run succeeded.
@@ -99,13 +99,13 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
 
-        var (messagesToSend, hasPendingRequests, generatedRejections) = this.ValidateInboundApprovalResponses(messages, session);
+        var (messagesToSend, hasPendingRequests, generatedMessages) = this.ValidateInboundApprovalResponses(messages, session, options);
 
         var response = await base.GetResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false);
 
-        if (generatedRejections is not null)
+        if (generatedMessages is not null)
         {
-            response.Messages = [generatedRejections, .. response.Messages];
+            response.Messages = [.. generatedMessages, .. response.Messages];
         }
 
         // The records are consumed only now that the run has succeeded, so a failed run leaves them intact and the
@@ -137,7 +137,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             yield break;
         }
 
-        var (messagesToSend, hasPendingRequests, generatedRejections) = this.ValidateInboundApprovalResponses(messages, session);
+        var (messagesToSend, hasPendingRequests, generatedMessages) = this.ValidateInboundApprovalResponses(messages, session, options);
 
         List<ToolApprovalRequestContent>? emitted = null;
 
@@ -149,12 +149,15 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
 
         try
         {
-            if (generatedRejections is not null)
+            if (generatedMessages is not null)
             {
-                yield return new ChatResponseUpdate(generatedRejections.Role, generatedRejections.Contents)
+                foreach (var message in generatedMessages)
                 {
-                    MessageId = generatedRejections.MessageId,
-                };
+                    yield return new ChatResponseUpdate(message.Role, message.Contents)
+                    {
+                        MessageId = message.MessageId,
+                    };
+                }
             }
 
             await foreach (var update in base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false))
@@ -232,14 +235,16 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// </remarks>
     /// <param name="messages">The inbound messages.</param>
     /// <param name="session">The session holding the recorded pending approval requests.</param>
+    /// <param name="options">The options indicating whether chat history is managed downstream.</param>
     /// <returns>
     /// The messages to send to the inner client, whether the session held any recorded pending requests
-    /// (consumed after the inner call succeeds), and a separate message of generated rejections to return
+    /// (consumed after the inner call succeeds), and separate generated decisions, calls, and results to return
     /// to the caller without exposing the function calls that the inner client changes.
     /// </returns>
-    private (IEnumerable<ChatMessage> Messages, bool HasPendingRequests, ChatMessage? GeneratedRejections) ValidateInboundApprovalResponses(
+    private (IEnumerable<ChatMessage> Messages, bool HasPendingRequests, List<ChatMessage>? GeneratedMessages) ValidateInboundApprovalResponses(
         IEnumerable<ChatMessage> messages,
-        AgentSession session)
+        AgentSession session,
+        ChatOptions? options)
     {
         var messageList = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
 
@@ -333,6 +338,8 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         // the conversation.
         List<AIContent>? rejections = null;
         ChatMessage? generatedRejections = null;
+        List<AIContent>? generatedCalls = null;
+        List<AIContent>? generatedResults = null;
         foreach (var request in knownRequests.Values)
         {
             if (settledCallIds?.Contains(request.ToolCall.CallId) is true)
@@ -340,8 +347,8 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
                 continue;
             }
 
-            // FICC changes the rejection's FunctionCallContent.InformationalOnly flag.
-            // Copy the saved request's call so a failed rejection attempt leaves it usable for retry.
+            // Keep the generated decision separate from the saved request so a failed attempt leaves
+            // the pending call usable for retry.
             var rejection = ToolApprovalHelpers.SnapshotRequest(request).CreateResponse(
                 approved: false,
                 reason: "No approval response was provided for this approval required tool call.");
@@ -350,11 +357,38 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             {
                 MessageId = Guid.NewGuid().ToString("N"),
             };
-            // Keep the returned decision separate from the call FICC marks InformationalOnly.
+            // Keep the returned decision separate from the call passed downstream.
             generatedRejections.Contents.Add(CopyResponse(rejection, ToolApprovalHelpers.SnapshotRequest(request).ToolCall));
+
+            if (ToolApprovalHelpers.SnapshotRequest(request).ToolCall is FunctionCallContent call)
+            {
+                // Settle missing approvals ourselves. FICC skips responses with an existing result, so its
+                // dependency-specific wording for an explicit human rejection does not apply to this case.
+                call.InformationalOnly = true;
+                (generatedCalls ??= []).Add(call);
+                (generatedResults ??= []).Add(new FunctionResultContent(call.CallId, $"Tool call invocation rejected. {rejection.Reason}"));
+            }
         }
 
-        return (ToolApprovalHelpers.PrepareApprovalMessages(result ?? messageList, rejections, settledCallIds), hasPendingRequests, generatedRejections);
+        List<ChatMessage>? generatedMessages = null;
+        List<ChatMessage>? toolMessages = null;
+        if (generatedRejections is not null)
+        {
+            generatedMessages = [generatedRejections];
+            if (generatedResults is not null)
+            {
+                var calls = new ChatMessage(ChatRole.Assistant, generatedCalls!) { MessageId = Guid.NewGuid().ToString("N") };
+                var results = new ChatMessage(ChatRole.Tool, generatedResults) { MessageId = Guid.NewGuid().ToString("N") };
+                generatedMessages.Add(calls);
+                generatedMessages.Add(results);
+
+                // Match FICC's history policy: downstream history already contains the model's calls.
+                // Always return the call/result pair for callers that save history at the end of the run.
+                toolMessages = options?.ConversationId is null ? [calls, results] : [results];
+            }
+        }
+
+        return (ToolApprovalHelpers.PrepareApprovalMessages(result ?? messageList, rejections, settledCallIds, toolMessages), hasPendingRequests, generatedMessages);
     }
 
     /// <summary>
