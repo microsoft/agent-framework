@@ -3,18 +3,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
-using ModelContextProtocol;
 using ModelContextProtocol.Client;
-using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI;
 
@@ -93,18 +87,11 @@ namespace Microsoft.Agents.AI;
 public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 {
     private const string SkillsExtensionName = "io.modelcontextprotocol/skills";
-    private const string CompleteResultType = "complete";
-    private const int DefaultMaxPageCount = 10;
-    private const int DefaultMaxSkillCount = 100;
 
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The MCP client is supplied and owned by the caller, who is responsible for disposing it.")]
     private readonly McpClient _client;
     private readonly ILogger _logger;
-    private readonly long _maxResourceSizeBytes;
-    private readonly int _maxPageCount;
-    private readonly int _maxSkillCount;
-    private readonly TimeProvider _timeProvider;
-    private readonly McpSkillsLoader _skillsLoader;
+    private readonly McpSkillsCatalog _catalog;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
@@ -124,14 +111,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         this._client = Throw.IfNull(client);
         loggerFactory ??= NullLoggerFactory.Instance;
         this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
-        this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpSkill.DefaultMaxResourceSizeBytes;
-        this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
-        this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
-        this._timeProvider = Throw.IfNull(timeProvider);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
-        this._skillsLoader = new McpSkillsLoader(this._timeProvider, this.FetchSkillsAsync, this.FetchSkillAsync);
+        this._catalog = new McpSkillsCatalog(this._client, options, this._logger, Throw.IfNull(timeProvider));
     }
 
     /// <inheritdoc/>
@@ -149,7 +129,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return [];
         }
 
-        IList<AgentSkill> skills = await this._skillsLoader.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        IList<AgentSkill> skills = await this._catalog.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
 
         LogSkillsLoadedTotal(this._logger, skills.Count);
 
@@ -161,334 +141,21 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     {
         if (disposing)
         {
-            this._skillsLoader.Dispose();
+            this._catalog.Dispose();
         }
 
         base.Dispose(disposing);
     }
 
     /// <summary>
-    /// Fetches the complete skill list with a lifetime ending at the earliest page expiration.
+    /// Logs that the server does not declare support for skills.
     /// </summary>
-    private async Task<McpCacheEntry<IList<AgentSkill>>> FetchSkillsAsync(CancellationToken cancellationToken)
-    {
-        var (skillEntries, pageLifetimes) = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
-
-        List<AgentSkill> skills = [];
-
-        foreach (McpSkillEntry entry in skillEntries)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Listing responses specify a TTL per page, not per skill. Use Infinite to avoid independent
-            // skill expiration; the page's TTL triggers a refresh of the whole catalog, including this skill.
-            skills.Add(this.CreateSkill(entry, McpCacheLifetime.Infinite));
-        }
-
-        return new(skills, this.CombineLifetimes(pageLifetimes));
-    }
-
-    /// <summary>
-    /// Fetches updated details for one skill and creates a replacement object, or returns null if the skill no longer exists.
-    /// </summary>
-    private async Task<AgentMcpSkill?> FetchSkillAsync(string skillUri, CancellationToken cancellationToken)
-    {
-        JsonRpcResponse response;
-        try
-        {
-            response = await this._client.SendRequestAsync(new JsonRpcRequest
-            {
-                Method = "skills/get",
-                Params = new JsonObject { ["uri"] = skillUri },
-            }, cancellationToken).ConfigureAwait(false);
-        }
-        catch (McpProtocolException ex) when (ex.ErrorCode == McpErrorCode.InvalidParams || ex.ErrorCode == McpErrorCode.ResourceNotFound)
-        {
-            return null;
-        }
-
-        long receivedTimestamp = this._timeProvider.GetTimestamp();
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        McpSkillsGetResult result = response.Result?.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult)
-            ?? throw new InvalidOperationException("The server returned no skills/get result.");
-
-        if (result.ResultType != CompleteResultType)
-        {
-            throw new InvalidOperationException($"A skills/get result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
-        }
-
-        if (!string.Equals(result.Skill.Uri, skillUri, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
-        }
-
-        TimeSpan timeToLive = result.TimeToLive.GetValueOrDefault();
-        if (timeToLive < TimeSpan.Zero)
-        {
-            timeToLive = TimeSpan.Zero;
-        }
-
-        // Unlike listing responses, skills/get provides a TTL for this skill,
-        // allowing it to expire and refresh independently of the catalog.
-        return this.CreateSkill(result.Skill, new McpCacheLifetime(receivedTimestamp, timeToLive));
-    }
-
-    /// <summary>
-    /// Checks the server's skill details and creates a skill object with its own resource cache.
-    /// </summary>
-    private AgentMcpSkill CreateSkill(McpSkillEntry entry, McpCacheLifetime metadataLifetime)
-    {
-        AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
-
-        List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
-
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._skillsLoader, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime);
-    }
-
-    /// <summary>
-    /// Creates one lifetime that ends when the earliest page expires.
-    /// </summary>
-    private McpCacheLifetime CombineLifetimes(List<McpCacheLifetime> lifetimes)
-    {
-        if (lifetimes.Count == 0)
-        {
-            throw new ArgumentException("At least one lifetime is required.", nameof(lifetimes));
-        }
-
-        long now = this._timeProvider.GetTimestamp();
-        TimeSpan shortestRemaining = TimeSpan.MaxValue;
-
-        // Compare all pages at the same timestamp; combining them must not extend the earliest expiration.
-        foreach (McpCacheLifetime lifetime in lifetimes)
-        {
-            TimeSpan elapsed = this._timeProvider.GetElapsedTime(lifetime.ReceivedTimestamp, now);
-            TimeSpan remaining = lifetime.TimeToLive <= elapsed ? TimeSpan.Zero : lifetime.TimeToLive - elapsed;
-
-            if (remaining < shortestRemaining)
-            {
-                shortestRemaining = remaining;
-            }
-        }
-
-        return new McpCacheLifetime(now, shortestRemaining);
-    }
-
-    /// <summary>
-    /// Fetches all listing pages and records their lifetimes.
-    /// </summary>
-    /// <remarks>
-    /// Invalid pages, repeated cursors, and exceeded limits fail the whole request.
-    /// </remarks>
-    private async Task<(List<McpSkillEntry> Entries, List<McpCacheLifetime> PageLifetimes)> ListSkillEntriesAsync(CancellationToken cancellationToken)
-    {
-        List<McpSkillEntry> skillEntries = [];
-        List<McpCacheLifetime> pageLifetimes = [];
-        HashSet<string> cursors = new(StringComparer.Ordinal);
-        string? cursor = null;
-        int pageCount = 0;
-
-        do
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (pageCount >= this._maxPageCount)
-            {
-                throw new InvalidOperationException($"Skill discovery exceeds the maximum allowed page count ({this._maxPageCount}).");
-            }
-
-            JsonObject parameters = new();
-            if (cursor is not null)
-            {
-                parameters["cursor"] = cursor;
-            }
-
-            JsonRpcResponse response = await this._client.SendRequestAsync(new JsonRpcRequest
-            {
-                Method = "skills/list",
-                Params = parameters,
-            }, cancellationToken).ConfigureAwait(false);
-
-            long receivedTimestamp = this._timeProvider.GetTimestamp();
-            pageCount++;
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            JsonNode resultNode = response.Result
-                ?? throw new InvalidOperationException("The server returned no skills/list result.");
-
-            // Reject excessive catalogs before deserializing their typed metadata or constructing skills.
-            if (resultNode is JsonObject resultObject && resultObject["skills"] is JsonArray entries && entries.Count > this._maxSkillCount - skillEntries.Count)
-            {
-                throw new InvalidOperationException($"Skill discovery exceeds the maximum allowed skill count ({this._maxSkillCount}).");
-            }
-
-            McpSkillsListResult result = resultNode.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult)
-                ?? throw new InvalidOperationException("The server returned no skills/list result.");
-
-            if (result.ResultType != CompleteResultType)
-            {
-                throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
-            }
-
-            TimeSpan pageTimeToLive = result.TimeToLive.GetValueOrDefault();
-            if (pageTimeToLive < TimeSpan.Zero)
-            {
-                pageTimeToLive = TimeSpan.Zero;
-            }
-
-            pageLifetimes.Add(new McpCacheLifetime(receivedTimestamp, pageTimeToLive));
-
-            cursor = result.NextCursor;
-            if (cursor is not null && !cursors.Add(cursor))
-            {
-                throw new InvalidOperationException("The skills/list result contains a repeated pagination cursor.");
-            }
-
-            foreach (McpSkillEntry? entry in result.Skills)
-            {
-                // Nullable annotations do not reject null collection elements during deserialization.
-                if (entry is null)
-                {
-                    throw new InvalidOperationException("The skills/list result contains a null skill entry.");
-                }
-
-                skillEntries.Add(entry);
-            }
-        }
-        while (cursor is not null);
-
-        return (skillEntries, pageLifetimes);
-    }
-
-    /// <summary>
-    /// Validates the skill URI, name, and description and returns the metadata used to list the skill.
-    /// </summary>
-    private static AgentSkillFrontmatter CreateFrontmatter(McpSkillEntry entry)
-    {
-        // Instructions must be addressable as a safe, absolute resource, e.g. skill://unit-converter/SKILL.md.
-        if (!Uri.TryCreate(entry.Uri, UriKind.Absolute, out _) ||
-            !entry.Uri.EndsWith("/SKILL.md", StringComparison.Ordinal) ||
-            entry.Uri.Contains('\\') || entry.Uri.Any(char.IsControl))
-        {
-            throw new InvalidOperationException("A skill entry must specify an absolute SKILL.md resource URI.");
-        }
-
-        // Validate the metadata needed to advertise the skill.
-        if (!AgentSkillFrontmatter.ValidateName(entry.Frontmatter.Name, out string? reason) ||
-            !AgentSkillFrontmatter.ValidateDescription(entry.Frontmatter.Description, out reason))
-        {
-            throw new InvalidOperationException($"Skill '{entry.Uri}' has invalid frontmatter: {reason}");
-        }
-
-        // skill://unit-converter/SKILL.md -> skill://unit-converter
-        string directory = entry.Uri[..^"/SKILL.md".Length];
-
-        // Start of "unit-converter" in skill://unit-converter; 0 if no '/'.
-        int segmentStart = directory.LastIndexOf('/') + 1;
-
-        // Opaque URI schemes can place the skill name directly after the scheme.
-        if (segmentStart == 0)
-        {
-            // Start of "unit-converter" in skill:unit-converter.
-            segmentStart = directory.IndexOf(':') + 1;
-        }
-
-        // directory[segmentStart..] extracts "unit-converter", which must match the advertised skill name.
-        if (!string.Equals(directory[segmentStart..], entry.Frontmatter.Name, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException($"Skill URI '{entry.Uri}' must end with its frontmatter name followed by /SKILL.md.");
-        }
-
-        // Project the fields used to advertise the skill.
-        return new AgentSkillFrontmatter(entry.Frontmatter.Name, entry.Frontmatter.Description);
-    }
-
-    /// <summary>
-    /// Checks the server's resource list, including the required <c>SKILL.md</c> entry.
-    /// </summary>
-    private List<McpSkillResourceEntry> CreateSupportingResources(McpSkillEntry entry)
-    {
-        string skillUri = entry.Uri;
-
-        // skill://unit-converter/SKILL.md -> skill://unit-converter/ (keep the trailing slash).
-        string skillRootUri = skillUri[..^"SKILL.md".Length];
-
-        List<McpSkillResourceEntry> resources = [];
-        HashSet<string> resourceUris = new(StringComparer.Ordinal);
-
-        foreach (McpSkillResourceEntry? resource in entry.Resources)
-        {
-            this.ValidateResourceManifestEntry(resource, skillUri, skillRootUri);
-
-            // Each resource URI must appear only once in the skill's resource list.
-            if (!resourceUris.Add(resource.Uri))
-            {
-                throw new InvalidOperationException($"Skill '{skillUri}' contains a duplicate resource URI '{resource.Uri}'.");
-            }
-
-            resources.Add(resource);
-        }
-
-        if (!resourceUris.Contains(skillUri))
-        {
-            throw new InvalidOperationException($"Skill '{skillUri}' must include SKILL.md in its resource manifest.");
-        }
-
-        return resources;
-    }
-
-    /// <summary>
-    /// Checks that a listed resource stays within the skill directory and has a valid content hash and size.
-    /// </summary>
-    private void ValidateResourceManifestEntry([NotNull] McpSkillResourceEntry? resource, string skillUri, string skillRootUri)
-    {
-        // Reject null entries, e.g. "resources": [null], which deserialization can accept.
-        if (resource is null)
-        {
-            throw new InvalidOperationException($"Skill '{skillUri}' contains a null manifest entry.");
-        }
-
-        // Resources must stay under the skill root, e.g. skill://unit-converter/references/rates.md.
-        if (!resource.Uri.StartsWith(skillRootUri, StringComparison.Ordinal) ||
-            resource.Uri.Length == skillRootUri.Length ||
-            !AgentMcpSkill.IsResourceNameSafe(resource.Uri[skillRootUri.Length..]))
-        {
-            throw new InvalidOperationException($"Skill '{skillUri}' contains an invalid resource manifest entry.");
-        }
-
-        if (!ResourceDigestRegex().IsMatch(resource.Digest))
-        {
-            throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a digest as 'sha256:' followed by 64 lowercase hexadecimal characters.");
-        }
-
-        if (resource.Size < 0)
-        {
-            throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a nonnegative size in bytes.");
-        }
-
-        if (resource.Size > this._maxResourceSizeBytes)
-        {
-            throw new InvalidOperationException($"Resource '{resource.Uri}' exceeds the maximum allowed size ({this._maxResourceSizeBytes} bytes).");
-        }
-    }
-
-    /// <summary>
-    /// Matches the required SHA-256 digest format.
-    /// </summary>
-    [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
-    private static partial Regex ResourceDigestRegex();
+    [LoggerMessage(LogLevel.Debug, "No io.modelcontextprotocol/skills extension declared by MCP server; skill discovery is skipped.")]
+    private static partial void LogSkillsExtensionAbsent(ILogger logger);
 
     /// <summary>
     /// Reports how many skills the source returned.
     /// </summary>
     [LoggerMessage(LogLevel.Information, "Successfully loaded {Count} skills from MCP server")]
     private static partial void LogSkillsLoadedTotal(ILogger logger, int count);
-
-    /// <summary>
-    /// Logs that the server does not declare support for skills.
-    /// </summary>
-    [LoggerMessage(LogLevel.Debug, "No io.modelcontextprotocol/skills extension declared by MCP server; skill discovery is skipped.")]
-    private static partial void LogSkillsExtensionAbsent(ILogger logger);
 }

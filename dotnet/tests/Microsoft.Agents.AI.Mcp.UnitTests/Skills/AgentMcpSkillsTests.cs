@@ -27,6 +27,22 @@ public sealed partial class AgentMcpSkillsTests
     private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
 
     [Fact]
+    public void Constructor_CreatesLoggerOnce()
+    {
+        // Arrange
+        var client = CreateSkillsClient();
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(Mock.Of<ILogger>());
+
+        // Act
+        using var source = new AgentMcpSkillsSource(client.Object, loggerFactory: loggerFactory.Object);
+
+        // Assert
+        loggerFactory.Verify(factory => factory.CreateLogger(typeof(AgentMcpSkillsSource).FullName!), Times.Once());
+        loggerFactory.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task GetSkillsAsync_ListRequest_ProjectsFrontmatterAndIncludesRequestMetadataAsync()
     {
         // Arrange
