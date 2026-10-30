@@ -873,12 +873,13 @@ def test_bearer_token_comparison_survives_non_ascii_tokens(
     app = server.get_app()
 
     with TestClient(app, base_url="http://127.0.0.1", raise_server_exceptions=False) as client:
-        # Sent as raw bytes: httpx refuses to encode a non-ASCII header value itself.
-        # A bytes key keeps the header mapping bytes/bytes so the raw token bytes are
-        # preserved on the wire and the mapping stays type-consistent for Pyright/Pyrefly.
+        # Emulate the bundled browser client: fetch() encodes a header value with
+        # ByteString (latin-1) semantics, so a non-ASCII token travels as its latin-1
+        # bytes. A bytes key keeps the mapping bytes/bytes so the raw token bytes are
+        # preserved and the mapping stays type-consistent for Pyright/Pyrefly.
         response = client.get(
             "/v1/entities",
-            headers={b"Authorization": b"Bearer " + presented_token.encode("utf-8")},
+            headers={b"Authorization": b"Bearer " + presented_token.encode("latin-1")},
         )
 
     assert response.status_code == expected_status

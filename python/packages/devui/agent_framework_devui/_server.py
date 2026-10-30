@@ -146,18 +146,20 @@ class DevServer:
         than HTTP 401, and it makes a non-ASCII `DEVUI_AUTH_TOKEN` unusable even when the
         client presents it correctly. Comparing bytes has no such restriction.
 
-        Headers travel as bytes and Starlette hands them back decoded as latin-1, so
-        re-encoding with latin-1 recovers what the client actually put on the wire. The
-        expected token is text (an argument, or `DEVUI_AUTH_TOKEN` from the environment), so
-        UTF-8 is its wire form. ASCII tokens behave exactly as before, since both encodings
-        agree on ASCII.
+        HTTP header values are bytes; Starlette decodes them as latin-1, and the bundled
+        browser client encodes a header value with fetch()'s ByteString (latin-1) semantics.
+        To keep one explicit wire encoding across the browser client and the server, encode
+        both the presented and the expected token as latin-1. ASCII tokens behave exactly as
+        before, since latin-1 agrees with ASCII there.
         """
         try:
             presented_bytes = presented.encode("latin-1")
+            expected_bytes = expected.encode("latin-1")
         except UnicodeEncodeError:
-            # Not something a header could have carried; treat it as a wrong token.
+            # A token outside latin-1 cannot be expressed by the browser client's
+            # ByteString header encoding; treat it as a mismatch rather than raising.
             return False
-        return secrets.compare_digest(presented_bytes, expected.encode("utf-8"))
+        return secrets.compare_digest(presented_bytes, expected_bytes)
 
     @classmethod
     def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
