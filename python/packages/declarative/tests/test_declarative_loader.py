@@ -408,6 +408,25 @@ id: gpt-4
     assert result.id == "gpt-4"
 
 
+def test_agent_schema_dispatch_model_specification():
+    """A model tagged spec carrying provider fields loads as a Model, not a resource."""
+    yaml_content = """
+kind: model
+id: gpt-4o
+provider: OpenAI
+apiType: Chat
+"""
+    result = agent_schema_dispatch(yaml.safe_load(yaml_content))
+
+    assert isinstance(result, Model)
+    assert result.provider == "OpenAI"
+    assert result.apiType == "Chat"
+
+    via_options = agent_schema_dispatch({"kind": "model", "id": "m", "options": {"temperature": 0.2}})
+    assert isinstance(via_options, Model)
+    assert via_options.options is not None
+
+
 def test_agent_schema_dispatch_property_schema_with_nested_properties():
     """Test loading a property schema with nested properties."""
     yaml_content = """

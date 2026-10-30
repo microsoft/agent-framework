@@ -1079,6 +1079,11 @@ def agent_schema_dispatch(schema: dict[str, Any]) -> AgentSchemaSpec | None:
         case "tool":
             return ToolResource.from_dict(schema)
         case "model":
+            # Both the model resource and the model specification claim this
+            # kind. The specification carries provider fields; the resource
+            # carries a name. Dispatch by shape so both stay loadable.
+            if any(key in schema for key in ("provider", "apiType", "connection", "options")):
+                return Model.from_dict({key: value for key, value in schema.items() if key != "kind"})
             return ModelResource.from_dict(schema)
         case "resource":
             return Resource.from_dict(schema)
@@ -1138,8 +1143,6 @@ def agent_schema_dispatch(schema: dict[str, Any]) -> AgentSchemaSpec | None:
             return Parser.from_dict(schema)
         case "template":
             return Template.from_dict(schema)
-        case "model":
-            return Model.from_dict(schema)
         case "model_options":
             return ModelOptions.from_dict(schema)
         case "property_schema":
