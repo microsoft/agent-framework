@@ -138,6 +138,30 @@ class DevServer:
             return None
         return self._LOOPBACK_HOSTS
 
+    @staticmethod
+    def _token_matches(presented: str, expected: str) -> bool:
+        """Compare two bearer tokens in constant time without raising on non-ASCII input.
+
+        `secrets.compare_digest` accepts only ASCII `str` values and raises `TypeError` when
+        either side holds a non-ASCII character. Uncaught, that surfaces as HTTP 500 rather
+        than HTTP 401, and it makes a non-ASCII `DEVUI_AUTH_TOKEN` unusable even when the
+        client presents it correctly. Comparing bytes has no such restriction.
+
+        HTTP header values are bytes; Starlette decodes them as latin-1, and the bundled
+        browser client encodes a header value with fetch()'s ByteString (latin-1) semantics.
+        To keep one explicit wire encoding across the browser client and the server, encode
+        both the presented and the expected token as latin-1. ASCII tokens behave exactly as
+        before, since latin-1 agrees with ASCII there.
+        """
+        try:
+            presented_bytes = presented.encode("latin-1")
+            expected_bytes = expected.encode("latin-1")
+        except UnicodeEncodeError:
+            # A token outside latin-1 cannot be expressed by the browser client's
+            # ByteString header encoding; treat it as a mismatch rather than raising.
+            return False
+        return secrets.compare_digest(presented_bytes, expected_bytes)
+
     @classmethod
     def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
         """Resolve the active Bearer token. Returns None when auth is disabled."""
@@ -445,8 +469,13 @@ class DevServer:
                         },
                     )
 
-                token = auth_header.replace("Bearer ", "", 1).strip()
-                if not secrets.compare_digest(token, expected_token):
+                # Trim only HTTP optional-whitespace (space/tab). A bare `.strip()`
+                # would also drop non-ASCII whitespace such as NBSP (U+00A0), which
+                # is a valid byte in a UTF-8 token (e.g. the second byte of "à" is
+                # 0xA0), so a correct non-ASCII token would be truncated before the
+                # byte comparison and rejected with 401.
+                token = auth_header.replace("Bearer ", "", 1).strip(" \t")
+                if not self._token_matches(token, expected_token):
                     return JSONResponse(
                         status_code=401,
                         content={
