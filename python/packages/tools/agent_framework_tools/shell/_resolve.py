@@ -15,7 +15,7 @@ _ENV_OVERRIDE = "AGENT_FRAMEWORK_SHELL"
 
 
 def _split_shell_override(value: str) -> list[str]:
-    """Split a shell override string into argv.
+    r"""Split a shell override string into argv.
 
     On POSIX, ``shlex.split`` is correct. On Windows, ``shlex.split`` treats
     ``\\`` as an escape and drops backslashes from unquoted paths such as
