@@ -1995,6 +1995,15 @@ class ToolResultCompactionStrategy:
                         tool_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
+                    elif content.type in (
+                        "code_interpreter_tool_result",
+                        "computer_tool_result",
+                        "image_generation_tool_result",
+                        "shell_tool_result",
+                    ):
+                        result_text = _hosted_tool_result_summary(content)
+                        if result_text:
+                            tool_results.append(f"{content.type}: {result_text}")
             summary_text = self._summary_text(tool_results)
 
             summary_id = f"tool_summary_{group_id}"
@@ -2178,6 +2187,66 @@ def _format_summary_content(content: Content) -> str:
             rendered += f" approved={content.approved}"
         return rendered
     return ""
+
+
+def _hosted_tool_result_summary(content: Content) -> str:
+    """Render hosted tool outputs without embedding image payloads in summaries."""
+    if content.type == "shell_tool_result":
+        parts: list[str] = []
+        for output in content.outputs or []:
+            if output.stdout:
+                parts.append(f"stdout: {output.stdout}")
+            if output.stderr:
+                parts.append(f"stderr: {output.stderr}")
+            if output.timed_out:
+                parts.append("command timed out")
+            elif output.exit_code is not None:
+                parts.append(f"exit_code: {output.exit_code}")
+        return "\n".join(parts) or "no output returned"
+
+    if content.type == "computer_tool_result":
+        details = [f"status={content.status}"] if content.status else []
+        if content.screenshot is not None:
+            details.append("screenshot")
+        return ", ".join(details) or "result received"
+
+    outputs = content.outputs
+    if isinstance(outputs, Content):
+        output_items = [outputs]
+    elif isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, bytearray)):
+        output_items = [item for item in outputs if isinstance(item, Content)]
+    else:
+        output_items = []
+
+    if output_items:
+        parts = []
+        for item in output_items:
+            if item.type == "text" and item.text:
+                parts.append(item.text)
+            elif item.type == "error":
+                error_text = item.message or item.error_details or "tool output error"
+                if item.error_code:
+                    error_text = f"error({item.error_code}): {error_text}"
+                parts.append(error_text)
+            else:
+                # Hosted image and file outputs can carry data URIs or binary
+                # payloads. Keep only descriptive metadata in the compact trace.
+                metadata = [f"media_type={item.media_type}"] if item.media_type else []
+                if item.file_id:
+                    metadata.append(f"file_id={item.file_id}")
+                parts.append(f"{item.type} content" + (f" ({', '.join(metadata)})" if metadata else ""))
+        status = getattr(content, "status", None)
+        if status:
+            parts.insert(0, f"status={status}")
+        return "\n".join(parts) or "no output returned"
+
+    status = getattr(content, "status", None)
+    parts = [f"status={status}"] if status else []
+    if content.type == "image_generation_tool_result" and outputs:
+        parts.append("image output available")
+    elif not parts:
+        parts.append("no output returned")
+    return "\n".join(parts)
 
 
 def _format_summary_message(index: int, message: Message) -> str:

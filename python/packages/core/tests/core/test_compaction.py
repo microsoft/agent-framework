@@ -2471,6 +2471,173 @@ async def test_tool_result_compaction_preserves_hosted_search_result() -> None:
     assert "no results" not in summaries[0]
 
 
+@pytest.mark.parametrize("result_kind", ["shell", "code_interpreter", "image_generation", "computer"])
+async def test_tool_result_compaction_preserves_hosted_tool_results(result_kind: str) -> None:
+    if result_kind == "shell":
+        call = Content.from_shell_tool_call(call_id="shell-1", commands=["echo hello"])
+        result = Content.from_shell_tool_result(
+            call_id="shell-1",
+            outputs=[Content.from_shell_command_output(stdout="hello from shell", stderr="warning", exit_code=1)],
+        )
+        expected = ["hello from shell", "warning", "exit_code: 1"]
+        excluded = []
+    elif result_kind == "code_interpreter":
+        call = Content.from_code_interpreter_tool_call(
+            call_id="code-1", inputs=[Content.from_text(text="print('hello')")]
+        )
+        result = Content.from_code_interpreter_tool_result(
+            call_id="code-1", outputs=[Content.from_text(text="hello from interpreter")]
+        )
+        expected = ["hello from interpreter"]
+        excluded = []
+    elif result_kind == "image_generation":
+        call = Content.from_image_generation_tool_call(image_id="image-1")
+        image_data = Content.from_data(data=b"private-image-payload", media_type="image/png")
+        result = Content.from_image_generation_tool_result(image_id="image-1", outputs=[image_data])
+        expected = ["image_generation_tool_result", "media_type=image/png"]
+        excluded = [image_data.uri or "", "base64,"]
+    else:
+        call = Content.from_computer_tool_call(id="computer-1", call_id="computer-1", actions=[{"type": "click"}])
+        screenshot = Content.from_data(data=b"private-screen-payload", media_type="image/png")
+        result = Content.from_computer_tool_result(call_id="computer-1", screenshot=screenshot)
+        expected = ["computer_tool_result: screenshot"]
+        excluded = [screenshot.uri or "", "base64,"]
+
+    call_message = Message(role="assistant", contents=[call])
+    result_message = Message(role="tool", contents=[result])
+    messages = [
+        Message(role="user", contents=["run the hosted tool"]),
+        call_message,
+        result_message,
+        Message(role="assistant", contents=["done"]),
+    ]
+    annotate_message_groups(messages)
+
+    changed = await ToolResultCompactionStrategy(keep_last_tool_call_groups=0)(messages)
+
+    summaries = [
+        message.text or ""
+        for message in included_messages(messages)
+        if (message.text or "").startswith("[Tool results:")
+    ]
+    assert changed is True
+    assert call_message.additional_properties[EXCLUDED_KEY] is True
+    assert result_message.additional_properties[EXCLUDED_KEY] is True
+    assert len(summaries) == 1
+    assert "no results" not in summaries[0]
+    for fragment in expected:
+        assert fragment in summaries[0]
+    for fragment in excluded:
+        if fragment:
+            assert fragment not in summaries[0]
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (
+            Content.from_code_interpreter_tool_result(call_id="code-1", outputs=None, status="failed"),
+            "status=failed",
+        ),
+        (
+            Content.from_shell_tool_result(
+                call_id="shell-1", outputs=[Content.from_shell_command_output(timed_out=True)]
+            ),
+            "command timed out",
+        ),
+        (Content.from_image_generation_tool_result(image_id="image-1", outputs=None), "no output returned"),
+    ],
+)
+async def test_tool_result_compaction_preserves_hosted_tool_result_status_or_empty_state(
+    result: Content, expected: str
+) -> None:
+    if result.type == "code_interpreter_tool_result":
+        call = Content.from_code_interpreter_tool_call(call_id="code-1", inputs=[Content.from_text(text="run")])
+    elif result.type == "shell_tool_result":
+        call = Content.from_shell_tool_call(call_id="shell-1", commands=["sleep 10"])
+    else:
+        call = Content.from_image_generation_tool_call(image_id="image-1")
+
+    messages = [
+        Message(role="assistant", contents=[call]),
+        Message(role="tool", contents=[result]),
+        Message(role="assistant", contents=["done"]),
+    ]
+    annotate_message_groups(messages)
+
+    changed = await ToolResultCompactionStrategy(keep_last_tool_call_groups=0)(messages)
+
+    summaries = [
+        message.text or ""
+        for message in included_messages(messages)
+        if (message.text or "").startswith("[Tool results:")
+    ]
+    assert changed is True
+    assert len(summaries) == 1
+    assert expected in summaries[0]
+    assert "no results" not in summaries[0]
+
+
+async def test_tool_result_compaction_preserves_multiple_hosted_outputs_and_errors() -> None:
+    call = Content.from_code_interpreter_tool_call(call_id="code-1", inputs=[Content.from_text(text="run")])
+    result = Content.from_code_interpreter_tool_result(
+        call_id="code-1",
+        outputs=[
+            Content.from_text(text="first output"),
+            Content.from_error(message="execution failed", error_code="runtime_error"),
+            Content.from_text(text="last output"),
+        ],
+    )
+    messages = [
+        Message(role="assistant", contents=[call]),
+        Message(role="tool", contents=[result]),
+        Message(role="assistant", contents=["done"]),
+    ]
+    annotate_message_groups(messages)
+
+    await ToolResultCompactionStrategy(keep_last_tool_call_groups=0)(messages)
+
+    summaries = [
+        message.text or ""
+        for message in included_messages(messages)
+        if (message.text or "").startswith("[Tool results:")
+    ]
+    assert len(summaries) == 1
+    assert "first output" in summaries[0]
+    assert "error(runtime_error): execution failed" in summaries[0]
+    assert "last output" in summaries[0]
+
+
+async def test_tool_result_compaction_preserves_mixed_hosted_results_in_one_group() -> None:
+    shell_call = Content.from_shell_tool_call(call_id="shell-1", commands=["echo shell"])
+    code_call = Content.from_code_interpreter_tool_call(call_id="code-1", inputs=[Content.from_text(text="run code")])
+    shell_result = Content.from_shell_tool_result(
+        call_id="shell-1", outputs=[Content.from_shell_command_output(stdout="shell output", exit_code=0)]
+    )
+    code_result = Content.from_code_interpreter_tool_result(
+        call_id="code-1", outputs=[Content.from_text(text="interpreter output")]
+    )
+    call_message = Message(role="assistant", contents=[shell_call, code_call])
+    result_message = Message(role="tool", contents=[shell_result, code_result])
+    messages = [call_message, result_message, Message(role="assistant", contents=["done"])]
+    annotate_message_groups(messages)
+
+    changed = await ToolResultCompactionStrategy(keep_last_tool_call_groups=0)(messages)
+
+    summaries = [
+        message.text or ""
+        for message in included_messages(messages)
+        if (message.text or "").startswith("[Tool results:")
+    ]
+    assert changed is True
+    assert call_message.additional_properties[EXCLUDED_KEY] is True
+    assert result_message.additional_properties[EXCLUDED_KEY] is True
+    assert len(summaries) == 1
+    assert "shell output" in summaries[0]
+    assert "interpreter output" in summaries[0]
+    assert "no results" not in summaries[0]
+
+
 async def test_tool_result_compaction_collapses_old_groups_into_summary() -> None:
     """Old tool-call groups are collapsed into summary messages, newest kept."""
     messages = [
