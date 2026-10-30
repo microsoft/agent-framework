@@ -1144,9 +1144,11 @@ class FunctionTool(SerializationMixin):
         security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
         if security_materialization is not None:
             active_context, materialize = security_materialization
-            if context is not None and context is active_context:
-                materialize(context)
-                arguments = context.arguments
+            if active_context.function is self and (context is None or context is active_context):
+                active_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+                materialize(active_context)
+                arguments = active_context.arguments
+                context = active_context
 
         configured_parser = self.result_parser
         skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
