@@ -4,7 +4,7 @@ description = "NVIDIA Integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260929"
+version = "1.0.0a261030"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,9 +24,14 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
     # input_type and truncate need RawOpenAIEmbeddingClient._prepare_extra_request_options.
-    # Published 1.17.0 and earlier lack it, so the package refuses to import with them. Raise this
-    # floor to the first release that adds it.
-    "agent-framework-openai>=1.17.0,<2",
+    # OpenAI 1.18.0 is the first release with this hook.
+    "agent-framework-openai>=1.18.0,<2",
+]
+
+[dependency-groups]
+test = [
+    "httpx>=0.28,<1",
+    "httpx2>=2.0.0,<3",
 ]
 
 [tool.ruff]
@@ -67,5 +72,5 @@ help = "Run tests against the NVIDIA service using NVIDIA_API_KEY."
 cmd = 'pytest -m integration tests'
 
 [build-system]
-requires = ["flit-core>=3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

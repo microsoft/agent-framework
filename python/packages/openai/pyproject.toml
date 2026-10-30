@@ -4,7 +4,7 @@ description = "OpenAI integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.17.0"
+version = "1.18.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,8 +23,13 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.22.0,<2",
+    "agent-framework-core>=1.24.0,<2",
     "openai>=2.25.0,<4",
+]
+
+[dependency-groups]
+test = [
+    "agent-framework-ag-ui>=1.7.1,<2",
 ]
 
 [tool.uv]
