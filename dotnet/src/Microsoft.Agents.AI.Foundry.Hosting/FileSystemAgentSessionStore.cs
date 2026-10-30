@@ -208,7 +208,7 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         "requests; the container's root filesystem is read-only and paths outside it may be cleared between " +
         $"requests. Use {nameof(FileSystemAgentSessionStore)}.{nameof(CreateDefault)}() (which targets that " +
         $"directory), construct the store with a path under it, or register a different {nameof(AgentSessionStore)} " +
-        $"(for example {nameof(InMemoryAgentSessionStore)}) via AddFoundryResponses(agent, agentSessionStore).";
+        $"(for example {nameof(InMemoryAgentSessionStore)}) via builder.AddFoundryResponses(agent, agentSessionStore).";
 
     /// <inheritdoc/>
     public override async ValueTask<AgentSession?> GetSessionAsync(

@@ -56,7 +56,7 @@ feature after the first call fails immediately instead of leaving AgentServer an
 different settings.
 
 ```csharp
-builder.Services.AddFoundryResponses(agent, configure: o => o.ResilientBackground = true);
+builder.AddFoundryResponses(agent, configure: o => o.ResilientBackground = true);
 ```
 
 ### Handler contract on recovery
