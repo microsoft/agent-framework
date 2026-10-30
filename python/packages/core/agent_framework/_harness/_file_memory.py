@@ -95,9 +95,16 @@ _ENCODED_SCOPE_PREFIX = "~scope-"
 def _description_file_name(file_name: str) -> str:
     """Return the companion description file name for ``file_name``.
 
-    The suffix replaces the original extension when present (so ``notes.md``
-    becomes ``notes_description.md``); otherwise it is appended.
+    The suffix is appended to the full name. Stripping the extension first let
+    ``notes.md`` and ``notes`` share one sidecar, so one file's description
+    overwrote or deleted the other's; appending keeps the mapping injective
+    while extension-less names keep their existing sidecar name.
     """
+    return f"{file_name}{_DESCRIPTION_SUFFIX}"
+
+
+def _legacy_description_file_name(file_name: str) -> str:
+    """Return the sidecar name used before the suffix was made injective."""
     dot_index = file_name.rfind(".")
     if dot_index > 0:
         return f"{file_name[:dot_index]}{_DESCRIPTION_SUFFIX}"
@@ -323,6 +330,13 @@ class FileMemoryProvider(ContextProvider):
             )
         return _storage_key_segment(raw_scope, encoded_prefix=_ENCODED_SCOPE_PREFIX)
 
+    async def _read_description(self, working_folder: str, file_name: str) -> str | None:
+        """Read a file's description sidecar, including ones written under the legacy name."""
+        description = await self.store.read(_combine_paths(working_folder, _description_file_name(file_name)))
+        if description is not None:
+            return description
+        return await self.store.read(_combine_paths(working_folder, _legacy_description_file_name(file_name)))
+
     async def _rebuild_index(self, working_folder: str) -> None:
         """Rebuild the ``memories.md`` index for ``working_folder``.
 
@@ -335,7 +349,7 @@ class FileMemoryProvider(ContextProvider):
 
         lines = ["# Memory Index", ""]
         for file_name in sorted_files[:_MAX_INDEX_ENTRIES]:
-            description = await self.store.read(_combine_paths(working_folder, _description_file_name(file_name)))
+            description = await self._read_description(working_folder, file_name)
             if description and description.strip():
                 lines.append(f"- **{file_name}**: {description.strip()}")
             else:
@@ -378,6 +392,7 @@ class FileMemoryProvider(ContextProvider):
 
             path = _combine_paths(working_folder, normalized)
             desc_path = _combine_paths(working_folder, _description_file_name(normalized))
+            legacy_desc_path = _combine_paths(working_folder, _legacy_description_file_name(normalized))
             # Every mutating tool locks the whole working folder, not just the file, because each
             # write and delete rebuilds the folder's memories.md index. The lock is shared by all
             # providers on the store, including file-access tools editing a file in this folder, so
@@ -387,8 +402,12 @@ class FileMemoryProvider(ContextProvider):
                     await self.store.write(path, content)
                     if description and description.strip():
                         await self.store.write(desc_path, description)
+                        if legacy_desc_path != desc_path:
+                            await self.store.delete(legacy_desc_path)
                     else:
                         await self.store.delete(desc_path)
+                        if legacy_desc_path != desc_path:
+                            await self.store.delete(legacy_desc_path)
                     await self._rebuild_index(working_folder)
                 except ValueError as exc:
                     return f"Could not write file '{file_name}': {exc}"
@@ -427,10 +446,13 @@ class FileMemoryProvider(ContextProvider):
 
             path = _combine_paths(working_folder, normalized)
             desc_path = _combine_paths(working_folder, _description_file_name(normalized))
+            legacy_desc_path = _combine_paths(working_folder, _legacy_description_file_name(normalized))
             async with _store_write_lock(self.store, working_folder):
                 try:
                     deleted = await self.store.delete(path)
                     await self.store.delete(desc_path)
+                    if legacy_desc_path != desc_path:
+                        await self.store.delete(legacy_desc_path)
                     await self._rebuild_index(working_folder)
                 except ValueError as exc:
                     return f"Could not delete file '{file_name}': {exc}"

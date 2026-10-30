@@ -55,13 +55,23 @@ async def _prepare(
     return context, tools
 
 
-def test_description_file_name_replaces_extension() -> None:
-    """The description sidecar replaces a known extension and appends otherwise."""
-    assert _description_file_name("notes.md") == "notes_description.md"
-    assert _description_file_name("data.json") == "data_description.md"
+def test_description_file_name_is_injective_across_extensions() -> None:
+    """The description sidecar appends to the full name so extensions cannot collide."""
+    assert _description_file_name("notes.md") == "notes.md_description.md"
+    assert _description_file_name("data.json") == "data.json_description.md"
     assert _description_file_name("noext") == "noext_description.md"
-    # Leading-dot files have no stem, so the suffix is appended.
+    # Leading-dot files keep the suffix appended as well.
     assert _description_file_name(".hidden") == ".hidden_description.md"
+    # names with and without an extension no longer share one sidecar.
+    assert _description_file_name("notes.md") != _description_file_name("notes")
+
+
+def test_legacy_description_file_name_still_resolves_for_old_stores() -> None:
+    """Sidecars written before the injective naming stay readable for extension files."""
+    from agent_framework._harness._file_memory import _legacy_description_file_name  # pyright: ignore[reportPrivateUsage]
+
+    assert _legacy_description_file_name("notes.md") == "notes_description.md"
+    assert _legacy_description_file_name("noext") == "noext_description.md"
 
 
 def test_is_internal_file_detects_sidecars_and_index() -> None:
@@ -152,7 +162,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
     )
     assert "with description" in _text(result)
 
-    sidecar = await store.read(_combine_paths("user-1", "arch_description.md"))
+    sidecar = await store.read(_combine_paths("user-1", "arch.md_description.md"))
     assert sidecar == "system architecture"
 
     listed = json.loads(_text(await list_files.invoke()))
@@ -160,7 +170,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
 
     # Re-saving without a description removes the sidecar.
     await save.invoke(arguments={"file_name": "arch.md", "content": "big content"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) is None
     listed_again = json.loads(_text(await list_files.invoke()))
     assert listed_again == [{"name": "arch.md", "type": "file", "description": None}]
 
@@ -172,10 +182,53 @@ async def test_delete_removes_sidecar() -> None:
     _, tools = await _prepare(provider)
 
     await tools["file_memory_write"].invoke(arguments={"file_name": "arch.md", "content": "x", "description": "desc"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) == "desc"
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) == "desc"
 
     await tools["file_memory_delete"].invoke(arguments={"file_name": "arch.md"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) is None
+
+
+async def test_description_sidecars_stay_separate_for_names_differing_by_extension() -> None:
+    """``notes.md`` and ``notes`` own distinct description sidecars."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+    list_files = tools["file_memory_ls"]
+
+    await save.invoke(
+        arguments={"file_name": "notes.md", "content": "architecture notes", "description": "architecture"}
+    )
+    await save.invoke(arguments={"file_name": "notes", "content": "scratch", "description": "scratch"})
+
+    assert await store.read(_combine_paths("user-1", "notes.md_description.md")) == "architecture"
+    assert await store.read(_combine_paths("user-1", "notes_description.md")) == "scratch"
+
+    # Rewriting the extension-less file without a description must not touch the other's sidecar.
+    await save.invoke(arguments={"file_name": "notes", "content": "more scratch"})
+    assert await store.read(_combine_paths("user-1", "notes.md_description.md")) == "architecture"
+
+    listed = json.loads(_text(await list_files.invoke()))
+    descriptions = {entry["name"]: entry["description"] for entry in listed}
+    assert descriptions == {"notes.md": "architecture", "notes": None}
+
+
+async def test_legacy_description_sidecar_still_feeds_the_index() -> None:
+    """Descriptions written under the old sidecar name keep appearing in the index."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+
+    await store.write(_combine_paths("user-1", "legacy.md"), "old")
+    await store.write(_combine_paths("user-1", "legacy_description.md"), "old description")
+    await tools["file_memory_write"].invoke(
+        arguments={"file_name": "fresh.txt", "content": "new", "description": "new desc"}
+    )
+
+    index = await store.read(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME))
+    assert index is not None
+    assert "old description" in index
+    assert "new desc" in index
 
 
 async def test_index_is_rebuilt_and_injected_on_next_run() -> None:
