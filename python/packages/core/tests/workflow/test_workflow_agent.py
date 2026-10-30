@@ -943,6 +943,153 @@ class TestWorkflowAgent:
         assert final_response.continuation_token == {"token": "response-resume-token"}
         assert final_response.additional_properties == {"provider_marker": "preserve-response"}
 
+    async def test_workflow_as_agent_stream_preserves_agent_response_usage(self) -> None:
+        """Streaming must carry the usage of an AgentResponse output, like the non-streaming path does."""
+        usage = UsageDetails(input_token_count=10, output_token_count=5, total_token_count=15)
+
+        @executor
+        async def usage_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="assistant", contents=["first"]),
+                        Message(role="assistant", contents=["second"]),
+                    ],
+                    response_id="usage-response",
+                    usage_details=usage,
+                )
+            )
+
+        agent = WorkflowBuilder(start_executor=usage_executor).build().as_agent("usage-test-agent")
+
+        non_streaming = await agent.run("hello")
+        assert non_streaming.usage_details == usage
+
+        stream = agent.run("hello", stream=True)
+        updates = [update async for update in stream]
+        final_response = await stream.get_final_response()
+
+        assert [update.text for update in updates] == ["first", "second"]
+        # Usage describes the whole response, so it rides on the last update only.
+        assert not any(content.type == "usage" for content in updates[0].contents)
+        usage_contents = [content for content in updates[-1].contents if content.type == "usage"]
+        assert len(usage_contents) == 1
+        assert usage_contents[0].usage_details == usage
+        assert final_response.usage_details == usage
+        assert final_response.text == non_streaming.text
+
+    async def test_workflow_as_agent_stream_sums_usage_of_multiple_agent_responses(self) -> None:
+        """Usage from several AgentResponse outputs adds up the same way in both run modes."""
+
+        @executor
+        async def two_responses_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[Message(role="assistant", contents=["one"])],
+                    response_id="usage-response-1",
+                    usage_details=UsageDetails(input_token_count=3, output_token_count=2, total_token_count=5),
+                )
+            )
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[Message(role="assistant", contents=["two"])],
+                    response_id="usage-response-2",
+                    usage_details=UsageDetails(input_token_count=7, output_token_count=1, total_token_count=8),
+                )
+            )
+
+        agent = WorkflowBuilder(start_executor=two_responses_executor).build().as_agent("usage-sum-agent")
+        expected = UsageDetails(input_token_count=10, output_token_count=3, total_token_count=13)
+
+        non_streaming = await agent.run("hello")
+        streaming = await agent.run("hello", stream=True).get_final_response()
+
+        assert non_streaming.usage_details == expected
+        assert streaming.usage_details == expected
+
+    @pytest.mark.parametrize(
+        "messages",
+        [
+            [Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="t", arguments="{}")])],
+            [],
+        ],
+        ids=["only_internal_call", "no_messages"],
+    )
+    async def test_workflow_as_agent_stream_keeps_usage_without_caller_facing_messages(
+        self, messages: list[Message]
+    ) -> None:
+        """Usage still reaches the streamed response when no message of the AgentResponse is shown to the caller."""
+        usage = UsageDetails(input_token_count=10, output_token_count=5, total_token_count=15)
+
+        @executor
+        async def usage_only_executor(messages_in: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(AgentResponse(messages=list(messages), usage_details=usage))
+
+        agent = WorkflowBuilder(start_executor=usage_only_executor).build().as_agent("usage-only-agent")
+
+        non_streaming = await agent.run("hello")
+        stream = agent.run("hello", stream=True)
+        updates = [update async for update in stream]
+        streaming = await stream.get_final_response()
+
+        assert non_streaming.usage_details == usage
+        assert streaming.usage_details == usage
+        assert streaming.text == non_streaming.text
+        assert len(streaming.messages) == len(non_streaming.messages)
+        # The filtered messages must not reach the caller through a raw representation either.
+        assert all(update.raw_representation is None for update in updates)
+        raw = streaming.raw_representation
+        assert not any(isinstance(item, AgentResponse) for item in (raw if isinstance(raw, list) else [raw]))
+
+    async def test_workflow_as_agent_stream_usage_only_update_does_not_split_a_message(self) -> None:
+        """A usage-only AgentResponse between chunks of one streamed message leaves that message whole."""
+        usage = UsageDetails(input_token_count=2, output_token_count=1, total_token_count=3)
+
+        @executor
+        async def interleaved_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponseUpdate | AgentResponse],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output(
+                AgentResponseUpdate(contents=[Content.from_text("x")], message_id="m1", author_name="writer")
+            )
+            await ctx.yield_output(AgentResponse(messages=[], usage_details=usage))
+            await ctx.yield_output(
+                AgentResponseUpdate(contents=[Content.from_text("y")], message_id="m1", author_name="writer")
+            )
+
+        agent = WorkflowBuilder(start_executor=interleaved_executor).build().as_agent("interleaved-agent")
+
+        streaming = await agent.run("hello", stream=True).get_final_response()
+
+        assert [message.text for message in streaming.messages] == ["xy"]
+        assert streaming.usage_details == usage
+
+    async def test_workflow_as_agent_stream_usage_only_update_keeps_continuation_token(self) -> None:
+        """The usage-only update carries the response-level fields, like the last update of a normal response."""
+        usage = UsageDetails(input_token_count=4, output_token_count=0, total_token_count=4)
+
+        @executor
+        async def background_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[],
+                    usage_details=usage,
+                    continuation_token=cast(Any, {"token": "still-running"}),
+                )
+            )
+
+        agent = WorkflowBuilder(start_executor=background_executor).build().as_agent("background-agent")
+
+        stream = agent.run("hello", stream=True)
+        updates = [update async for update in stream]
+        final_response = await stream.get_final_response()
+
+        assert len(updates) == 1
+        assert [content.type for content in updates[0].contents] == ["usage"]
+        assert updates[0].continuation_token == {"token": "still-running"}
+        assert final_response.usage_details == usage
+
     async def test_workflow_as_agent_stream_preserves_custom_finish_reason(self) -> None:
         """Test that a non-literal finish_reason is forwarded unchanged.
 

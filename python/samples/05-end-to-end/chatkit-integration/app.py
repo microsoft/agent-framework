@@ -30,7 +30,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
+from agent_framework import Agent, AgentResponseUpdate, FunctionInvocationContext, Message, tool
 from agent_framework.foundry import FoundryChatClient
 
 # Agent Framework ChatKit integration
@@ -105,15 +105,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class WeatherResponse(str):
-    """A string response that also carries WeatherData for widget creation."""
-
-    def __new__(cls, text: str, weather_data: WeatherData):
-        instance = super().__new__(cls, text)
-        instance.weather_data = weather_data  # type: ignore
-        return instance
-
-
 async def stream_widget(
     thread_id: str,
     widget: WidgetRoot,
@@ -151,10 +142,13 @@ async def stream_widget(
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
+    ctx: FunctionInvocationContext,
 ) -> str:
     """Get the weather for a given location.
 
-    Returns a string description with embedded WeatherData for widget creation.
+    Returns a string description for the model. The structured WeatherData is appended to the
+    request-scoped ``weather_results`` list passed via ``function_invocation_kwargs`` so the
+    server can render a weather widget; it is never exposed to the model.
     """
     logger.info(f"Fetching weather for location: {location}")
 
@@ -176,15 +170,19 @@ def get_weather(
 
     logger.debug(f"Weather data generated: {condition}, {temperature}°C, {humidity}% humidity, {wind_speed} km/h wind")
 
-    # Return a WeatherResponse that is both a string (for the LLM) and carries structured data
-    text = (
+    # Hand the structured data to the server for widget rendering
+    weather_results = ctx.kwargs.get("weather_results")
+    if isinstance(weather_results, list):
+        weather_results.append(weather_data)
+
+    # Return a plain-text description for the LLM
+    return (
         f"Weather in {location}:\n"
         f"• Condition: {condition.title()}\n"
         f"• Temperature: {temperature}°C\n"
         f"• Humidity: {humidity}%\n"
         f"• Wind: {wind_speed} km/h"
     )
-    return WeatherResponse(text, weather_data)
 
 
 @tool(approval_mode="never_require")
@@ -297,7 +295,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             title_prompt = [
                 Message(
-                    role=Role.USER,
+                    role="user",
                     contents=[
                         (
                             f"Generate a very short, concise title (max 40 characters) for a conversation "
@@ -350,8 +348,6 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events using stream_agent_response,
         and creates interactive weather widgets when weather data is queried.
         """
-        from agent_framework import FunctionResultContent
-
         if input_user_message is None:
             logger.debug("Received None user message, skipping")
             return
@@ -359,8 +355,8 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         logger.info(f"Processing message for thread: {thread.id}")
 
         try:
-            # Track weather data and city selector flag for this request
-            weather_data: WeatherData | None = None
+            # Collect weather data from get_weather and track the city selector flag for this request
+            weather_results: list[WeatherData] = []
             show_city_selector = False
 
             # Load full thread history from the store
@@ -383,29 +379,22 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             logger.info(f"Running agent with {len(agent_messages)} message(s)")
 
-            # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run(agent_messages, stream=True)
+            # Run the Agent Framework agent with streaming. get_weather appends to weather_results.
+            agent_stream = self.weather_agent.run(
+                agent_messages,
+                stream=True,
+                function_invocation_kwargs={"weather_results": weather_results},
+            )
 
-            # Create an intercepting stream that extracts function results while passing through updates
+            # Create an intercepting stream that detects the city selector marker while passing through updates
             async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
-                nonlocal weather_data, show_city_selector
+                nonlocal show_city_selector
                 async for update in agent_stream:
-                    # Check for function results in the update
-                    if update.contents:
-                        for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
-                                result = content.result
-
-                                # Check if it's a WeatherResponse (string subclass with weather_data attribute)
-                                if isinstance(result, str) and hasattr(result, "weather_data"):
-                                    extracted_data = getattr(result, "weather_data", None)
-                                    if isinstance(extracted_data, WeatherData):
-                                        weather_data = extracted_data
-                                        logger.info(f"Weather data extracted: {weather_data.location}")
-                                # Check if it's the city selector marker
-                                elif isinstance(result, str) and result == "__SHOW_CITY_SELECTOR__":
-                                    show_city_selector = True
-                                    logger.info("City selector flag detected")
+                    # Check for the city selector marker in function results
+                    for content in update.contents:
+                        if content.type == "function_result" and content.result == "__SHOW_CITY_SELECTOR__":
+                            show_city_selector = True
+                            logger.info("City selector flag detected")
                     yield update
 
             # Stream updates as ChatKit events with interception
@@ -416,7 +405,8 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                 yield event
 
             # If weather data was collected during the tool call, create a widget
-            if weather_data is not None and isinstance(weather_data, WeatherData):
+            if weather_results:
+                weather_data = weather_results[-1]
                 logger.info(f"Creating weather widget for location: {weather_data.location}")
                 # Create weather widget
                 widget = render_weather_widget(weather_data)
@@ -472,44 +462,31 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             logger.info(f"City selected: {city_label}")
             logger.debug(f"Action payload: {action.payload}")
 
-            # Track weather data for this request
-            weather_data: WeatherData | None = None
+            # Collect weather data from get_weather for this request
+            weather_results: list[WeatherData] = []
 
             # Create an agent message asking about the weather
-            agent_messages = [Message(role=Role.USER, contents=[f"What's the weather in {city_label}?"])]
+            agent_messages = [Message(role="user", contents=[f"What's the weather in {city_label}?"])]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
-            # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run(agent_messages, stream=True)
+            # Run the Agent Framework agent with streaming. get_weather appends to weather_results.
+            agent_stream = self.weather_agent.run(
+                agent_messages,
+                stream=True,
+                function_invocation_kwargs={"weather_results": weather_results},
+            )
 
-            # Create an intercepting stream that extracts function results while passing through updates
-            async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
-                nonlocal weather_data
-                async for update in agent_stream:
-                    # Check for function results in the update
-                    if update.contents:
-                        for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
-                                result = content.result
-
-                                # Check if it's a WeatherResponse (string subclass with weather_data attribute)
-                                if isinstance(result, str) and hasattr(result, "weather_data"):
-                                    extracted_data = getattr(result, "weather_data", None)
-                                    if isinstance(extracted_data, WeatherData):
-                                        weather_data = extracted_data
-                                        logger.info(f"Weather data extracted: {weather_data.location}")
-                    yield update
-
-            # Stream updates as ChatKit events with interception
+            # Stream updates as ChatKit events
             async for event in stream_agent_response(
-                intercept_stream(),
+                agent_stream,
                 thread_id=thread.id,
             ):
                 yield event
 
             # If weather data was collected during the tool call, create a widget
-            if weather_data is not None and isinstance(weather_data, WeatherData):
+            if weather_results:
+                weather_data = weather_results[-1]
                 logger.info(f"Creating weather widget for: {weather_data.location}")
                 # Create weather widget
                 widget = render_weather_widget(weather_data)

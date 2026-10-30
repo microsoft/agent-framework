@@ -187,7 +187,7 @@ Or in PowerShell:
 1. An existing Foundry project
 2. A deployed model in your Foundry project
 3. Azure CLI installed and authenticated
-4. Python 3.10 or later
+4. Python 3.11–3.15, subject to the selected sample's dependency requirements
 
 #### Running the Agent Host with Python
 

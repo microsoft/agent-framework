@@ -17,6 +17,15 @@ Run the commands below from the `python/` directory.
   - `test` runs the exhaustive workspace test+typing compatibility matrix.
   - `lower`, `upper`, and `both` dispatch to the lower/upper optimizer implementations for one package.
 
+- `detect_version_bumps.py`
+  - Dependency-free CI selector requiring Python 3.11 or newer.
+  - Compares committed `project.version` values against an explicit base commit for the root package and existing
+    workspace members, and compares workspace membership at both commits. Newly added package manifests and existing
+    packages newly included through `members` or `exclude` changes require validation, even without a version change.
+  - Other metadata edits, deleted packages, and excluded standalone projects do not trigger it.
+  - Treats any version value change, including a downgrade, as requiring validation.
+  - Invalid base refs or malformed version metadata fail detection instead of silently skipping the gate.
+
 - `_dependency_bounds_release_impl.py`
   - Discovers package metadata changed from the selected release base.
   - Verifies that every Agent Framework integration in `agent-framework-core[all]` has lower and upper bounds, and
@@ -78,12 +87,26 @@ uv run poe validate-dependency-bounds-project --mode both --package core --depen
 - `validate-python-release` is the bounded release gate: it refreshes `uv.lock`, finds changed package metadata,
   and probes both dependency-bound extremes without reusing the lockfile.
 - `validate-dependency-bounds-test` runs the exhaustive package test+typing matrix and is intentionally not part of
-  the routine release path.
+  the routine local release-preparation path. Version-bump and new-package PRs run it as a blocking CI check.
 - `validate-dependency-bounds-project` is the single package-scoped task; use `--mode lower`, `--mode upper`, or `--mode both` for the target package/dependency pair. Its `--package` argument defaults to `*`, and `--dependency` is optional, so automation can also use it for repo-wide upper-bound runs.
 
 ### GitHub Actions workflows
 
 These workflows call the Poe tasks:
+
+- `.github/workflows/python-dependency-bounds.yml`
+  - `Dependency Bounds Validation` is blocking on PRs and merge groups containing a new workspace package or an existing
+    package version change; ordinary PRs run only the lightweight selector and its offline regression tests,
+    without installing the workspace.
+  - Compares the checked-out synthetic merge commit against the immutable PR `base.sha` or merge-group `base_sha`,
+    not a moving branch or the previous commit. Manual dispatch explicitly runs the full matrix.
+  - Runs `uv run --locked --group tool-runtime poe validate-dependency-bounds-test --package "*"` on Python 3.13,
+    with a 60-minute job timeout and the validator's existing per-command timeouts and first-failure behavior.
+  - Uploads `dependency-bounds-test-results.json` even on validation failure.
+  - To enforce this gate at merge time, repository rules must require the `Dependency Bounds Validation` check.
+    No new package or version change produces a successful no-op check; detector/setup/validation errors fail the check.
+    The workflow has no PR path filter, so non-Python PRs also receive that successful no-op instead of a pending required check.
+  - This does not substitute the bounded `validate-python-release` import probes for test-and-typing coverage.
 
 - `.github/workflows/python-dependency-range-validation.yml`
   - Trigger: `workflow_dispatch`

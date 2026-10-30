@@ -77,7 +77,9 @@ marked text is sent as ordinary input text.
 Responses citations remain `Content.annotations`, including annotation-only updates parsed from completed
 text parts and output messages. Streaming deduplication is request-local and keyed by item ID, content index,
 and annotation index, so separate references to the same URL remain distinct. `_parse_chunk_from_openai` retains
-the signature overridden by released Foundry clients.
+the signature overridden by released Foundry clients. When assistant history is serialized back to Responses,
+only content-coordinate annotation regions become output-text spans; source-coordinate regions remain framework
+metadata and must not be interpreted as generated-text offsets.
 
 ## Dependencies
 

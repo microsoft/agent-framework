@@ -53,7 +53,8 @@ pip install "agent-framework-lab[tau2]"
 pip install "agent-framework-lab[lightning]"
 ```
 
-Lab currently supports Python 3.10–3.14. PyArrow 26 now provides Python 3.15
+Lab currently supports Python 3.11–3.14. Python 3.10 installation remains
+permitted, but compatibility is not guaranteed. PyArrow 26 now provides Python 3.15
 wheels for the GAIA extra, but the Tau2 dependency chain still includes
 DeepDiff with `cachebox` 5.x, whose PyO3 version rejects Python 3.15 builds.
 

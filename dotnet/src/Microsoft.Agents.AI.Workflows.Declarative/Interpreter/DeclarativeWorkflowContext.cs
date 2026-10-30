@@ -93,6 +93,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     /// <inheritdoc/>
     public async ValueTask<TValue?> ReadStateAsync<TValue>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
+        scopeName = IsManagedScope(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
+
         return typeof(TValue) switch
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
@@ -107,6 +109,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     public async ValueTask<TValue> ReadOrInitStateAsync<TValue>(string key, Func<TValue> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
     {
+        scopeName = IsManagedScope(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
+
         return typeof(TValue) switch
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
@@ -115,8 +119,31 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             // Retrieve formula values directly from the managed state to avoid conversion.
             _ when typeof(TValue) == typeof(FormulaValue) => await EnsureFormulaValueAsync().ConfigureAwait(false),
             // Retrieve native types from the source context to avoid conversion.
-            _ => await this.Source.ReadOrInitStateAsync(key, initialStateFactory, scopeName, cancellationToken).ConfigureAwait(false),
+            _ => await EnsureNativeValueAsync().ConfigureAwait(false),
         };
+
+        async ValueTask<TValue> EnsureNativeValueAsync()
+        {
+            PortableValue? existing = await this.Source.ReadStateAsync<PortableValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+            bool legacyEntry = existing is null &&
+                await Kit.IWorkflowContextExtensions.HasLegacyTopicEntryAsync(this.Source, key, scopeName!, forWrite: true, cancellationToken).ConfigureAwait(false);
+            bool initialized = false;
+            TValue result = await this.Source.ReadOrInitStateAsync(key, () =>
+            {
+                initialized = true;
+                return initialStateFactory();
+            }, legacyEntry ? VariableScopeNames.Topic : scopeName, cancellationToken).ConfigureAwait(false);
+            if (legacyEntry)
+            {
+                PortableValue legacyValue = await ReadLegacyValueAsync().ConfigureAwait(false);
+                await this.Source.QueueStateUpdateAsync(key, legacyValue.ToPortableObject(), scopeName, cancellationToken).ConfigureAwait(false);
+            }
+            if (initialized || legacyEntry)
+            {
+                await CompleteInitializationAsync(legacyEntry).ConfigureAwait(false);
+            }
+            return result;
+        }
 
         async ValueTask<TValue> EnsureFormulaValueAsync()
         {
@@ -125,30 +152,53 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
             if (result is null or BlankValue)
             {
-                result = initialStateFactory() as FormulaValue;
+                bool legacyEntry = await Kit.IWorkflowContextExtensions.HasLegacyTopicEntryAsync(this.Source, key, scopeName!, forWrite: true, cancellationToken).ConfigureAwait(false);
+                PortableValue? legacyValue = legacyEntry ? await ReadLegacyValueAsync().ConfigureAwait(false) : null;
+                result = legacyValue is null ? initialStateFactory() as FormulaValue : legacyValue.ToFormula();
                 if (result is null)
                 {
                     throw new InvalidOperationException($"The initial state factory for key '{key}' in scope '{scopeName}' did not return a FormulaValue.");
                 }
 
                 this.State.Set(key, result, scopeName);
-                await this.Source.QueueStateUpdateAsync(key, result.AsPortable(), scopeName, cancellationToken)
+                await this.Source.QueueStateUpdateAsync(key, legacyValue is null ? result.AsPortable() : legacyValue.ToPortableObject(), scopeName, cancellationToken)
                                  .ConfigureAwait(false);
+                await CompleteInitializationAsync(legacyEntry).ConfigureAwait(false);
             }
 
             return (TValue)(object)result!; // The null analyzer is confused here, but it is impossible to hit this line with result is null
+        }
+
+        async ValueTask<PortableValue> ReadLegacyValueAsync() =>
+            await this.Source.ReadStateAsync<PortableValue>(key, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"The existing state for key '{key}' in scope '{VariableScopeNames.Topic}' is missing.");
+
+        async ValueTask CompleteInitializationAsync(bool legacyEntry)
+        {
+            SensitivityLevel sensitivity = legacyEntry
+                ? await this.Source.ReadStateAsync<SensitivityLevel>(key, WorkflowFormulaState.GetSensitivityScopeName(scopeName!), cancellationToken).ConfigureAwait(false)
+                : SensitivityLevel.None;
+            await this.QueueSensitivityUpdateAsync(key, scopeName, sensitivity, cancellationToken).ConfigureAwait(false);
+            this.State.SetSensitivity(key, scopeName, sensitivity);
+            if (legacyEntry)
+            {
+                await this.Source.QueueStateUpdateAsync<object>(key, null, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
     /// <inheritdoc/>
     public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
-        => this.Source.ReadStateKeysAsync(scopeName, cancellationToken);
+    {
+        scopeName = IsManagedScope(scopeName) ? WorkflowFormulaState.GetScopeName(scopeName) : scopeName;
+        return this.Source.ReadStateKeysAsync(scopeName, cancellationToken);
+    }
 
     /// <inheritdoc/>
     public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         => this.Source.SendMessageAsync(message, targetId, cancellationToken);
 
-    public ValueTask UpdateStateAsync<T>(
+    public async ValueTask UpdateStateAsync<T>(
         string key,
         T? value,
         string? scopeName,
@@ -164,7 +214,8 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
-            return this.Source.QueueStateUpdateAsync(key, value, scopeName, cancellationToken);
+            await this.Source.QueueStateUpdateAsync(key, value, scopeName, cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         if (!ManagedScopes.Contains(scopeName!) && !allowSystem)
@@ -172,15 +223,30 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             throw new DeclarativeActionException($"Cannot manage variable definitions in scope: '{scopeName}'.");
         }
 
-        return value switch
+        scopeName = WorkflowFormulaState.GetScopeName(scopeName);
+
+        bool legacyEntry = await Kit.IWorkflowContextExtensions.HasLegacyTopicEntryAsync(this.Source, key, scopeName, forWrite: true, cancellationToken).ConfigureAwait(false);
+        switch (value)
         {
-            null => QueueEmptyStateAsync(),
-            UnassignedValue => QueueEmptyStateAsync(),
-            BlankValue => QueueEmptyStateAsync(),
-            FormulaValue formulaValue => QueueFormulaStateAsync(formulaValue),
-            DataValue dataValue => QueueDataValueStateAsync(dataValue),
-            _ => QueueNativeStateAsync(value),
-        };
+            case null:
+            case UnassignedValue:
+            case BlankValue:
+                await QueueEmptyStateAsync().ConfigureAwait(false);
+                break;
+            case FormulaValue formulaValue:
+                await QueueFormulaStateAsync(formulaValue).ConfigureAwait(false);
+                break;
+            case DataValue dataValue:
+                await QueueDataValueStateAsync(dataValue).ConfigureAwait(false);
+                break;
+            default:
+                await QueueNativeStateAsync(value).ConfigureAwait(false);
+                break;
+        }
+        if (legacyEntry)
+        {
+            await this.Source.QueueStateUpdateAsync<object>(key, null, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+        }
 
         async ValueTask QueueEmptyStateAsync()
         {
@@ -237,6 +303,6 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             return default;
         }
 
-        return this.Source.QueueStateUpdateAsync(key, sensitivity, WorkflowFormulaState.GetSensitivityScopeName(scopeName), cancellationToken);
+        return WorkflowFormulaState.QueueSensitivityUpdateAsync(this.Source, key, scopeName, sensitivity, delete: false, cancellationToken);
     }
 }
