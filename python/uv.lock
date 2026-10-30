@@ -365,7 +365,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "pymongo", specifier = ">=4.13,<5" },
+    { name = "pymongo", specifier = ">=4.15,<5" },
 ]
 
 [[package]]
@@ -904,7 +904,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "pymongo", specifier = ">=4.13.2,<5" },
+    { name = "pymongo", specifier = ">=4.15,<5" },
 ]
 
 [[package]]

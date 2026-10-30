@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "pymongo>=4.13.2,<5",
+    "pymongo>=4.15,<5",
 ]
 
 [tool.pytest.ini_options]
