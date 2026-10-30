@@ -202,7 +202,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-core**, **agent-framework-hosting-a2a**: Tighten security-label enforcement and restrict owned-input argument labels ([#8238](https://github.com/microsoft/agent-framework/pull/8238), [#8394](https://github.com/microsoft/agent-framework/pull/8394))
 - **agent-framework-purview**: Handle additional content types during Purview policy processing ([#8370](https://github.com/microsoft/agent-framework/pull/8370))
 - **agent-framework-mistral**, **agent-framework-hosting-responses**: Reject unsupported per-call Mistral transport options ([#8392](https://github.com/microsoft/agent-framework/pull/8392))
-- **agent-framework-monty**: Update the Monty bridge for the current `pydantic-monty` pool API and reuse registered tools in callbacks ([#8152](https://github.com/microsoft/agent-framework/pull/8152), [#8395](https://github.com/microsoft/agent-framework/pull/8395))
+- **agent-framework-monty**: Update the Monty bridge for the current `pydantic-monty` pool API and reuse registered tools in callbacks ([#8152](https://github.com/microsoft/agent-framework/commit/4d173b24007da3f1adeccd158024960de55f3a24), [#8395](https://github.com/microsoft/agent-framework/pull/8395))
 - **agent-framework-openai**: Separate hosted and local shell calls ([#8294](https://github.com/microsoft/agent-framework/pull/8294))
 - **agent-framework-ag-ui**, **agent-framework-anthropic**, **agent-framework-bedrock**, **agent-framework-core**, **agent-framework-foundry-hosting**, **agent-framework-hosting-a2a**, **agent-framework-hosting-mcp**, **agent-framework-hosting-responses**, **agent-framework-openai**: Keep tool diagnostics internal by default ([#8235](https://github.com/microsoft/agent-framework/pull/8235))
 - **agent-framework-azure-cosmos**: Clarify Cosmos history-provider storage scope ([#8391](https://github.com/microsoft/agent-framework/pull/8391))
@@ -212,7 +212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **agent-framework-core**: Preserve function-call and approval context across mixed batches, resumed runs, nested workflows, and streaming merges ([#8428](https://github.com/microsoft/agent-framework/pull/8428), [#8433](https://github.com/microsoft/agent-framework/pull/8433), [#8345](https://github.com/microsoft/agent-framework/pull/8345), [#8337](https://github.com/microsoft/agent-framework/pull/8337))
 - **agent-framework-core**: Preserve compaction summaries and configuration while excluding encrypted reasoning payloads from token counts ([#8354](https://github.com/microsoft/agent-framework/pull/8354), [#8329](https://github.com/microsoft/agent-framework/pull/8329), [#8117](https://github.com/microsoft/agent-framework/pull/8117), [#7944](https://github.com/microsoft/agent-framework/pull/7944))
-- **agent-framework-core**: Make file checkpoint saves, deletion, encoding, and round trips concurrency-safe and lossless ([#7757](https://github.com/microsoft/agent-framework/pull/7757), [#8261](https://github.com/microsoft/agent-framework/pull/8261), [#8272](https://github.com/microsoft/agent-framework/pull/8272), [#8262](https://github.com/microsoft/agent-framework/pull/8262), [#8181](https://github.com/microsoft/agent-framework/pull/8181))
+- **agent-framework-core**: Make file checkpoint saves, deletion, encoding, and round trips concurrency-safe and lossless ([#7757](https://github.com/microsoft/agent-framework/pull/7757), [#8261](https://github.com/microsoft/agent-framework/pull/8261), [#8272](https://github.com/microsoft/agent-framework/pull/8272), [#8262](https://github.com/microsoft/agent-framework/pull/8262), [#8181](https://github.com/microsoft/agent-framework/commit/91b3c8b02248e675079419635eceabc7d067bf7c))
 - **agent-framework-core**: Preserve workflow streaming, response metadata, state, return types, and invocation keyword arguments across completion and resume paths ([#8231](https://github.com/microsoft/agent-framework/pull/8231), [#8389](https://github.com/microsoft/agent-framework/pull/8389), [#8300](https://github.com/microsoft/agent-framework/pull/8300), [#8309](https://github.com/microsoft/agent-framework/pull/8309), [#8311](https://github.com/microsoft/agent-framework/pull/8311), [#7999](https://github.com/microsoft/agent-framework/pull/7999), [#8287](https://github.com/microsoft/agent-framework/pull/8287), [#8331](https://github.com/microsoft/agent-framework/pull/8331))
 - **agent-framework-core**: Authenticate and scope MCP requests and sessions to the correct invocation identity, origin, and ownership ([#8303](https://github.com/microsoft/agent-framework/pull/8303), [#8285](https://github.com/microsoft/agent-framework/pull/8285), [#8246](https://github.com/microsoft/agent-framework/pull/8246), [#8225](https://github.com/microsoft/agent-framework/pull/8225))
 - **agent-framework-core**: Verify MCP skill archive digests, avoid duplicate structured content, and reject ambiguous MCP configuration matches ([#8404](https://github.com/microsoft/agent-framework/pull/8404), [#8274](https://github.com/microsoft/agent-framework/pull/8274), [#8386](https://github.com/microsoft/agent-framework/pull/8386))
@@ -260,7 +260,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-foundry**, **agent-framework-foundry-hosting**, **agent-framework-openai**: Lazily load Foundry and OpenAI integrations to avoid unnecessary import-time dependencies ([#8219](https://github.com/microsoft/agent-framework/pull/8219))
 - **agent-framework-devui**: Update frontend transitive dependencies ([#8019](https://github.com/microsoft/agent-framework/pull/8019), [#8009](https://github.com/microsoft/agent-framework/pull/8009), [#8175](https://github.com/microsoft/agent-framework/pull/8175))
 - **agent-framework**: Replace stale Python documentation placeholders with live documentation links ([#7777](https://github.com/microsoft/agent-framework/pull/7777))
-- **docs**: Repair external links, document anonymous Parallel Search MCP usage, and correct Python documentation wording ([#8090](https://github.com/microsoft/agent-framework/pull/8090), [#8084](https://github.com/microsoft/agent-framework/pull/8084), [#7942](https://github.com/microsoft/agent-framework/pull/7942))
+- **docs**: Repair external links, document anonymous Parallel Search MCP usage, and correct Python documentation wording ([#8090](https://github.com/microsoft/agent-framework/commit/3904a2fc213bda9172aa1be2d7dbb6ab4ffcaab1), [#8084](https://github.com/microsoft/agent-framework/pull/8084), [#7942](https://github.com/microsoft/agent-framework/pull/7942))
 - **tests**: Update uv, Ruff, Zuban, ty, pytest, and Python type-checking dependencies; isolate Lab test dependencies; and make the optional Lightning test robust to nested import failures ([#8038](https://github.com/microsoft/agent-framework/pull/8038), [#8036](https://github.com/microsoft/agent-framework/pull/8036), [#8037](https://github.com/microsoft/agent-framework/pull/8037), [#8062](https://github.com/microsoft/agent-framework/pull/8062), [#8110](https://github.com/microsoft/agent-framework/pull/8110), [#8064](https://github.com/microsoft/agent-framework/pull/8064), [#8071](https://github.com/microsoft/agent-framework/pull/8071), [#8209](https://github.com/microsoft/agent-framework/pull/8209), [#8207](https://github.com/microsoft/agent-framework/pull/8207), [#8208](https://github.com/microsoft/agent-framework/pull/8208))
 
 ### Fixed
@@ -361,7 +361,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-a2a**, **agent-framework-core**, **agent-framework-orchestrations**: Preserve and normalize A2A inputs when used through orchestrations ([#7761](https://github.com/microsoft/agent-framework/pull/7761))
 - **agent-framework-ag-ui**: Preserve tool-message IDs, URL-source attachments, and JSON workflow resume payloads ([#7510](https://github.com/microsoft/agent-framework/pull/7510), [#7655](https://github.com/microsoft/agent-framework/pull/7655), [#7684](https://github.com/microsoft/agent-framework/pull/7684))
 - **agent-framework-anthropic**, **agent-framework-core**: Preserve structured instructions when merging chat options ([#7730](https://github.com/microsoft/agent-framework/pull/7730))
-- **agent-framework-core**: Preserve all fan-in trace contexts and restrict workflow type deserialization ([#7557](https://github.com/microsoft/agent-framework/pull/7557), [#7500](https://github.com/microsoft/agent-framework/pull/7500))
+- **agent-framework-core**: Preserve all fan-in trace contexts and restrict workflow type deserialization ([#7557](https://github.com/microsoft/agent-framework/commit/00d7102c54aa4ed14676cfceb41645e19097b62e), [#7500](https://github.com/microsoft/agent-framework/pull/7500))
 - **agent-framework-core**: Avoid remote MCP tool-name shadowing while retaining the documented argument allowlist ([#7799](https://github.com/microsoft/agent-framework/pull/7799))
 - **agent-framework-core**: Always emit an arguments field for zero-argument tool calls in Foundry evaluations ([#7734](https://github.com/microsoft/agent-framework/pull/7734))
 - **agent-framework-core**, **agent-framework-github-copilot**: Forward telemetry configuration to the GitHub Copilot client ([#7625](https://github.com/microsoft/agent-framework/pull/7625))
@@ -786,7 +786,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-foundry-hosting**: Allow hosted checkpoints to restore `MessageRole` values ([#6049](https://github.com/microsoft/agent-framework/pull/6049))
 - **agent-framework-openai**: Preserve citation `get_url` metadata ([#6037](https://github.com/microsoft/agent-framework/pull/6037))
 - **agent-framework-openai**: Guard Chat Completions streaming against null deltas ([#5734](https://github.com/microsoft/agent-framework/pull/5734))
-- **agent-framework-openai**: Read response headers defensively for stream wrappers without `.headers` ([#6028](https://github.com/microsoft/agent-framework/pull/6028), [#6029](https://github.com/microsoft/agent-framework/pull/6029))
+- **agent-framework-openai**: Read response headers defensively for stream wrappers without `.headers` ([#6028](https://github.com/microsoft/agent-framework/commit/3db2004e49b374f163e9f105008a4ad829db173a), [#6029](https://github.com/microsoft/agent-framework/pull/6029))
 - **samples**: Fix sequential workflow sample output handling ([#5976](https://github.com/microsoft/agent-framework/pull/5976))
 
 ## [1.6.0] - 2026-05-21
@@ -1158,8 +1158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **agent-framework-core**: Add Shell tool ([#4339](https://github.com/microsoft/agent-framework/pull/4339))
 - **agent-framework-core**: Add `file_ids` and `data_sources` support to `get_code_interpreter_tool()` ([#4201](https://github.com/microsoft/agent-framework/pull/4201))
-- **agent-framework-core**: Map file citation annotations from `TextDeltaBlock` in Assistants API streaming ([#4316](https://github.com/microsoft/agent-framework/pull/4316), [#4320](https://github.com/microsoft/agent-framework/pull/4320))
-- **agent-framework-claude**: Add OpenTelemetry instrumentation to `ClaudeAgent` ([#4278](https://github.com/microsoft/agent-framework/pull/4278), [#4326](https://github.com/microsoft/agent-framework/pull/4326))
+- **agent-framework-core**: Map file citation annotations from `TextDeltaBlock` in Assistants API streaming ([#4316](https://github.com/microsoft/agent-framework/commit/e0461b42c12ed2ca492ad6512583ef1920c649a6), [#4320](https://github.com/microsoft/agent-framework/pull/4320))
+- **agent-framework-claude**: Add OpenTelemetry instrumentation to `ClaudeAgent` ([#4278](https://github.com/microsoft/agent-framework/commit/fae36b36f2f8b9f21f6507678c9a172e4370dc69), [#4326](https://github.com/microsoft/agent-framework/pull/4326))
 - **agent-framework-azure-cosmos**: Add Azure Cosmos history provider package ([#4271](https://github.com/microsoft/agent-framework/pull/4271))
 - **samples**: Add `auto_retry.py` sample for rate limit handling ([#4223](https://github.com/microsoft/agent-framework/pull/4223))
 - **tests**: Add regression tests for Entry JoinExecutor workflow input initialization ([#4335](https://github.com/microsoft/agent-framework/pull/4335))
@@ -1167,7 +1167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **samples**: Restructure and improve Python samples ([#4092](https://github.com/microsoft/agent-framework/pull/4092))
-- **agent-framework-orchestrations**: [BREAKING] Tighten `HandoffBuilder` to require `Agent` instead of `SupportsAgentRun` ([#4301](https://github.com/microsoft/agent-framework/pull/4301), [#4302](https://github.com/microsoft/agent-framework/pull/4302))
+- **agent-framework-orchestrations**: [BREAKING] Tighten `HandoffBuilder` to require `Agent` instead of `SupportsAgentRun` ([#4301](https://github.com/microsoft/agent-framework/commit/97b24990d902a358e64d19c219961eaaebfa543b), [#4302](https://github.com/microsoft/agent-framework/pull/4302))
 - **samples**: Update workflow orchestration samples to use `AzureOpenAIResponsesClient` ([#4285](https://github.com/microsoft/agent-framework/pull/4285))
 
 ### Fixed
@@ -1191,7 +1191,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-anthropic**: Set `role="assistant"` on `message_start` streaming update ([#4329](https://github.com/microsoft/agent-framework/pull/4329))
 - **samples**: Fix samples discovered by auto validation pipeline ([#4355](https://github.com/microsoft/agent-framework/pull/4355))
 - **samples**: Use `AgentResponse.value` instead of `model_validate_json` in HITL sample ([#4405](https://github.com/microsoft/agent-framework/pull/4405))
-- **agent-framework-devui**: Fix .NET conversation memory handling in DevUI integration ([#3484](https://github.com/microsoft/agent-framework/pull/3484), [#4294](https://github.com/microsoft/agent-framework/pull/4294))
+- **agent-framework-devui**: Fix .NET conversation memory handling in DevUI integration ([#3484](https://github.com/microsoft/agent-framework/commit/9124d51e0eda5f3bc790a6c5f8fc5c7605c62f02), [#4294](https://github.com/microsoft/agent-framework/pull/4294))
 
 ## [1.0.0rc2] - 2026-02-25
 
@@ -1478,7 +1478,7 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 ### Changed
 
-- **agent-framework-core**: Preserve reasoning blocks with OpenRouter ([#2950](https://github.com/microsoft/agent-framework/pull/2950))
+- **agent-framework-core**: Preserve reasoning blocks with OpenRouter ([#2950](https://github.com/microsoft/agent-framework/commit/85d70f01f65d855cd69da7b78b1de68289ac12ad))
 
 ## [1.0.0b251218] - 2025-12-18
 
@@ -1660,7 +1660,7 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 ### Fixed
 
-- **agent-framework-core**: Prevent duplicate MCP tools and prompts ([#1876](https://github.com/microsoft/agent-framework/pull/1876)) ([#1890](https://github.com/microsoft/agent-framework/pull/1890))
+- **agent-framework-core**: Prevent duplicate MCP tools and prompts ([#1876](https://github.com/microsoft/agent-framework/commit/36c12176057894bb10f3b0d6012cfb2149ffa1d0)) ([#1890](https://github.com/microsoft/agent-framework/pull/1890))
 - **agent-framework-devui**: Fix HIL regression ([#2167](https://github.com/microsoft/agent-framework/pull/2167))
 - **agent-framework-chatkit**: ChatKit sample fixes ([#2174](https://github.com/microsoft/agent-framework/pull/2174))
 
