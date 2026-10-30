@@ -129,7 +129,10 @@ _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
     "builtins:list",
     "builtins:dict",
     "builtins:tuple",
-    "builtins:type",
+    # Deliberately absent: "builtins:type". It is resolved separately (see
+    # _RESTRICTED_TYPE_GLOBAL_KEYS below) to a call restricted to its introspective one-argument
+    # form, because the three-argument form, type(name, bases, namespace), constructs a new class
+    # whose __module__/__qualname__ are chosen by the pickle data itself.
     # getattr is used by pickle to reconstruct nested types. find_class
     # substitutes a restricted implementation during unpickling.
     "builtins:getattr",
@@ -158,6 +161,68 @@ _GETATTR_GLOBAL_KEYS: frozenset[str] = frozenset({
     "__builtin__:getattr",
 })
 
+_RESTRICTED_TYPE_GLOBAL_KEYS: frozenset[str] = frozenset({
+    "builtins:type",
+    # Protocol 2 pickles use Python 2's module name for the same global.
+    "__builtin__:type",
+})
+
+
+def _restricted_type(*args: Any, **kwargs: Any) -> Any:
+    """Restrict ``type`` to its introspective one-argument form over a non-class value.
+
+    The three-argument form, ``type(name, bases, namespace)``, constructs a new class whose
+    identity is chosen entirely by its arguments -- the same hazard the metaclass and
+    unpopulated-enum checks below exist to prevent. Calling the one-argument form on a *value*
+    only returns that value's existing class and cannot construct a new one, so restricting to
+    that shape keeps checkpoints that hold ``type(None)``/etc. as data restorable. Calling it on a
+    *class* is a second route to the same hazard: every ordinary class (``dict``, ``list``,
+    ``int``, and any class without a custom metaclass) is itself an instance of ``type``, so
+    ``type(dict)`` returns the bare ``type`` object -- the pickle stream could then reuse that
+    returned value as the callable of a *second*, unchecked ``REDUCE`` (``find_class`` is never
+    consulted for values already on the unpickling stack) to construct an arbitrary class after
+    all. Rejecting a class argument closes that route; ``type(x)`` can only return a metaclass
+    when ``x`` is itself a class, because only classes are instances of a metaclass.
+    """
+    if len(args) != 1 or kwargs:
+        raise pickle.UnpicklingError(
+            "Checkpoint deserialization blocked for 'builtins:type' called to construct a new "
+            "class; only the single-argument introspective form is permitted."
+        )
+    value: object = args[0]
+    if isinstance(value, type):
+        raise pickle.UnpicklingError(
+            "Checkpoint deserialization blocked for 'builtins:type' called on a class; this would "
+            "return a metaclass that could be reused to construct an arbitrary class."
+        )
+    return type(value)
+
+
+def _is_metaclass(resolved: type) -> bool:
+    """Return True if instantiating ``resolved`` would itself construct a new class.
+
+    A metaclass (``type`` or any subclass of it) is a class factory: calling it with
+    ``(qualname, bases, namespace)`` creates a brand-new class whose identity is chosen by
+    the caller. Checkpoint deserialization must never hand one back, regardless of which
+    allowlisted name or prefix was used to reach it, or a pickle could construct a class
+    that satisfies any downstream "is this an allowed type" check.
+    """
+    return issubclass(resolved, type)
+
+
+def _is_unpopulated_enum(resolved: type) -> bool:
+    """Return True if ``resolved`` is an Enum-family class with no members.
+
+    ``EnumMeta.__call__`` dispatches a call with more than one positional argument to the Enum
+    functional API, which constructs a brand-new Enum subclass -- the same class-construction
+    hazard as calling ``type`` directly. Python refuses to subclass (functional-API or otherwise)
+    an Enum that already has members, on every supported Python version, so a populated
+    application or framework enum cannot be used this way; only a member-less class (the base
+    ``Enum``/``IntEnum``/``Flag``/``IntFlag``/``StrEnum`` classes themselves, or an unusual custom
+    subclass with no members) is a reachable class factory and needs to be rejected here.
+    """
+    return isinstance(resolved, EnumMeta) and len(resolved) == 0
+
 
 class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-usage]
     """Unpickler that restricts which classes may be instantiated.
@@ -173,6 +238,8 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         self._allowed_types = allowed_types
 
     def _is_allowed_type(self, resolved: type) -> bool:
+        if _is_metaclass(resolved) or _is_unpopulated_enum(resolved):
+            return False
         type_key = _type_to_key(resolved)
         return (
             type_key in _BUILTIN_ALLOWED_TYPE_KEYS
@@ -215,14 +282,26 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         if type_key in _GETATTR_GLOBAL_KEYS:
             return self._restricted_getattr
 
+        if type_key in _RESTRICTED_TYPE_GLOBAL_KEYS:
+            return _restricted_type
+
         if type_key in _BUILTIN_ALLOWED_TYPE_KEYS:
             return super().find_class(module, name)  # nosec
 
         if type_key in self._allowed_types:
             resolved = super().find_class(module, name)  # nosec
-            if isinstance(resolved, type):
-                return resolved
-            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
+            if not isinstance(resolved, type):
+                raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
+            if _is_metaclass(resolved):
+                # Explicitly listing a metaclass's own key (e.g. a custom allowed_checkpoint_types entry)
+                # would otherwise still hand back a class factory; there is no legitimate reconstructible
+                # application type that is itself a metaclass.
+                raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for metaclass '{type_key}'.")
+            if _is_unpopulated_enum(resolved):
+                raise pickle.UnpicklingError(
+                    f"Checkpoint deserialization blocked for unpopulated Enum class '{type_key}'."
+                )
+            return resolved
 
         if module.startswith(_FRAMEWORK_MODULE_PREFIXES) or module.startswith(_OPENAI_MODULE_PREFIX):
             # Pickle dotted names traverse attributes on an allowed module; keep the prefix allowlist to concrete
@@ -230,9 +309,21 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
             if "." in name:
                 raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
             resolved = super().find_class(module, name)  # nosec
-            if isinstance(resolved, type):
-                return resolved
-            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
+            if not isinstance(resolved, type):
+                raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
+            if _is_metaclass(resolved):
+                # A module can re-export a metaclass under an allowed prefix (for example `type` imported
+                # as `from builtins import type as builtin_type`); judge the class itself, not just where
+                # the name was found.
+                raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for metaclass '{type_key}'.")
+            if _is_unpopulated_enum(resolved):
+                # Likewise, a module can re-export a member-less Enum-family base class (for example
+                # `from enum import Enum`); its functional API constructs a brand-new class the same
+                # way calling a metaclass does.
+                raise pickle.UnpicklingError(
+                    f"Checkpoint deserialization blocked for unpopulated Enum class '{type_key}'."
+                )
+            return resolved
 
         raise pickle.UnpicklingError(
             f"Checkpoint deserialization blocked for type '{type_key}'. "
