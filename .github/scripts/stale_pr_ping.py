@@ -16,18 +16,21 @@ import time
 from datetime import datetime, timezone
 
 from github import Auth, Github
+from github.IssueComment import IssueComment
 from github.PullRequest import PullRequest
 from github.Repository import Repository
 
 
 REQUESTED_INFO_LABEL = "requested-info"
 DONT_CLOSE_LABEL = "dont-close"
+WARNING_MARKER = "<!-- stale-pr-warning -->"
 WARNING_THRESHOLD_DAYS = 4
 CLOSING_THRESHOLD_DAYS = 4
 WARNING_COMMENT = (
     "@{author}, this pull request is waiting on your response. "
     "If there is no further activity within {closing_days} days, "
     "it will be closed automatically. (This is an automated message.)"
+    f"\n\n{WARNING_MARKER}"
 )
 CLOSING_COMMENT = (
     "Closing this pull request because there was no further activity "
@@ -65,16 +68,33 @@ def get_maintainers(repo: Repository) -> set[str]:
     return owners
 
 
+def get_latest_comment(pull_request: PullRequest) -> IssueComment | None:
+    """Fetch only the newest page of regular PR conversation comments."""
+    return next(iter(pull_request.get_issue_comments().reversed), None)
+
+
+def has_warning_marker(comment: IssueComment | None) -> bool:
+    """Return whether a comment is the automated warning."""
+    return bool(comment and WARNING_MARKER in (comment.body or ""))
+
+
+def is_exempt(pull_request: PullRequest, maintainers: set[str]) -> bool:
+    """Return whether a pull request is exempt from the lifecycle."""
+    return (
+        pull_request.user.login.lower() in maintainers
+        or any(label.name == DONT_CLOSE_LABEL for label in pull_request.labels)
+    )
+
+
 def should_warn(
     pull_request: PullRequest,
+    latest_comment: IssueComment | None,
     maintainers: set[str],
     now: datetime,
     warning_threshold_days: int,
 ) -> bool:
     """Return whether an external pull request is ready for its warning."""
-    if pull_request.user.login.lower() in maintainers:
-        return False
-    if any(label.name == DONT_CLOSE_LABEL for label in pull_request.labels):
+    if is_exempt(pull_request, maintainers):
         return False
     if any(label.name == REQUESTED_INFO_LABEL for label in pull_request.labels):
         return False
@@ -84,38 +104,85 @@ def should_warn(
     if days_inactive < warning_threshold_days:
         return False
 
-    comments = list(pull_request.get_issue_comments())
-    if not comments:
-        return False
-
-    latest_comment = comments[-1]
     return bool(
-        latest_comment.user
+        latest_comment
+        and latest_comment.user
         and latest_comment.user.login.lower() in maintainers
     )
 
 
 def should_close(
     pull_request: PullRequest,
+    latest_comment: IssueComment | None,
     maintainers: set[str],
     now: datetime,
     closing_threshold_days: int,
 ) -> bool:
     """Return whether a warned external pull request is ready to close."""
-    if pull_request.user.login.lower() in maintainers:
-        return False
-    if any(label.name == DONT_CLOSE_LABEL for label in pull_request.labels):
+    if is_exempt(pull_request, maintainers):
         return False
     if not any(
         label.name == REQUESTED_INFO_LABEL
         for label in pull_request.labels
     ):
         return False
+    if not has_warning_marker(latest_comment):
+        return False
 
     days_inactive = (
         now - pull_request.updated_at.astimezone(timezone.utc)
     ).days
     return days_inactive >= closing_threshold_days
+
+
+def clear_requested_info(pull_request: PullRequest, dry_run: bool) -> bool:
+    """Remove stale lifecycle state after newer conversation activity."""
+    if dry_run:
+        print(
+            f"  [DRY RUN] Would remove '{REQUESTED_INFO_LABEL}' "
+            f"from PR #{pull_request.number}"
+        )
+        return True
+
+    try:
+        pull_request.remove_from_labels(REQUESTED_INFO_LABEL)
+    except Exception as exc:
+        print(
+            f"  ERROR: Failed to remove '{REQUESTED_INFO_LABEL}' "
+            f"from PR #{pull_request.number}: {exc}"
+        )
+        return False
+
+    print(
+        f"  Removed '{REQUESTED_INFO_LABEL}' from PR #{pull_request.number} "
+        "after newer conversation activity"
+    )
+    return True
+
+
+def restore_requested_info(pull_request: PullRequest, dry_run: bool) -> bool:
+    """Restore lifecycle state when the warning comment already exists."""
+    if dry_run:
+        print(
+            f"  [DRY RUN] Would restore '{REQUESTED_INFO_LABEL}' "
+            f"on PR #{pull_request.number}"
+        )
+        return True
+
+    try:
+        pull_request.add_to_labels(REQUESTED_INFO_LABEL)
+    except Exception as exc:
+        print(
+            f"  ERROR: Failed to restore '{REQUESTED_INFO_LABEL}' "
+            f"on PR #{pull_request.number}: {exc}"
+        )
+        return False
+
+    print(
+        f"  Restored '{REQUESTED_INFO_LABEL}' on PR #{pull_request.number} "
+        "from the warning marker"
+    )
+    return True
 
 
 def warn(
@@ -269,11 +336,34 @@ def main() -> None:
         f"closing: {closing_threshold_days} days)...\n"
     )
 
-    for pull_request in repo.get_pulls(state="open"):
+    pull_requests = list(repo.get_pulls(state="open"))
+
+    for pull_request in pull_requests:
         scanned += 1
+
+        if is_exempt(pull_request, maintainers):
+            continue
+
+        latest_comment = get_latest_comment(pull_request)
+        has_requested_info = any(
+            label.name == REQUESTED_INFO_LABEL
+            for label in pull_request.labels
+        )
+        has_marker = has_warning_marker(latest_comment)
+
+        if has_requested_info and not has_marker:
+            if not clear_requested_info(pull_request, dry_run):
+                failed.append(pull_request.number)
+            continue
+
+        if has_marker and not has_requested_info:
+            if not restore_requested_info(pull_request, dry_run):
+                failed.append(pull_request.number)
+            continue
 
         if should_close(
             pull_request,
+            latest_comment,
             maintainers,
             now,
             closing_threshold_days,
@@ -286,6 +376,7 @@ def main() -> None:
 
         if should_warn(
             pull_request,
+            latest_comment,
             maintainers,
             now,
             warning_threshold_days,
