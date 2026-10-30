@@ -1094,10 +1094,15 @@ Configure tool security requirements in the `@tool` decorator:
 ```
 
 Hidden variable references in tool arguments are expanded recursively, but their stored labels remain attached to
-the invocation. A tool with `accepts_untrusted=False` is blocked, audited, or sent for policy approval before it can
-receive hidden untrusted data. `accepts_untrusted=True` permits blind forwarding without exposing that data to the
-model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to a public
-sink. Argument labels do not rewrite result labels.
+the invocation. FIDES resolves a detached copy for label and approval binding, then blocks, audits, or requests policy
+approval before it mutates the live arguments or runs Pydantic validators. Validators and the tool body receive hidden
+values only after the policy permits the call. `accepts_untrusted=True` permits blind forwarding without exposing that
+data to the model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to
+a public sink. Argument labels do not rewrite result labels.
+
+FIDES metadata values are exact and case-sensitive (`"trusted"`, `"untrusted"`, `"public"`, `"private"`, and
+`"user_identity"`). Unknown values and non-boolean `accepts_untrusted` declarations are blocked as an
+`invalid_policy` configuration violation instead of falling back to a less restrictive policy.
 
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.
