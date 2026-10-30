@@ -8,6 +8,8 @@ Integration with AWS Bedrock for LLM inference.
 - **`BedrockChatOptions`** - Options TypedDict for Bedrock-specific parameters
 - **`BedrockGuardrailConfig`** - Configuration for Bedrock guardrails
 - **`BedrockSettings`** - Pydantic settings for Bedrock configuration
+- **`BedrockKnowledgeBaseProvider`** - The public entry point for using an Amazon Bedrock Knowledge Base with an agent. A single `ContextProvider` with a `mode`: `"inject"` (inject retrieved passages as context), `"tool"` (expose a KB search tool the model can call), or `"both"` (default). Uses agentic retrieval (query decomposition + managed reranking) with fallback to standard Retrieve, injects retrieved images as image `Content` (gif/jpeg/png/webp), and uses the transcription/summary text of audio/video results.
+- **`BedrockKnowledgeBaseSettings`** - Settings TypedDict for KB region/credentials resolution (`BEDROCK_*`)
 
 ## Usage
 

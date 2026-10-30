@@ -17,3 +17,10 @@ See the [Bedrock sample](../../samples/02-agents/providers/amazon/bedrock_chat_c
 - Loads credentials from the `BEDROCK_*` environment variables
 - Instantiates `BedrockChatClient`
 - Sends a simple conversation turn and prints the response
+
+### Knowledge Base Examples
+
+For Amazon Bedrock managed Knowledge Base retrieval, use `BedrockKnowledgeBaseProvider`. Its `mode` selects `"inject"` (inject KB context automatically), `"tool"` (expose a KB search tool the agent calls on demand), or `"both"` (default). See:
+
+- [`bedrock_kb_tool.py`](../../samples/02-agents/providers/amazon/bedrock_kb_tool.py) — `BedrockKnowledgeBaseProvider(mode="tool")`: the agent searches the KB on demand.
+- [`bedrock_kb_context_provider.py`](../../samples/02-agents/providers/amazon/bedrock_kb_context_provider.py) — `BedrockKnowledgeBaseProvider(mode="inject")`: KB context is injected automatically.
