@@ -27,20 +27,31 @@ if TYPE_CHECKING:
     from ._events import WorkflowEvent
     from ._runner_context import WorkflowMessage
 
+
+class _CheckpointScanInvalidated(WorkflowCheckpointException):
+    """Raised when the checkpoint directory changes during a get_latest scan.
+
+    A separate subclass so the retry loop in :meth:`FileCheckpointStorage.get_latest`
+    can distinguish a transient concurrent-write condition (retryable) from a
+    genuine read failure (not retryable). Causes include:
+
+    - A checkpoint file disappearing between directory enumeration and the
+      per-file read (concurrent delete).
+    - A checkpoint file's content changing during the scan (concurrent write
+      or replace).
+    - The set of files or directories changing between the initial scan and
+      the post-scan validation.
+
+    The caller can retry the entire scan; the next attempt will see the
+    surviving checkpoints.
+    """
+
+
 # Type alias for checkpoint IDs in case we want to change the
 # underlying type in the future (e.g., to UUID or a custom class)
 CheckpointID: TypeAlias = str
 _MAX_GET_LATEST_ATTEMPTS = 3
 _GET_LATEST_RETRY_DELAY_SECONDS = 0.05
-
-
-class _CheckpointScanInvalidated(WorkflowCheckpointException):
-    """Internal signal that an optimistic scan was invalidated by concurrent changes.
-
-    Raised only inside the worker thread used by ``get_latest`` and always consumed
-    by its retry loop. Callers see a plain :class:`WorkflowCheckpointException`
-    only when every attempt is invalidated.
-    """
 
 
 @dataclass(slots=True)
@@ -898,13 +909,6 @@ class FileCheckpointStorage:
         """
 
         def _version(info: os.stat_result) -> tuple[int, int, int]:
-            # On Windows, Path.stat() and os.fstat() use different Win32 APIs and can
-            # return different values for st_dev (volume serial number) and st_ino
-            # (file ID). Only st_size + st_mtime_ns + st_ctime_ns are reliable across
-            # both APIs, which is sufficient to detect both content changes (mtime,
-            # size) and file replacement (ctime on Windows is creation time, which
-            # updates on os.replace). Symlink escapes are caught separately by
-            # _validate_file_path and the is_relative_to(root) check in _checkpoint_paths.
             return info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
         def _checkpoint_paths(root: Path) -> tuple[list[Path], dict[Path, tuple[int, int, int]]]:
@@ -931,27 +935,45 @@ class FileCheckpointStorage:
         def _make_duplicate_capturing_hook() -> tuple[
             Callable[[list[tuple[str, Any]]], dict[str, Any]],
             list[str],
+            list[str],
         ]:
-            """Return a JSON ``object_pairs_hook`` that records duplicate keys instead of raising.
+            """Return a JSON ``object_pairs_hook`` plus root and document-wide duplicate trackers.
 
-            The hook is paired with a list that collects duplicate key names as they are
-            encountered during parsing. The caller decides when to raise based on workflow
-            ownership, so a foreign-workflow file with duplicate keys does not block
-            recovery of healthy checkpoints for the requested workflow (per the documented
-            policy that invalid metadata for a known different workflow is ignored).
+            Returns ``(hook, root_duplicate_keys, all_duplicate_keys)``:
+
+            - ``root_duplicate_keys`` collects duplicates found in the **top-level**
+              JSON object only. Used to detect ambiguous ``workflow_name`` ownership:
+              a duplicated ``workflow_name`` at the root means the file's owner
+              cannot be trusted.
+            - ``all_duplicate_keys`` collects duplicates across the **entire
+              document** (root + nested). Used to enforce key uniqueness for
+              matching-workflow files, so corruption in a file with known matching
+              ownership is surfaced rather than silently quarantining the newer
+              checkpoint.
+
+            Tracking root duplicates separately from payload duplicates is
+            essential: a matching-workflow file with a duplicated ``workflow_name``
+            *inside* ``metadata`` or ``state`` has unambiguous root ownership and
+            must not be treated as ambiguous. The nested duplicate is still surfaced
+            as corruption once ownership is established.
             """
-            duplicate_keys: list[str] = []
+            root_duplicate_keys: list[str] = []
+            all_duplicate_keys: list[str] = []
+            is_root = [True]
 
             def hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+                target = root_duplicate_keys if is_root[0] else all_duplicate_keys
                 result: dict[str, Any] = {}
                 for key, value in pairs:
                     if key in result:
-                        duplicate_keys.append(key)
+                        target.append(key)
+                        all_duplicate_keys.append(key)
                     else:
                         result[key] = value
+                is_root[0] = False
                 return result
 
-            return hook, duplicate_keys
+            return hook, root_duplicate_keys, all_duplicate_keys
 
         def _read_latest() -> WorkflowCheckpoint | None:
             root = self.storage_path.resolve()
@@ -965,39 +987,46 @@ class FileCheckpointStorage:
                     if not stat.S_ISREG(info.st_mode):
                         raise ValueError("checkpoint path is not a regular file")
                     version = _version(info)
-                    hook, duplicate_keys = _make_duplicate_capturing_hook()
-                    with open(file_path, encoding="utf-8") as f:
-                        stored: dict[str, Any] = json.load(f, object_pairs_hook=hook)
+                    hook, root_duplicate_keys, all_duplicate_keys = _make_duplicate_capturing_hook()
+                    try:
+                        with open(file_path, encoding="utf-8") as f:
+                            stored: dict[str, Any] = json.load(f, object_pairs_hook=hook)
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        logger.warning(f"Skipping unparseable checkpoint file {file_path}: {e}")
+                        continue
                     versions[file_path] = version
-                    owner: str | None = None
-                    if (
-                        isinstance(stored, dict)
-                        and "workflow_name" not in duplicate_keys
-                        and isinstance(stored.get("workflow_name"), str)
-                    ):
-                        owner = stored["workflow_name"]
-                    if owner is None:
+                    if "workflow_name" in root_duplicate_keys:
                         logger.warning(
-                            "Quarantining unidentifiable checkpoint file %s while finding "
-                            "the latest checkpoint for workflow '%s'",
-                            file_path,
-                            workflow_name,
+                            f"Skipping checkpoint {file_path} with ambiguous workflow_name (duplicated at root)"
                         )
                         continue
-                    if owner != workflow_name:
+                    if not isinstance(stored, dict) or not isinstance(stored.get("workflow_name"), str):
+                        logger.warning(
+                            f"Skipping unidentifiable checkpoint file {file_path} (missing or non-string workflow_name)"
+                        )
                         continue
                     if "__pickled__" in stored or "__type__" in stored:
                         raise ValueError("Top-level pickle markers are not checkpoint metadata")
-                    if duplicate_keys:
-                        raise ValueError(f"Duplicate checkpoint JSON key: {duplicate_keys[0]}")
+                    if stored["workflow_name"] != workflow_name:
+                        continue
+                    if all_duplicate_keys:
+                        raise ValueError(f"Duplicate checkpoint JSON key: {all_duplicate_keys[0]}")
                     timestamp = datetime.fromisoformat(stored["timestamp"])
                     checkpoint_id = stored["checkpoint_id"]
                     if not isinstance(checkpoint_id, str):
                         raise ValueError("checkpoint_id must be a string")
-                    if self._validate_file_path(checkpoint_id) != file_path.resolve():
+                    try:
+                        resolved_checkpoint_path = self._validate_file_path(checkpoint_id)
+                    except WorkflowCheckpointException as e:
+                        raise ValueError(f"checkpoint_id does not resolve to a valid path: {e}") from e
+                    if resolved_checkpoint_path != file_path.resolve():
                         raise ValueError("checkpoint_id does not match its checkpoint file")
                     if latest is None or timestamp > latest[0]:
                         latest = (timestamp, stored)
+                except FileNotFoundError as e:
+                    raise _CheckpointScanInvalidated(
+                        f"Checkpoint {file_path} disappeared during the scan; retry get_latest"
+                    ) from e
                 except (json.JSONDecodeError, UnicodeDecodeError) as ex:
                     logger.warning(
                         "Quarantining checkpoint file %s that is not valid JSON while "
@@ -1007,6 +1036,8 @@ class FileCheckpointStorage:
                         ex,
                     )
                     continue
+                except WorkflowCheckpointException:
+                    raise
                 except Exception as e:
                     raise WorkflowCheckpointException(
                         f"Failed to read checkpoint metadata for workflow {workflow_name} from {file_path}: {e}"

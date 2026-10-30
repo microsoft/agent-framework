@@ -3909,3 +3909,77 @@ async def test_file_checkpoint_storage_get_latest_ignores_duplicate_keys_in_fore
     latest = await storage.get_latest(workflow_name="recovery-workflow")
     assert latest is not None
     assert latest.checkpoint_id == newest_id
+
+
+async def test_file_checkpoint_storage_get_latest_retries_when_checkpoint_disappears_before_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkpoint deleted between _checkpoint_paths() and stat() must retry, not fail.
+
+    Regression for the deletion-race blocker from review: previously
+    FileNotFoundError during the initial read was wrapped as
+    WorkflowCheckpointException, which the outer retry loop does not catch —
+    so deleting even an unrelated workflow's checkpoint mid-scan failed
+    otherwise healthy recovery after a single scan. The fix classifies
+    disappearance during the initial read as scan invalidation, allowing the
+    next attempt to return the surviving checkpoint.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    surviving_id = await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
+    other_id = await storage.save(_stamped_checkpoint({"stage": "second"}, "2026-01-01T11:00:00+00:00"))
+    other_path = tmp_path / f"{other_id}.json"
+
+    original_stat = Path.stat
+    deleted = False
+
+    def delete_on_first_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        nonlocal deleted
+
+        if not deleted and self.resolve() == other_path.resolve():
+            deleted = True
+            other_path.unlink()
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", delete_on_first_stat)
+
+    latest = await storage.get_latest(workflow_name="recovery-workflow")
+    assert latest is not None
+    assert latest.checkpoint_id == surviving_id
+
+
+async def test_file_checkpoint_storage_get_latest_surfaces_nested_duplicate_workflow_name(
+    tmp_path: Path,
+) -> None:
+    """A matching-workflow file with a nested duplicate workflow_name must surface corruption.
+
+    Regression for the silent-stale-state recurrence from review: the
+    duplicate_keys list collected duplicates from every nested JSON object, so a
+    matching-workflow file with a nested duplicate workflow_name was quarantined
+    as unowned (owner=None) and skipped. get_latest() returned the older
+    checkpoint instead of surfacing the corruption in the newer, known-matching
+    file — the exact bug this PR fixes.
+
+    The fix tracks root duplicates separately from nested duplicates: root
+    ownership is unambiguous (single workflow_name at the root), so the file is
+    correctly identified as matching, and the nested duplicate is surfaced as a
+    key-uniqueness violation.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    await storage.save(_stamped_checkpoint({"stage": "older"}, "2026-01-01T10:00:00+00:00"))
+    newer_id = "newer-corrupt-checkpoint"
+    (tmp_path / f"{newer_id}.json").write_text(
+        '{"workflow_name": "recovery-workflow", '
+        '"graph_signature_hash": "test-hash", '
+        '"checkpoint_id": "' + newer_id + '", '
+        '"previous_checkpoint_id": null, '
+        '"timestamp": "2026-01-01T11:00:00+00:00", '
+        '"messages": {}, '
+        '"state": {}, '
+        '"pending_request_info_events": {}, '
+        '"iteration_count": 0, '
+        '"metadata": {"workflow_name": "a", "workflow_name": "b"}, '
+        '"version": "1.0"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(WorkflowCheckpointException, match="Duplicate checkpoint JSON key"):
+        await storage.get_latest(workflow_name="recovery-workflow")
