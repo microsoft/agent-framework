@@ -99,6 +99,10 @@ jobs:
         run: uv run poe test -A --junitxml=pytest.xml
         working-directory: ./python
 
+      - name: Run workspace script routing tests
+        run: uv run --locked --group dev --group tool-runtime python -m pytest scripts/tests --import-mode=importlib -q
+        working-directory: ./python
+
       # Surface failing tests
       - name: Surface failing tests
         if: always()

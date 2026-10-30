@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from rich import print
+
 from scripts.task_runner import build_work_items, discover_projects, run_tasks
 
 # Tasks that need to run in all packages when core changes (type info propagates)
@@ -24,15 +25,15 @@ def get_changed_packages(
     core_package_changed = False
 
     for file_path in changed_files:
-        # Strip 'python/' prefix if present (when git diff is run from repo root)
-        file_path_str = str(file_path)
-        if file_path_str.startswith("python/"):
-            file_path_str = file_path_str[7:]  # Remove 'python/' prefix
+        # Strip the repository prefix using native separators, preserving POSIX filenames.
+        file_path_obj = Path(file_path)
+        if file_path_obj.parts and file_path_obj.parts[0] == "python":
+            file_path_obj = Path(*file_path_obj.parts[1:])
 
         # Convert to absolute path if relative
-        abs_path = Path(file_path_str)
+        abs_path = file_path_obj
         if not abs_path.is_absolute():
-            abs_path = workspace_root / file_path_str
+            abs_path = workspace_root / file_path_obj
 
         # Check which package this file belongs to
         for project in projects:
