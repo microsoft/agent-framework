@@ -1646,6 +1646,17 @@ class RawAnthropicClient(
                             annotations=self._parse_citations_from_anthropic(content_block),
                         )
                     )
+                case "citations_delta":
+                    # Streaming delivers each citation as its own delta on the open text block;
+                    # surface it as an empty appended text so the annotation merges into that text.
+                    contents.append(
+                        Content.from_text(
+                            text="",
+                            merge_mode="append" if streaming else None,
+                            raw_representation=content_block,
+                            annotations=self._parse_citations_from_anthropic(content_block),
+                        )
+                    )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     request_state.active_call_id = content_block.id
                     request_state.active_call_content_type = content_block.type
@@ -1977,7 +1988,9 @@ class RawAnthropicClient(
             Their ``annotated_regions_coordinate_space`` is ``"source"`` to distinguish these locations from
             generated-content character offsets. Protocol adapters do not emit these regions as output-text spans.
         """
-        content_blocks = getattr(content_block, "citations", None)
+        content_blocks: Any = getattr(content_block, "citations", None)
+        if content_block.type == "citations_delta":
+            content_blocks = [content_block.citation]
         if not content_blocks:
             return None
         annotations: list[Annotation] = []
@@ -1985,7 +1998,7 @@ class RawAnthropicClient(
             cit = Annotation(type="citation", raw_representation=citation)
             match citation.type:
                 case "char_location":
-                    cit["title"] = citation.title
+                    cit["title"] = citation.document_title
                     cit["snippet"] = citation.cited_text
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
