@@ -1198,7 +1198,7 @@ public sealed partial class AgentMcpSkillsTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetSkillsAsync_DisposedLoader_RetainedSkillRefetchesExpiredContentAsync(bool instructions)
+    public async Task GetSkillsAsync_DisposedCatalog_RetainedSkillRefetchesExpiredContentAsync(bool instructions)
     {
         // Arrange
         var clock = new ManualTimeProvider();

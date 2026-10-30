@@ -37,7 +37,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// A refresh creates a new skill object with the server's updated resource list.
 /// Existing skill objects continue checking reads against the resource list they were created with.
-/// The loader uses <see cref="MetadataLifetime"/> to refresh skill metadata independently of resource content.
+/// The catalog uses <see cref="MetadataLifetime"/> to refresh skill metadata independently of resource content.
 /// </para>
 /// </remarks>
 internal sealed partial class AgentMcpSkill : AgentSkill
@@ -51,7 +51,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     private readonly string _skillRootUri;
     private readonly IReadOnlyList<McpSkillResourceEntry> _resources;
     private readonly long _maxResourceSizeBytes;
-    private readonly McpSkillsLoader _skillsLoader;
+    private readonly McpSkillsCatalog _skillsCatalog;
     private readonly TimeProvider _timeProvider;
     private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
     private readonly McpCache<string, ResourceContents> _resourceCache;
@@ -63,14 +63,14 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="uri">The resource URI of the skill's <c>SKILL.md</c>.</param>
     /// <param name="resources">The allowed resource URIs and their expected sizes and content hashes, including <c>SKILL.md</c>.</param>
     /// <param name="client">The MCP client used to fetch <c>SKILL.md</c> and supporting resources.</param>
-    /// <param name="loader">The loader to notify when a content mismatch requires updated skill details.</param>
+    /// <param name="catalog">The catalog to notify when a content mismatch requires updated skill details.</param>
     /// <param name="logger">Optional logger for validation diagnostics.</param>
     /// <param name="maxResourceSizeBytes">The maximum allowed resource size in bytes.</param>
     /// <param name="timeProvider">Optional clock for resource expiration.</param>
     /// <param name="metadataLifetime">Optional lifetime for skill metadata. Defaults to no independent expiration; the catalog lifetime controls refreshes.</param>
     /// <param name="ttlResolver">Optional callback to override the server's resource TTLs.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> is not positive.</exception>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, McpSkillsLoader loader, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null)
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, McpSkillsCatalog catalog, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this.Uri = Throw.IfNullOrWhitespace(uri);
@@ -78,7 +78,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         this._skillRootUri = this.Uri[..^"SKILL.md".Length];
         this._resources = Throw.IfNull(resources);
         this._client = Throw.IfNull(client);
-        this._skillsLoader = Throw.IfNull(loader);
+        this._skillsCatalog = Throw.IfNull(catalog);
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = ttlResolver;
         this._resourceCache = new(this._timeProvider, StringComparer.Ordinal);
@@ -201,7 +201,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             cancellationToken.ThrowIfCancellationRequested();
 
             // The resource may have changed; request a new manifest without changing this skill's held manifest.
-            this._skillsLoader.QueueSkillRefresh(this);
+            this._skillsCatalog.QueueSkillRefresh(this);
             LogResourceIntegrityMismatch(this._logger, resource.Uri, this.Uri, mismatch);
             cancellationToken.ThrowIfCancellationRequested();
 
