@@ -679,6 +679,110 @@ public sealed class ObservabilityTests : IDisposable
     }
 
     [Fact]
+    public async Task IncludeSensitiveDataWhenHostedAsAgent_AllowsNestedPayloadsWithoutParentSensitiveDataAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        AIAgent childFirstAgent = new TestEchoAgent(id: "child-first-agent", name: "ChildFirstAgent");
+        AIAgent childSecondAgent = new TestEchoAgent(id: "child-second-agent", name: "ChildSecondAgent");
+        ExecutorBinding childFirst = childFirstAgent.BindAsExecutor(
+            new AIAgentHostOptions { EmitAgentResponseEvents = true });
+        ExecutorBinding childSecond = childSecondAgent.BindAsExecutor(
+            new AIAgentHostOptions { EmitAgentResponseEvents = true });
+
+        Workflow childWorkflow = new WorkflowBuilder(childFirst)
+            .AddEdge(childFirst, childSecond)
+            .WithOutputFrom(childSecond)
+            .WithOpenTelemetry(configure: options => options.EnableSensitiveData = true)
+            .Build();
+        ExecutorBinding child = childWorkflow.BindAsExecutor("ChildWorkflow");
+
+        Workflow parentWorkflow = new WorkflowBuilder(child)
+            .WithOutputFrom(child)
+            .WithOpenTelemetry(configure: options =>
+                options.IncludeSensitiveDataWhenHostedAsAgent = true)
+            .Build();
+        AIAgent hostedAgent = parentWorkflow.AsAIAgent(includeWorkflowOutputsInResponse: true);
+
+        // Act
+        AgentResponse response = await hostedAgent.RunAsync(
+            new ChatMessage(ChatRole.User, "sensitive workflow input"));
+
+        // Assert
+        Assert.Contains("sensitive workflow input", response.Text);
+
+        List<Activity> capturedActivities =
+            this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        List<Activity> parentExecutorActivities = capturedActivities
+            .Where(activity => activity.OperationName.Contains("ChildWorkflow", StringComparison.Ordinal))
+            .ToList();
+        List<Activity> childExecutorActivities = capturedActivities
+            .Where(activity =>
+                activity.OperationName.Contains("ChildFirstAgent", StringComparison.Ordinal) ||
+                activity.OperationName.Contains("ChildSecondAgent", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.NotEmpty(parentExecutorActivities);
+        Assert.NotEmpty(childExecutorActivities);
+        Assert.DoesNotContain(
+            parentExecutorActivities.SelectMany(activity => activity.Tags),
+            tag => string.Equals(tag.Key, Tags.ExecutorInput, StringComparison.Ordinal) ||
+                   string.Equals(tag.Key, Tags.ExecutorOutput, StringComparison.Ordinal));
+        Assert.Contains(
+            childExecutorActivities.SelectMany(activity => activity.Tags),
+            tag => string.Equals(tag.Key, Tags.ExecutorInput, StringComparison.Ordinal) ||
+                   string.Equals(tag.Key, Tags.ExecutorOutput, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HostedAsAgent_OuterSuppressionOverridesNestedHostedAgentOptInAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        AIAgent innerEchoAgent = new TestEchoAgent(id: "inner-echo-agent", name: "InnerEchoAgent");
+        ExecutorBinding innerEcho = innerEchoAgent.BindAsExecutor(
+            new AIAgentHostOptions { EmitAgentResponseEvents = true });
+
+        Workflow innerWorkflow = new WorkflowBuilder(innerEcho)
+            .WithOutputFrom(innerEcho)
+            .WithOpenTelemetry(configure: options =>
+            {
+                options.EnableSensitiveData = true;
+                options.IncludeSensitiveDataWhenHostedAsAgent = true;
+            })
+            .Build();
+        AIAgent innerHostedAgent = innerWorkflow.AsAIAgent(
+            name: "InnerHostedWorkflow",
+            includeWorkflowOutputsInResponse: true);
+        ExecutorBinding innerHosted = innerHostedAgent.BindAsExecutor(
+            new AIAgentHostOptions { EmitAgentResponseEvents = true });
+
+        Workflow outerWorkflow = new WorkflowBuilder(innerHosted)
+            .WithOutputFrom(innerHosted)
+            .WithOpenTelemetry(configure: options => options.EnableSensitiveData = true)
+            .Build();
+        AIAgent outerHostedAgent = outerWorkflow.AsAIAgent(includeWorkflowOutputsInResponse: true);
+
+        // Act
+        AgentResponse response = await outerHostedAgent.RunAsync(
+            new ChatMessage(ChatRole.User, "sensitive workflow input"));
+
+        // Assert
+        Assert.Contains("sensitive workflow input", response.Text);
+
+        List<Activity> capturedActivities =
+            this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        Assert.Contains(
+            capturedActivities,
+            activity => activity.OperationName.Contains("InnerEchoAgent", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            capturedActivities.SelectMany(activity => activity.Tags),
+            tag => string.Equals(tag.Key, Tags.ExecutorInput, StringComparison.Ordinal) ||
+                   string.Equals(tag.Key, Tags.ExecutorOutput, StringComparison.Ordinal) ||
+                   string.Equals(tag.Key, Tags.MessageContent, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task EnableSensitiveData_UnserializableMessage_DoesNotFailWorkflowAsync()
     {
         // Arrange

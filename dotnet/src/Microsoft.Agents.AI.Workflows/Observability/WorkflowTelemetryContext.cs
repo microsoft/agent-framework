@@ -219,8 +219,7 @@ internal sealed class WorkflowTelemetryContext
 
     internal IDisposable? SuppressSensitiveDataForHostedAgent()
     {
-        if (this.Options.EnableSensitiveData &&
-            this.Options.IncludeSensitiveDataWhenHostedAsAgent)
+        if (this.Options.IncludeSensitiveDataWhenHostedAsAgent)
         {
             return null;
         }
