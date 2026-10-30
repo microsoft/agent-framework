@@ -1306,7 +1306,7 @@ class MCPTool:
             return ""
         if len(parts) == 1:
             return parts[0]
-        return json.dumps(parts, default=str)
+        return json.dumps(parts, default=str, ensure_ascii=False)
 
     def _parse_message_from_mcp(
         self,
@@ -1392,7 +1392,7 @@ class MCPTool:
         structured_block: Content | None = None
         if mcp_type.structured_content is not None:
             structured_block = Content.from_text(
-                json.dumps(mcp_type.structured_content, default=str), **additional_kwargs
+                json.dumps(mcp_type.structured_content, default=str, ensure_ascii=False), **additional_kwargs
             )
 
         # Select model-visible content per explicit policy (#7866). Host payload still
