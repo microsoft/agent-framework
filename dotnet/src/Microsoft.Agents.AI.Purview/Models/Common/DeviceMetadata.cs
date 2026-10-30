@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI.Purview.Models.Common;
 
 /// <summary>
-/// Endpoint device Metdata
+/// Endpoint device metadata
 /// </summary>
 internal sealed class DeviceMetadata
 {

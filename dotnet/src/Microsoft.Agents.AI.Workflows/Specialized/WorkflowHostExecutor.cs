@@ -84,7 +84,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
         {
             if (this.JoinContext.IsCheckpointingEnabled)
             {
-                // Use a seprate in-memory checkpoint manager for scoping purposes. We do not need to worry about
+                // Use a separate in-memory checkpoint manager for scoping purposes. We do not need to worry about
                 // serialization because we will be relying on the parent workflow's checkpoint manager to do that,
                 // if needed. For our purposes, all we need is to keep a faithful representation of the checkpointed
                 // objects so we can emit them back to the parent workflow on checkpoint creation.

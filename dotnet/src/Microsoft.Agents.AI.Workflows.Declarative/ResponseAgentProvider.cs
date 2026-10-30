@@ -25,7 +25,7 @@ public abstract class ResponseAgentProvider
     /// Gets or sets a collection of additional tools an agent is able to automatically invoke.
     /// If an agent is configured with a function tool that is not available, a <see cref="RequestPort"/> is executed
     /// that provides an <see cref="ExternalInputRequest"/> that describes the function calls requested.  The caller may
-    /// then respond with a corrsponding <see cref="ExternalInputResponse"/> that includes the results of the function calls.
+    /// then respond with a corresponding <see cref="ExternalInputResponse"/> that includes the results of the function calls.
     /// </summary>
     /// <remarks>
     /// These will not impact the requests sent to the model by the <see cref="FunctionInvokingChatClient"/>.

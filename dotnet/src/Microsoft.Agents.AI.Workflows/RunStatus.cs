@@ -13,7 +13,7 @@ public enum RunStatus
     NotStarted,
 
     /// <summary>
-    /// The run has halted, has no outstanding requets, but has not received a <see cref="RequestHaltEvent"/>.
+    /// The run has halted, has no outstanding requests, but has not received a <see cref="RequestHaltEvent"/>.
     /// </summary>
     Idle,
 
