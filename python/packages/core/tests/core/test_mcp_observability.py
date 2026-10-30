@@ -509,3 +509,85 @@ async def test_mcp_spans_not_created_when_observability_disabled(span_exporter: 
 
 
 # endregion
+
+
+# region execute_tool server identity
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("https://user:pw@mcp.example.com:8443/api/mcp?code=secret#frag", "https://mcp.example.com:8443/api/mcp"),
+        ("http://localhost/mcp", "http://localhost/mcp"),
+        ("https://[::1]:9000/mcp?x=1", "https://[::1]:9000/mcp"),
+        ("ftp://example.com/mcp", None),
+        ("not a url", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_sanitize_mcp_server_url(raw: str | None, expected: str | None):
+    from agent_framework._mcp import _sanitize_mcp_server_url
+
+    assert _sanitize_mcp_server_url(raw) == expected
+
+
+def test_mcp_server_identity_properties_for_http_tool():
+    from agent_framework._mcp import _mcp_server_identity_properties
+    from agent_framework.observability import MCP_SERVER_NAME_PROPERTY, MCP_SERVER_URL_PROPERTY
+
+    tool = MCPStreamableHTTPTool(name="weather", url="https://mcp.example.com/mcp?key=secret")
+
+    assert _mcp_server_identity_properties(tool) == {
+        MCP_SERVER_NAME_PROPERTY: "weather",
+        MCP_SERVER_URL_PROPERTY: "https://mcp.example.com/mcp",
+    }
+
+
+def test_mcp_server_identity_properties_for_stdio_tool_omits_url():
+    from agent_framework._mcp import _mcp_server_identity_properties
+    from agent_framework.observability import MCP_SERVER_NAME_PROPERTY
+
+    tool = MCPStdioTool(name="local", command="python")
+
+    assert _mcp_server_identity_properties(tool) == {MCP_SERVER_NAME_PROPERTY: "local"}
+
+
+def test_function_span_attributes_include_mcp_server_identity():
+    from agent_framework import FunctionTool
+    from agent_framework.observability import (
+        MCP_SERVER_NAME_PROPERTY,
+        MCP_SERVER_URL_PROPERTY,
+        get_function_span_attributes,
+    )
+
+    function = FunctionTool(
+        name="get_weather",
+        description="",
+        func=lambda: "ok",
+        additional_properties={
+            MCP_SERVER_NAME_PROPERTY: "weather",
+            MCP_SERVER_URL_PROPERTY: "https://mcp.example.com/mcp",
+        },
+    )
+
+    attributes = get_function_span_attributes(function, "call-1")
+
+    assert attributes[OtelAttr.TOOL_SERVER_NAME] == "weather"
+    assert attributes[OtelAttr.URL_FULL] == "https://mcp.example.com/mcp"
+    assert attributes[OtelAttr.TOOL_NAME] == "get_weather"
+
+
+def test_function_span_attributes_omit_server_identity_for_plain_function():
+    from agent_framework import FunctionTool
+    from agent_framework.observability import get_function_span_attributes
+
+    function = FunctionTool(name="plain", description="", func=lambda: "ok")
+
+    attributes = get_function_span_attributes(function, "call-1")
+
+    assert OtelAttr.TOOL_SERVER_NAME not in attributes
+    assert OtelAttr.URL_FULL not in attributes
+
+
+# endregion
