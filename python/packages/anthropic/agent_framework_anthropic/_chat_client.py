@@ -1342,14 +1342,26 @@ class RawAnthropicClient(
         if not usage:
             return None
         usage_details = UsageDetails(output_token_count=usage.output_tokens)
-        if usage.input_tokens is not None:
-            usage_details["input_token_count"] = usage.input_tokens
+        # Anthropic's input_tokens excludes cache_creation and cache_read; total
+        # input (and gen_ai.usage.input_tokens) must include them, matching other
+        # connectors and the GenAI semconv.
+        input_total = usage.input_tokens if usage.input_tokens is not None else None
         if usage.cache_creation_input_tokens is not None:
             usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
             usage_details["cache_creation_input_token_count"] = usage.cache_creation_input_tokens
+            if input_total is not None:
+                input_total += usage.cache_creation_input_tokens
+            else:
+                input_total = usage.cache_creation_input_tokens
         if usage.cache_read_input_tokens is not None:
             usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
             usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
+            if input_total is not None:
+                input_total += usage.cache_read_input_tokens
+            else:
+                input_total = usage.cache_read_input_tokens
+        if input_total is not None:
+            usage_details["input_token_count"] = input_total
         return usage_details
 
     @staticmethod
