@@ -3710,6 +3710,22 @@ async def _run_agent_stream(
             interrupt=snapshot_interrupts(),
         )
 
+    # Received input is durable independently of the provider's response. Save
+    # before invoking it so an exception cannot erase this turn's user messages
+    # or attachments. Later safe points still exclude unfinalized model output.
+    # Service-session history must remain atomic with terminal provider continuation.
+    if snapshot_session.enabled and not config.use_service_session:
+        persisted_input = snapshot_messages
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            persisted_input = snapshot_session.resume_seeded_messages(persisted_input)
+        await save_thread_snapshot(
+            persisted_messages=persisted_input,
+            state=latest_state_snapshot,
+            interrupt=merge_snapshot_interrupts(
+                remaining_stored_interrupts(retired_approval_interrupt_ids), flow.interrupts
+            ),
+        )
+
     initial_state_snapshot = flow.current_state if state_schema and flow.current_state else None
 
     # With both IDs supplied there is nothing to wait for, so start the run before
@@ -3763,6 +3779,8 @@ async def _run_agent_stream(
                 # IDs remain authoritative for lifecycle correlation and thread-scoped persistence.
                 if not run_started_emitted:
                     if supplied_thread_id is None and conv_id:
+                        if not config.use_service_session:
+                            await snapshot_session.migrate_thread_id(conv_id)
                         thread_id = conv_id
                         snapshot_session.rebind_thread_id(thread_id)
                     if supplied_run_id is None and update.response_id:

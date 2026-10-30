@@ -107,6 +107,21 @@ class ThreadSnapshotSession:
         """
         self._thread_id = thread_id
 
+    async def migrate_thread_id(self, thread_id: str) -> None:
+        """Move a provisional checkpoint before publishing a provider's thread ID.
+
+        Save the destination before deleting the source. Storage failures propagate
+        so callers cannot announce an ID whose checkpoint was not migrated.
+        """
+        if thread_id == self._thread_id:
+            return
+        if self._store is not None and self._scope is not None:
+            checkpoint = await self._store.get(scope=self._scope, thread_id=self._thread_id)
+            if checkpoint is not None:
+                await self._store.save(scope=self._scope, thread_id=thread_id, snapshot=checkpoint)
+                await self._store.delete(scope=self._scope, thread_id=self._thread_id)
+        self.rebind_thread_id(thread_id)
+
     async def hydrate_events(self, *, run_id: str) -> AsyncGenerator[BaseEvent]:
         """Replay the stored snapshot as a complete run without invoking the agent."""
         yield RunStartedEvent(run_id=run_id, thread_id=self._thread_id)

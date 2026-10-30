@@ -3470,3 +3470,28 @@ def test_parse_multimodal_media_part_url_field_backward_compat():
     )
     assert from_uri is not None
     assert from_uri.uri == "https://example.com/b.png"
+
+
+@pytest.mark.parametrize(
+    "kind,mime", [("image", "image/png"), ("document", "text/plain"), ("audio", "audio/wav"), ("video", "video/mp4")]
+)
+def test_snapshot_media_retains_filename_across_normalization(kind: str, mime: str) -> None:
+    """Draft metadata filenames survive the legacy snapshot shape and subsequent turns."""
+    incoming = [
+        {
+            "id": "upload",
+            "role": "user",
+            "content": [
+                {
+                    "type": kind,
+                    "source": {"type": "data", "data": "aGVsbG8=", "mimeType": mime},
+                    "metadata": {"filename": "original-name"},
+                }
+            ],
+        }
+    ]
+    normalized = agui_messages_to_snapshot_format(incoming)
+    assert normalized[0]["content"] == [
+        {"type": "binary", "data": "aGVsbG8=", "mimeType": mime, "filename": "original-name"}
+    ]
+    assert agui_messages_to_snapshot_format(normalized) == normalized

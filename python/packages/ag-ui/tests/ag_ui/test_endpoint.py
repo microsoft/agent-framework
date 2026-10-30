@@ -1819,7 +1819,9 @@ async def test_endpoint_disconnect_still_cancels_run_by_default(
     await asyncio.wait_for(source_closed.wait(), timeout=5)
 
     assert not source_completed
-    assert await store.get(scope="tenant-a", thread_id="thread-cancelled") is None
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-cancelled")
+    assert snapshot is not None
+    assert [(message["role"], message["content"]) for message in snapshot.messages] == [("user", "Start")]
 
 
 async def test_endpoint_detached_workflow_runner_completes_after_disconnect() -> None:
@@ -11871,8 +11873,8 @@ async def test_agent_endpoint_hydrates_interrupted_thread_without_invoking_agent
     assert _interrupt_metadata_value(hydrated_interrupts[0])["function_call"]["name"] == "draft_steps"
 
 
-async def test_agent_endpoint_run_error_does_not_overwrite_previous_snapshot(streaming_chat_client_stub):
-    """A failing agent turn leaves the last good AG-UI Thread Snapshot available for hydration."""
+async def test_agent_endpoint_run_error_preserves_previous_history_and_received_input(streaming_chat_client_stub):
+    """A failing agent turn retains prior output and the newly received user turn."""
     app = FastAPI()
     call_count = 0
 
@@ -11917,7 +11919,7 @@ async def test_agent_endpoint_run_error_does_not_overwrite_previous_snapshot(str
     assert call_count == 2
     messages = _latest_messages_snapshot(hydrate_response)
     assert any(message.get("role") == "assistant" and message.get("content") == "Stable reply" for message in messages)
-    assert not any(message.get("content") == "Break the run" for message in messages)
+    assert sum(message.get("content") == "Break the run" for message in messages) == 1
 
 
 async def test_workflow_endpoint_hydrates_emitted_snapshots_without_invoking_workflow():
@@ -13329,6 +13331,8 @@ async def test_agent_endpoint_snapshot_save_failure_keeps_previous_continuation(
     ) -> AsyncIterator[ChatResponseUpdate]:
         del options, kwargs
         provider_result = next(message.text for message in messages if message.role == "system")
+        if any(message.text == "Second" for message in messages):
+            store.fail_next_save = True
         yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
 
     store = _FailNextSaveStore()
@@ -13353,7 +13357,6 @@ async def test_agent_endpoint_snapshot_save_failure_keeps_previous_continuation(
         "/snapshot-failure",
         json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "First"}]},
     )
-    store.fail_next_save = True
     failed_save_response = client.post(
         "/snapshot-failure",
         json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Second"}]},
@@ -14050,3 +14053,200 @@ async def test_endpoint_does_not_forward_resolved_local_approval_control_to_chat
         if content.type == "function_result" and content.call_id == call_id
     ]
     assert provider_results == ["Action executed by server"]
+
+
+@pytest.mark.parametrize("existing_thread", [False, True])
+async def test_agent_endpoint_retains_received_media_when_provider_fails(existing_thread: bool):
+    """A downstream failure keeps accepted input, without committing partial model output."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    from agent_framework_ag_ui._snapshot_session import ThreadSnapshotSession
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    prior = [{"id": "prior", "role": "user", "content": "Earlier turn"}] if existing_thread else []
+    if existing_thread:
+        await store.save(scope="tenant-a", thread_id="media-thread", snapshot=AGUIThreadSnapshot(messages=prior))
+    agent = StubAgent()
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Unfinalized output")], role="assistant")
+            raise ResponseInvalidatedException("provider rejected media")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app, agent, path="/media-failure", snapshot_store=store, snapshot_scope_resolver=lambda request: "tenant-a"
+    )
+    media = [
+        {
+            "type": kind,
+            "source": {"type": "data", "data": "aGVsbG8=", "mimeType": mime},
+            "metadata": {"filename": filename},
+        }
+        for kind, mime, filename in [
+            ("image", "image/png", "original.png"),
+            ("document", "text/plain", "original.txt"),
+            ("audio", "audio/wav", "original.wav"),
+            ("video", "video/mp4", "original.mp4"),
+        ]
+    ]
+    received = {"id": "media-user", "role": "user", "content": media}
+    response = TestClient(app).post(
+        "/media-failure",
+        json={"threadId": "media-thread", "runId": "failed-run", "messages": [*prior, received], "state": {"count": 7}},
+    )
+    events = _decode_sse_events(response)
+    assert [event["code"] for event in events if event["type"] == "RUN_ERROR"] == ["ResponseInvalidatedException"]
+    assert not any(event["type"] == "RUN_FINISHED" for event in events)
+    cold = await ThreadSnapshotSession.open(store=store, scope="tenant-a", thread_id="media-thread")
+    assert cold.stored is not None
+    expected = {
+        **received,
+        "content": [
+            {
+                "type": "binary",
+                "data": part["source"]["data"],
+                "mimeType": part["source"]["mimeType"],
+                "filename": part["metadata"]["filename"],
+            }
+            for part in media
+        ],
+    }
+    assert cold.stored.messages == [*prior, expected]
+    assert cold.stored.state == {"count": 7}
+    hydrated = [event async for event in cold.hydrate_events(run_id="cold-run")]
+    replay = next(event for event in hydrated if isinstance(event, MessagesSnapshotEvent))
+    assert replay.messages[-1].model_dump(by_alias=True, exclude_none=True) == expected
+
+
+@pytest.mark.parametrize("approved", [True, False])
+async def test_native_approval_replay_gap_preserves_canonical_history_once(approved: bool):
+    """A later client projection cannot duplicate an earlier native approval outcome."""
+    import copy
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, _, executed_cities = _build_weather_approval_endpoint(snapshot_store=store)
+    resumed = client.post(
+        "/approval",
+        json={
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "resolved", "payload": {"approved": approved}}],
+        },
+    )
+    assert not any(event["type"] == "RUN_ERROR" for event in _decode_sse_events(resumed))
+    first = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert first is not None
+    result = [
+        message
+        for message in first.messages
+        if message.get("toolCallId", message.get("tool_call_id")) == "call_get_weather"
+    ]
+    assert len(result) == 1
+    assert result[0]["content"] == (
+        "Sunny in Seattle" if approved else "Error: Tool call invocation was rejected by user."
+    )
+    for index in range(2):
+        before = await store.get(scope="tenant-a", thread_id="thread-weather")
+        assert before is not None
+        replay = copy.deepcopy(before.messages)
+        assistant = next(message for message in replay if message["role"] == "assistant")
+        assistant["id"] = f"client-projection-{index}"
+        assistant["content"] = "Client regrouped assistant output"
+        new_user = {"id": f"followup-{index}", "role": "user", "content": "Continue"}
+        response = client.post("/approval", json={"threadId": "thread-weather", "messages": [*replay, new_user]})
+        assert not any(event["type"] == "RUN_ERROR" for event in _decode_sse_events(response))
+        after = await store.get(scope="tenant-a", thread_id="thread-weather")
+        assert after is not None
+        assert after.messages[: len(before.messages)] == before.messages
+        assert after.messages[len(before.messages)] == new_user
+        assert len({message["id"] for message in after.messages}) == len(after.messages)
+        assert [
+            message
+            for message in after.messages
+            if message.get("toolCallId", message.get("tool_call_id")) == "call_get_weather"
+        ] == result
+    assert executed_cities == (["Seattle"] if approved else [])
+
+
+async def test_input_checkpoint_preserves_unconsumed_interrupt_on_provider_failure():
+    """A failed ordinary turn cannot consume a stored confirmation prompt."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    interrupt = {"id": "confirm-one", "reason": "confirm_changes", "payload": {"steps": ["Review"]}}
+    prior = {"id": "prior", "role": "user", "content": "Draft a plan"}
+    await store.save(
+        scope="tenant-a",
+        thread_id="pending-thread",
+        snapshot=AGUIThreadSnapshot(messages=[prior], interrupt=[interrupt]),
+    )
+    agent = StubAgent()
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Partial")], role="assistant")
+            raise ResponseInvalidatedException("provider failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app, agent, path="/pending", snapshot_store=store, snapshot_scope_resolver=lambda request: "tenant-a"
+    )
+    received = {"id": "next", "role": "user", "content": "Explain the plan"}
+    response = TestClient(app).post(
+        "/pending", json={"threadId": "pending-thread", "runId": "failed", "messages": [prior, received]}
+    )
+    assert any(event["type"] == "RUN_ERROR" for event in _decode_sse_events(response))
+    saved = await store.get(scope="tenant-a", thread_id="pending-thread")
+    assert saved is not None
+    assert saved.messages == [prior, received]
+    assert saved.interrupt == [interrupt]
+
+
+@pytest.mark.parametrize("provider_fails", [False, True])
+async def test_input_checkpoint_follows_provider_thread_id(provider_fails: bool):
+    """The public fallback thread ID owns input, without a provisional orphan."""
+    from unittest.mock import AsyncMock
+
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    original_save = store.save
+    store.save = AsyncMock(wraps=original_save)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    agent = StubAgent()
+
+    def provider_run(*args: Any, **kwargs: Any) -> Any:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="Partial")],
+                role="assistant",
+                raw_representation=ChatResponseUpdate(conversation_id="provider-thread"),
+            )
+            if provider_fails:
+                raise ResponseInvalidatedException("provider failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = provider_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app, agent, path="/fallback", snapshot_store=store, snapshot_scope_resolver=lambda request: "tenant-a"
+    )
+    received = {"id": "input", "role": "user", "content": "Remember this"}
+    response = TestClient(app).post("/fallback", json={"messages": [received]})
+    events = _decode_sse_events(response)
+    assert next(event for event in events if event["type"] == "RUN_STARTED")["threadId"] == "provider-thread"
+    assert any(event["type"] == "RUN_ERROR" for event in events) == provider_fails
+    saved = await store.get(scope="tenant-a", thread_id="provider-thread")
+    assert saved is not None
+    assert saved.messages[0] == received
+    for call in store.save.call_args_list:
+        saved_id = call.kwargs["thread_id"]
+        if saved_id != "provider-thread":
+            assert await store.get(scope="tenant-a", thread_id=saved_id) is None

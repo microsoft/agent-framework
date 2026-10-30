@@ -3258,7 +3258,10 @@ async def test_finish_reason_and_trailing_usage_do_not_persist_invalidated_model
 
     snapshot = await store.get(scope="tenant-a", thread_id="invalidated-thread")
     assert snapshot is not None
-    assert snapshot.messages == [{"id": "baseline", "role": "user", "content": "Persisted baseline"}]
+    assert snapshot.messages[0] == {"id": "baseline", "role": "user", "content": "Persisted baseline"}
+    assert len(snapshot.messages) == 2
+    assert snapshot.messages[1]["role"] == "user"
+    assert snapshot.messages[1]["content"] == "Start"
     assert "c1" not in str(snapshot.messages)
 
 
