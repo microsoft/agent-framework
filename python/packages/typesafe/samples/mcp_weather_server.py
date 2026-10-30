@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 # ]
 # ///
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 """
 Local stdio MCP server used by mcp_function_calling.py.
@@ -22,10 +22,10 @@ run mcp_function_calling.py for user-facing output.
 """
 
 # 1. Define a small deterministic MCP server and one compatible closed-set tool.
-server = FastMCP(name="typesafe-weather-sample")
+server = MCPServer(name="typesafe-weather-sample")
 
 
-@server.tool(name="get_weather", description="Get weather for Seattle or Paris.")
+@server.tool(name="get_weather", description="Get weather for Seattle or Paris.", structured_output=False)
 def get_weather(city: Literal["Seattle", "Paris"], detailed: bool) -> str:
     """Return deterministic sample weather."""
     suffix = " with a detailed hourly forecast" if detailed else ""
