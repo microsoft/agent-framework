@@ -661,7 +661,7 @@ class ChatContext:
 
             class TokenCounterMiddleware(ChatMiddleware):
                 async def process(self, context: ChatContext, call_next):
-                    print(f"Chat client: {context.chat_client.__class__.__name__}")
+                    print(f"Chat client: {context.client.__class__.__name__}")
                     print(f"Messages: {len(context.messages)}")
                     print(f"Model: {context.options.get('model')}")
 
@@ -859,7 +859,13 @@ class AgentMiddleware(ABC):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentMiddleware, AgentContext, Agent
+            from agent_framework import (
+                Agent,
+                AgentContext,
+                AgentMiddleware,
+                MiddlewareFailure,
+                MiddlewareTermination,
+            )
 
 
             class RetryMiddleware(AgentMiddleware):
@@ -867,11 +873,17 @@ class AgentMiddleware(ABC):
                     self.max_retries = max_retries
 
                 async def process(self, context: AgentContext, call_next):
-                    for attempt in range(self.max_retries):
-                        await call_next()
-                        if context.result and not context.result.is_error:
-                            break
-                        print(f"Retry {attempt + 1}/{self.max_retries}")
+                    for attempt in range(1, self.max_retries + 1):
+                        try:
+                            await call_next()
+                            return
+                        except (MiddlewareFailure, MiddlewareTermination):
+                            # Abort and stop signals must reach the caller unchanged.
+                            raise
+                        except Exception:
+                            if attempt == self.max_retries:
+                                raise
+                            print(f"Retry {attempt}/{self.max_retries}")
 
 
             # Use with an agent
