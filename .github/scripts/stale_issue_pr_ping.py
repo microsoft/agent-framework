@@ -4,7 +4,8 @@
 
 After a CODEOWNER's latest conversation comment, warn and apply
 'requested-info' after the warning threshold, then close after the closing
-threshold without activity. CODEOWNER-authored pull requests are exempt.
+threshold without activity. CODEOWNER-authored and 'dont-close'-labeled pull
+requests are exempt.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from github.Repository import Repository
 
 
 REQUESTED_INFO_LABEL = "requested-info"
+DONT_CLOSE_LABEL = "dont-close"
 WARNING_THRESHOLD_DAYS = 4
 CLOSING_THRESHOLD_DAYS = 4
 WARNING_COMMENT = (
@@ -72,6 +74,8 @@ def should_warn(
     """Return whether an external pull request is ready for its warning."""
     if pull_request.user.login.lower() in maintainers:
         return False
+    if any(label.name == DONT_CLOSE_LABEL for label in pull_request.labels):
+        return False
     if any(label.name == REQUESTED_INFO_LABEL for label in pull_request.labels):
         return False
     days_inactive = (
@@ -99,6 +103,8 @@ def should_close(
 ) -> bool:
     """Return whether a warned external pull request is ready to close."""
     if pull_request.user.login.lower() in maintainers:
+        return False
+    if any(label.name == DONT_CLOSE_LABEL for label in pull_request.labels):
         return False
     if not any(
         label.name == REQUESTED_INFO_LABEL

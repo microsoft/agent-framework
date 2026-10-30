@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from stale_issue_pr_ping import (
     CLOSING_COMMENT,
     CLOSING_THRESHOLD_DAYS,
+    DONT_CLOSE_LABEL,
     REQUESTED_INFO_LABEL,
     WARNING_COMMENT,
     WARNING_THRESHOLD_DAYS,
@@ -137,6 +138,16 @@ class TestShouldWarn:
     def test_requested_info_pr_is_not_warned_again(self):
         pull_request = _make_pull_request(
             labels=[REQUESTED_INFO_LABEL],
+            comments=[_make_comment("alice")],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_warn(pull_request, MAINTAINERS, NOW, 4) is False
+        pull_request.get_issue_comments.assert_not_called()
+
+    def test_dont_close_pr_is_not_warned(self):
+        pull_request = _make_pull_request(
+            labels=[DONT_CLOSE_LABEL],
             comments=[_make_comment("alice")],
             updated_at=NOW - timedelta(days=4),
         )
@@ -275,6 +286,14 @@ class TestShouldClose:
 
     def test_unlabeled_pr_is_not_closed(self):
         pull_request = _make_pull_request(
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_close(pull_request, MAINTAINERS, NOW, 4) is False
+
+    def test_dont_close_pr_is_not_closed(self):
+        pull_request = _make_pull_request(
+            labels=[REQUESTED_INFO_LABEL, DONT_CLOSE_LABEL],
             updated_at=NOW - timedelta(days=4),
         )
 
