@@ -7,7 +7,7 @@
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/single_agent/03_assistant_agent_thread_and_stream.py
+#   uv run samples/autogen-migration/single_agent/03_agent_thread_and_stream.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
