@@ -1452,8 +1452,11 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as termination:
+            if context.result is None:
+                context.result = termination.result
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:
@@ -1663,8 +1666,11 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as termination:
+            if context.result is None:
+                context.result = termination.result
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:
