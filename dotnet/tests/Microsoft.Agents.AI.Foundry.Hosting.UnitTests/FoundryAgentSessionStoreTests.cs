@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure;
 using Azure.AI.AgentServer.Core.Storage;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.Logging;
@@ -492,20 +493,20 @@ public sealed class FoundryAgentSessionStoreTests
             string key,
             IDictionary<string, BinaryData> value,
             IReadOnlyDictionary<string, string>? tags = null,
-            string? ifMatch = null,
+            ETag ifMatch = default,
             bool requireExists = false,
             CancellationToken cancellationToken = default)
         {
             this._items[key] = value;
-            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: "etag"));
+            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: new ETag("etag")));
         }
 
         public override Task<StateStoreItem?> GetItemAsync(string key, CancellationToken cancellationToken = default)
             => Task.FromResult(this._items.TryGetValue(key, out var value)
-                ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: value, etag: "etag")
+                ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: value, etag: new ETag("etag"))
                 : null);
 
-        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, string? ifMatch = null, CancellationToken cancellationToken = default)
+        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, ETag ifMatch = default, CancellationToken cancellationToken = default)
         {
             if (!this._items.TryRemove(key, out _))
             {

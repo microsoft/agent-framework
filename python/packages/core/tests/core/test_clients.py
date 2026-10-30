@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,8 +16,10 @@ from agent_framework import (
     GROUP_TOKEN_COUNT_KEY,
     SUMMARIZED_BY_SUMMARY_ID_KEY,
     SUMMARY_OF_MESSAGE_IDS_KEY,
+    AgentTriggeredCompactionStrategy,
     BaseChatClient,
     ChatMiddleware,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -23,6 +27,7 @@ from agent_framework import (
     SlidingWindowStrategy,
     SummarizationStrategy,
     SupportsChatGetResponse,
+    TokenBudgetComposedStrategy,
     ToolResultCompactionStrategy,
     TruncationStrategy,
     annotate_message_groups,
@@ -30,6 +35,8 @@ from agent_framework import (
     included_messages,
     tool,
 )
+from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID
+from agent_framework.exceptions import ChatClientInvalidRequestException
 
 
 class _NoOpChatMiddleware(ChatMiddleware):
@@ -113,6 +120,86 @@ async def test_chat_client_get_response_streaming(client: SupportsChatGetRespons
 def test_base_client(chat_client_base: SupportsChatGetResponse):
     assert isinstance(chat_client_base, BaseChatClient)
     assert isinstance(chat_client_base, SupportsChatGetResponse)
+
+
+async def test_base_client_default_lifecycle(chat_client_base: BaseChatClient) -> None:
+    await chat_client_base.close()
+    async with chat_client_base as entered:
+        assert entered is chat_client_base
+        response = await entered.get_response([Message(role="user", contents=["Hello"])])
+        assert response.text == "test response - Hello"
+        updates = [update async for update in entered.get_response([Message("user", ["Hello"])], stream=True)]
+        assert updates
+    await chat_client_base.close()
+    assert (await chat_client_base.get_response([Message("user", ["Again"])])).text == "test response - Again"
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
+async def test_base_client_context_calls_close(chat_client_base: BaseChatClient, error: BaseException | None) -> None:
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        if error is None:
+            async with chat_client_base:
+                close.assert_not_awaited()
+        else:
+            with pytest.raises(type(error)) as raised:
+                async with chat_client_base:
+                    raise error
+            assert raised.value is error
+        close.assert_awaited_once_with()
+
+
+async def test_base_client_context_closes_on_cancellation(chat_client_base: BaseChatClient) -> None:
+    entered = asyncio.Event()
+
+    async def run_client() -> None:
+        async with chat_client_base:
+            entered.set()
+            await asyncio.Event().wait()
+
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        task = asyncio.create_task(run_client())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+        close.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("body failed")])
+async def test_base_client_context_accepts_sync_close(
+    chat_client_base: BaseChatClient, error: RuntimeError | None
+) -> None:
+    with patch.object(chat_client_base, "close", new_callable=MagicMock, return_value=None) as close:
+        if error is None:
+            async with chat_client_base:
+                close.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError) as raised:
+                async with chat_client_base:
+                    raise error
+            assert raised.value is error
+        close.assert_called_once_with()
+
+
+async def test_base_client_context_propagates_cleanup_failure(chat_client_base: BaseChatClient) -> None:
+    with (
+        patch.object(chat_client_base, "close", new_callable=AsyncMock, side_effect=RuntimeError("close failed")),
+        pytest.raises(RuntimeError, match="close failed"),
+    ):
+        async with chat_client_base:
+            pass
+
+
+async def test_base_client_context_closes_after_early_stream_exit(chat_client_base: BaseChatClient) -> None:
+    with patch.object(chat_client_base, "close", new_callable=AsyncMock) as close:
+        async with chat_client_base:
+            async with chat_client_base.get_response([Message("user", ["Hello"])], stream=True) as stream:
+                async for update in stream:
+                    assert update.text
+                    break
+            close.assert_not_awaited()
+        close.assert_awaited_once_with()
 
 
 def test_base_client_rejects_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
@@ -245,6 +332,124 @@ async def test_base_client_per_call_compaction_override_applies_before_inner_cal
         compaction_strategy=TruncationStrategy(max_n=1, compact_to=1),
     )
     assert captured_roles == [["assistant"]]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_triggered_compaction_rejects_default_service_storage(
+    chat_client_base: SupportsChatGetResponse,
+    stream: bool,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
+
+    with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
+        if stream:
+            response_stream = chat_client_base.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=True,
+                compaction_strategy=strategy,
+            )
+            async for _ in response_stream:
+                pass
+        else:
+            response = chat_client_base.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=False,
+                compaction_strategy=strategy,
+            )
+            _ = await response
+
+
+async def test_agent_triggered_compaction_rejects_explicit_store_true(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
+
+    with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["Hello"])],
+            options=ChatOptions(store=True),
+            compaction_strategy=strategy,
+        )
+
+
+async def test_nested_agent_triggered_compaction_rejects_service_storage(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    class StrategyWrapper:
+        def __init__(self, strategy: Any) -> None:
+            self.inner = strategy
+            self.requires_client_managed_history = strategy.requires_client_managed_history
+
+        async def __call__(self, messages: list[Message]) -> bool:
+            return await self.inner(messages)
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    strategy = StrategyWrapper(AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1)))
+
+    with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["Hello"])],
+            compaction_strategy=strategy,
+        )
+
+
+async def test_composed_agent_triggered_compaction_rejects_service_storage(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tokenizer = _FixedTokenizer(1)
+    strategy = TokenBudgetComposedStrategy(
+        token_budget=1,
+        tokenizer=tokenizer,
+        strategies=[AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))],
+    )
+
+    assert strategy.requires_client_managed_history is True
+    with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["Hello"])],
+            compaction_strategy=strategy,
+        )
+
+
+async def test_agent_triggered_compaction_rejects_service_conversation_id(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
+
+    with pytest.raises(ChatClientInvalidRequestException, match="service-managed continuation"):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["Hello"])],
+            options=ChatOptions(store=False, conversation_id="service-conversation"),
+            compaction_strategy=strategy,
+        )
+
+
+@pytest.mark.parametrize("conversation_id", [None, LOCAL_HISTORY_CONVERSATION_ID])
+async def test_agent_triggered_compaction_allows_client_managed_history(
+    chat_client_base: SupportsChatGetResponse,
+    conversation_id: str | None,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
+    options = ChatOptions(store=False)
+    if conversation_id is not None:
+        options["conversation_id"] = conversation_id
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["Hello"])],
+        options=options,
+        compaction_strategy=strategy,
+    )
+
+    assert response.text == "test response - Hello"
 
 
 async def test_base_client_per_call_tokenizer_override_annotates_messages(

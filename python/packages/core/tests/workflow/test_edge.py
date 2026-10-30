@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import patch
@@ -1706,6 +1707,343 @@ async def test_switch_case_edge_group_send_message_with_invalid_data() -> None:
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
+
+
+async def test_switch_case_edge_group_async_condition_matches() -> None:
+    """An async case condition is awaited and correctly routes the message."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    async def async_is_negative(message: MockMessage) -> bool:
+        await asyncio.sleep(0)
+        return message.data < 0
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=async_is_negative, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+
+    message = WorkflowMessage(data=MockMessage(data=-1), source_id=source.id)
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        success = await edge_runner.send_message(message, state, ctx)
+        assert success is True
+        assert mock_send.call_count == 1
+        assert mock_send.call_args[0][0] == target1.id
+
+
+async def test_switch_case_edge_group_async_condition_fallthrough_to_default() -> None:
+    """An async condition evaluating to False falls through to the default branch."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    async def async_is_negative(message: MockMessage) -> bool:
+        await asyncio.sleep(0)
+        return message.data < 0
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=async_is_negative, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+
+    message = WorkflowMessage(data=MockMessage(data=10), source_id=source.id)
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        success = await edge_runner.send_message(message, state, ctx)
+        assert success is True
+        assert mock_send.call_count == 1
+        assert mock_send.call_args[0][0] == target2.id
+
+
+async def test_switch_case_edge_group_mixed_sync_and_async_conditions_order() -> None:
+    """Conditions are evaluated in order even with mixed sync and async conditions."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+    target3 = MockExecutor(id="target_executor_3")
+
+    async def async_is_large(message: MockMessage) -> bool:
+        return message.data > 100
+
+    def sync_is_positive(message: MockMessage) -> bool:
+        return message.data > 0
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=async_is_large, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=sync_is_positive, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target3.id),
+        ],
+    )
+    executors: dict[str, Executor] = {
+        source.id: source,
+        target1.id: target1,
+        target2.id: target2,
+        target3.id: target3,
+    }
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        await edge_runner.send_message(WorkflowMessage(data=MockMessage(data=150), source_id=source.id), state, ctx)
+        assert mock_send.call_args[0][0] == target1.id
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        await edge_runner.send_message(WorkflowMessage(data=MockMessage(data=50), source_id=source.id), state, ctx)
+        assert mock_send.call_args[0][0] == target2.id
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        await edge_runner.send_message(WorkflowMessage(data=MockMessage(data=-10), source_id=source.id), state, ctx)
+        assert mock_send.call_args[0][0] == target3.id
+
+
+async def test_switch_case_edge_group_async_condition_error_propagates() -> None:
+    """An error inside an async condition propagates and does not silently fall through to default."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    async def failing_async_condition(message: MockMessage) -> bool:
+        raise ValueError("async failure")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=failing_async_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id)
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        with pytest.raises(ValueError, match="async failure"):
+            await edge_runner.send_message(message, State(), InProcRunnerContext())
+        assert mock_send.call_count == 0
+
+
+async def test_fan_out_edge_group_with_async_selection_func() -> None:
+    """FanOutEdgeRunner awaits an async selection_func on FanOutEdgeGroup."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    async def async_selector(data: Any, available_targets: list[str]) -> list[str]:
+        await asyncio.sleep(0)
+        return [target1.id]
+
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=async_selector,
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id)
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        success = await edge_runner.send_message(message, state, ctx)
+        assert success is True
+        assert mock_send.call_count == 1
+        assert mock_send.call_args[0][0] == target1.id
+
+
+async def test_switch_case_edge_group_async_condition_future_and_custom_awaitable() -> None:
+    """Async condition results from asyncio.Future and custom awaitable objects are properly awaited."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+    target3 = MockExecutor(id="target_executor_3")
+
+    class CustomAwaitableBool:
+        def __init__(self, value: bool) -> None:
+            self.value = value
+
+        def __await__(self):
+            async def _coro() -> bool:
+                await asyncio.sleep(0)
+                return self.value
+
+            return _coro().__await__()
+
+    def future_condition(message: MockMessage) -> asyncio.Future[bool]:
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[bool] = loop.create_future()
+        fut.set_result(message.data == 100)
+        return fut
+
+    def custom_awaitable_condition(message: MockMessage) -> CustomAwaitableBool:
+        return CustomAwaitableBool(message.data == 200)
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=future_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=custom_awaitable_condition, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target3.id),
+        ],
+    )
+    executors: dict[str, Executor] = {
+        source.id: source,
+        target1.id: target1,
+        target2.id: target2,
+        target3.id: target3,
+    }
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+
+    # Matches Future condition
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        await edge_runner.send_message(WorkflowMessage(data=MockMessage(data=100), source_id=source.id), state, ctx)
+        assert mock_send.call_args[0][0] == target1.id
+
+    # Matches Custom awaitable condition
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        await edge_runner.send_message(WorkflowMessage(data=MockMessage(data=200), source_id=source.id), state, ctx)
+        assert mock_send.call_args[0][0] == target2.id
+
+    # Falls through to default when neither matches
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        await edge_runner.send_message(WorkflowMessage(data=MockMessage(data=0), source_id=source.id), state, ctx)
+        assert mock_send.call_args[0][0] == target3.id
+
+
+async def test_switch_case_edge_group_sync_match_skips_later_async_predicate() -> None:
+    """A synchronous match on an earlier case skips evaluating later async predicates."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+    target3 = MockExecutor(id="target_executor_3")
+
+    async_called = False
+
+    async def bomb_condition(message: MockMessage) -> bool:
+        nonlocal async_called
+        async_called = True
+        raise RuntimeError("Should never be called")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=lambda msg: msg.data == 1, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=bomb_condition, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target3.id),
+        ],
+    )
+    executors: dict[str, Executor] = {
+        source.id: source,
+        target1.id: target1,
+        target2.id: target2,
+        target3.id: target3,
+    }
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        success = await edge_runner.send_message(
+            WorkflowMessage(data=MockMessage(data=1), source_id=source.id), state, ctx
+        )
+        assert success is True
+        assert mock_send.call_args[0][0] == target1.id
+        assert async_called is False
+
+
+async def test_switch_case_edge_group_async_condition_cancellation() -> None:
+    """Cancellation during async condition evaluation propagates CancelledError and skips next cases."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+    target3 = MockExecutor(id="target_executor_3")
+
+    case2_called = False
+
+    async def cancelling_condition(message: MockMessage) -> bool:
+        task = asyncio.current_task()
+        if task:
+            task.cancel()
+        await asyncio.sleep(0.01)
+        return False
+
+    def case2_condition(message: MockMessage) -> bool:
+        nonlocal case2_called
+        case2_called = True
+        return True
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=cancelling_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=case2_condition, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target3.id),
+        ],
+    )
+    executors: dict[str, Executor] = {
+        source.id: source,
+        target1.id: target1,
+        target2.id: target2,
+        target3.id: target3,
+    }
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        with pytest.raises(asyncio.CancelledError):
+            await edge_runner.send_message(
+                WorkflowMessage(data=MockMessage(data=1), source_id=source.id), State(), InProcRunnerContext()
+            )
+        assert mock_send.call_count == 0
+        assert case2_called is False
+
+
+async def test_fan_out_edge_group_with_async_selection_func_invalid_result_raises() -> None:
+    """FanOutEdgeRunner raises RuntimeError when an async selection_func returns invalid target IDs."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    async def async_invalid_selector(data: Any, available_targets: list[str]) -> list[str]:
+        await asyncio.sleep(0)
+        return [target1.id, "invalid_target_id"]
+
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=async_invalid_selector,
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id)
+    with pytest.raises(RuntimeError):
+        await edge_runner.send_message(message, state, ctx)
 
 
 # endregion SwitchCaseEdgeGroup

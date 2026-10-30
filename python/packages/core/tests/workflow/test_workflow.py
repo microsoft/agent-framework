@@ -19,7 +19,9 @@ from agent_framework import (
     AgentRunInputs,
     AgentSession,
     BaseAgent,
+    Case,
     Content,
+    Default,
     Executor,
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
@@ -1110,6 +1112,45 @@ async def test_comprehensive_edge_groups_workflow():
     assert has_switch_case, "Workflow should contain SwitchCaseEdgeGroup"
     assert has_fan_out, "Workflow should contain FanOutEdgeGroup"
     assert has_fan_in, "Workflow should contain FanInEdgeGroup"
+
+
+async def test_workflow_switch_case_with_async_condition() -> None:
+    """Test that a workflow with switch-case edge group correctly awaits async case conditions."""
+
+    class LeafExecutor(Executor):
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[Any, str]) -> None:
+            await ctx.yield_output(f"{self.id}:{message.data}")
+
+    router = IncrementExecutor(id="router", limit=1000, increment=1)
+    large_handler = LeafExecutor(id="large")
+    small_handler = LeafExecutor(id="small")
+
+    async def async_is_large(msg: NumberMessage) -> bool:
+        await asyncio.sleep(0)
+        return msg.data > 5
+
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_switch_case_edge_group(
+            router,
+            [
+                Case(condition=async_is_large, target=large_handler),
+                Default(target=small_handler),
+            ],
+        )
+        .build()
+    )
+
+    # 1. Input 10 -> router sends 11 -> async_is_large(11) is True -> routes to large_handler
+    events_large = await workflow.run(NumberMessage(data=10))
+    assert events_large.get_final_state() == WorkflowRunState.IDLE
+    assert events_large.get_outputs() == ["large:11"]
+
+    # 2. Input 2 -> router sends 3 -> async_is_large(3) is False -> routes to default (small_handler)
+    events_small = await workflow.run(NumberMessage(data=2))
+    assert events_small.get_final_state() == WorkflowRunState.IDLE
+    assert events_small.get_outputs() == ["small:3"]
 
 
 async def test_switch_case_cases_can_share_a_target():

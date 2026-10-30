@@ -1061,6 +1061,46 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equal(1, providerCallCount);
     }
 
+    [Theory]
+    [InlineData(302, "GET", "https://secondary.example.test/next")]
+    [InlineData(307, "DELETE", "https://secondary.example.test/next")]
+    [InlineData(307, "GET", "https://api.example.test/next")]
+    public async Task SendAsyncRedirectThatChangesClientThrowsAsync(int redirectStatusCode, string method, string redirectUrl)
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<string> providerUrls = [];
+        using HttpResponseMessage redirectResponse = new((HttpStatusCode)redirectStatusCode)
+        {
+            Headers = { Location = new Uri(redirectUrl) },
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler ownedMessageHandler = new((_, _) => Task.FromResult(redirectResponse));
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK);
+        TestHttpMessageHandler providedMessageHandler = new((_, _) =>
+            Task.FromResult(okResponse));
+#pragma warning restore CA2025
+        using HttpClient providedClient = new(providedMessageHandler);
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(ownedMessageHandler, (info, _) =>
+        {
+            providerUrls.Add(info.Url);
+            return Task.FromResult(providerUrls.Count == 1 ? null : providedClient);
+        });
+#pragma warning restore CA2025
+        HttpRequestInfo request = new() { Method = method, Url = TestUrl };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("change the HTTP client", exception.Message, StringComparison.Ordinal);
+        Assert.Equal([TestUrl, redirectUrl], providerUrls);
+        Assert.Single(ownedMessageHandler.RequestMethods);
+        Assert.Empty(providedMessageHandler.RequestMethods);
+    }
+
     [Fact]
     public async Task SendAsyncInvokesProviderForRedirectDestinationAsync()
     {

@@ -12,7 +12,8 @@ caller-provided `duckdb.DuckDBPyConnection` objects use the same implementation.
 pip install agent-framework-duckdb --pre
 ```
 
-Python 3.10–3.15 is officially supported. Python 3.10–3.14 uses DuckDB
+Python 3.11–3.15 is officially supported. Python 3.10 installation remains
+permitted, but compatibility is not guaranteed. Python 3.10–3.14 uses DuckDB
 1.4.1–1.5.x, while Python 3.15 uses DuckDB 2.x, whose stable-ABI wheels support
 Python 3.15. The package also installs `pytz`, which DuckDB uses when returning
 timezone-aware timestamps. Import `DuckDBStore` and `DuckDBCollection` directly

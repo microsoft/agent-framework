@@ -4,12 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Files;
 using OpenAI.VectorStores;
+using OpenAIAgentReference = Azure.AI.Extensions.OpenAI.AgentReference;
 
 #pragma warning disable OPENAI001
 
@@ -32,7 +32,7 @@ public static class FoundryAgentExtensions
     /// definition exists; conversion in that case throws <see cref="InvalidOperationException"/>.
     /// </remarks>
     /// <param name="agent">The Foundry agent to convert.</param>
-    /// <param name="cancellationToken">A token that can cancel an internal server-side fetch when the agent was constructed from a bare <see cref="AgentReference"/>.</param>
+    /// <param name="cancellationToken">A token that can cancel an internal server-side fetch when the agent was constructed from a bare <see cref="OpenAIAgentReference"/>.</param>
     /// <returns>A <see cref="ProjectsAgentDefinition"/> suitable for publishing.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="agent"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The agent's chat client is not a <see cref="FoundryChatClient"/>; the agent was constructed via the Agent Endpoint mode (Mode 3); no model id is set on the agent's <see cref="ChatOptions"/> for the Responses Agent mode (Mode 1); or the agent contains an <see cref="AITool"/> that cannot be converted to a <c>ResponseTool</c>.</exception>

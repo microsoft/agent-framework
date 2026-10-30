@@ -22,7 +22,7 @@ Each script is fully async and the `main()` routine runs both implementations ba
 
 ## Prerequisites
 
-- Python 3.10 or later.
+- Python 3.11–3.15, subject to AutoGen's dependency requirements.
 - Access to the necessary model endpoints (Azure OpenAI, OpenAI, etc.).
 - Installed SDKs: Install AutoGen and the Microsoft Agent Framework with:
   ```bash
