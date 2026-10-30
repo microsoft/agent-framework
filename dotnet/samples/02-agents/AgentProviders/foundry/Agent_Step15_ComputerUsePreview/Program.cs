@@ -108,5 +108,5 @@ try
 }
 finally
 {
-    await ComputerUseUtil.EnsureDeleteScreenshotAssetsAsync(fileClient, screenshots);
+    await ComputerUseUtil.DeleteScreenshotAssetsAsync(fileClient, screenshots);
 }

@@ -24,7 +24,7 @@ The sample continues each turn from the stored response, so only the new `comput
 
 ## How the simulation works
 
-**This sample does not connect to a real browser.** It intercepts the model's actions and returns pre-captured screenshots (shared with the preview sample) as if the actions were performed:
+**This sample does not connect to a real browser.** It intercepts the model's actions and returns pre-captured screenshots as if the actions were performed:
 
 | State | Reached by | Screenshot sent back |
 | --- | --- | --- |

@@ -40,7 +40,7 @@ internal static class ComputerUseUtil
         return screenshots;
     }
 
-    internal static async Task EnsureDeleteScreenshotAssetsAsync(IHostedFileClient fileClient, Dictionary<string, string> screenshots)
+    internal static async Task DeleteScreenshotAssetsAsync(IHostedFileClient fileClient, Dictionary<string, string> screenshots)
     {
         foreach (var (_, fileId) in screenshots)
         {

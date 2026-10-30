@@ -19,8 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Reuses the simulated browser screenshots of the preview computer use sample. -->
-    <None Include="..\..\foundry\Agent_Step15_ComputerUsePreview\Assets\*.jpg" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
+    <None Update="Assets\*.jpg" CopyToOutputDirectory="Always" />
   </ItemGroup>
 
 </Project>
