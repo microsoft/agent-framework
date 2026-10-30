@@ -810,6 +810,18 @@ public class AgentModeProviderTests
         // Assert
         Assert.Equal("draft", mode);
         Assert.Equal("draft", await v2.GetModeAsync(restored));
+
+        // SetModeAsync(review) left PreviousModeForNotification=draft; fallback must clear it
+        // so the next invoke does not announce a draft→draft mode change.
+        Assert.True(restored.StateBag.TryGetValue<AgentModeState>("AgentModeProvider", out var stateAfterFallback, AgentJsonUtilities.DefaultOptions));
+        Assert.Null(stateAfterFallback!.PreviousModeForNotification);
+
+        var agent = new Mock<AIAgent>().Object;
+#pragma warning disable MAAI001
+        var invoking = new AIContextProvider.InvokingContext(agent, restored, new AIContext());
+#pragma warning restore MAAI001
+        AIContext ctx = await v2.InvokingAsync(invoking);
+        Assert.Contains("Draft instructions.", ctx.Instructions);
     }
 
     private static async Task<(IEnumerable<AITool> Tools, AgentModeState State)> CreateToolsWithStateAsync()
