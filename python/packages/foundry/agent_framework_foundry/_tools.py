@@ -35,12 +35,14 @@ def _validate_hosted_tool_payload(sanitized: Mapping[str, Any]) -> None:
 
 def _to_plain_dict(value: Any) -> Any:
     """Recursively convert Azure SDK models and mappings into plain dictionaries."""
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[str, Any]", value)
+        return {k: _to_plain_dict(v) for k, v in mapping.items()}
     if hasattr(value, "as_dict") and callable(value.as_dict):
         return _to_plain_dict(value.as_dict())
-    if isinstance(value, Mapping):
-        return {k: _to_plain_dict(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_to_plain_dict(v) for v in value]
+        items = cast("list[Any] | tuple[Any, ...]", value)
+        return [_to_plain_dict(v) for v in items]
     return value
 
 
