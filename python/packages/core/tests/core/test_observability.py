@@ -7727,3 +7727,37 @@ async def test_chat_capture_messages_called_when_span_recording(
     assert mock_capture_v1_36.call_count == 2
     assert mock_capture_experimental.call_count == 2
     assert mock_capture_response.call_count == 1
+
+
+def _otel_log_handlers(target: logging.Logger) -> list[Any]:
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    return [h for h in target.handlers if isinstance(h, LoggingHandler)]
+
+
+@pytest.mark.parametrize("root_handler_first", [False, True])
+def test_configure_providers_log_handler_not_duplicated_with_root_handler(root_handler_first: bool):
+    """MAF records are exported once when the app already has an OTel handler on the root logger."""
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
+
+    from agent_framework.observability import ObservabilitySettings
+
+    exporter = InMemoryLogRecordExporter()
+    root = logging.getLogger()
+    maf_logger = logging.getLogger("agent_framework")
+    root_handler = LoggingHandler(logger_provider=LoggerProvider())
+    original_root_handlers = list(root.handlers)
+    original_maf_handlers = list(maf_logger.handlers)
+    handlers_before = len(_otel_log_handlers(maf_logger))
+    try:
+        if root_handler_first:
+            root.addHandler(root_handler)
+        with patch("opentelemetry._logs.set_logger_provider"):
+            ObservabilitySettings(enable_instrumentation=True)._configure_providers([exporter])  # type: ignore[reportPrivateUsage]
+
+        added = len(_otel_log_handlers(maf_logger)) - handlers_before
+        assert added == (0 if root_handler_first else 1)
+    finally:
+        root.handlers[:] = original_root_handlers
+        maf_logger.handlers[:] = original_maf_handlers

@@ -1355,9 +1355,10 @@ class ObservabilitySettings:
             logger_provider = LoggerProvider(resource=resource)
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-            # Attach a handler with the provider to the root logger
-            handler = LoggingHandler(logger_provider=logger_provider)
-            logger.addHandler(handler)
+            # Attach a handler with the provider to the agent_framework logger, unless the root logger
+            # already has an OTel handler: records propagate to it and would otherwise be exported twice.
+            if not any(isinstance(h, LoggingHandler) for h in logging.getLogger().handlers):
+                logger.addHandler(LoggingHandler(logger_provider=logger_provider))
             set_logger_provider(logger_provider)
 
         # metrics
