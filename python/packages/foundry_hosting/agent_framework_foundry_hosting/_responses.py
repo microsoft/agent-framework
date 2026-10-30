@@ -415,8 +415,16 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
     )
 
 
-def _reject_busy_conversation(session: AgentSession) -> None:
+def _reject_busy_conversation(session: AgentSession, *, agent_server_history: bool) -> None:
     if session.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is not None:
+        if agent_server_history:
+            raise _PublicResponseFailure(
+                RuntimeError(
+                    "The conversation already has an in-flight turn. Wait for it to finish before sending "
+                    "another request; if that turn ended abnormally (for example, the host stopped or its "
+                    "cleanup failed), start a new conversation."
+                )
+            )
         raise _PublicResponseFailure(
             RuntimeError(
                 "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
@@ -424,6 +432,60 @@ def _reject_busy_conversation(session: AgentSession) -> None:
                 "reusing a possibly changed provider thread."
             )
         )
+
+
+async def _release_conversation_claim(
+    store: SessionStore,
+    conversation_id: str,
+    response_id: str,
+    *,
+    persist_state: AgentSession | None = None,
+) -> None:
+    """Remove a claim still owned by ``response_id`` so an uncommitted turn leaves the conversation usable.
+
+    The head is re-read so the conditional write carries the ETag of the claim record. By default the claim
+    record's unchanged pre-turn state is restored. When ``persist_state`` is provided it is written instead,
+    so state the turn already consumed (such as an approval whose tool may have run) is not reopened.
+    A claim owned by another response is left untouched.
+    """
+    head = await store.get(conversation_id)
+    if head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != response_id:
+        return
+    if persist_state is None:
+        head.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
+        await store.set(conversation_id, head)
+    else:
+        persist_state.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
+        await store.set(conversation_id, persist_state)
+
+
+async def _release_conversation_claim_best_effort(
+    store: SessionStore,
+    conversation_id: str,
+    response_id: str,
+    *,
+    persist_state: AgentSession | None,
+) -> None:
+    """Release a claim without letting a cancellation or a storage failure skip or mask the cleanup.
+
+    The release is shielded so it still completes when the surrounding task is cancelled, and the
+    cancellation itself is left to propagate. A failed release is logged; the claim then stays held,
+    which blocks later turns rather than risking a repeated approval.
+    """
+    try:
+        await asyncio.shield(
+            _release_conversation_claim(store, conversation_id, response_id, persist_state=persist_state)
+        )
+    except Exception as release_error:
+        _log_response_failure("conversation claim release", response_id, release_error)
+
+
+def _request_carries_approval_response(request: CreateResponse) -> bool:
+    """Return whether the caller's input resumes a paused tool call with an approval response."""
+    items = request.get("input")
+    return isinstance(items, list) and any(
+        isinstance(item, Mapping) and item.get("type") == "mcp_approval_response" for item in items
+    )
 
 
 def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
@@ -1382,7 +1444,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             )
                         session = agent.create_session()
                     if context.conversation_id is not None:
-                        _reject_busy_conversation(session)
+                        _reject_busy_conversation(session, agent_server_history=configuration.agent_server_history)
                     if previous_response_id is not None and context.conversation_id is None:
                         if session.service_session_id is not None and session.state.get(
                             _HOSTED_SOURCE_CONVERSATION_KEY
@@ -1569,9 +1631,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise RuntimeError("A non-resumable agent cannot be replayed after a process crash.")
 
         stored = request.get("store") is not False
+        carries_approval_response = _request_carries_approval_response(request)
 
         request_messages_task: asyncio.Task[list[Message]] | None = None
         conversation_already_committed = False
+        releasable_claim_conversation_id: str | None = None
         try:
             if isinstance(agent, RawAgent):
                 try:
@@ -1704,7 +1768,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             )
                         )
                 else:
-                    _reject_busy_conversation(session)
+                    _reject_busy_conversation(session, agent_server_history=configuration.agent_server_history)
             if not stored and self._history_source == "agent" and session.service_session_id is not None:
                 raise _PublicResponseFailure(
                     ValueError(
@@ -1811,17 +1875,29 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
                 session.state.pop(_HOSTED_CONVERSATION_COMMITTED_KEY, None)
 
+            # With steering, AgentServer already serializes same-conversation turns and deliberately lets a newer
+            # turn supersede an in-flight one, so an agent_server-history turn must not be fenced by a claim.
+            steering_owns_admission = configuration.agent_server_history and bool(
+                self._host_options and self._host_options.steerable_conversations
+            )
             if (
                 stored
                 and context.conversation_id is not None
-                and not configuration.agent_server_history
                 and not conversation_already_committed
+                and not steering_owns_admission
             ):
                 if session_storage is None:
-                    raise RuntimeError("Service history requires agent session storage.")
-                # The scoped store's conditional write must succeed before the provider can
-                # mutate its linear thread; a losing turn never reaches agent.run().
+                    raise RuntimeError("Conversation admission requires agent session storage.")
+                # The scoped store's conditional write must succeed before the agent can dispatch a tool or
+                # mutate a provider thread; a losing turn never reaches agent.run(). This also applies to
+                # agent_server history, where it is the only guard against two concurrent turns each consuming
+                # the same pending approval from stale session copies.
                 session.state[_HOSTED_CONVERSATION_CLAIM_KEY] = context.response_id
+                if configuration.agent_server_history:
+                    # No provider thread is mutated, so an uncommitted turn can hand the conversation back.
+                    # Recorded before the write because a cancellation can land after the backend commits the
+                    # claim but before the await returns; the ownership-checked release then still cleans up.
+                    releasable_claim_conversation_id = context.conversation_id
                 try:
                     await _set_agent_session(session_storage, context.conversation_id, session)
                 finally:
@@ -1955,6 +2031,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
                         session.state[_HOSTED_CONVERSATION_COMMITTED_KEY] = context.response_id
                         await _set_agent_session(session_storage, context.conversation_id, session)
+                        releasable_claim_conversation_id = None
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1964,6 +2041,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 else:
                     message = "Failed to persist the Agent Framework session after a successful request"
                 _log_response_failure(message, context.response_id, save_error)
+            finally:
+                if releasable_claim_conversation_id is not None and session_storage is not None:
+                    # An approval turn may already have run its tool, so keep the consumed approval rather than
+                    # reopening it; any other turn restores the pre-turn state.
+                    await _release_conversation_claim_best_effort(
+                        session_storage,
+                        releasable_claim_conversation_id,
+                        context.response_id,
+                        persist_state=session if carries_approval_response else None,
+                    )
 
         if request_failure is not None and save_failure is not None:
             raise RuntimeError(
