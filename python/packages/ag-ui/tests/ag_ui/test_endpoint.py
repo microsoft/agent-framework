@@ -5375,6 +5375,665 @@ def _is_policy_violation(tool_results: list[str]) -> bool:
     return any("Policy violation" in result for result in tool_results)
 
 
+async def test_endpoint_fides_snapshot_provenance_survives_reasoning_normalization(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A new client tool result cannot inherit restored-snapshot FIDES provenance."""
+    thread_id = "thread-fides-reasoning-provenance"
+    session_id = _session_id_for_thread(scope="test", thread_id=thread_id)
+    executed: list[str] = []
+
+    def public_sink() -> str:
+        executed.append("public_sink")
+        return "published"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        assert all(
+            "_agent_framework_ag_ui_backend_snapshot_origin" not in message.additional_properties
+            for message in messages
+        )
+        assert any(
+            content.type == "function_result" and content.call_id == "client-call"
+            for message in messages
+            for content in message.contents
+        )
+        if any(
+            content.type == "function_result" and content.call_id == "sink-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="sink-call", name="public_sink", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=public_sink,
+                name="public_sink",
+                description="Publish data to a public sink",
+                additional_properties={"source_integrity": "trusted"},
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    stored_messages: list[dict[str, Any]] = [
+        {"id": "user-1", "role": "user", "content": "Use the client lookup tool."},
+        {"id": "reasoning-1", "role": "reasoning", "content": "Stored model reasoning."},
+        {
+            "id": "assistant-1",
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+                {
+                    "id": "client-call",
+                    "type": "function",
+                    "function": {"name": "client_lookup", "arguments": "{}"},
+                }
+            ],
+        },
+    ]
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=stored_messages,
+            session_state={
+                config.source_id: {
+                    "scope_id": session_id,
+                    "context_label": _TRUSTED_PUBLIC_LABEL,
+                }
+            },
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-provenance",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/fides-provenance",
+            json={
+                "runId": "run-fides-provenance",
+                "threadId": thread_id,
+                "messages": [
+                    *stored_messages,
+                    {
+                        "id": "tool-result-1",
+                        "role": "tool",
+                        "toolCallId": "client-call",
+                        "content": "client-controlled external result",
+                    },
+                ],
+            },
+        )
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in events if event["type"] == "TOOL_CALL_RESULT"])
+    snapshot = await store.get(scope="test", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+    assert context_label["integrity"] == "untrusted"
+    assert context_label["confidentiality"] == "private"
+
+
+async def test_endpoint_fides_synthetic_skipped_result_keeps_snapshot_provenance(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A framework-synthesized skipped result does not taint restored FIDES state."""
+    thread_id = "thread-fides-synthetic-result"
+    session_id = _session_id_for_thread(scope="test", thread_id=thread_id)
+    executed: list[str] = []
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        assert all(
+            "_agent_framework_ag_ui_backend_snapshot_origin" not in message.additional_properties
+            for message in messages
+        )
+        assert any(
+            content.type == "function_result"
+            and content.call_id == "client-call"
+            and "Tool execution skipped" in (content.result or "")
+            for message in messages
+            for content in message.contents
+        )
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Use the client lookup tool."},
+                {
+                    "id": "assistant-1",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "client-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+            ],
+            session_state={
+                config.source_id: {
+                    "scope_id": session_id,
+                    "context_label": _TRUSTED_PUBLIC_LABEL,
+                }
+            },
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-synthetic-result",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/fides-synthetic-result",
+            json={
+                "runId": "run-fides-synthetic-result",
+                "threadId": thread_id,
+                "messages": [{"id": "user-2", "role": "user", "content": "Continue without the client tool."}],
+            },
+        )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert executed == ["protected"]
+    snapshot = await store.get(scope="test", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+    assert context_label["integrity"] == "trusted"
+    assert context_label["confidentiality"] == "public"
+
+
+async def test_endpoint_fides_normal_continuation_reconstructs_missing_context_label(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A normal continuation reconstructs backend history when FIDES state is absent."""
+    thread_id = "thread-fides-normal-missing-state"
+    executed: list[str] = []
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        assert any(
+            content.type == "function_result"
+            and content.call_id == "external-call"
+            and content.result == "stored external result"
+            for message in messages
+            for content in message.contents
+        )
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Look up the external record."},
+                {
+                    "id": "assistant-external-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "external-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "id": "external-result",
+                    "role": "tool",
+                    "toolCallId": "external-call",
+                    "content": "stored external result",
+                },
+            ],
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-normal-missing-state",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/fides-normal-missing-state",
+            json={
+                "runId": "run-fides-normal-missing-state",
+                "threadId": thread_id,
+                "messages": [{"id": "user-2", "role": "user", "content": "Run the protected action."}],
+            },
+        )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in events if event["type"] == "TOOL_CALL_RESULT"])
+    snapshot = await store.get(scope="test", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+    assert context_label["integrity"] == "untrusted"
+    assert context_label["confidentiality"] == "private"
+
+
+async def test_endpoint_fides_confirm_changes_folds_fresh_client_result(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A confirm-only return folds a fresh client result before snapshot persistence."""
+    thread_id = "thread-fides-confirm-client-result"
+    executed: list[str] = []
+    model_calls = 0
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal model_calls
+        del options, kwargs
+        model_calls += 1
+        assert any(
+            content.type == "function_result" and content.call_id == "client-call"
+            for message in messages
+            for content in message.contents
+        )
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Draft the plan"},
+                {
+                    "id": "assistant-1",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "client-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        },
+                        {
+                            "id": "confirm-call",
+                            "type": "function",
+                            "function": {"name": "confirm_changes", "arguments": "{}"},
+                        },
+                    ],
+                },
+            ],
+            session_state={
+                config.source_id: {
+                    "scope_id": _session_id_for_thread(scope="test", thread_id=thread_id),
+                    "context_label": _TRUSTED_PUBLIC_LABEL,
+                }
+            },
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-confirm-client-result",
+        state_schema={"steps": {"type": "array", "items": {"type": "object"}}},
+        predict_state_config={"steps": {"tool": "draft_steps", "tool_argument": "steps"}},
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        confirm_response = client.post(
+            "/fides-confirm-client-result",
+            json={
+                "runId": "run-fides-confirm-resume",
+                "threadId": thread_id,
+                "messages": [
+                    {
+                        "id": "client-result-1",
+                        "role": "tool",
+                        "toolCallId": "client-call",
+                        "content": "fresh external client result",
+                    },
+                    {
+                        "id": "confirm-result-1",
+                        "role": "tool",
+                        "toolCallId": "confirm-call",
+                        "content": json.dumps(
+                            {
+                                "accepted": True,
+                                "steps": [],
+                                "function_call_id": "unknown-confirm-target",
+                            }
+                        ),
+                    },
+                ],
+            },
+        )
+
+        assert confirm_response.status_code == 200
+        assert model_calls == 0
+        snapshot = await store.get(scope="test", thread_id=thread_id)
+        assert snapshot is not None
+        assert snapshot.session_state is not None
+        context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+        assert context_label["integrity"] == "untrusted"
+        assert context_label["confidentiality"] == "private"
+
+        protected_response = client.post(
+            "/fides-confirm-client-result",
+            json={
+                "runId": "run-fides-confirm-protected",
+                "threadId": thread_id,
+                "messages": [{"id": "user-2", "role": "user", "content": "Run the protected action"}],
+            },
+        )
+
+    assert protected_response.status_code == 200
+    protected_events = _decode_sse_events(protected_response)
+    assert not [event for event in protected_events if event["type"] == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in protected_events if event["type"] == "TOOL_CALL_RESULT"])
+
+
+@pytest.mark.parametrize("confirmation_transport", ["message", "resume"])
+async def test_endpoint_fides_confirm_changes_reconstructs_missing_context_label(
+    streaming_chat_client_stub: Any,
+    confirmation_transport: str,
+) -> None:
+    """A confirm-only return reconstructs stored history when FIDES state lacks its label."""
+    thread_id = f"thread-fides-confirm-missing-state-{confirmation_transport}"
+    executed: list[str] = []
+    model_calls = 0
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal model_calls
+        del messages, options, kwargs
+        model_calls += 1
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            )
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    confirm_payload = {"accepted": True, "steps": []}
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Look up the external record"},
+                {
+                    "id": "assistant-external-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "external-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "id": "external-result",
+                    "role": "tool",
+                    "toolCallId": "external-call",
+                    "content": "stored external result",
+                },
+                {
+                    "id": "assistant-confirm-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "confirm-call",
+                            "type": "function",
+                            "function": {
+                                "name": "confirm_changes",
+                                "arguments": json.dumps({"function_call_id": "unknown-confirm-target"}),
+                            },
+                        }
+                    ],
+                },
+            ],
+            session_state={
+                config.source_id: {
+                    "scope_id": _session_id_for_thread(scope="test", thread_id=thread_id),
+                }
+            },
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-confirm-missing-state",
+        state_schema={"steps": {"type": "array", "items": {"type": "object"}}},
+        predict_state_config={"steps": {"tool": "draft_steps", "tool_argument": "steps"}},
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+    confirmation_request: dict[str, Any] = {
+        "runId": f"run-fides-confirm-missing-{confirmation_transport}",
+        "threadId": thread_id,
+        "messages": [],
+    }
+    if confirmation_transport == "message":
+        confirmation_request["messages"] = [
+            {
+                "id": "confirm-result",
+                "role": "tool",
+                "toolCallId": "confirm-call",
+                "content": json.dumps(confirm_payload),
+            }
+        ]
+    else:
+        confirmation_request["resume"] = [
+            {
+                "interruptId": "confirm-call",
+                "status": "resolved",
+                "payload": json.dumps(confirm_payload),
+            }
+        ]
+
+    with TestClient(app) as client:
+        confirm_response = client.post("/fides-confirm-missing-state", json=confirmation_request)
+
+        assert confirm_response.status_code == 200
+        assert not [event for event in _decode_sse_events(confirm_response) if event["type"] == "RUN_ERROR"]
+        assert model_calls == 0
+        snapshot = await store.get(scope="test", thread_id=thread_id)
+        assert snapshot is not None
+        assert snapshot.session_state is not None
+        context_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+        assert context_label["integrity"] == "untrusted"
+        assert context_label["confidentiality"] == "private"
+
+        protected_response = client.post(
+            "/fides-confirm-missing-state",
+            json={
+                "runId": f"run-fides-confirm-missing-protected-{confirmation_transport}",
+                "threadId": thread_id,
+                "messages": [{"id": "user-2", "role": "user", "content": "Run the protected action"}],
+            },
+        )
+
+    assert protected_response.status_code == 200
+    protected_events = _decode_sse_events(protected_response)
+    assert not [event for event in protected_events if event["type"] == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in protected_events if event["type"] == "TOOL_CALL_RESULT"])
+
+
 @pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper", "client"])
 @pytest.mark.parametrize("session_state_key", [None, "custom_security_state"], ids=["default-key", "custom-key"])
 @pytest.mark.parametrize("state_origin", ["request", "snapshot"])
@@ -7877,6 +8536,168 @@ async def test_endpoint_collected_approval_preserves_original_expiration(
     else:
         assert errors
         assert executed == []
+
+
+@pytest.mark.parametrize("mixed_decisions", [False, True], ids=["deny-only", "mixed-approve-deny"])
+async def test_endpoint_fides_authenticated_rejection_preserves_restored_context(
+    streaming_chat_client_stub: Any,
+    mixed_decisions: bool,
+) -> None:
+    """A lifecycle-authenticated denial remains control-plane replay, not external data."""
+    phase = "approval"
+    executed: list[str] = []
+    provider_calls = 0
+
+    def guarded_action() -> str:
+        executed.append("guarded")
+        return "guarded result"
+
+    def guarded_action_two() -> str:
+        executed.append("guarded-two")
+        return "guarded result two"
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal provider_calls
+        del options, kwargs
+        provider_calls += 1
+        if phase == "approval":
+            guarded_calls = [
+                Content.from_function_call(
+                    call_id="guarded-call",
+                    name="guarded_action",
+                    arguments={},
+                )
+            ]
+            if mixed_decisions:
+                guarded_calls.append(
+                    Content.from_function_call(
+                        call_id="guarded-call-two",
+                        name="guarded_action_two",
+                        arguments={},
+                    )
+                )
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=guarded_calls,
+            )
+            return
+        if phase == "denied":
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("denied")])
+            return
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=guarded_action,
+                name="guarded_action",
+                description="Require approval",
+                approval_mode="always_require",
+            ),
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            ),
+            FunctionTool(
+                func=guarded_action_two,
+                name="guarded_action_two",
+                description="Run an already-approved sibling action",
+                approval_mode="never_require",
+            ),
+        ],
+        context_providers=[security],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-authenticated-rejection",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        pause = client.post(
+            "/fides-authenticated-rejection",
+            json={
+                "runId": "run-rejection-pause",
+                "threadId": "thread-authenticated-rejection",
+                "messages": [{"id": "user-1", "role": "user", "content": "Prepare guarded action"}],
+            },
+        )
+        finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+        interrupts = _run_finished_interrupts(finished[-1])
+        assert len(interrupts) == 1
+        approval_ids = {interrupt["toolCallId"]: interrupt["id"] for interrupt in interrupts}
+        resume_entries = [
+            {
+                "interruptId": approval_ids["guarded-call"],
+                "status": "resolved",
+                "payload": {"approved": False},
+            }
+        ]
+
+        phase = "denied"
+        denied = client.post(
+            "/fides-authenticated-rejection",
+            json={
+                "runId": "run-rejection-denied",
+                "threadId": "thread-authenticated-rejection",
+                "messages": [],
+                "resume": resume_entries,
+            },
+        )
+        assert denied.status_code == 200
+        assert not [event for event in _decode_sse_events(denied) if event.get("type") == "RUN_ERROR"]
+        snapshot = await store.get(scope="test", thread_id="thread-authenticated-rejection")
+        assert snapshot is not None
+        assert snapshot.interrupt is None
+        assert snapshot.session_state is not None
+        label = json.loads(snapshot.session_state[security.source_id]["context_label"])
+        assert label["integrity"] == "trusted"
+        assert label["confidentiality"] == "public"
+
+        phase = "protected"
+        protected = client.post(
+            "/fides-authenticated-rejection",
+            json={
+                "runId": "run-rejection-protected",
+                "threadId": "thread-authenticated-rejection",
+                "messages": [{"id": "user-2", "role": "user", "content": "Run protected action"}],
+            },
+        )
+
+    assert protected.status_code == 200
+    assert not [event for event in _decode_sse_events(protected) if event.get("type") == "RUN_ERROR"]
+    assert executed == (["guarded-two", "protected"] if mixed_decisions else ["protected"])
+    assert provider_calls == 4
 
 
 async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(streaming_chat_client_stub):
@@ -12747,6 +13568,186 @@ async def test_agent_endpoint_rejected_approval_is_persisted_before_provider_con
     assert snapshot is not None
     assert snapshot.interrupt is None
     assert "Tool call invocation was rejected by user" in str(snapshot.messages)
+
+
+async def test_endpoint_fides_rejection_folds_client_result_before_provider_failure(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A pre-run rejection snapshot persists fresh client-result restrictions."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    phase = "pause"
+    executed: list[str] = []
+
+    def guarded_action() -> str:
+        return "guarded result"
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="guarded-call",
+                        name="guarded_action",
+                        arguments={},
+                    )
+                ],
+            )
+            return
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    config = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=guarded_action,
+                name="guarded_action",
+                description="Require approval",
+                approval_mode="always_require",
+            ),
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run an unrelated protected action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            ),
+        ],
+        context_providers=[config],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-rejection-provider-failure",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/fides-rejection-provider-failure",
+            json={
+                "runId": "run-fides-rejection-pause",
+                "threadId": "thread-fides-rejection-provider-failure",
+                "messages": [{"id": "user-1", "role": "user", "content": "Prepare the guarded action"}],
+            },
+        )
+        pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+        approval_id = _run_finished_interrupts(pause_finished[-1])[0]["id"]
+        snapshot = await store.get(scope="test", thread_id="thread-fides-rejection-provider-failure")
+        assert snapshot is not None
+        assert snapshot.session_state is not None
+        initial_label = json.loads(snapshot.session_state[config.source_id]["context_label"])
+        assert initial_label["integrity"] == "trusted"
+        assert initial_label["confidentiality"] == "public"
+        snapshot.messages.append(
+            {
+                "id": "assistant-client-call",
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [
+                    {
+                        "id": "client-call",
+                        "type": "function",
+                        "function": {"name": "client_lookup", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
+        await store.save(
+            scope="test",
+            thread_id="thread-fides-rejection-provider-failure",
+            snapshot=snapshot,
+        )
+
+        original_run = agent.run
+
+        def failing_run(*args: Any, **kwargs: Any) -> Any:
+            if not kwargs.get("stream", False):
+                return original_run(*args, **kwargs)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                if False:  # pragma: no cover
+                    yield AgentResponseUpdate()
+                raise ResponseInvalidatedException("provider preparation failed")
+
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+        rejected_response = client.post(
+            "/fides-rejection-provider-failure",
+            json={
+                "runId": "run-fides-rejection-failure",
+                "threadId": "thread-fides-rejection-provider-failure",
+                "messages": [
+                    {
+                        "id": "client-result",
+                        "role": "tool",
+                        "toolCallId": "client-call",
+                        "content": "fresh external client result",
+                    }
+                ],
+                "resume": [
+                    {
+                        "interruptId": approval_id,
+                        "status": "resolved",
+                        "payload": {"approved": False},
+                    }
+                ],
+            },
+        )
+        rejected_events = _decode_sse_events(rejected_response)
+        assert [event["code"] for event in rejected_events if event.get("type") == "RUN_ERROR"] == [
+            "ResponseInvalidatedException"
+        ]
+        failed_snapshot = await store.get(scope="test", thread_id="thread-fides-rejection-provider-failure")
+        assert failed_snapshot is not None
+        assert failed_snapshot.session_state is not None
+        failed_label = json.loads(failed_snapshot.session_state[config.source_id]["context_label"])
+        assert failed_label["integrity"] == "untrusted"
+        assert failed_label["confidentiality"] == "private"
+
+        agent.run = original_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+        phase = "protected"
+        retry_response = client.post(
+            "/fides-rejection-provider-failure",
+            json={
+                "runId": "run-fides-rejection-retry",
+                "threadId": "thread-fides-rejection-provider-failure",
+                "messages": [{"id": "user-2", "role": "user", "content": "Run the protected action"}],
+            },
+        )
+
+    retry_events = _decode_sse_events(retry_response)
+    assert not [event for event in retry_events if event.get("type") == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in retry_events if event["type"] == "TOOL_CALL_RESULT"])
 
 
 async def test_agent_endpoint_approval_resume_preserves_other_stored_interrupts():

@@ -120,6 +120,8 @@ _SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_security_arguments_materialized
 _SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_security_materialized_authority"
 _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
 _MAX_REPLAY_CONTENT_DEPTH = 32
+_REPLAY_STATE_COVERED_KEY = "_agent_framework_fides_replay_state_covered"
+_REPLAY_STATE_COVERED_MARKER = object()
 _APPROVAL_HISTORY_RECONSTRUCTION_KEY = "_agent_framework_fides_reconstruct_history_unstamped"
 _APPROVAL_REPLAY_AUTHORITY_KEY = "_agent_framework_fides_authenticated_approval_calls"
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
@@ -1280,16 +1282,17 @@ def _is_bound_approval_control(
     content: Content,
     *,
     scope: _SecurityScope,
+    transport_authoritative: bool,
     approval_authority: _ApprovalReplayAuthority | None,
 ) -> Content | None:
-    """Return whether session state authenticates this approval control."""
+    """Return whether trusted transport or session state authenticates this approval control."""
     if content.type not in {"function_approval_request", "function_approval_response"} or content.id is None:
         return None
     authoritative_call = approval_authority.function_call_for(content) if approval_authority is not None else None
     function_call = authoritative_call or content.function_call
     if function_call is None or function_call.id is None or _function_call_replay_key(function_call) is None:
         return None
-    if authoritative_call is not None or _is_pending_approval_control(content, scope=scope):
+    if authoritative_call is not None or transport_authoritative or _is_pending_approval_control(content, scope=scope):
         return function_call
     return None
 
@@ -1328,6 +1331,7 @@ def _replayed_message_label(
     has_authenticated_hidden_content = False
     has_role_independent_untrusted_content = False
     has_bound_approval_control = False
+    transport_authoritative = _is_replay_state_covered(message)
     bound_approval_call_keys = {
         key
         for content in message.contents
@@ -1336,6 +1340,7 @@ def _replayed_message_label(
             authoritative_call := _is_bound_approval_control(
                 content,
                 scope=scope,
+                transport_authoritative=transport_authoritative,
                 approval_authority=approval_authority,
             )
         )
@@ -1356,6 +1361,7 @@ def _replayed_message_label(
         authoritative_approval_call = _is_bound_approval_control(
             content,
             scope=scope,
+            transport_authoritative=transport_authoritative,
             approval_authority=approval_authority,
         )
         is_bound_approval_control = authoritative_approval_call is not None
@@ -1416,8 +1422,20 @@ def _replayed_message_label(
     return combine_labels(*labels)
 
 
+def _is_replay_state_covered(message: Message) -> bool:
+    """Return whether trusted transport code marked this replay as represented by restored state."""
+    return message.additional_properties.get(_REPLAY_STATE_COVERED_KEY) is _REPLAY_STATE_COVERED_MARKER
+
+
+def _clear_replay_state_covered_markers(messages: Sequence[Message]) -> None:
+    """Remove private replay provenance before messages reach a chat provider."""
+    for message in messages:
+        if message.additional_properties.get(_REPLAY_STATE_COVERED_KEY) is _REPLAY_STATE_COVERED_MARKER:
+            message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
+
+
 class _ReplaySecurityChatMiddleware(ChatMiddleware):
-    """Raise the session label from replayed history-provider messages."""
+    """Raise the session label from replayed caller and history-provider messages."""
 
     def __init__(
         self,
@@ -1446,6 +1464,7 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
         context: ChatContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
+        _clear_replay_state_covered_markers(context.messages)
         if not self._processed:
             self._processed = True
             history_messages = [message for message in context.messages if self._is_history_message(message)]
@@ -4298,6 +4317,47 @@ class SecureAgentConfig(ContextProvider):
         """Return provider-customized middleware bound to one restored session scope."""
         return self._middleware_for_scope(self._scope_for_session(session))
 
+    def _mark_replay_state_covered_messages(self, messages: Sequence[Message]) -> None:
+        """Mark trusted transport-restored messages as already represented by session state."""
+        for message in messages:
+            message.additional_properties[_REPLAY_STATE_COVERED_KEY] = _REPLAY_STATE_COVERED_MARKER
+
+    def _fold_uncovered_replay_messages(
+        self,
+        session: AgentSession,
+        messages: Sequence[Message],
+        *,
+        complete_replay_messages: Sequence[Message] | None = None,
+    ) -> None:
+        """Fold new transport messages before a snapshot-only return persists them."""
+        state = session.state.setdefault(self.source_id, {})
+        if not isinstance(state, dict):
+            raise ValueError("Security provider state must be a dictionary.")
+        restored_context_label = _STATE_CONTEXT_LABEL in state
+        scope = _SecurityScope(cast(dict[str, Any], state), scope_id=session.session_id)
+        replay_messages = (
+            messages if restored_context_label or complete_replay_messages is None else complete_replay_messages
+        )
+        approval_authority = self._authenticated_core_approval_calls(
+            session,
+            replay_messages,
+        )
+        replay_labels = [
+            _replayed_message_label(
+                message,
+                reconstruct_unstamped=True,
+                scope=scope,
+                approval_authority=approval_authority,
+            )
+            for message in replay_messages
+            if not restored_context_label or not _is_replay_state_covered(message)
+        ]
+        if replay_labels:
+            scope.context_label = combine_labels(scope.context_label, *replay_labels)
+        _clear_replay_state_covered_markers(messages)
+        if replay_messages is not messages:
+            _clear_replay_state_covered_markers(replay_messages)
+
     def _approval_history_metadata_key(self) -> str:
         """Return the run-local SessionContext metadata key for this provider."""
         return f"{_APPROVAL_HISTORY_RECONSTRUCTION_KEY}:{self.source_id}"
@@ -4460,7 +4520,7 @@ class SecureAgentConfig(ContextProvider):
         input_labels = [
             _replayed_message_label(
                 message,
-                reconstruct_unstamped=True,
+                reconstruct_unstamped=not restored_context_label or not _is_replay_state_covered(message),
                 scope=scope,
                 approval_authority=approval_authority,
             )
