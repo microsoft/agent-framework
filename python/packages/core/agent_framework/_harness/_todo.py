@@ -287,6 +287,33 @@ class TodoSessionStore(TodoStore):
         provider_state["next_id"] = _safe_next_id(items, next_id)
 
 
+_TODO_SESSION_LOCKS: weakref.WeakKeyDictionary[
+    AgentSession, dict[tuple[int, asyncio.AbstractEventLoop], asyncio.Lock]
+] = weakref.WeakKeyDictionary()
+
+
+def _todo_mutation_lock(store: TodoStore, session: AgentSession) -> asyncio.Lock:
+    """Return the lock that serializes read-modify-write todo operations for one store and session.
+
+    The lock belongs to the store and session rather than to one provider, so
+    two providers sharing a todo store cannot both load the same state before
+    either saves it back and silently drop one of the edits. Locks are also per
+    event loop, because an :class:`asyncio.Lock` that has had a waiter on one
+    loop raises when a caller has to wait for it on another. The outer map is
+    weak so locks for garbage collected sessions are evicted rather than
+    accumulating in long-running services; the key holds ``id(store)`` so a
+    store need not be hashable, mirroring ``_store_write_lock`` in the file
+    access layer.
+    """
+    per_session = _TODO_SESSION_LOCKS.setdefault(session, {})
+    key = (id(store), asyncio.get_running_loop())
+    lock = per_session.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        per_session[key] = lock
+    return lock
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoFileStore(TodoStore):
     """Store todo state in one JSON file per session and source ID.
@@ -446,17 +473,6 @@ class TodoProvider(ContextProvider):
         super().__init__(source_id)
         self.instructions = instructions or DEFAULT_TODO_INSTRUCTIONS
         self.store = store or TodoSessionStore()
-        # WeakKeyDictionary so per-session locks are evicted automatically when the session is GC'd
-        # rather than accumulating in long-running services that create many sessions.
-        self._mutation_locks: weakref.WeakKeyDictionary[AgentSession, asyncio.Lock] = weakref.WeakKeyDictionary()
-
-    def _mutation_lock(self, session: AgentSession) -> asyncio.Lock:
-        """Return the per-session lock for read-modify-write todo operations."""
-        lock = self._mutation_locks.get(session)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._mutation_locks[session] = lock
-        return lock
 
     async def before_run(
         self,
@@ -476,7 +492,7 @@ class TodoProvider(ContextProvider):
             if not todos:
                 raise ValueError("todos must contain at least one item.")
 
-            async with self._mutation_lock(session):
+            async with _todo_mutation_lock(self.store, session):
                 existing_items, next_id = await self.store.load_state(session, source_id=self.source_id)
                 created_items: list[TodoItem] = []
                 for raw_todo in todos:
@@ -505,7 +521,7 @@ class TodoProvider(ContextProvider):
             parsed = [_coerce_todo_complete_input(entry) for entry in items]
             ids = [entry.id for entry in parsed]
 
-            async with self._mutation_lock(session):
+            async with _todo_mutation_lock(self.store, session):
                 existing_items, next_id = await self.store.load_state(session, source_id=self.source_id)
                 id_set = set(ids)
                 completed_count = 0
@@ -534,7 +550,7 @@ class TodoProvider(ContextProvider):
             if not ids:
                 raise ValueError("ids must contain at least one todo ID.")
 
-            async with self._mutation_lock(session):
+            async with _todo_mutation_lock(self.store, session):
                 items, next_id = await self.store.load_state(session, source_id=self.source_id)
                 remaining_items = [item for item in items if item.id not in set(ids)]
                 removed_count = len(items) - len(remaining_items)

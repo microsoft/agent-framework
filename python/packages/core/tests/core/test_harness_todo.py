@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -200,17 +201,20 @@ async def test_todo_stores_clamp_next_id_to_avoid_collisions(tmp_path: Path) -> 
 
 
 async def test_todo_provider_evicts_locks_when_session_is_garbage_collected() -> None:
-    """The provider should not retain mutation locks for sessions that have been GC'd."""
+    """Mutation locks should not be retained for sessions that have been GC'd."""
     import gc
 
-    provider = TodoProvider()
+    from agent_framework._harness._todo import _TODO_SESSION_LOCKS, _todo_mutation_lock  # pyright: ignore[reportPrivateUsage]
+
+    store = TodoSessionStore()
     session = AgentSession(session_id="session-1")
-    provider._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
-    assert len(provider._mutation_locks) == 1  # pyright: ignore[reportPrivateUsage]
+    _todo_mutation_lock(store, session)  # pyright: ignore[reportPrivateUsage]
+    _todo_mutation_lock(store, session)  # pyright: ignore[reportPrivateUsage]
+    assert len(_TODO_SESSION_LOCKS) == 1  # pyright: ignore[reportPrivateUsage]
 
     del session
     gc.collect()
-    assert len(provider._mutation_locks) == 0  # pyright: ignore[reportPrivateUsage]
+    assert len(_TODO_SESSION_LOCKS) == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_todo_file_store_rejects_session_path_traversal(tmp_path: Path) -> None:
@@ -319,6 +323,68 @@ async def test_todo_provider_tools_manage_session_state(
     assert json.loads(get_all_result[0].text) == [
         {"id": 1, "title": "Write tests", "description": "Cover stores", "is_complete": True}
     ]
+
+
+class _ToolCapturingContext:
+    """Minimal context that records what the todo provider injects."""
+
+    def __init__(self) -> None:
+        self.tools: list[object] = []
+
+    def extend_instructions(self, source_id: str, instructions: list[str]) -> None:
+        del source_id, instructions
+
+    def extend_tools(self, source_id: str, tools: list[object]) -> None:
+        del source_id
+        self.tools.extend(tools)
+
+    def extend_messages(self, source_id: str, messages: list[object]) -> None:
+        del source_id, messages
+
+
+async def test_todo_provider_serializes_mutations_across_providers_sharing_a_store(tmp_path: Path) -> None:
+    """Two providers over one store must serialize like one provider does.
+
+    The mutation lock belongs to the store and session rather than to one
+    provider, so concurrent tool calls from agents that share a todo store
+    cannot both load the same state before either saves and silently drop one
+    of the writes.
+    """
+    store = TodoFileStore(tmp_path)
+    session = AgentSession(session_id="session-1")
+
+    tools_per_provider: list[dict[str, object]] = []
+    for _ in range(2):
+        context = _ToolCapturingContext()
+        await TodoProvider(store=store).before_run(agent=None, session=session, context=context, state={})  # type: ignore[arg-type]
+        tools_per_provider.append({tool.name: tool for tool in cast(list[Any], context.tools) if hasattr(tool, "name")})  # type: ignore[attr-defined]
+
+    # Gate loads only after tool capture: before_run itself loads the todo
+    # state to inject it into the run.
+    gate = asyncio.Event()
+    original_load = store.load_state
+
+    async def gated_load(session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
+        await gate.wait()
+        return await original_load(session, source_id=source_id)
+
+    store.load_state = gated_load
+
+    async def add(provider_tools: dict[str, object], title: str) -> None:
+        add_tool = cast(Any, provider_tools["todos_add"])
+        await add_tool.invoke(arguments={"todos": [{"title": title}]})
+
+    first = asyncio.create_task(add(tools_per_provider[0], "From provider A"))
+    second = asyncio.create_task(add(tools_per_provider[1], "From provider B"))
+    await asyncio.sleep(0)
+    gate.set()
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+
+    get_all_tool = cast(Any, tools_per_provider[0]["todos_get_all"])
+    get_all_result = await get_all_tool.invoke()
+    payload = json.loads(get_all_result[0].text)
+    assert sorted(item["title"] for item in payload) == ["From provider A", "From provider B"]
+    assert sorted(item["id"] for item in payload) == [1, 2]
 
 
 async def test_todo_provider_serializes_concurrent_mutations(
