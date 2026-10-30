@@ -964,7 +964,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         logger.exception("Error running after_run providers in streaming result hook")
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
-                response_format = (options or {}).get("response_format") or self._default_options.get("response_format")
+                response_format: Any = cast(Mapping[str, Any], options or {}).get(
+                    "response_format"
+                ) or self._default_options.get("response_format")
                 return AgentResponse.from_updates(
                     updates,
                     output_format_type=response_format,
