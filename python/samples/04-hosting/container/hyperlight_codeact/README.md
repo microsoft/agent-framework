@@ -68,6 +68,12 @@ Follow the instructions in the
 [Running the Agent Host Locally](../../foundry-hosted-agents//README.md#running-the-agent-host-locally)
 section of the README in the Foundry Hosted Agent directory.
 
+The image and hosted deployment definitions set `PYTHONNOUSERSITE=1`; see the
+[Python startup configuration](../../foundry-hosted-agents/README.md#python-startup-configuration).
+This controls Python user-site loading only and does not
+change the hypervisor requirement or make this sample supported on the default
+Foundry runtime.
+
 ## Interacting with the agent
 
 Send a POST request to the server with a JSON body containing an `"input"`

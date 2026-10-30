@@ -20,6 +20,8 @@ services:
       Telegram bot routed through API Management to an Agent Framework agent
       using the Foundry Invocations 2.0 protocol.
     environmentVariables:
+      - name: PYTHONNOUSERSITE
+        value: "1"
       - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
         value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
       - name: AZURE_COSMOS_ENDPOINT

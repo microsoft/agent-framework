@@ -22,6 +22,7 @@ def test_direct_code_invocations_2_configuration() -> None:
         "runtime": "python_3_13",
     }
     assert service["protocols"] == [{"protocol": "invocations", "version": "2.0.0"}]
+    assert {"name": "PYTHONNOUSERSITE", "value": "1"} in service["environmentVariables"]
 
 
 def test_dependencies_use_sample_local_pyproject() -> None:

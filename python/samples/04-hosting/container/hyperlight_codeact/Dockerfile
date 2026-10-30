@@ -7,6 +7,8 @@
 #     python/
 FROM python:3.12-slim
 
+ENV PYTHONNOUSERSITE=1
+
 WORKDIR /app
 
 # Copy the in-tree agent-framework packages we need. Order matters for editable
