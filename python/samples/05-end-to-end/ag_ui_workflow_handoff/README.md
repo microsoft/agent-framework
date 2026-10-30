@@ -27,7 +27,7 @@ terminated workflow.
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11–3.15
 - Node.js 18+
 - npm 9+
 - Azure AI project + model deployment configured in environment variables:

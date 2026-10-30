@@ -292,6 +292,8 @@ class RawFoundryAgentChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+        self._owns_client = True
+        self._project_client_closed = False
         self.model = ""  # Foundry agents resolve model server-side; ignore env vars (issue #7272).
 
     @override
@@ -541,10 +543,15 @@ class RawFoundryAgentChatClient(
 
         return transformed
 
+    @override
     async def close(self) -> None:
-        """Close the project client if we created it."""
-        if self._should_close_client:
-            await self.project_client.close()
+        """Close owned OpenAI and project connections, not the supplied credential."""
+        try:
+            await super().close()
+        finally:
+            if self._should_close_client and not self._project_client_closed:
+                await self.project_client.close()
+                self._project_client_closed = True
 
 
 class _FoundryAgentChatClient(

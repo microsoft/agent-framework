@@ -6,7 +6,8 @@ Please install this package via pip:
 pip install agent-framework-declarative
 ```
 
-The package currently advertises Python 3.10–3.13 support. Python 3.14 and
+The package currently advertises Python 3.11–3.13 support. Python 3.10
+installation remains permitted, but compatibility is not guaranteed. Python 3.14 and
 3.15 can install the package, but Power Fx expressions are unavailable because
 the `powerfx` dependency requires a `pythonnet` build that does not support
 those Python versions.

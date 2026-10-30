@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,6 +20,49 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 /// </summary>
 public class OutputConverterWorkflowTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompletedWorkflowTextParts_OffsetsCitationSpansAsync(bool agentResponseEvent)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var message = new ChatMessage(ChatRole.Assistant,
+            [new MeaiTextContent("First "), new MeaiTextContent("world") { Annotations = [annotation] }])
+        {
+            MessageId = "msg_completed"
+        };
+        WorkflowEvent workflowEvent = agentResponseEvent
+            ? new AgentResponseEvent("writer", new AgentResponse(message))
+            : new WorkflowOutputEvent(message, "writer");
+        var update = new AgentResponseUpdate
+        {
+            MessageId = message.MessageId,
+            Contents = message.Contents,
+            RawRepresentation = workflowEvent
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync([update]), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var citation = Assert.IsType<UrlCitationBody>(Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>()).Annotation);
+        Assert.Equal(6, citation.StartIndex);
+        Assert.Equal(11, citation.EndIndex);
+        var donePart = Assert.IsType<OutputContentOutputTextContent>(Assert.Single(events.OfType<ResponseContentPartDoneEvent>()).Part);
+        Assert.Equal("First world", donePart.Text);
+        Assert.Same(citation, Assert.Single(donePart.Annotations));
+    }
+
     [Fact]
     public async Task ConvertUpdatesToItemsAsync_SuperStepCheckpoint_EmitsCheckpointBoundaryAsync()
     {

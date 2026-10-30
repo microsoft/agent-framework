@@ -92,7 +92,13 @@ from ._mcp import _as_mcp_connection, _MCPConnection  # pyright: ignore[reportPr
 from ._middleware import FunctionInvocationContext
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._tools import ApprovalMode, FunctionTool
+from ._tools import (
+    _FUNCTION_RESULT_CARRIER_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    ApprovalMode,
+    FunctionTool,
+    _FunctionResultCarrier,  # pyright: ignore[reportPrivateUsage]
+)
+from ._types import SKILL_CONTEXT_NAME_KEY
 
 if TYPE_CHECKING:
     from mcp import Client, ClientSession
@@ -2717,8 +2723,8 @@ class SkillsProvider(ContextProvider):
             A list of :class:`FunctionTool` instances.
         """
 
-        async def _load(skill_name: str) -> str:
-            return await self._load_skill(skills, skill_name)
+        async def _load(ctx: FunctionInvocationContext, skill_name: str) -> str:
+            return await self._load_skill(skills, skill_name, context=ctx)
 
         # The runtime kwargs these handlers forward come from the host's
         # ``agent.run(function_invocation_kwargs=...)``, never from the model. Two
@@ -2752,6 +2758,7 @@ class SkillsProvider(ContextProvider):
                 skill_name,
                 resource_name,
                 runtime_kwargs=ctx.kwargs,
+                context=ctx,
             )
 
         async def _run_script(
@@ -2863,7 +2870,26 @@ class SkillsProvider(ContextProvider):
         name_lower = name.lower()
         return next((s for s in skills if s.frontmatter.name.lower() == name_lower), None)
 
-    async def _load_skill(self, skills: Sequence[Skill], skill_name: str) -> str:
+    @staticmethod
+    def _record_skill_context(context: FunctionInvocationContext | None, skill: Skill) -> None:
+        """Attach the resolved skill identity without changing model-facing output."""
+        if context is not None:
+            carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+            if isinstance(carrier, _FunctionResultCarrier):
+                carrier.additional_properties[SKILL_CONTEXT_NAME_KEY] = skill.frontmatter.name
+            else:
+                context.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = _FunctionResultCarrier(
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: skill.frontmatter.name},
+                    item_additional_properties={},
+                )
+
+    async def _load_skill(
+        self,
+        skills: Sequence[Skill],
+        skill_name: str,
+        *,
+        context: FunctionInvocationContext | None = None,
+    ) -> str:
         """Return the full content for the named skill.
 
         Delegates to the skill's :meth:`~Skill.get_content` method, which
@@ -2872,6 +2898,9 @@ class SkillsProvider(ContextProvider):
         Args:
             skills: The skills to look up the skill from.
             skill_name: The name of the skill to load.
+
+        Keyword Args:
+            context: Invocation context for recording successful load provenance.
 
         Returns:
             The skill content text, or a user-facing error message if
@@ -2886,7 +2915,9 @@ class SkillsProvider(ContextProvider):
 
         logger.info("Loading skill: %s", skill_name)
 
-        return await skill.get_content()
+        content = await skill.get_content()
+        self._record_skill_context(context, skill)
+        return content
 
     async def _run_skill_script(
         self,
@@ -2954,6 +2985,7 @@ class SkillsProvider(ContextProvider):
         resource_name: str,
         *,
         runtime_kwargs: Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -2971,6 +3003,7 @@ class SkillsProvider(ContextProvider):
                 ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
                 and delivered through :class:`FunctionInvocationContext`; they are
                 never sourced from model-supplied tool arguments.
+            context: Invocation context for recording successful resource provenance.
 
         Returns:
             The resource content (any type). Returns a user-facing error
@@ -2999,10 +3032,13 @@ class SkillsProvider(ContextProvider):
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            return await resource.read(**(runtime_kwargs or {}))
+            result = await resource.read(**(runtime_kwargs or {}))
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise
+
+        self._record_skill_context(context, skill)
+        return result
 
 
 # endregion

@@ -14,7 +14,10 @@ The package uses Psycopg 3 and the official pgvector Python adapter.
 pip install agent-framework-postgres --pre
 ```
 
-Requires Python 3.10+, PostgreSQL 13+, and pgvector 0.8.0+.
+Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
+compatibility is not guaranteed.
+
+Requires PostgreSQL 13+ and pgvector 0.8.0+.
 Import the connector directly from `agent_framework_postgres`.
 Python 3.10 through 3.14 install Psycopg's binary distribution. Python 3.15+
 uses the pure-Python implementation because binary wheels are not yet

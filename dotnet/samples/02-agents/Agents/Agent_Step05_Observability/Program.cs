@@ -10,6 +10,7 @@ using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
 using OpenTelemetry;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -20,6 +21,7 @@ var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("AP
 // This will output the telemetry data to the console.
 string sourceName = Guid.NewGuid().ToString("N");
 var tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
+    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]))
     .AddSource(sourceName)
     .AddConsoleExporter();
 if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))

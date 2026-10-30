@@ -32,29 +32,37 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 /// executors), so the start executor only ever sees a single inbound batch per turn.
 /// </para>
 /// </remarks>
-internal sealed class DeclarativeWorkflowExecutor<TInput>(
-    string workflowId,
-    DeclarativeWorkflowOptions options,
-    WorkflowFormulaState state,
-    Func<TInput, ChatMessage> inputTransform) :
-    Executor<TInput>(workflowId), IResettableExecutor, IModeledAction where TInput : notnull
+internal sealed class DeclarativeWorkflowExecutor<TInput> :
+    Executor<TInput>, IResettableExecutor, IModeledAction where TInput : notnull
 {
-    /// <inheritdoc/>
-    public ValueTask ResetAsync()
+    private readonly DeclarativeWorkflowOptions _options;
+    private readonly WorkflowFormulaState _state;
+    private readonly Func<TInput, ChatMessage> _inputTransform;
+
+    public DeclarativeWorkflowExecutor(
+        string workflowId,
+        DeclarativeWorkflowOptions options,
+        WorkflowFormulaState state,
+        Func<TInput, ChatMessage> inputTransform) : base(workflowId)
     {
-        state.Reset();
-        return default;
+        this._options = options;
+        this._state = state;
+        this._inputTransform = inputTransform;
+        this.RegisterCheckpointRestoringCallback(state, state.RestoreCheckpointAsync);
     }
 
     /// <inheritdoc/>
-    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        state.RestoreAsync(context, cancellationToken);
+    public ValueTask ResetAsync()
+    {
+        this._state.Reset();
+        return default;
+    }
 
     /// <inheritdoc/>
     [SendsMessage(typeof(ActionExecutorResult))]
     public override ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        ChatMessage input = inputTransform.Invoke(message);
+        ChatMessage input = this._inputTransform.Invoke(message);
         return this.AdvanceAsync(input, context, cancellationToken);
     }
 
@@ -152,9 +160,9 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     private async ValueTask AdvanceAsync(ChatMessage input, IWorkflowContext context, CancellationToken cancellationToken, bool finalizeTurn = true)
     {
         // No state to restore if we're starting from the beginning.
-        state.SetInitialized();
+        this._state.SetInitialized();
 
-        DeclarativeWorkflowContext declarativeContext = new(context, state);
+        DeclarativeWorkflowContext declarativeContext = new(context, this._state);
 
         // Conversation id resolution prefers state already persisted by a prior turn,
         // so multi-turn invocations reuse the same backend conversation rather than
@@ -162,13 +170,13 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         string? conversationId = declarativeContext.GetWorkflowConversation();
         if (string.IsNullOrWhiteSpace(conversationId))
         {
-            conversationId = options.ConversationId;
+            conversationId = this._options.ConversationId;
         }
 
         bool conversationCreated = false;
         if (string.IsNullOrWhiteSpace(conversationId))
         {
-            conversationId = await options.AgentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
+            conversationId = await this._options.AgentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
             conversationCreated = true;
         }
 
@@ -177,7 +185,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
             await declarativeContext.QueueConversationUpdateAsync(conversationId!, isExternal: true, cancellationToken).ConfigureAwait(false);
         }
 
-        ChatMessage inputMessage = await options.AgentProvider.CreateMessageAsync(conversationId!, input, cancellationToken).ConfigureAwait(false);
+        ChatMessage inputMessage = await this._options.AgentProvider.CreateMessageAsync(conversationId!, input, cancellationToken).ConfigureAwait(false);
 
         // Use the original input for System.LastMessage to ensure Text is preserved (the
         // service may strip text on round-trip), but substitute server-side media references

@@ -15,13 +15,58 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
+  devui-changes:
+    name: Detect DevUI Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      devui: ${{ steps.filter.outputs.devui }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            devui:
+              - 'python/packages/devui/**'
+              - '.github/workflows/python-tests.yml'
+
+  devui-frontend:
+    name: DevUI Frontend Checks
+    needs: devui-changes
+    if: needs.devui-changes.outputs.devui == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: python/packages/devui/frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: python/packages/devui/frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Test file links
+        run: npm run test:file-urls
+      - name: Test tracing
+        run: npm run test:tracing
+      - name: Lint frontend
+        run: npm run lint
+      - name: Build frontend
+        run: npm run build
+
   python-tests:
     name: Python Tests
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         # todo: add macos-latest when problems are resolved
         os: [ubuntu-latest, windows-latest]
         # Full workspace setup still builds native packages slowly on Windows 3.15.
@@ -45,7 +90,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
           # RedisVL still declares Python <3.15.
-          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot agent-framework-azure-cosmos-memory' || matrix.python-version == '3.15' && 'agent-framework-redis' || '' }}
+          exclude-packages: ${{ matrix.python-version == '3.15' && 'agent-framework-redis' || '' }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache

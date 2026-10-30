@@ -3,6 +3,7 @@
 #pragma warning disable VSTHRD002 // Synchronous waits are required by OpenTelemetry enrichment callbacks.
 
 using OpenTelemetry;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 namespace Harness.Shared.Console;
@@ -24,6 +25,7 @@ public static class HarnessTracing
         var traceLogPath = Path.Combine(AppContext.BaseDirectory, $"traces_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid()}.log");
 
         return Sdk.CreateTracerProviderBuilder()
+            .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]))
             .AddSource(sourceName)
             .AddHttpClientInstrumentation((options) =>
             {

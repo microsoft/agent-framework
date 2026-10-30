@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import inspect
 import json
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, cast
 
 from ..exceptions import WorkflowCheckpointException
@@ -233,7 +234,8 @@ class FanOutEdgeRunner(EdgeRunner):
         self._target_ids = edge_group.target_executor_ids
         self._target_map = {edge.target_id: edge for edge in self._edges}
         self._selection_func = cast(
-            Callable[[Any, list[str]], list[str]] | None, getattr(edge_group, "selection_func", None)
+            Callable[[Any, list[str]], list[str] | Awaitable[list[str]]] | None,
+            getattr(edge_group, "selection_func", None),
         )
 
     async def send_message(
@@ -278,9 +280,12 @@ class FanOutEdgeRunner(EdgeRunner):
                     })
                     return False
 
-                selection_results = (
-                    self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
-                )
+                if self._selection_func:
+                    selection_results = self._selection_func(message.data, self._target_ids)
+                    if inspect.isawaitable(selection_results):
+                        selection_results = await selection_results
+                else:
+                    selection_results = self._target_ids
                 if not self._validate_selection_result(selection_results):
                     span.set_attributes({
                         OtelAttr.EDGE_GROUP_DELIVERED: False,
