@@ -90,7 +90,12 @@ from ._approval_execution import (
     InRunPendingToolTransitionOwner,
 )
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
-from ._message_adapters import _APPROVAL_DECISION_IS_BOOLEAN_KEY, normalize_agui_input_messages
+from ._message_adapters import (
+    _APPROVAL_DECISION_IS_BOOLEAN_KEY,
+    _mark_backend_snapshot_origin,
+    _take_backend_snapshot_messages,
+    normalize_agui_input_messages,
+)
 from ._predictive_state import PredictiveStateHandler
 from ._tooling import collect_server_tools, merge_tools
 from ._run_common import (
@@ -1764,6 +1769,7 @@ async def _resolve_approval_responses(
     pending_response_groups: dict[object, tuple[ApprovalOccurrence, list[Content]]] = {}
     intents_by_response_content_id: dict[int, AuthorizedExecution] = {}
     authenticated_non_grants: list[Content] = []
+    authenticated_rejection_call_ids: set[str] = set()
     for response in approval_responses:
         resp_id = response.id
         function_call_id = response.function_call.call_id if response.function_call else None
@@ -1861,6 +1867,7 @@ async def _resolve_approval_responses(
                 )
         if decision_is_boolean and primary_response.approved is False and not server_label:
             authenticated_non_grants.append(_approval_observer_response(pending_entry))
+            authenticated_rejection_call_ids.add(pending_entry.identity.call_id)
         if (
             (primary_response.approved is True or pending_entry.owner is ApprovalExecutionOwner.DEFERRED)
             and lifecycle is not None
@@ -1901,6 +1908,14 @@ async def _resolve_approval_responses(
         middleware_pipeline._notify_approval_responses(  # pyright: ignore[reportPrivateUsage]
             authenticated_non_grants, session=invocation_session
         )
+
+    if valid_response_content_ids:
+        for message in messages:
+            if message.contents and all(
+                content.type == "function_approval_response" and id(content) in valid_response_content_ids
+                for content in message.contents
+            ):
+                _mark_backend_snapshot_origin(message)
 
     if response_content_ids_to_strip:
         filtered_messages: list[Message] = []
@@ -2075,12 +2090,19 @@ async def _resolve_approval_responses(
     # After _replace_approval_contents_with_results, approved tool calls have their results
     # placed in user messages. OpenAI requires tool results to be in role="tool" messages.
     # This transformation ensures the message history is valid for the LLM provider.
-    _convert_approval_results_to_tool_messages(messages)
+    _convert_approval_results_to_tool_messages(
+        messages,
+        authenticated_rejection_call_ids=authenticated_rejection_call_ids,
+    )
 
     return approved_results
 
 
-def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
+def _convert_approval_results_to_tool_messages(
+    messages: list[Message],
+    *,
+    authenticated_rejection_call_ids: set[str] | None = None,
+) -> None:
     """Convert function_result content in user messages to proper tool messages.
 
     After approval processing, tool results end up in user messages. OpenAI and other
@@ -2095,6 +2117,13 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
     result: list[Message] = []
 
     for msg in messages:
+        if authenticated_rejection_call_ids and any(
+            content.type == "function_result"
+            and content.call_id in authenticated_rejection_call_ids
+            and content.result == "Error: Tool call invocation was rejected by user."
+            for content in msg.contents
+        ):
+            _mark_backend_snapshot_origin(msg)
         if get_role_value(msg) != "user":
             result.append(msg)
             continue
@@ -2113,7 +2142,8 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
 
         # Tool messages first (right after the preceding assistant message per OpenAI requirements)
         for func_result in function_results:
-            result.append(Message(role="tool", contents=[func_result]))
+            tool_message = Message(role="tool", contents=[func_result])
+            result.append(tool_message)
 
         # Then user message with remaining content (if any)
         if other_contents:
@@ -2801,6 +2831,33 @@ def _split_service_session_input(
     return snapshot_messages[len(stored_snapshot_messages) :], snapshot_messages
 
 
+def _mark_fides_state_covered_messages(
+    agent: SupportsAgentRun,
+    messages: Sequence[Message],
+) -> None:
+    """Mark backend-restored replay messages for FIDES without importing the experimental module."""
+    if not messages:
+        return
+    for provider in getattr(agent, "context_providers", ()):
+        marker = getattr(provider, "_mark_replay_state_covered_messages", None)
+        if callable(marker):
+            marker(messages)
+
+
+def _fold_fides_uncovered_replay_messages(
+    agent: SupportsAgentRun,
+    session: AgentSession,
+    messages: Sequence[Message],
+    *,
+    complete_replay_messages: Sequence[Message] | None = None,
+) -> None:
+    """Fold uncovered replay into FIDES state before a snapshot-only return."""
+    for provider in getattr(agent, "context_providers", ()):
+        fold = getattr(provider, "_fold_uncovered_replay_messages", None)
+        if callable(fold):
+            fold(session, messages, complete_replay_messages=complete_replay_messages)
+
+
 def _legacy_tool_message_approval_resume(
     messages: Sequence[Mapping[str, Any]],
     *,
@@ -3004,6 +3061,7 @@ async def _run_agent_stream(
     )
 
     stored_snapshot = snapshot_session.stored
+    backend_snapshot_message_ids: set[int] = set()
     stored_pending_approval_interrupt_ids: set[str] = set()
     seeded_resume_from_snapshot = False
     if stored_snapshot is not None:
@@ -3073,6 +3131,8 @@ async def _run_agent_stream(
                 stored_interrupt=stored_snapshot.interrupt,
             )
             raw_messages = provider_suffix
+        if not config.use_service_session:
+            backend_snapshot_message_ids = {id(message) for message in raw_messages[: len(stored_snapshot.messages)]}
 
     # Initialize flow state with stored state plus request-provided overrides;
     # endpoint-deferred defaults apply only to keys missing from both.
@@ -3198,7 +3258,9 @@ async def _run_agent_stream(
         raw_messages,
         sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
         protected_tool_call_ids=protected_tool_call_ids,
+        backend_snapshot_message_ids=backend_snapshot_message_ids,
     )
+    _mark_fides_state_covered_messages(agent, _take_backend_snapshot_messages(messages))
 
     if snapshot_seed_messages is not None:
         _, snapshot_messages = normalize_agui_input_messages(
@@ -3360,6 +3422,23 @@ async def _run_agent_stream(
                 include_service_session_id=config.use_service_session,
             ),
         )
+
+    def fold_fides_replay_before_snapshot_save() -> None:
+        complete_replay_snapshot = snapshot_messages
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            complete_replay_snapshot = snapshot_session.resume_seeded_messages(complete_replay_snapshot)
+        complete_replay_messages, _ = normalize_agui_input_messages(
+            complete_replay_snapshot,
+            sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
+            protected_tool_call_ids=protected_tool_call_ids,
+        )
+        _fold_fides_uncovered_replay_messages(
+            agent,
+            session,
+            messages,
+            complete_replay_messages=complete_replay_messages,
+        )
+        _mark_fides_state_covered_messages(agent, messages)
 
     authenticated_cancellations = [
         _approval_observer_response(occurrence, cancelled=True)
@@ -3552,6 +3631,7 @@ async def _run_agent_stream(
         forwarded_executions=forwarded_executions,
     )
     resolved_approval_results = retained_approval_results + newly_resolved_approval_results
+    _mark_fides_state_covered_messages(agent, _take_backend_snapshot_messages(messages))
 
     # Defense-in-depth: replace approval payloads in snapshot with actual tool results
     # so CopilotKit does not re-send stale approval content on subsequent turns.
@@ -3613,6 +3693,7 @@ async def _run_agent_stream(
         persisted_messages = snapshot_messages
         if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+        fold_fides_replay_before_snapshot_save()
         await save_thread_snapshot(
             persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
@@ -3646,6 +3727,7 @@ async def _run_agent_stream(
         if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
         preserved_interrupts = remaining_stored_interrupts(retired_approval_interrupt_ids)
+        fold_fides_replay_before_snapshot_save()
         await save_thread_snapshot(
             persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
@@ -3654,6 +3736,7 @@ async def _run_agent_stream(
 
     # Handle confirm_changes response (state confirmation flow - emit confirmation and stop)
     if is_confirm_changes_response:
+        fold_fides_replay_before_snapshot_save()
         confirm_additional_properties = cast(dict[str, Any], messages[-1].additional_properties or {})
         confirm_interrupt_id = confirm_additional_properties.get("tool_call_id")
         confirm_remaining_interrupts = remaining_stored_interrupts(

@@ -11,8 +11,9 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, _AsyncGeneratorContextManager  # type: ignore
 from contextvars import ContextVar
+from pathlib import Path
 from textwrap import dedent
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -24,17 +25,21 @@ from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
+    AgentSession,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FileSessionStore,
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionTool,
+    InMemoryHistoryProvider,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPTaskOptions,  # ty: ignore[deprecated]
     MCPWebsocketTool,  # ty: ignore[deprecated]
     Message,
+    SessionContext,
     SupportsChatGetResponse,
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
@@ -56,7 +61,7 @@ from agent_framework._mcp import (
     _should_propagate_cancelled_error,
     logger,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import (
     _auto_invoke_function,
     _FunctionResultPayloadBudget,
@@ -243,7 +248,10 @@ async def _call_generated_mcp_tool(
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
     mcp_local_label: tuple[str, str] | None = None,
+    mcp_local_principals: list[dict[str, str]] | None = None,
+    invocation_session: AgentSession | None = None,
     trust_server_ifc: bool = False,
+    include_detailed_errors: bool = False,
     **kwargs: Any,
 ) -> Content:
     function_kwargs: dict[str, Any] = {}
@@ -257,7 +265,7 @@ async def _call_generated_mcp_tool(
         **function_kwargs,
     )
     if mcp_local_label is not None:
-        from agent_framework.security import IntegrityLabel, _wrap_mcp_function_for_ifc
+        from agent_framework.security import PRINCIPAL_METADATA_KEY, IntegrityLabel, _wrap_mcp_function_for_ifc
 
         source_integrity, confidentiality = mcp_local_label
         function.additional_properties = {
@@ -266,11 +274,16 @@ async def _call_generated_mcp_tool(
             "confidentiality": confidentiality,
             "_mcp_trust_server_ifc": trust_server_ifc,
         }
+        if mcp_local_principals is not None:
+            function.additional_properties[PRINCIPAL_METADATA_KEY] = mcp_local_principals
         _wrap_mcp_function_for_ifc(function, IntegrityLabel(source_integrity))
     return await _auto_invoke_function(
         Content.from_function_call(call_id=f"call-{tool_name}", name=tool_name, arguments=kwargs),
-        config=normalize_function_invocation_configuration(None),
+        config=normalize_function_invocation_configuration({
+            "include_detailed_errors": include_detailed_errors,
+        }),
         tool_map={tool_name: function},
+        invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
         host_payload_budget=host_payload_budget,
     )
@@ -1684,6 +1697,505 @@ async def test_exhausted_aggregate_budget_rejects_meta_before_copy(monkeypatch: 
     assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in function_result.additional_properties
 
 
+async def test_exhausted_aggregate_budget_preserves_ifc_security_label() -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private result")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="helper",
+        parse_tool_results=lambda _: "model projection",
+        max_host_payload_size_bytes=128,
+    )
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert "_meta" not in function_result.additional_properties
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "trusted",
+        "confidentiality": "private",
+    }
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+
+
+@pytest.mark.parametrize(
+    ("server_ifc", "expected_integrity", "expected_confidentiality"),
+    [
+        pytest.param(
+            {"integrity": "trusted", "confidentiality": "private"},
+            "trusted",
+            "private",
+            id="restrictive",
+        ),
+        pytest.param(
+            {"integrity": "trusted"},
+            "untrusted",
+            "user_identity",
+            id="invalid",
+        ),
+    ],
+)
+async def test_exhausted_aggregate_budget_enforces_ifc_on_detailed_mcp_error(
+    tmp_path: Path,
+    server_ifc: dict[str, str],
+    expected_integrity: str,
+    expected_confidentiality: str,
+) -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private MCP error instructions")],
+        is_error=True,
+        _meta={"ifc": server_ifc},
+    )
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="helper",
+        max_host_payload_size_bytes=128,
+    )
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+        include_detailed_errors=True,
+    )
+
+    assert "private MCP error instructions" in function_result.result
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"]["integrity"] == expected_integrity
+    assert (
+        function_result.items[0].additional_properties["security_label"]["confidentiality"] == expected_confidentiality
+    )
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+    store = FileSessionStore(tmp_path / expected_integrity, serialization_format="json")
+    session = AgentSession(session_id=f"mcp-error-{expected_integrity}")
+    session.state["mcp_error_result"] = function_result
+    await store.set(session.session_id, session)
+    restored = await store.get(session.session_id)
+    assert restored is not None
+    restored_result = restored.state["mcp_error_result"]
+    assert isinstance(restored_result, dict)
+    restored_items = restored_result["items"]
+    assert isinstance(restored_items, list)
+    assert restored_items[0]["additional_properties"]["security_label"]["integrity"] == expected_integrity
+    context_label = tracker.get_context_label()
+    assert context_label.integrity.value == expected_integrity
+    assert context_label.confidentiality.value == expected_confidentiality
+
+    protected_tool = FunctionTool(
+        func=lambda: "must not run",
+        name="protected_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=protected_tool, arguments={})
+
+    with pytest.raises(MiddlewareTermination):
+        await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+            invocation,
+            lambda _context: pytest.fail("MCP error IFC must block the protected public sink"),
+        )
+
+
+async def test_retried_mcp_error_does_not_commit_swallowed_label() -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    error_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private failed attempt")],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    success_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="recovered")],
+        is_error=False,
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(side_effect=[error_result, success_result])
+
+    class RetryOnceMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Any]) -> None:
+            del context
+            try:
+                await call_next()
+            except ToolExecutionException:
+                await call_next()
+
+    tracker = LabelTrackingFunctionMiddleware()
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(RetryOnceMiddleware(), tracker),
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.result == "recovered"
+    context_label = tracker.get_context_label()
+    assert context_label.integrity.value == "trusted"
+    assert context_label.confidentiality.value == "public"
+
+    executed = False
+
+    def public_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    sink_tool = FunctionTool(
+        func=public_sink,
+        name="public_after_retry_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=sink_tool, arguments={})
+
+    async def execute_public_sink(_: FunctionInvocationContext) -> str:
+        return public_sink()
+
+    await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+        invocation,
+        execute_public_sink,
+    )
+    assert executed is True
+
+
+async def test_mcp_error_finalizer_updates_invocation_session_scope() -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="session-private failure")],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+    session = AgentSession(session_id="mcp-error-session-scope")
+
+    await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "public"),
+        invocation_session=session,
+        trust_server_ifc=True,
+        include_detailed_errors=True,
+    )
+
+    session_label = tracker.get_context_label(session)
+    assert session_label.integrity.value == "trusted"
+    assert session_label.confidentiality.value == "private"
+    default_label = tracker.get_context_label()
+    assert default_label.integrity.value == "trusted"
+    assert default_label.confidentiality.value == "public"
+
+    protected_tool = FunctionTool(
+        func=lambda: "must not run",
+        name="session_public_after_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=protected_tool, arguments={}, session=session)
+
+    with pytest.raises(MiddlewareTermination):
+        await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+            invocation,
+            lambda _context: pytest.fail("The invocation session must retain the MCP error restriction"),
+        )
+
+
+async def test_mcp_error_without_ifc_preserves_local_identity_principals() -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped failure")],
+        is_error=True,
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "user_identity"),
+        mcp_local_principals=principals,
+        include_detailed_errors=True,
+    )
+
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "user_identity"
+    assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == principals
+    context_label = tracker.get_context_label()
+    assert context_label.metadata[PRINCIPAL_METADATA_KEY] == principals
+
+    executed = False
+
+    def identity_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    sink_tool = FunctionTool(
+        func=identity_sink,
+        name="identity_after_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+    invocation = FunctionInvocationContext(function=sink_tool, arguments={})
+
+    async def execute_identity_sink(_: FunctionInvocationContext) -> str:
+        return identity_sink()
+
+    await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+        invocation,
+        execute_identity_sink,
+    )
+    assert executed is True
+
+
+async def test_restriction_only_mcp_error_preserves_private_argument_fallback() -> None:
+    from agent_framework.security import (
+        ConfidentialityLabel,
+        ContentLabel,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    secret = "private argument echoed by MCP error"
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text=secret)],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+    variable_id = tracker.get_variable_store().store(
+        secret,
+        ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        ),
+    )
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "public"),
+        include_detailed_errors=True,
+        value=f"[{variable_id}]",
+    )
+
+    assert secret in function_result.result
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+    context_label = tracker.get_context_label()
+    assert context_label.integrity == IntegrityLabel.TRUSTED
+    assert context_label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    protected_tool = FunctionTool(
+        func=lambda: "must not run",
+        name="public_after_private_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=protected_tool, arguments={})
+
+    with pytest.raises(MiddlewareTermination):
+        await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+            invocation,
+            lambda _context: pytest.fail("Private MCP error data must block the public sink"),
+        )
+
+
+async def test_oversized_identity_ifc_fails_closed_without_confidentiality_downgrade() -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": [{"tenant_id": "tenant-a", "user_id": "x" * 5000}],
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "metadata": {"source": "invalid_mcp_ifc"},
+    }
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+
+
+async def test_invalid_identity_ifc_cannot_inherit_local_principals() -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        ConfidentialityLabel,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": [{"tenant_id": "tenant-a", "user_id": "x" * 5000}],
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    function = FunctionTool(
+        name="identity_widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "identity_widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "identity_widget",
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+    _wrap_mcp_function_for_ifc(function, IntegrityLabel.TRUSTED)
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)
+    policy = PolicyEnforcementFunctionMiddleware()
+
+    result = await _auto_invoke_function(
+        Content.from_function_call(call_id="identity-call", name=function.name, arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={function.name: function},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+    )
+
+    assert result.items is not None
+    assert result.items[0].additional_properties["_variable_reference"] is True
+    context_label = tracker.get_context_label()
+    assert context_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+    assert PRINCIPAL_METADATA_KEY not in context_label.metadata
+
+    executed = False
+
+    def identity_destination() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    destination = FunctionTool(
+        name="identity_destination",
+        description="Identity-scoped destination",
+        func=identity_destination,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "accepts_untrusted": True,
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+
+    with pytest.raises(MiddlewareTermination):
+        await _auto_invoke_function(
+            Content.from_function_call(call_id="destination-call", name=destination.name, arguments={}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={destination.name: destination},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+    assert executed is False
+
+
 async def test_oversized_mcp_meta_is_omitted_from_host_and_model_items() -> None:
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="ok")],
@@ -1974,8 +2486,120 @@ async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shap
         assert hidden_item.additional_properties["_variable_reference"] is True
         assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
         assert hidden_item.additional_properties["security_label"]["confidentiality"] == "private"
-        assert hidden_item.additional_properties["_meta"] == mcp_result.meta
+        assert "_meta" not in hidden_item.additional_properties
     assert function_result.additional_properties["_meta"] == mcp_result.meta
+
+
+async def test_hidden_builtin_mcp_result_replays_without_tainting_context() -> None:
+    """A restored hidden MCP placeholder stays integrity-clean on the next run."""
+    from agent_framework.security import (
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+        SecureAgentConfig,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="untrusted MCP payload")],
+        _meta={"ifc": {"integrity": "untrusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    function = FunctionTool(
+        name="widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "widget",
+            "source_integrity": "untrusted",
+            "confidentiality": "private",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    _wrap_mcp_function_for_ifc(function, IntegrityLabel.UNTRUSTED)
+    security = SecureAgentConfig()
+    session = AgentSession(session_id="hidden-mcp-replay")
+    first_context = SessionContext(
+        session_id=session.session_id,
+        input_messages=[Message(role="user", contents=["run"])],
+    )
+    await security.before_run(
+        agent=cast(Any, SimpleNamespace(context_providers=[security])),
+        session=session,
+        context=first_context,
+        state=session.state.setdefault(security.source_id, {}),
+    )
+    first_tracker = first_context.get_middleware()[0]
+    assert isinstance(first_tracker, LabelTrackingFunctionMiddleware)
+
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="call-widget", name="widget", arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={"widget": function},
+        invocation_session=session,
+        middleware_pipeline=FunctionMiddlewarePipeline(first_tracker),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["_variable_reference"] is True
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == mcp_result.meta
+
+    restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    history = InMemoryHistoryProvider()
+    replayed = Message(role="tool", contents=[function_result])
+    second_context = SessionContext(session_id=restored.session_id, input_messages=[])
+    second_context.extend_messages(history.source_id, [replayed])
+    await security.before_run(
+        agent=cast(Any, SimpleNamespace(context_providers=[history, security])),
+        session=restored,
+        context=second_context,
+        state=restored.state.setdefault(security.source_id, {}),
+    )
+    second_tracker, second_policy, _ = second_context.get_middleware()
+    assert isinstance(second_tracker, LabelTrackingFunctionMiddleware)
+    assert isinstance(second_policy, PolicyEnforcementFunctionMiddleware)
+    restored_label = second_tracker.get_context_label()
+    assert restored_label.integrity.value == "trusted"
+    assert restored_label.confidentiality.value == "private"
+
+    executed = False
+
+    def protected_action() -> str:
+        nonlocal executed
+        executed = True
+        return "done"
+
+    protected_tool = FunctionTool(
+        name="protected_action",
+        description="Run an unrelated protected action",
+        func=protected_action,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "private",
+        },
+    )
+    invocation = FunctionInvocationContext(
+        function=protected_tool,
+        arguments={},
+        session=restored,
+    )
+
+    async def execute_protected(_: FunctionInvocationContext) -> list[Content]:
+        return [Content.from_text(protected_action())]
+
+    await FunctionMiddlewarePipeline(second_tracker, second_policy).execute(
+        invocation,
+        execute_protected,
+    )
+
+    assert executed is True
 
 
 async def test_secure_mcp_builtin_parser_honors_locally_trusted_server_ifc() -> None:

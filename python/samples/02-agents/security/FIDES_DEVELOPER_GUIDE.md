@@ -226,7 +226,24 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
 - Context label starts as **TRUSTED + PUBLIC** on first call
 - Gets updated (tainted) when untrusted content enters the context
 - Hidden content does NOT taint the context (it never enters LLM context)
+- Newly supplied caller messages are folded into the label before the first model call. Unstamped assistant/tool data
+  and data-bearing function results are treated as **UNTRUSTED + PRIVATE**, regardless of the role assigned during
+  input normalization and even when the session already has persisted FIDES state.
+- Framework-authenticated or transport-covered approval requests and responses remain control-plane content. Their
+  embedded function-call arguments still add confidentiality restrictions. Caller-only unbound controls, including
+  the function loop's explicit response-binding opt-out, are reconstructed conservatively.
+- Stored `HistoryProvider` messages are also folded into the label. A restored FIDES label remains authoritative for
+  unstamped stored history already represented by that state, while explicit replay labels may still add restrictions.
+  If the FIDES state is missing, unstamped assistant/tool history is reconstructed as **UNTRUSTED + PRIVATE**.
+- A resumed service-managed conversation without inspectable local history cannot be reconstructed safely. If it has
+  no authoritative FIDES context label, the run fails closed before model or approval execution. This applies when
+  the continuation ID comes from the session or chat options, and when local history is absent or write-only.
 - Policy enforcement uses the context label for validation
+
+`ContextProvider` implementations are trusted plugins and can already read the full conversation and session state.
+Messages from non-history context providers are not automatically classified by FIDES. Providers that inject retrieved
+or remembered external data must continue to apply their own trust boundary, use FIDES-labeled tools, or explicitly
+hide/label the data before adding it to the model context.
 
 **Automatic Hiding:**
 - UNTRUSTED results/items are automatically hidden in variable store
@@ -507,10 +524,14 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 - Sink-hardening: server annotations cannot remove the `PUBLIC` confidentiality cap or authorize untrusted input
 - Per-result label mapping from `_meta.ifc` into FIDES `security_label`; by default, remote labels are combined with
   local policy and can only add restrictions
+- Valid `_meta.ifc` is retained in a small security-only carrier that is independent of the generic Host-payload
+  retention budget
 
 Set `trust_server_ifc=True` only when the MCP server is an authenticated authority for result labels. In that mode,
 a complete valid `_meta.ifc` label is authoritative for that result, including permitted relaxation of the local
-fallback. Missing, partial, or malformed labels still use current local policy. This opt-in does not make
+fallback. Missing labels use current local policy; supplied-but-partial, malformed, or unretainable IFC metadata fails
+closed as **UNTRUSTED + USER_IDENTITY** without principals, so it cannot flow to any ordinary destination. This opt-in
+does not make
 ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restriction-only hints.
 
 ```python
@@ -797,7 +818,9 @@ response = await agent.run(messages=[
 
 Reusable manual middleware uses one private security scope for the complete run when `session` is omitted, so tool
 chains within that run share hidden variables while separate runs remain isolated. Pass an explicit `AgentSession`
-when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run` calls. Ordinary tool approval responses retain their no-session pass-through behavior.
+when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run`
+calls. The core function loop can still pass ordinary approval responses without a session, but `SecureAgentConfig`
+treats caller-only unbound approval transcripts as untrusted replay rather than approval authority.
 
 ### Example 3: Agent Processing Hidden Content
 
@@ -1094,10 +1117,15 @@ Configure tool security requirements in the `@tool` decorator:
 ```
 
 Hidden variable references in tool arguments are expanded recursively, but their stored labels remain attached to
-the invocation. A tool with `accepts_untrusted=False` is blocked, audited, or sent for policy approval before it can
-receive hidden untrusted data. `accepts_untrusted=True` permits blind forwarding without exposing that data to the
-model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to a public
-sink. Argument labels do not rewrite result labels.
+the invocation. FIDES resolves a detached copy for label and approval binding, then blocks, audits, or requests policy
+approval before it mutates the live arguments or runs Pydantic validators. Validators and the tool body receive hidden
+values only after the policy permits the call. `accepts_untrusted=True` permits blind forwarding without exposing that
+data to the model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to
+a public sink. Argument labels do not rewrite result labels.
+
+FIDES metadata values are exact and case-sensitive (`"trusted"`, `"untrusted"`, `"public"`, `"private"`, and
+`"user_identity"`). Unknown values and non-boolean `accepts_untrusted` declarations are blocked as an
+`invalid_policy` configuration violation instead of falling back to a less restrictive policy.
 
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.
