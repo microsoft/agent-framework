@@ -1703,3 +1703,36 @@ class TestAGUIChatClient:
         )
 
         assert response is not None
+
+    async def test_run_error_event_preserves_specific_code(self, monkeypatch: MonkeyPatch) -> None:
+        """AGUIChatClient preserves the specific error code from RUN_ERROR event."""
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {
+                "type": "RUN_ERROR",
+                "threadId": "thread_1",
+                "runId": "run_1",
+                "message": "Function invocation is disabled",
+                "code": "APPROVAL_INVOCATION_DISABLED",
+            },
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            del args, kwargs
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        messages = [Message(role="user", contents=["Test"])]
+        stream = client.get_response(messages=messages, stream=True)
+        assert isinstance(stream, ResponseStream)
+        updates: list[ChatResponseUpdate] = []
+        async for update in stream:
+            updates.append(cast(ChatResponseUpdate, update))
+
+        error_contents = [c for update in updates for c in update.contents if c.type == "error"]
+        assert len(error_contents) == 1
+        assert error_contents[0].message == "Function invocation is disabled"
+        assert error_contents[0].error_code == "APPROVAL_INVOCATION_DISABLED"
