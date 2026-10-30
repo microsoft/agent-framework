@@ -105,12 +105,16 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
 
 def is_powershell(argv: Sequence[str]) -> bool:
-    """Return True when ``argv[0]`` appears to be PowerShell."""
+    """Return True when ``argv[0]`` appears to be PowerShell.
+
+    Normalize backslashes to ``/`` before ``basename`` so win32-style
+    paths still detect correctly when this helper runs on POSIX (unit
+    tests monkeypatch ``sys.platform`` to ``win32`` on Linux CI).
+    """
     if not argv:
         return False
-    name = os.path.basename(argv[0]).lower()
+    name = os.path.basename(argv[0].replace("\\", "/")).lower()
     return name in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
-
 
 def _ensure_command_flag(argv: list[str]) -> list[str]:
     """Append the right ``-c`` / ``-Command`` flag for stateless argv.
