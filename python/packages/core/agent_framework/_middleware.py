@@ -1559,6 +1559,15 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middleware):
 
                 async def final_wrapper() -> None:
+                    from ._tools import (
+                        _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+                    )
+
+                    security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
+                    if security_materialization is not None:
+                        active_context, materialize = security_materialization
+                        if context is active_context:
+                            materialize(context)
                     context.result = final_handler(context)
                     if inspect.isawaitable(context.result):
                         context.result = await context.result
