@@ -97,6 +97,10 @@ internal static class OutputConverter
         StringBuilder? accumulatedText = null;
         List<Annotation>? accumulatedAnnotations = null;
         string? previousMessageId = null;
+        OutputItemReasoningItemBuilder? currentReasoningBuilder = null;
+        ReasoningSummaryPartBuilder? currentSummaryPartBuilder = null;
+        StringBuilder? accumulatedReasoning = null;
+        string? previousReasoningMessageId = null;
         bool hasTerminalEvent = false;
         var executorItemIds = new Dictionary<string, string>();
 
@@ -110,6 +114,11 @@ internal static class OutputConverter
             // fall through to the content-processing path below so those are emitted.
             if (update.RawRepresentation is WorkflowEvent workflowEvent && update.Contents.Count == 0)
             {
+                foreach (var evt in CloseCurrentReasoning())
+                {
+                    yield return evt;
+                }
+
                 // Close any open message builder before emitting workflow items
                 foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                 {
@@ -149,6 +158,11 @@ internal static class OutputConverter
                 {
                     case MeaiTextContent textContent:
                     {
+                        foreach (var evt in CloseCurrentReasoning())
+                        {
+                            yield return evt;
+                        }
+
                         if (!IsSameMessage(currentMessageId, previousMessageId) && currentMessageBuilder is not null)
                         {
                             foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
@@ -195,6 +209,11 @@ internal static class OutputConverter
                             break;
                         }
 
+                        foreach (var evt in CloseCurrentReasoning())
+                        {
+                            yield return evt;
+                        }
+
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
@@ -231,23 +250,43 @@ internal static class OutputConverter
                         accumulatedAnnotations = null;
                         previousMessageId = null;
 
-                        var reasoningBuilder = stream.AddOutputItemReasoningItem();
-                        yield return reasoningBuilder.EmitAdded();
+                        if (!IsSameMessage(currentMessageId, previousReasoningMessageId) && currentReasoningBuilder is not null)
+                        {
+                            foreach (var evt in CloseCurrentReasoning())
+                            {
+                                yield return evt;
+                            }
+                        }
 
-                        var summaryPart = reasoningBuilder.AddSummaryPart();
-                        yield return summaryPart.EmitAdded();
+                        if (currentMessageId is { Length: > 0 })
+                        {
+                            previousReasoningMessageId = currentMessageId;
+                        }
+
+                        if (currentReasoningBuilder is null)
+                        {
+                            currentReasoningBuilder = stream.AddOutputItemReasoningItem();
+                            yield return currentReasoningBuilder.EmitAdded();
+
+                            currentSummaryPartBuilder = currentReasoningBuilder.AddSummaryPart();
+                            yield return currentSummaryPartBuilder.EmitAdded();
+
+                            accumulatedReasoning = new StringBuilder();
+                        }
 
                         var text = reasoningContent.Text ?? string.Empty;
-                        yield return summaryPart.EmitTextDelta(text);
-                        yield return summaryPart.EmitTextDone(text);
-                        yield return summaryPart.EmitDone();
-
-                        yield return reasoningBuilder.EmitDone();
+                        accumulatedReasoning!.Append(text);
+                        yield return currentSummaryPartBuilder!.EmitTextDelta(text);
                         break;
                     }
 
                     case ToolApprovalRequestContent approvalRequest when approvalRequest.ToolCall is FunctionCallContent approvalFunctionCall:
                     {
+                        foreach (var evt in CloseCurrentReasoning())
+                        {
+                            yield return evt;
+                        }
+
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
@@ -310,6 +349,11 @@ internal static class OutputConverter
 
                     case ErrorContent errorContent:
                     {
+                        foreach (var evt in CloseCurrentReasoning())
+                        {
+                            yield return evt;
+                        }
+
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
@@ -341,6 +385,11 @@ internal static class OutputConverter
                         if (functionResult.CallId is not { Length: > 0 })
                         {
                             break;
+                        }
+
+                        foreach (var evt in CloseCurrentReasoning())
+                        {
+                            yield return evt;
                         }
 
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
@@ -404,6 +453,11 @@ internal static class OutputConverter
             }
         }
 
+        foreach (var evt in CloseCurrentReasoning())
+        {
+            yield return evt;
+        }
+
         // Close any remaining open message
         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
         {
@@ -413,6 +467,24 @@ internal static class OutputConverter
         if (!hasTerminalEvent)
         {
             yield return stream.EmitCompleted(accumulatedUsage);
+        }
+
+        IEnumerable<ResponseStreamEvent> CloseCurrentReasoning()
+        {
+            if (currentReasoningBuilder is null)
+            {
+                yield break;
+            }
+
+            var finalText = accumulatedReasoning?.ToString() ?? string.Empty;
+            yield return currentSummaryPartBuilder!.EmitTextDone(finalText);
+            yield return currentSummaryPartBuilder.EmitDone();
+            yield return currentReasoningBuilder.EmitDone();
+
+            currentReasoningBuilder = null;
+            currentSummaryPartBuilder = null;
+            accumulatedReasoning = null;
+            previousReasoningMessageId = null;
         }
     }
 
