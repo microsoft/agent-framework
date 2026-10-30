@@ -3,13 +3,14 @@
 
 <#
 .SYNOPSIS
-    Bumps the .NET package minor version and updates its date suffix.
+    Bumps the .NET package version and updates its date suffix.
 
 .DESCRIPTION
-    Updates VersionPrefix to the next minor version with patch zero and sets
+    Updates VersionPrefix by incrementing the selected version component and
+    resetting lower components to zero. Defaults to a minor version bump. Sets
     DateSuffix to the release date in yyMMdd format. Leaves RCNumber and all
     other package properties unchanged, preserving file formatting and UTF-8 BOM.
-    Each invocation increments the minor version again.
+    Each invocation increments the selected version component again.
 
 .PARAMETER ReleaseDate
     Release date for DateSuffix. Defaults to today's local date.
@@ -18,8 +19,19 @@
     Package properties file. Defaults to dotnet\nuget\nuget-package.props,
     resolved relative to this script, independently of the working directory.
 
+.PARAMETER VersionPart
+    Version component to increment: Major, Minor, or Patch. Defaults to Minor.
+
 .EXAMPLE
     .\dotnet\eng\scripts\Update-PackageVersion.ps1
+
+.EXAMPLE
+    .\dotnet\eng\scripts\Update-PackageVersion.ps1 -VersionPart Major
+    Increments the major version and resets minor and patch to zero.
+
+.EXAMPLE
+    .\dotnet\eng\scripts\Update-PackageVersion.ps1 -VersionPart Patch
+    Increments the patch version, leaving major and minor unchanged.
 
 .EXAMPLE
     .\dotnet\eng\scripts\Update-PackageVersion.ps1 -ReleaseDate '2026-10-23' -WhatIf
@@ -31,7 +43,10 @@ param(
     [datetime]$ReleaseDate = (Get-Date),
 
     [ValidateNotNullOrEmpty()]
-    [string]$Path = (Join-Path $PSScriptRoot '..\..\nuget\nuget-package.props')
+    [string]$Path = (Join-Path $PSScriptRoot '..\..\nuget\nuget-package.props'),
+
+    [ValidateSet('Major', 'Minor', 'Patch')]
+    [string]$VersionPart = 'Minor'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,7 +65,11 @@ if ($dateMatches.Count -ne 1) {
 }
 
 $version = [version]$versionMatches[0].Groups['Version'].Value
-$newVersion = [version]::new($version.Major, ($version.Minor + 1), 0).ToString()
+$newVersion = switch ($VersionPart) {
+    'Major' { [version]::new(($version.Major + 1), 0, 0).ToString() }
+    'Minor' { [version]::new($version.Major, ($version.Minor + 1), 0).ToString() }
+    'Patch' { [version]::new($version.Major, $version.Minor, ($version.Build + 1)).ToString() }
+}
 $dateSuffix = $ReleaseDate.ToString('yyMMdd', [System.Globalization.CultureInfo]::InvariantCulture)
 $updatedContent = $content.Replace($versionMatches[0].Value, "<VersionPrefix>$newVersion</VersionPrefix>")
 $updatedContent = $updatedContent.Replace($dateMatches[0].Value, "<DateSuffix>$dateSuffix</DateSuffix>")
