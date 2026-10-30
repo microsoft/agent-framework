@@ -527,7 +527,7 @@ class RawOpenAIChatCompletionClient(
 
         Note: For the Chat Completions API, web search is passed via the `web_search_options`
         parameter rather than in the `tools` array. This method returns a dict that can be
-        passed as a tool to ChatAgent, which will handle it appropriately.
+        passed as a tool to an Agent, which will handle it appropriately.
 
         Keyword Args:
             web_search_options: The full WebSearchOptions configuration. This TypedDict includes:
@@ -536,11 +536,12 @@ class RawOpenAIChatCompletionClient(
                 - search_context_size: One of "low", "medium", "high".
 
         Returns:
-            A dict configuration that enables web search when passed to ChatAgent.
+            A dict configuration that enables web search when passed to an Agent.
 
         Examples:
             .. code-block:: python
 
+                from agent_framework import Agent
                 from agent_framework.openai import OpenAIChatCompletionClient
 
                 # Basic web search
@@ -557,7 +558,7 @@ class RawOpenAIChatCompletionClient(
                     }
                 )
 
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client=OpenAIChatCompletionClient(), tools=[tool])
         """
         tool: dict[str, Any] = {"type": "web_search"}
 

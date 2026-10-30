@@ -1362,11 +1362,12 @@ class RawOpenAIChatClient(
                 or provide a TypedDict with custom container settings.
 
         Returns:
-            A CodeInterpreter tool parameter ready to pass to ChatAgent.
+            A CodeInterpreter tool parameter ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
 
+                from agent_framework import Agent
                 from agent_framework.openai import OpenAIChatClient
 
                 # Basic code interpreter
@@ -1376,7 +1377,7 @@ class RawOpenAIChatClient(
                 tool = OpenAIChatClient.get_code_interpreter_tool(file_ids=["file-abc123"])
 
                 # Use with agent
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         container_config: CodeInterpreterContainerCodeInterpreterToolAuto = (
             container if isinstance(container, dict) else {"type": "auto"}
@@ -1404,11 +1405,12 @@ class RawOpenAIChatClient(
             filters: Additional search filters.
 
         Returns:
-            A WebSearchToolParam dict ready to pass to ChatAgent.
+            A WebSearchToolParam dict ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
 
+                from agent_framework import Agent
                 from agent_framework.openai import OpenAIChatClient
 
                 # Basic web search
@@ -1420,7 +1422,7 @@ class RawOpenAIChatClient(
                     search_context_size="medium",
                 )
 
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         web_search_tool = WebSearchToolParam(type="web_search")
 
@@ -1466,11 +1468,12 @@ class RawOpenAIChatClient(
             output_compression: Compression level for output (0-100).
 
         Returns:
-            An ImageGeneration tool parameter dict ready to pass to ChatAgent.
+            An ImageGeneration tool parameter dict ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
 
+                from agent_framework import Agent
                 from agent_framework.openai import OpenAIChatClient
 
                 # Basic image generation
@@ -1483,7 +1486,7 @@ class RawOpenAIChatClient(
                     output_format="png",
                 )
 
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         tool: ImageGeneration = {"type": "image_generation"}
 
@@ -1625,11 +1628,12 @@ class RawOpenAIChatClient(
             headers: HTTP headers to include in requests to the MCP server.
 
         Returns:
-            An Mcp tool parameter dict ready to pass to ChatAgent.
+            An Mcp tool parameter dict ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
 
+                from agent_framework import Agent
                 from agent_framework.openai import OpenAIChatClient
 
                 # Basic MCP tool
@@ -1657,7 +1661,7 @@ class RawOpenAIChatClient(
                     },
                 )
 
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         mcp: Mcp = {
             "type": "mcp",
@@ -1706,11 +1710,12 @@ class RawOpenAIChatClient(
             max_num_results: Maximum number of results to return. Defaults to 50 if not specified.
 
         Returns:
-            A FileSearchToolParam dict ready to pass to ChatAgent.
+            A FileSearchToolParam dict ready to pass to an Agent.
 
         Examples:
             .. code-block:: python
 
+                from agent_framework import Agent
                 from agent_framework.openai import OpenAIChatClient
 
                 # Basic file search
@@ -1724,7 +1729,7 @@ class RawOpenAIChatClient(
                     max_num_results=10,
                 )
 
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client=OpenAIChatClient(), tools=[tool])
         """
         tool = FileSearchToolParam(
             type="file_search",
