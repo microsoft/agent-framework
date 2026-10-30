@@ -7,7 +7,7 @@ import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder, step, workflow
+from agent_framework import FunctionalWorkflow, InMemoryCheckpointStorage, WorkflowBuilder, step, workflow
 from agent_framework._workflows._events import WorkflowErrorDetails, WorkflowEvent
 from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._runner_context import InProcRunnerContext, MessageType, WorkflowMessage
@@ -126,6 +126,7 @@ async def test_workflow_run_span_uses_semantic_convention_name(
     span_exporter: InMemorySpanExporter, streaming: bool, functional: bool
 ) -> None:
     """Graph and functional workflow invocations use the standard span name."""
+    workflow_instance: Workflow | FunctionalWorkflow
     if functional:
 
         @workflow
