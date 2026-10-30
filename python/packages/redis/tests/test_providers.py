@@ -636,7 +636,8 @@ class TestRedisHistoryProviderRedisKey:
         # [result, user] with a function_result whose call was trimmed, which the model rejects on
         # every later turn. The trim must advance past the orphaned result and keep [user].
         key = provider._redis_key("s")
-        mock_redis_client.ltrim.assert_awaited_once_with(key, 2, -1)
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.ltrim.assert_awaited_once_with(key, 2, -1)
 
     def test_legacy_format_warns_and_preserves_historical_keys(self, mock_redis_client: MagicMock):
         with (
@@ -770,7 +771,8 @@ class TestRedisHistoryProviderSaveMessages:
             ],
         )
 
-        mock_redis_client.ltrim.assert_called_once_with(provider._redis_key("s1"), 1, -1)
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.ltrim.assert_called_once_with(provider._redis_key("s1"), 1, -1)
 
     async def test_no_trim_when_under_limit(self, mock_redis_client: MagicMock):
         mock_redis_client.llen = AsyncMock(return_value=3)
