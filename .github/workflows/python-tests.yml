@@ -89,8 +89,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
-          # RedisVL still declares Python <3.15.
-          exclude-packages: ${{ matrix.python-version == '3.15' && 'agent-framework-redis' || '' }}
+          # Foundry Local requires Python 3.11-3.14; RedisVL still declares Python <3.15.
+          exclude-packages: ${{ matrix.python-version == '3.15' && 'agent-framework-redis agent-framework-foundry-local' || '' }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
