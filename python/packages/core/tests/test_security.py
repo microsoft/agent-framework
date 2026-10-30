@@ -8248,9 +8248,7 @@ class TestMCPIFCMetaLabels:
         ids=["malformed", "partial"],
     )
     @pytest.mark.parametrize("trust_server_ifc", [False, True])
-    def test_stamp_contents_invalid_meta_falls_back_to_local_policy(
-        self, server_meta: dict[str, Any], trust_server_ifc: bool
-    ):
+    def test_stamp_contents_invalid_meta_fails_closed(self, server_meta: dict[str, Any], trust_server_ifc: bool):
         from agent_framework.security import _stamp_mcp_content_labels
 
         static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
@@ -8262,10 +8260,32 @@ class TestMCPIFCMetaLabels:
         ]
         _stamp_mcp_content_labels(contents, static, trust_server_ifc=trust_server_ifc)
         assert contents[0].additional_properties["security_label"] == {
-            "integrity": "trusted",
-            "confidentiality": "public",
+            "integrity": "untrusted",
+            "confidentiality": "user_identity",
+            "metadata": {"source": "invalid_mcp_ifc"},
         }
         assert "_meta" not in contents[0].additional_properties
+
+    def test_stamp_contents_unretained_ifc_fails_closed(self) -> None:
+        """A framework-dropped IFC label cannot silently fall back to public."""
+        from agent_framework.security import _stamp_mcp_content_labels
+
+        static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
+        contents = [
+            Content.from_text(
+                "x",
+                additional_properties={"_mcp_tool_result_security_meta": {"retained": False}},
+            )
+        ]
+
+        _stamp_mcp_content_labels(contents, static, trust_server_ifc=True)
+
+        assert contents[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "user_identity",
+            "metadata": {"source": "invalid_mcp_ifc"},
+        }
+        assert "_mcp_tool_result_security_meta" not in contents[0].additional_properties
 
     def test_stamp_contents_non_ifc_meta_falls_back_to_static(self):
         """Generic ``_meta`` keys unrelated to IFC don't accidentally produce a label."""

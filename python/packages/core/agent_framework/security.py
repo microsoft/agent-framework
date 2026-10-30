@@ -49,11 +49,13 @@ from ._sessions import AgentSession, ContextProvider, HistoryProvider, SessionCo
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    _FUNCTION_RESULT_CARRIER_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
     _bind_approval_response_to_pending_request,  # pyright: ignore[reportPrivateUsage]
+    _FunctionResultCarrier,  # pyright: ignore[reportPrivateUsage]
     _load_pending_approval_requests,  # pyright: ignore[reportPrivateUsage]
     tool,
 )
@@ -119,6 +121,7 @@ _SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_security_policy_errors"
 _SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_security_arguments_materialized"
 _SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_security_materialized_authority"
 _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
+_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY = "_security_result_fallback_label"
 _MAX_REPLAY_CONTENT_DEPTH = 32
 _REPLAY_STATE_COVERED_KEY = "_agent_framework_fides_replay_state_covered"
 _REPLAY_STATE_COVERED_MARKER = object()
@@ -2116,7 +2119,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         )
         logger.info("Context label reset to TRUSTED + PUBLIC")
 
-    def _update_context_label(self, new_content_label: ContentLabel) -> None:
+    def _update_context_label(
+        self,
+        new_content_label: ContentLabel,
+        *,
+        scope: _SecurityScope | None = None,
+    ) -> None:
         """Update the context label based on new content added to the context.
 
         The context label is updated using the most restrictive policy:
@@ -2125,21 +2133,24 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
         Args:
             new_content_label: The label of the new content being added to context.
+            scope: Exact security scope to update after task-local activation has unwound.
         """
-        old_label = self._context_label
-        self._context_label = combine_labels(self._context_label, new_content_label)
+        target_scope = scope if scope is not None else self._scope
+        old_label = target_scope.context_label
+        target_scope.context_label = combine_labels(target_scope.context_label, new_content_label)
+        updated_label = target_scope.context_label
 
-        if old_label != self._context_label:
+        if old_label != updated_label:
             logger.info(
                 f">>> CONTEXT TAINT: [{old_label.integrity.value}, {old_label.confidentiality.value}] "
-                f"-> [{self._context_label.integrity.value}, {self._context_label.confidentiality.value}] "
+                f"-> [{updated_label.integrity.value}, {updated_label.confidentiality.value}] "
                 f"(new content: [{new_content_label.integrity.value}, {new_content_label.confidentiality.value}])"
             )
         else:
             logger.debug(
                 "Context label unchanged: [%s, %s]",
-                self._context_label.integrity.value,
-                self._context_label.confidentiality.value,
+                updated_label.integrity.value,
+                updated_label.confidentiality.value,
             )
 
     @staticmethod
@@ -2755,6 +2766,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             context_label = self._context_label
             context.metadata["context_label"] = context_label
             context.metadata["argument_label"] = argument_label
+            context.metadata[_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY] = fallback_label
             context.metadata["effective_invocation_label"] = combine_labels(context_label, argument_label)
 
             materialization_token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set((
@@ -5528,6 +5540,7 @@ async def apply_mcp_security_labels(
 # ``_meta`` keys can be interpreted by additional consumers without touching
 # the transport layer.
 _MCP_RESULT_META_KEY = "_meta"
+_MCP_RESULT_SECURITY_META_KEY = "_mcp_tool_result_security_meta"
 
 
 def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
@@ -5570,13 +5583,13 @@ def _stamp_mcp_content_labels(
 ) -> Any:
     """Stamp ``security_label`` on each Content in an MCP tool result.
 
-    A parseable server label from ``additional_properties["_meta"]`` can only
-    restrict ``local_label`` through standard FIDES label combination by
-    default. When ``trust_server_ifc`` is enabled locally, a complete valid
-    server label is authoritative for that result. The local label is used
-    unchanged when metadata is missing, partial, or malformed. The sentinel
-    ``_meta`` key is consumed regardless so downstream layers do not re-process
-    it.
+    A parseable server label can only restrict ``local_label`` through standard
+    FIDES label combination by default. When ``trust_server_ifc`` is enabled
+    locally, a complete valid server label is authoritative for that result.
+    IFC metadata retained by the framework uses an independently bounded
+    private carrier, so generic Host-payload exhaustion cannot discard it.
+    Supplied-but-invalid or unretainable IFC metadata fails closed as
+    UNTRUSTED/PRIVATE. Private carrier keys and ``_meta`` are consumed.
     """
     if not isinstance(contents, list):
         return contents
@@ -5587,9 +5600,35 @@ def _stamp_mcp_content_labels(
         props = item.additional_properties or {}
         props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
         props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
+        security_meta = props.pop(_MCP_RESULT_SECURITY_META_KEY, None)
         server_meta = props.pop(_MCP_RESULT_META_KEY, None)
-        dynamic = _label_from_mcp_meta(server_meta) if server_meta else None
-        if dynamic is None:
+        invalid_ifc = False
+        dynamic: ContentLabel | None = None
+        if security_meta is not None:
+            if isinstance(security_meta, Mapping):
+                security_meta_mapping = cast(Mapping[str, Any], security_meta)
+            else:
+                security_meta_mapping = None
+            if security_meta_mapping is not None and security_meta_mapping.get("retained") is True:
+                dynamic = _label_from_mcp_meta(security_meta_mapping.get("meta"))
+                invalid_ifc = dynamic is None
+            else:
+                invalid_ifc = True
+        elif isinstance(server_meta, Mapping) and "ifc" in server_meta:
+            dynamic = _label_from_mcp_meta(server_meta)
+            invalid_ifc = dynamic is None
+
+        if invalid_ifc:
+            label = combine_labels(
+                local_label,
+                ContentLabel(
+                    integrity=IntegrityLabel.UNTRUSTED,
+                    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                    metadata={"source": "invalid_mcp_ifc"},
+                ),
+            )
+            props[_AUTHORITATIVE_SECURITY_LABEL] = _INTERNAL_RESULT_MARKER
+        elif dynamic is None:
             label = local_label
         elif trust_server_ifc:
             label = dynamic
@@ -5601,17 +5640,62 @@ def _stamp_mcp_content_labels(
     return contents_list
 
 
+def _stamp_mcp_error_carrier_label(
+    context: FunctionInvocationContext,
+    local_label: ContentLabel,
+    fallback_label: ContentLabel,
+    *,
+    trust_server_ifc: bool,
+) -> ContentLabel | None:
+    """Apply retained MCP IFC to a generic function-error result carrier."""
+    raw_carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+    if not isinstance(raw_carrier, _FunctionResultCarrier):
+        return None
+
+    security_meta = raw_carrier.private_metadata.pop(_MCP_RESULT_SECURITY_META_KEY, None)
+    probe = Content.from_text("")
+    valid_server_ifc = False
+    if security_meta is not None:
+        probe.additional_properties[_MCP_RESULT_SECURITY_META_KEY] = security_meta
+        if isinstance(security_meta, Mapping):
+            security_meta_mapping = cast(Mapping[str, Any], security_meta)
+            if security_meta_mapping.get("retained") is True:
+                valid_server_ifc = _label_from_mcp_meta(security_meta_mapping.get("meta")) is not None
+    effective_local_label = (
+        fallback_label if security_meta is None or (valid_server_ifc and not trust_server_ifc) else local_label
+    )
+    stamped = cast(
+        list[Content],
+        _stamp_mcp_content_labels([probe], effective_local_label, trust_server_ifc=trust_server_ifc),
+    )
+    if not stamped:
+        return None
+
+    stamped_item = stamped[0]
+    stamped_properties = dict(stamped_item.additional_properties)
+    stamped_properties.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+    stamped_properties.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
+    raw_carrier.item_additional_properties = {
+        **raw_carrier.item_additional_properties,
+        **stamped_properties,
+    }
+    label_data = stamped_properties.get("security_label")
+    if not isinstance(label_data, MutableMapping):
+        return None
+    return ContentLabel.from_dict(cast(MutableMapping[str, Any], label_data))
+
+
 def _current_mcp_local_label(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> ContentLabel:
     """Read the current local MCP output policy from a FunctionTool."""
     props = func_tool.additional_properties or {}
     try:
         integrity = IntegrityLabel(props.get("source_integrity", default_integrity.value))
-    except ValueError:
-        integrity = default_integrity
+    except (TypeError, ValueError):
+        integrity = IntegrityLabel.UNTRUSTED
     try:
         confidentiality = ConfidentialityLabel(props.get("confidentiality", ConfidentialityLabel.PUBLIC.value))
-    except ValueError:
-        confidentiality = ConfidentialityLabel.PUBLIC
+    except (TypeError, ValueError):
+        confidentiality = ConfidentialityLabel.PRIVATE
     return ContentLabel(integrity=integrity, confidentiality=confidentiality)
 
 
@@ -5635,9 +5719,43 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
         local_label = _current_mcp_local_label(func_tool, default_integrity)
         trust_server_ifc = props.get(_MCP_TRUST_SERVER_IFC_KEY) is True
 
-        res = original(*args, **kwargs)
-        if _inspect.isawaitable(res):
-            res = await res
+        invocation_context = next(
+            (value for value in kwargs.values() if isinstance(value, FunctionInvocationContext)),
+            None,
+        )
+        try:
+            res = original(*args, **kwargs)
+            if _inspect.isawaitable(res):
+                res = await res
+        except Exception:
+            if invocation_context is not None:
+                raw_fallback_label = invocation_context.metadata.get(_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY)
+                fallback_label = raw_fallback_label if isinstance(raw_fallback_label, ContentLabel) else local_label
+                error_label = _stamp_mcp_error_carrier_label(
+                    invocation_context,
+                    local_label,
+                    fallback_label,
+                    trust_server_ifc=trust_server_ifc,
+                )
+                active_middleware = _current_middleware.get()
+                if (
+                    error_label is not None
+                    and active_middleware is not None
+                    and _current_context.get() is invocation_context
+                ):
+                    raw_carrier = invocation_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+                    if isinstance(raw_carrier, _FunctionResultCarrier):
+                        active_scope = active_middleware._scope  # pyright: ignore[reportPrivateUsage]
+
+                        def commit_error_label() -> None:
+                            invocation_context.metadata["result_label"] = error_label
+                            active_middleware._update_context_label(  # pyright: ignore[reportPrivateUsage]
+                                error_label,
+                                scope=active_scope,
+                            )
+
+                        raw_carrier.error_result_finalizer = commit_error_label
+            raise
         return _stamp_mcp_content_labels(res, local_label, trust_server_ifc=trust_server_ifc)
 
     _wrapped._ifc_wrapped = True  # type: ignore[attr-defined]
