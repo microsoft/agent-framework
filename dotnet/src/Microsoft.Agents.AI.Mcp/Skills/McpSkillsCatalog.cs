@@ -64,6 +64,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
     private readonly McpCache<string, IList<AgentSkill>> _catalogCache;
     private readonly ConcurrentDictionary<AgentMcpSkill, byte> _skillsToRefresh = new();
     private bool _disposed;
@@ -72,7 +73,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// Initializes a new instance of the <see cref="McpSkillsCatalog"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
     /// <param name="logger">Optional logger for skill validation diagnostics.</param>
     /// <param name="timeProvider">Optional clock for checking expiration.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
@@ -85,6 +86,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
         this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = timeProvider ?? TimeProvider.System;
+        this._ttlResolver = options?.TtlResolver;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
@@ -290,15 +292,9 @@ internal sealed partial class McpSkillsCatalog : IDisposable
             throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
         }
 
-        TimeSpan timeToLive = result.TimeToLive.GetValueOrDefault();
-        if (timeToLive < TimeSpan.Zero)
-        {
-            timeToLive = TimeSpan.Zero;
-        }
-
         // Unlike listing responses, skills/get provides a TTL for this skill,
         // allowing it to expire and refresh independently of the catalog.
-        return this.CreateSkill(result.Skill, new McpCacheLifetime(receivedTimestamp, timeToLive));
+        return this.CreateSkill(result.Skill, McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
     }
 
     /// <summary>
@@ -310,7 +306,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
 
         List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime);
+        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver);
     }
 
     /// <summary>
@@ -398,13 +394,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
                 throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
             }
 
-            TimeSpan pageTimeToLive = result.TimeToLive.GetValueOrDefault();
-            if (pageTimeToLive < TimeSpan.Zero)
-            {
-                pageTimeToLive = TimeSpan.Zero;
-            }
-
-            pageLifetimes.Add(new McpCacheLifetime(receivedTimestamp, pageTimeToLive));
+            pageLifetimes.Add(McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
 
             cursor = result.NextCursor;
             if (cursor is not null && !cursors.Add(cursor))

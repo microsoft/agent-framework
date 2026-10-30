@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+
 namespace Microsoft.Agents.AI;
 
 /// <summary>
@@ -15,6 +17,23 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed class AgentMcpSkillsSourceOptions
 {
+    /// <summary>
+    /// Gets or sets a callback that determines the cache duration for each skill-list page, skill metadata, and resource response.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The MCP specification requires a TTL, but some servers may not provide it.
+    /// When this property is <see langword="null"/>, positive server TTLs are used unchanged;
+    /// missing, zero, or negative TTLs cause a fetch on every access.
+    /// </para>
+    /// <para>
+    /// The callback receives the server TTL, or <see langword="null"/> if missing, and returns the cache duration.
+    /// Positive results set the duration from response receipt; zero or negative results cause a fetch on the next access.
+    /// Extending TTLs delays observing server changes but does not bypass content validation.
+    /// </para>
+    /// </remarks>
+    public Func<TimeSpan?, TimeSpan>? TtlResolver { get; set; }
+
     /// <summary>
     /// Gets or sets the maximum number of <c>skills/list</c> pages requested per discovery.
     /// </summary>

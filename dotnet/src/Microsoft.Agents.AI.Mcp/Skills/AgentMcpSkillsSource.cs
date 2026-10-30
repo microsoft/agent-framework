@@ -26,7 +26,8 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// The skill list may span multiple response pages, each with a time to live (TTL).
 /// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
-/// A missing, zero, or negative page TTL causes the list to be fetched on every call.
+/// By default, a missing, zero, or negative page TTL causes the list to be fetched on every call.
+/// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override page, skill metadata, and resource TTLs.
 /// Disable other caches around this source, including the builder's cache through
 /// <see cref="AgentSkillsProviderBuilder.DisableCaching"/>, so this source can check expiration on each call.
 /// </para>
@@ -39,7 +40,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Each skill object caches resource content separately from the skill list, using each resource response's TTL.
-/// Expired resource content is fetched again on access. A missing, zero, or negative resource TTL
+/// Expired resource content is fetched again on access. By default, a missing, zero, or negative resource TTL
 /// causes content to be fetched on every access. All TTLs start when responses arrive, before validation.
 /// </para>
 /// <para>
@@ -97,7 +98,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
     /// <param name="loggerFactory">Optional factory for diagnostic logging.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>

@@ -53,6 +53,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     private readonly long _maxResourceSizeBytes;
     private readonly McpSkillsCatalog _skillsCatalog;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
     private readonly McpCache<string, ResourceContents> _resourceCache;
 
     /// <summary>
@@ -67,8 +68,9 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="maxResourceSizeBytes">The maximum allowed resource size in bytes.</param>
     /// <param name="timeProvider">Optional clock for resource expiration.</param>
     /// <param name="metadataLifetime">Optional lifetime for skill metadata. Defaults to no independent expiration; the catalog lifetime controls refreshes.</param>
+    /// <param name="ttlResolver">Optional callback to override the server's resource TTLs.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> is not positive.</exception>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, McpSkillsCatalog catalog, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null)
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, McpSkillsCatalog catalog, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this.Uri = Throw.IfNullOrWhitespace(uri);
@@ -78,6 +80,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         this._client = Throw.IfNull(client);
         this._skillsCatalog = Throw.IfNull(catalog);
         this._timeProvider = timeProvider ?? TimeProvider.System;
+        this._ttlResolver = ttlResolver;
         this._resourceCache = new(this._timeProvider, StringComparer.Ordinal);
         this._logger = logger ?? NullLogger.Instance;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResourceSizeBytes);
@@ -219,7 +222,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             this.VerifyInstructions(content);
         }
 
-        return new(content, new(receivedTimestamp, response.TimeToLive.GetValueOrDefault()));
+        return new(value: content, lifetime: McpCacheLifetime.Create(receivedTimestamp, response.TimeToLive, this._ttlResolver));
     }
 
     /// <summary>
