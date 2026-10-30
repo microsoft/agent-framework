@@ -2186,4 +2186,71 @@ async def test_empty_client_kwargs_clears_previous() -> None:
     assert agent.captured_kwargs[-1].get("client_kwargs") == {}
 
 
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_caller_kwargs_override_checkpoint_kwargs_on_restore(tmp_path: Any, kwargs_channel: str) -> None:
+    """Caller-provided kwargs override checkpoint-restored kwargs on continuation."""
+    from agent_framework_orchestrations._orchestration_request_info import AgentRequestInfoResponse
+
+    from agent_framework import FileCheckpointStorage
+
+    storage = FileCheckpointStorage(
+        tmp_path,
+        allowed_checkpoint_types=[
+            "agent_framework_orchestrations._orchestration_request_info:AgentRequestInfoResponse"
+        ],
+    )
+
+    def build_workflow() -> tuple[Any, _KwargsCapturingAgent, _KwargsCapturingAgent]:
+        agent = _KwargsCapturingAgent(name="agent")
+        sibling = _KwargsCapturingAgent(name="sibling")
+        workflow = (
+            SequentialBuilder(participants=[agent, sibling], checkpoint_storage=storage)
+            .with_request_info(agents=[agent])
+            .build()
+        )
+        return workflow, agent, sibling
+
+    workflow, agent, _ = build_workflow()
+    old_kwargs = {"key": "OLD"}
+    new_kwargs = {"key": "NEW"}
+
+    run_kwargs = {kwargs_channel: old_kwargs}
+    paused = await workflow.run("test", **run_kwargs)
+    [request] = paused.get_request_info_events()
+    assert agent.captured_kwargs[0].get(kwargs_channel) == old_kwargs
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    checkpoint = max(
+        (item for item in checkpoints if item.pending_request_info_events),
+        key=lambda item: item.timestamp,
+    )
+
+    # 1. Resuming with checkpoint_id and new kwargs: new kwargs must override checkpoint's old kwargs
+    resumed_workflow, _, resumed_sibling = build_workflow()
+    resume_kwargs = {kwargs_channel: new_kwargs}
+    resumed = await resumed_workflow.run(
+        checkpoint_id=checkpoint.checkpoint_id,
+        **resume_kwargs,
+    )
+    [resumed_request] = resumed.get_request_info_events()
+    assert resumed_request.request_id == request.request_id
+
+    # 2. Resuming with responses: executor should receive NEW kwargs
+    await resumed_workflow.run(
+        responses={resumed_request.request_id: AgentRequestInfoResponse.approve()},
+    )
+    assert resumed_sibling.captured_kwargs[0].get(kwargs_channel) == new_kwargs
+
+    # 3. Direct combined restore (checkpoint_id + responses + new kwargs)
+    combined_workflow, _, combined_sibling = build_workflow()
+    combined_kwargs = {"key": "COMBINED"}
+    combined_resume_kwargs = {kwargs_channel: combined_kwargs}
+    await combined_workflow.run(
+        checkpoint_id=checkpoint.checkpoint_id,
+        responses={request.request_id: AgentRequestInfoResponse.approve()},
+        **combined_resume_kwargs,
+    )
+    assert combined_sibling.captured_kwargs[0].get(kwargs_channel) == combined_kwargs
+
+
 # endregion
