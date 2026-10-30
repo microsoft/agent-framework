@@ -765,6 +765,32 @@ class TestMcpTool:
         assert tool.kind == "mcp"
         assert isinstance(tool.approvalMode, McpServerApprovalMode)
 
+    def test_mcp_tool_specify_approval_mode_parses_with_tool_lists(self):
+        """The specify mode with its tool lists must parse into its own subclass."""
+        tool = McpTool.from_dict({
+            "name": "mcp_tool",
+            "kind": "mcp",
+            "serverName": "test-server",
+            "approvalMode": {
+                "kind": "specify",
+                "alwaysRequireApprovalTools": ["alpha"],
+                "neverRequireApprovalTools": ["beta"],
+            },
+        })
+        assert isinstance(tool.approvalMode, McpServerToolSpecifyApprovalMode)
+        assert tool.approvalMode.alwaysRequireApprovalTools == ["alpha"]
+        assert tool.approvalMode.neverRequireApprovalTools == ["beta"]
+
+    def test_mcp_tool_simplified_specify_approval_mode_parses(self):
+        """The simplified string form must produce the specify subclass, not the base mode."""
+        tool = McpTool.from_dict({"name": "mcp_tool", "kind": "mcp", "approvalMode": "specify"})
+        assert isinstance(tool.approvalMode, McpServerToolSpecifyApprovalMode)
+
+    def test_mcp_tool_rejects_an_unknown_approval_mode(self):
+        """An unknown approval mode name is rejected instead of parsing as the base mode."""
+        with pytest.raises(ValueError, match="Unsupported approval mode"):
+            McpTool.from_dict({"name": "mcp_tool", "kind": "mcp", "approvalMode": "sometimes"})
+
     def test_mcp_tool_with_simplified_approval_mode(self):
         """Test McpTool with simplified string format for approvalMode."""
         # Test simplified string format: approvalMode: "always"

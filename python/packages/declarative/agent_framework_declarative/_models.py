@@ -806,11 +806,15 @@ class McpTool(Tool):
         self.serverName = _try_powerfx_eval(serverName)
         self.serverDescription = _try_powerfx_eval(serverDescription)
         if not isinstance(approvalMode, McpServerApprovalMode) and approvalMode is not None:
-            # Handle simplified string format: "always" -> {"kind": "always"}
+            # Handle simplified string format: "always" -> {"kind": "always"}.
+            # Dispatch by kind so specify mode parses into its own subclass with
+            # the tool lists; the base class only carries the kind.
             if isinstance(approvalMode, str):
-                approvalMode = McpServerApprovalMode.from_dict({"kind": approvalMode})
+                approvalMode = agent_schema_dispatch({"kind": approvalMode})
             else:
-                approvalMode = McpServerApprovalMode.from_dict(approvalMode)
+                approvalMode = agent_schema_dispatch(approvalMode)
+            if not isinstance(approvalMode, McpServerApprovalMode):
+                raise ValueError(f"Unsupported approval mode: {approvalMode!r}")
         self.approvalMode = approvalMode
         self.allowedTools = allowedTools or []
         self.url = _try_powerfx_eval(url)
