@@ -120,3 +120,22 @@ def test_win32_quoted_shell_override_with_spaces(monkeypatch: pytest.MonkeyPatch
     assert argv[0] == r"C:\Program Files\PowerShell\7\pwsh.exe"
     assert "-NoProfile" in argv
     assert argv[-1] == "-Command"
+
+
+def test_win32_adjacent_quoted_unquoted_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_framework_tools.shell._resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module.sys, "platform", "win32")
+    argv = resolve_shell('"C:/Program Files"/PowerShell/7/pwsh.exe -NoProfile', interactive=False)
+    assert argv[0] == "C:/Program Files/PowerShell/7/pwsh.exe"
+    assert "-NoProfile" in argv
+    assert argv[-1] == "-Command"
+
+
+def test_win32_equals_quoted_value_stays_one_arg(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_framework_tools.shell._resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module.sys, "platform", "win32")
+    argv = resolve_shell(r'C:\msys64\usr\bin\bash.exe --rcfile="C:/Program Files/bash.rc"', interactive=True)
+    assert argv[0] == r"C:\msys64\usr\bin\bash.exe"
+    assert argv[1] == "--rcfile=C:/Program Files/bash.rc"

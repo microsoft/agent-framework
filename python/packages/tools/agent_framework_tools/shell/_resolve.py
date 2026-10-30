@@ -18,27 +18,43 @@ def _split_shell_override(value: str) -> list[str]:
     r"""Split a shell override string into argv.
 
     On POSIX, ``shlex.split`` is correct. On Windows, ``shlex.split`` treats
-    ``\\`` as an escape and drops backslashes from unquoted paths such as
-    ``C:\\Windows\\...\\powershell.exe``, which then fails with
-    ``FileNotFoundError``. Use non-POSIX splitting that keeps backslashes and
-    only honours double quotes (aligned with ``CommandLineToArgvW``).
+    ``\`` as an escape and drops backslashes from unquoted paths such as
+    ``C:\Windows\...\powershell.exe``, which then fails with
+    ``FileNotFoundError``. Parse with CommandLineToArgvW-like rules: keep
+    backslashes literal, honour double quotes, and concatenate adjacent
+    quoted and unquoted fragments (so ``"C:/Program Files"/PowerShell/7/pwsh.exe``
+    stays one argv element).
     """
     import shlex
 
     if sys.platform != "win32":
         return shlex.split(value)
 
-    lexer = shlex.shlex(value, posix=False)
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    lexer.quotes = '"'
-    parts: list[str] = []
-    for token in lexer:
-        if len(token) >= 2 and token[0] == '"' and token[-1] == '"':
-            parts.append(token[1:-1])
+    args: list[str] = []
+    buf: list[str] = []
+    in_quotes = False
+    i = 0
+    n = len(value)
+    while i < n:
+        c = value[i]
+        if in_quotes:
+            if c == '"':
+                in_quotes = False
+            else:
+                buf.append(c)
         else:
-            parts.append(token)
-    return parts
+            if c == '"':
+                in_quotes = True
+            elif c in " 	":
+                if buf:
+                    args.append("".join(buf))
+                    buf = []
+            else:
+                buf.append(c)
+        i += 1
+    if buf:
+        args.append("".join(buf))
+    return args
 
 
 def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> list[str]:
