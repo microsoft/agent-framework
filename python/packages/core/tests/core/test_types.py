@@ -2326,6 +2326,59 @@ def test_from_updates_starts_new_message_for_authors_sharing_a_message_id() -> N
     ]
 
 
+@pytest.mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+    ids=["chat", "agent"],
+)
+def test_from_updates_rejoins_interleaved_updates_that_share_a_message_id(
+    response_type: Any,
+    update_type: Any,
+) -> None:
+    """Test that interleaved updates carrying the same message id aggregate into one message each.
+
+    Streams with interleaved alternatives (e.g. ``n>1`` chat completions choices) tag
+    each fragment with the id of the message it belongs to; aggregation must return to
+    the message with that id instead of shattering the stream into per-fragment
+    messages.
+    """
+    response = response_type.from_updates([
+        update_type(contents=[Content.from_text("A1")], role="assistant", message_id="m0"),
+        update_type(contents=[Content.from_text("B1")], role="assistant", message_id="m1"),
+        update_type(contents=[Content.from_text("A2")], role="assistant", message_id="m0"),
+        update_type(contents=[Content.from_text("B2")], role="assistant", message_id="m1"),
+    ])
+
+    assert [(message.message_id, message.text) for message in response.messages] == [
+        ("m0", "A1A2"),
+        ("m1", "B1B2"),
+    ]
+
+
+def test_from_updates_keeps_usage_in_arrival_order_across_interleaved_message_ids() -> None:
+    """Test that response-level usage follows update arrival order, not message grouping."""
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(contents=[Content.from_text("A1")], role="assistant", message_id="m0"),
+        ChatResponseUpdate(contents=[Content.from_text("B1")], role="assistant", message_id="m1"),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_text("B2"),
+                Content.from_usage(UsageDetails(total_token_count=10), merge_mode="replace"),
+            ],
+            role="assistant",
+            message_id="m1",
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_usage(UsageDetails(total_token_count=15), merge_mode="replace")],
+            role="assistant",
+            message_id="m0",
+        ),
+    ])
+
+    assert response.usage_details is not None
+    assert response.usage_details["total_token_count"] == 15
+
+
 def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
     response = AgentResponse.from_updates([
         AgentResponseUpdate(agent_id="first-agent"),

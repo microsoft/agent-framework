@@ -2565,8 +2565,28 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
         is_new_message = True
 
     if is_new_message:
-        message = Message("assistant", [])
-        response.messages.append(message)
+        author_or_role_boundary = bool(response.messages) and (
+            (
+                update.author_name
+                and response.messages[-1].author_name
+                and response.messages[-1].author_name != update.author_name
+            )
+            or (update.role and response.messages[-1].role != update.role)
+        )
+        message = None
+        if update.message_id and not author_or_role_boundary:
+            # The update belongs to the message its id names. When alternatives
+            # interleave in one stream (e.g. `n>1` chat completions choices),
+            # return to the message that already carries this id instead of
+            # starting a new one for every interleaved fragment. Author and role
+            # boundaries still start a new message regardless of the id.
+            for existing_message in reversed(response.messages):
+                if existing_message.message_id == update.message_id:
+                    message = existing_message
+                    break
+        if message is None:
+            message = Message("assistant", [])
+            response.messages.append(message)
     else:
         message = response.messages[-1]
     if getattr(update, "merge_mode", None) == "replace":
