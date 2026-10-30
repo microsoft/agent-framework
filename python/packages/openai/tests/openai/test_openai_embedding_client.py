@@ -432,3 +432,27 @@ async def test_integration_openai_get_embeddings_with_dimensions() -> None:
 
     assert len(result) == 1
     assert len(result[0].vector) == 256
+
+
+async def test_openai_embedding_client_close_ownership() -> None:
+    """close() releases an internally created client and leaves a caller-supplied one open."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework_openai import OpenAIEmbeddingClient
+
+    # Internally created client: close() must release it.
+    owned = OpenAIEmbeddingClient(model="text-embedding-3-small", api_key="test-key")
+    assert owned._owns_client is True
+    owned.client.close = AsyncMock()
+    await owned.close()
+    owned.client.close.assert_awaited_once()
+
+    # Caller-supplied client: close() must leave it open.
+    supplied = MagicMock()
+    supplied.close = AsyncMock()
+    caller_owned = OpenAIEmbeddingClient(
+        model="text-embedding-3-small", api_key="test-key", async_client=supplied
+    )
+    assert caller_owned._owns_client is False
+    await caller_owned.close()
+    supplied.close.assert_not_awaited()

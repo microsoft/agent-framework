@@ -112,12 +112,22 @@ class RawOllamaEmbeddingClient(
 
         self.model = ollama_settings["embedding_model"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
+        # Track ownership so close() only releases clients this instance created.
+        self._owns_client = client is None
         self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
         super().__init__(additional_properties=additional_properties)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
         return self.host
+
+    async def close(self) -> None:
+        """Close the internally created Ollama client when this instance owns it.
+
+        A caller-supplied ``client`` stays open: its lifecycle belongs to the caller.
+        """
+        if self._owns_client:
+            await self.client.close()
 
     async def get_embeddings(
         self,
