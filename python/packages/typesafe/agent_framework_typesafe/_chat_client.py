@@ -38,6 +38,7 @@ from agent_framework.observability import ChatTelemetryLayer
 from typesafe_sdk import (
     AsyncTypeSafeClient,
     ChoiceAnswer,
+    Image,
     Questions,
     ScoreAnswer,
     SystemOneResponse,
@@ -57,6 +58,9 @@ from ._tool_calls import compile_tool_call_plan
 
 _TYPESAFE_DEFAULT_BASE_URL = "https://api.typesafe.ai"
 _TYPESAFE_SYSTEM_ONE_PATH = "/v1/systemone"
+# TypeSafe gates image assets and Box questions behind this opt-in header.
+# See https://docs.typesafe.ai/go/images and https://docs.typesafe.ai/go/box.
+_TYPESAFE_IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
 
 
 class TypeSafeSettings(TypedDict, total=False):
@@ -244,12 +248,19 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 instructions=normalized_options.get("instructions"),
             )
 
+            extra_headers = (
+                {_TYPESAFE_IMAGES_HEADER: "true"}
+                if self._state_has_images(state) or self._has_box_questions(questions)
+                else None
+            )
+
             try:
                 response = await self.client.system_one(  # pyright: ignore[reportUnknownMemberType]
                     state=state,
                     questions=questions,
                     model=model,
                     response_model=SystemOneResponse,
+                    extra_headers=extra_headers,
                 )
             except TypeSafeError as exc:
                 self._raise_sdk_error(exc)
@@ -389,10 +400,12 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 content.type
                 for content in message.contents
                 if content.type not in {"text", "text_reasoning", "function_call", "function_result"}
+                and not RawTypeSafeChatClient._is_inline_image(content)
             })
             if unsupported_content_types:
                 raise ChatClientInvalidRequestException(
-                    f"TypeSafe only supports text, reasoning summaries, and function call/result content; "
+                    f"TypeSafe only supports text, inline images, reasoning summaries, and function call/result "
+                    f"content; "
                     f"message {index} contains: "
                     f"{', '.join(unsupported_content_types)}."
                 )
@@ -412,6 +425,8 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                     })
                 elif content.type == "function_result":
                     contents.append(RawTypeSafeChatClient._serialize_function_result(content))
+                elif RawTypeSafeChatClient._is_inline_image(content):
+                    contents.append({"type": "image", "image": RawTypeSafeChatClient._to_image(content)})
             if contents:
                 state_messages.append({
                     "role": str(message.role),
@@ -425,6 +440,34 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         if instructions:
             state["instructions"] = instructions
         return state
+
+    @staticmethod
+    def _is_inline_image(content: Content) -> bool:
+        return content.type == "data" and (content.media_type or "").startswith("image/")
+
+    @staticmethod
+    def _to_image(content: Content) -> Image:
+        uri = content.uri or ""
+        header, separator, payload = uri.partition(",")
+        if not separator or not header.endswith(";base64"):
+            raise ChatClientInvalidRequestException("TypeSafe image content must be a base64 data URI.")
+        try:
+            return Image.from_base64(payload)
+        except Exception as exc:
+            raise ChatClientInvalidRequestException(f"TypeSafe could not read image content: {exc}") from exc
+
+    @staticmethod
+    def _state_has_images(state: Mapping[str, Any]) -> bool:
+        return any(
+            item.get("type") == "image" for message in state.get("messages", ()) for item in message.get("contents", ())
+        )
+
+    @staticmethod
+    def _has_box_questions(questions: Questions) -> bool:
+        return any(
+            (question.get("type") if isinstance(question, Mapping) else getattr(question, "type", None)) == "box"
+            for question in questions.values()
+        )
 
     @staticmethod
     def _serialize_function_result(content: Content) -> dict[str, Any]:
