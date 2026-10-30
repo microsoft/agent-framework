@@ -5,14 +5,16 @@ import json
 import math
 import os
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Annotated, Any, cast
 
+import httpx
 import httpx2
 import pytest
 from agent_framework import InMemoryCollection, VectorStoreField, create_vector_search_tool, vectorstoremodel
 from agent_framework._settings import SecretString
 from agent_framework_openai._embedding_client import RawOpenAIEmbeddingClient  # pyright: ignore[reportPrivateUsage]
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from agent_framework_nvidia import NvidiaEmbeddingClient, RawNvidiaEmbeddingClient
 from agent_framework_nvidia._embedding_client import (  # pyright: ignore[reportPrivateUsage]
@@ -22,6 +24,8 @@ from agent_framework_nvidia._embedding_client import (  # pyright: ignore[report
     _batches,  # pyright: ignore[reportPrivateUsage]
 )
 from agent_framework_nvidia._feature_usage import FeatureIndex  # pyright: ignore[reportPrivateUsage]
+
+_OPENAI_HTTPX = import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0])
 
 # region: helpers
 
@@ -54,13 +58,13 @@ class MockNvidia:
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
-        self.requests: list[httpx2.Request] = []
+        self.requests: list[httpx.Request | httpx2.Request] = []
         self.bodies: list[dict[str, Any]] = []
 
-    def handler(self, request: httpx2.Request) -> httpx2.Response:
+    def handler(self, request: httpx.Request | httpx2.Request) -> httpx.Response | httpx2.Response:
         self.requests.append(request)
         self.bodies.append(json.loads(request.content))
-        return httpx2.Response(200, json=self._payload)
+        return _OPENAI_HTTPX.Response(200, json=self._payload)
 
 
 def make_mock_client(model: str = "test-model") -> tuple[NvidiaEmbeddingClient, MockNvidia]:
@@ -68,7 +72,7 @@ def make_mock_client(model: str = "test-model") -> tuple[NvidiaEmbeddingClient, 
     async_client = AsyncOpenAI(
         api_key="test-key",
         base_url=DEFAULT_BASE_URL,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(server.handler)),
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(server.handler)),
     )
     return NvidiaEmbeddingClient(model=model, async_client=async_client), server
 
@@ -233,7 +237,7 @@ async def test_raw_client_sends_nvidia_options_without_telemetry() -> None:
     async_client = AsyncOpenAI(
         api_key="test-key",
         base_url=DEFAULT_BASE_URL,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(server.handler)),
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(server.handler)),
     )
     client = RawNvidiaEmbeddingClient(model="test-model", async_client=async_client)
 
@@ -335,26 +339,26 @@ class BatchingNvidia:
         self._fail_request = fail_request
         self._next = 0
 
-    def handler(self, request: httpx2.Request) -> httpx2.Response:
+    def handler(self, request: httpx.Request | httpx2.Request) -> httpx.Response | httpx2.Response:
         body = json.loads(request.content)
         self.bodies.append(body)
         self.batch_sizes.append(len(body["input"]))
         if len(self.batch_sizes) == self._fail_request:
-            return httpx2.Response(
+            return _OPENAI_HTTPX.Response(
                 400, json={"object": "error", "message": "rejected", "type": "invalid_request_error"}
             )
         vectors = [[float(self._next + i), 0.0, 0.0] for i in range(len(body["input"]))]
         self._next += len(vectors)
         payload = make_embeddings_payload(vectors)
         payload["usage"] = {"prompt_tokens": len(vectors), "total_tokens": len(vectors)}
-        return httpx2.Response(200, json=payload)
+        return _OPENAI_HTTPX.Response(200, json=payload)
 
 
 def make_batching_client(server: BatchingNvidia) -> NvidiaEmbeddingClient:
     async_client = AsyncOpenAI(
         api_key="test-key",
         base_url=DEFAULT_BASE_URL,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(server.handler)),
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(server.handler)),
     )
     return NvidiaEmbeddingClient(model="test-model", async_client=async_client)
 

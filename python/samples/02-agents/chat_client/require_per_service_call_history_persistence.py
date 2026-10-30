@@ -14,7 +14,7 @@ from agent_framework import (
     Message,
     MiddlewareTermination,
 )
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -95,7 +95,7 @@ async def main() -> None:
     query = "What is the weather in Seattle, and should I bring sunglasses?"
 
     # 2. Create and run the agent without per-service-call persistence.
-    agent_without_persistence = Agent(
+    agent_without_persistence = Agent[FoundryChatOptions](
         client=client,
         instructions=(
             "You are a weather assistant. Call lookup_weather exactly once before answering "
@@ -124,7 +124,7 @@ async def main() -> None:
     print()
 
     # 3. Create and run the agent with per-service-call persistence enabled.
-    agent_with_persistence = Agent(
+    agent_with_persistence = Agent[FoundryChatOptions](
         client=client,
         instructions=(
             "You are a weather assistant. Call lookup_weather exactly once before answering "
