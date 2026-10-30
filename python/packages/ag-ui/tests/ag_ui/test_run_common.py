@@ -27,6 +27,7 @@ from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
+    _emit_content,
     _close_reasoning_block,
     _emit_mcp_tool_result,
     _emit_text_reasoning,
@@ -1108,3 +1109,46 @@ class TestReasoningCoalescing:
         assert id1 is not None
         assert id2 is not None
         assert id1 != id2, "New turn should get a new reasoning message_id"
+
+
+def test_replayed_declaration_only_calls_start_each_tool_call_once() -> None:
+    """Two declaration-only calls replayed after streaming must not re-emit START (#9638)."""
+    flow = FlowState()
+    streamed = [
+        Content.from_function_call(call_id="call_a", name="get_weather", arguments='{"city": "NYC"}'),
+        Content.from_function_call(call_id="call_b", name="get_time", arguments='{"zone": "UTC"}'),
+    ]
+    replayed = [
+        Content.from_function_call(call_id="call_a", name="get_weather"),
+        Content.from_function_call(call_id="call_b", name="get_time"),
+    ]
+    events = []
+    for content in [*streamed, *replayed]:
+        events.extend(_emit_content(content, flow))
+
+    starts = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    assert sorted(e.tool_call_id for e in starts) == ["call_a", "call_b"]
+    ids = [entry["id"] for entry in flow.pending_tool_calls]
+    assert sorted(ids) == ["call_a", "call_b"]
+
+
+def test_reused_provider_call_id_starts_a_new_occurrence() -> None:
+    """A later distinct call reusing a completed provider call_id must START again (#9638)."""
+    flow = FlowState()
+    streamed = [
+        Content.from_function_call(call_id="call_x", name="get_weather", arguments='{"city": "NYC"}'),
+    ]
+    for content in streamed:
+        _emit_content(content, flow)
+    _emit_content(Content.from_function_result(call_id="call_x", result="72F"), flow)
+    second = [
+        Content.from_function_call(call_id="call_x", name="get_weather", arguments='{"city": "LA"}'),
+    ]
+    events = []
+    for content in second:
+        events.extend(_emit_content(content, flow))
+
+    starts = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    assert [e.tool_call_id for e in starts] == ["call_x"]
+    assert flow.tool_calls_by_id["call_x"]["function"]["arguments"] == '{"city": "LA"}'
+    assert "call_x" not in flow.tool_calls_ended
