@@ -39,11 +39,17 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
+    BetaCitationCharLocation,
+    BetaCitationsDelta,
+    BetaCitationsWebSearchResultLocation,
     BetaMessage,
     BetaMessageDeltaUsage,
+    BetaRawContentBlockDeltaEvent,
+    BetaRawContentBlockStartEvent,
     BetaRedactedThinkingBlock,
     BetaServerToolUseBlock,
     BetaTextBlock,
+    BetaTextDelta,
     BetaToolUseBlock,
     BetaUsage,
     BetaWebSearchResultBlock,
@@ -5370,6 +5376,89 @@ def test_parse_citations_search_result_location(
 
     assert result is not None
     assert len(result) > 0
+
+
+def test_parse_citations_char_location_uses_document_title(mock_anthropic_client: MagicMock) -> None:
+    """A real char_location citation exposes ``document_title``; parsing must not read a missing ``title``."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    citation = BetaCitationCharLocation(
+        type="char_location",
+        cited_text="The sky is blue.",
+        document_index=0,
+        document_title="Facts",
+        start_char_index=0,
+        end_char_index=16,
+        file_id=None,
+    )
+    block = BetaTextBlock(type="text", text="The sky is blue.", citations=[citation])
+
+    result = client._parse_citations_from_anthropic(block)
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["title"] == "Facts"
+    assert result[0]["snippet"] == "The sky is blue."
+    assert result[0]["annotated_regions"] == [{"type": "text_span", "start_index": 0, "end_index": 16}]
+
+
+async def test_streaming_citations_delta_surfaces_annotations(mock_anthropic_client: MagicMock) -> None:
+    """Citations streamed as citations_delta events end up as annotations on the text, like non-streaming."""
+    char_citation = BetaCitationCharLocation(
+        type="char_location",
+        cited_text="Paris is sunny today.",
+        document_index=0,
+        document_title="Weather report",
+        start_char_index=0,
+        end_char_index=21,
+        file_id=None,
+    )
+    web_citation = BetaCitationsWebSearchResultLocation(
+        type="web_search_result_location",
+        url="https://example.com/paris",
+        title="Paris weather",
+        cited_text="Paris is sunny today.",
+        encrypted_index="enc-1",
+    )
+
+    async def events() -> Any:
+        yield _message_start_event("msg_cited")
+        yield BetaRawContentBlockStartEvent(
+            type="content_block_start", index=0, content_block=BetaTextBlock(type="text", text="", citations=None)
+        )
+        for citation in (char_citation, web_citation):
+            yield BetaRawContentBlockDeltaEvent(
+                type="content_block_delta",
+                index=0,
+                delta=BetaCitationsDelta(type="citations_delta", citation=citation),
+            )
+        yield BetaRawContentBlockDeltaEvent(
+            type="content_block_delta", index=0, delta=BetaTextDelta(type="text_delta", text="It is sunny in Paris.")
+        )
+        yield _content_block_stop_event()
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    async def create(**kwargs: Any) -> Any:
+        return events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response([Message(role="user", contents=["Weather in Paris?"])], stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert response.text == "It is sunny in Paris."
+    annotations = [
+        annotation
+        for message in response.messages
+        for content in message.contents
+        if content.type == "text"
+        for annotation in content.annotations or []
+    ]
+    assert [annotation["title"] for annotation in annotations] == ["Weather report", "Paris weather"]
+    assert annotations[1]["url"] == "https://example.com/paris"
+    assert all(annotation["snippet"] == "Paris is sunny today." for annotation in annotations)
 
 
 @pytest.mark.parametrize(
