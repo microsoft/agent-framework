@@ -66,5 +66,5 @@ help = "Run tests against the NVIDIA service using NVIDIA_API_KEY."
 cmd = 'pytest -m integration tests'
 
 [build-system]
-requires = ["flit-core>=3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

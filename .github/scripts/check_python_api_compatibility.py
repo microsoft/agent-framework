@@ -18,7 +18,6 @@ from pathlib import Path
 from griffe import (
     Alias,
     AliasResolutionError,
-    AttributeChangedValueBreakage,
     ExplanationStyle,
     Object,
     find_breaking_changes,
@@ -231,13 +230,6 @@ def main() -> int:
                 continue
 
             for breakage in find_breaking_changes(old_package, new_package):
-                if (
-                    isinstance(breakage, AttributeChangedValueBreakage)
-                    and "instance-attribute" in breakage.obj.labels
-                    and "class-attribute" not in breakage.obj.labels
-                ):
-                    continue
-
                 try:
                     old_breakage_obj = old_package.modules_collection.get_member(
                         breakage.obj.path

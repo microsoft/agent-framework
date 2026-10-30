@@ -16,6 +16,7 @@ from agent_framework import (
     Agent,
     AgentResponse,
     BaseChatClient,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -5244,12 +5245,12 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedTelemetryChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
         description="Nested telemetry agent",
-        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "NestedModel"},
     )
 
     span_exporter.clear()
@@ -6779,11 +6780,11 @@ async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExpo
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
-        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "NestedModel"},
     )
 
     span_exporter.clear()
@@ -6897,11 +6898,11 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="tool_agent_id",
         name="tool_agent",
-        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},
     )
 
     span_exporter.clear()
@@ -7001,11 +7002,11 @@ async def test_parallel_function_call_spans_nested_under_agent_span(span_exporte
 
             return _get_final()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=ParallelToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="parallel_tool_agent_id",
         name="parallel_tool_agent",
-        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},
     )
 
     span_exporter.clear()

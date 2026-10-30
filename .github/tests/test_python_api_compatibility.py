@@ -287,7 +287,7 @@ class ApiCompatibilityTests(unittest.TestCase):
         )
         self.assertNotIn(str(current_source), warning)
 
-    def test_ignores_instance_values_but_reports_other_attribute_values(self) -> None:
+    def test_attribute_value_changes_are_not_breaking(self) -> None:
         self.write_status([("agent-framework-stable", "stable", "released")])
         self.write_module(
             "stable",
@@ -321,17 +321,14 @@ class ApiCompatibilityTests(unittest.TestCase):
 
         result = self.run_checker(base_sha)
 
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 0)
         warnings = [
             line for line in result.stdout.splitlines() if line.startswith("::warning ")
         ]
-        self.assertEqual(len(warnings), 3)
-        self.assertTrue(any("PUBLIC_VALUE" in warning for warning in warnings))
-        self.assertTrue(
-            any("PublicClass.class_value" in warning for warning in warnings)
+        self.assertEqual(warnings, [])
+        self.assertIn(
+            "- Published API breakages: 0", (self.repo / "summary.md").read_text()
         )
-        self.assertTrue(any("PublicEnum.MEMBER" in warning for warning in warnings))
-        self.assertFalse(any("instance_value" in warning for warning in warnings))
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ async def main() -> None:
 
     # Create an agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
-    agent = Agent(
+    agent = Agent[AnthropicChatOptions](
         client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
