@@ -20,10 +20,76 @@ from agent_framework._filesystem import _storage_key_segment  # pyright: ignore[
 from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._telemetry import mark_feature_used
 from redis.credentials import CredentialProvider
+from redis.exceptions import WatchError
 
 from ._feature_usage import FeatureIndex
 
 _T = TypeVar("_T")
+
+# Optimistic-concurrency retries for a single ``save_messages`` call. Each retry recomputes the
+# trim boundary against the key state after a competing writer modified it (WATCH conflict).
+_SAVE_WATCH_RETRIES = 8
+
+# Content types that carry a tool output and therefore require a matching earlier call (or
+# approval request) in the same history. A message holding only such a content cannot start a
+# retained window: its source would already have been trimmed away, leaving a dangling output the
+# model rejects (``role='tool'`` without a preceding ``tool_calls``, or a function-call output
+# without its call).
+_DEFERRED_OUTPUT_SUFFIX = "_result"
+_DEFERRED_OUTPUT_TYPES = frozenset({"function_approval_response"})
+
+
+def _is_deferred_output_content(content_type: str) -> bool:
+    return content_type.endswith(_DEFERRED_OUTPUT_SUFFIX) or content_type in _DEFERRED_OUTPUT_TYPES
+
+
+def _is_source_content(content_type: str) -> bool:
+    return content_type.endswith("_call") or content_type == "function_approval_request"
+
+
+def _content_call_id(content: Any) -> str | None:
+    """Return the call/request id a content pairs with, when it carries one."""
+    call_id = getattr(content, "call_id", None)
+    return call_id if isinstance(call_id, str) and call_id else None
+
+
+def _window_is_self_contained(window: Sequence[Message]) -> bool:
+    """Return True when every deferred output in ``window`` has its matching source there too.
+
+    A model replay rejects an output whose call/request was trimmed away, so the retained window
+    must keep each output paired with its own source (matched by call id), not merely contain some
+    source somewhere. Non-adjacent pairs count: a result is only safe when its own call survives.
+    """
+    source_ids: set[str] = set()
+    for message in window:
+        for content in message.contents:
+            if _is_source_content(content.type):
+                call_id = _content_call_id(content)
+                if call_id is not None:
+                    source_ids.add(call_id)
+    for message in window:
+        for content in message.contents:
+            if _is_deferred_output_content(content.type):
+                call_id = _content_call_id(content)
+                if call_id is None or call_id not in source_ids:
+                    return False
+    return True
+
+
+def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
+    """Return the index to keep from so the retained window is self-contained and bounded.
+
+    The window keeps the most recent ``max_messages`` messages, then advances while the candidate
+    still holds a deferred output whose source lies outside it. Advancing drops those dangling
+    outputs along with older messages, so the retained history never splits a call/result group.
+    """
+    count = len(messages)
+    if count <= max_messages:
+        return 0
+    start = count - max_messages
+    while start < count and not _window_is_self_contained(messages[start:]):
+        start += 1
+    return start
 
 
 async def _redis_result(value: Awaitable[_T] | _T) -> _T:
@@ -302,23 +368,39 @@ class RedisHistoryProvider(HistoryProvider):
             # history is what clear() is for.
             return
 
-        existing_messages = await self.get_messages(session_id, state=state, **kwargs)
-        new_messages = filter_new_messages(existing_messages, messages)
+        # Retention trims the oldest messages, and the cut must not split a tool call/result pair.
+        # Read, append, and trim are guarded by WATCH so a concurrent save to the same key cannot
+        # make this one trim from a stale absolute index and delete the whole session history: if
+        # the key changed under us, the transaction aborts and we recompute against the new state.
+        for _ in range(_SAVE_WATCH_RETRIES):
+            async with self._redis_client.pipeline(transaction=True) as pipe:
+                await _redis_result(pipe.watch(key))
+                existing_messages = await self.get_messages(session_id, state=state, **kwargs)
+                new_messages = filter_new_messages(existing_messages, messages)
+                if not new_messages:
+                    await _redis_result(pipe.unwatch())
+                    return
 
-        if not new_messages:
-            return
+                serialized_messages = [self._serialize_json(msg) for msg in new_messages]
+                # ``existing_messages`` plus ``new_messages`` is exactly the list being written
+                # (existing entries followed by the appended ones), so its indices line up with the
+                # Redis list we are about to trim.
+                full_messages: list[Message] = list(existing_messages) + list(new_messages)
+                trim_start = -1
+                if self.max_messages is not None and len(full_messages) > self.max_messages:
+                    trim_start = _trim_start_index(full_messages, self.max_messages)
 
-        serialized_messages = [self._serialize_json(msg) for msg in new_messages]
-
-        async with self._redis_client.pipeline(transaction=True) as pipe:
-            for serialized in serialized_messages:
-                await _redis_result(pipe.rpush(key, serialized))
-            await pipe.execute()
-
-        if self.max_messages is not None:
-            current_count: int = await _redis_result(self._redis_client.llen(key))
-            if current_count > self.max_messages:
-                await _redis_result(self._redis_client.ltrim(key, -self.max_messages, -1))
+                pipe.multi()
+                for serialized in serialized_messages:
+                    await _redis_result(pipe.rpush(key, serialized))
+                if trim_start >= 0:
+                    await _redis_result(pipe.ltrim(key, trim_start, -1))
+                try:
+                    await pipe.execute()
+                except WatchError:
+                    # The key changed between WATCH and EXEC. Recompute against the new state.
+                    continue
+                return
 
     @staticmethod
     def _serialize_json(message: Message) -> str:
