@@ -427,7 +427,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.46,<0.3" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.140,<0.3" },
 ]
 
 [[package]]

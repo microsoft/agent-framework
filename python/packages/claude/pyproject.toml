@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.22.0,<2",
-    "claude-agent-sdk>=0.1.46,<0.3",
+    "claude-agent-sdk>=0.2.140,<0.3",
 ]
 
 [tool.uv]
