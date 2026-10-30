@@ -2769,6 +2769,21 @@ class RawOpenAIChatClient(
                         raw_representation=item,
                     )
                 )
+                if (
+                    local_shell_tool_name
+                    and is_local_environment
+                    and shell_call_id
+                    and shell_call_item_id
+                    and isinstance(raw_shell_commands, list)
+                    and not raw_shell_commands
+                ):
+                    contents.append(
+                        Content.from_shell_tool_result(
+                            call_id=shell_call_id,
+                            outputs=[],
+                            max_output_length=shell_max_output,
+                        )
+                    )
         elif item_type == "local_shell_call":
             raw_local_call_id = getattr(item, "call_id", None)
             local_call_id = raw_local_call_id if isinstance(raw_local_call_id, str) else ""
@@ -3041,6 +3056,16 @@ class RawOpenAIChatClient(
         expected_type: Literal["shell_call", "shell_call_output", "local_shell_call"],
     ) -> dict[str, Any]:
         """Restore a provider-issued shell transcript item for stateless replay."""
+        if (
+            expected_type == "shell_call_output"
+            and content.raw_representation is None
+            and content.call_id
+            and content.outputs == []
+        ):
+            output: dict[str, Any] = {"type": "shell_call_output", "call_id": content.call_id, "output": []}
+            if content.max_output_length is not None:
+                output["max_output_length"] = content.max_output_length
+            return output
         payload = cls._serialize_provider_payload(content.raw_representation)
         if isinstance(payload, Mapping):
             typed_payload = cast("Mapping[str, Any]", payload)
