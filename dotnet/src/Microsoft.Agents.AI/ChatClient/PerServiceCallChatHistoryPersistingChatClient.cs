@@ -19,6 +19,8 @@ namespace Microsoft.Agents.AI;
 /// This decorator is intended to operate between the <see cref="FunctionInvokingChatClient"/> and the leaf
 /// <see cref="IChatClient"/> in a <see cref="ChatClientAgent"/> pipeline. It is activated when
 /// <see cref="ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence"/> is <see langword="true"/>.
+/// For custom pipelines, use <see cref="ChatClientBuilderExtensions.UsePerServiceCallChatHistoryPersistence"/>
+/// to add this decorator.
 /// </para>
 /// <para>
 /// When active, it handles two complementary scenarios:
@@ -54,7 +56,7 @@ namespace Microsoft.Agents.AI;
 /// available or if the agent is not a <see cref="ChatClientAgent"/>.
 /// </para>
 /// </remarks>
-internal sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingChatClient
+public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingChatClient
 {
     /// <summary>
     /// A sentinel value returned on <see cref="ChatResponse.ConversationId"/> to signal
@@ -72,13 +74,13 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
     /// requests before forwarding to the inner client, so the underlying model never sees it.
     /// </para>
     /// </remarks>
-    internal const string LocalHistoryConversationId = "_agent_local_chat_history";
+    public const string LocalHistoryConversationId = "_agent_local_chat_history";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PerServiceCallChatHistoryPersistingChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying chat client that will handle the core operations.</param>
-    public PerServiceCallChatHistoryPersistingChatClient(IChatClient innerClient)
+    internal PerServiceCallChatHistoryPersistingChatClient(IChatClient innerClient)
         : base(innerClient)
     {
     }

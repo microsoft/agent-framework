@@ -2150,6 +2150,136 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("Prefix ")]
+    [InlineData("\U0001F600 ")]
+    public async Task ConvertUpdatesToEventsAsync_CompletedTextParts_OffsetsCitationSpansAsync(string prefix)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Document",
+            AnnotatedRegions =
+            [
+                new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 },
+                new TextSpanAnnotatedRegion { StartIndex = 6, EndIndex = 11 }
+            ]
+        };
+        var text = new MeaiTextContent("Hello world") { Annotations = [annotation] };
+        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant,
+            [new MeaiTextContent(prefix), text, text])
+        { MessageId = "msg_1" });
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(response.ToAgentResponseUpdates()), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var citations = events.OfType<ResponseOutputTextAnnotationAddedEvent>()
+            .Select(evt => Assert.IsType<UrlCitationBody>(evt.Annotation)).ToList();
+        Assert.Equal(4, citations.Count);
+        var donePart = Assert.IsType<OutputContentOutputTextContent>(Assert.Single(events.OfType<ResponseContentPartDoneEvent>()).Part);
+        Assert.Equal(prefix + "Hello worldHello world", donePart.Text);
+        Assert.Equal(4, donePart.Annotations.Count);
+        for (int i = 0; i < citations.Count; i++)
+        {
+            int expectedStart = prefix.Length + (i / 2 * text.Text.Length) + (i % 2 * 6);
+            Assert.Equal(expectedStart, citations[i].StartIndex);
+            Assert.Equal(expectedStart + 5, citations[i].EndIndex);
+            Assert.Equal(i % 2 == 0 ? "Hello" : "world",
+                donePart.Text.Substring((int)citations[i].StartIndex, (int)(citations[i].EndIndex - citations[i].StartIndex)));
+        }
+
+        var doneMessage = Assert.IsType<OutputItemMessage>(Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal(4, Assert.IsType<MessageContentOutputTextContent>(Assert.Single(doneMessage.Content)).Annotations.Count);
+        Assert.Equal(0, Assert.IsType<TextSpanAnnotatedRegion>(annotation.AnnotatedRegions![0]).StartIndex);
+        Assert.Equal(6, Assert.IsType<TextSpanAnnotatedRegion>(annotation.AnnotatedRegions[1]).StartIndex);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConvertUpdatesToEventsAsync_StreamingCitationAfterEarlierText_PreservesSpanAsync(bool annotationOnly)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 6, EndIndex = 11 }]
+        };
+        var updates = new List<AgentResponseUpdate>
+        {
+            new() { MessageId = "msg_1", Contents = [new MeaiTextContent("Hello ")] },
+            new()
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("world") { Annotations = annotationOnly ? null : [annotation] }]
+            }
+        };
+        if (annotationOnly)
+        {
+            updates.Add(new() { MessageId = "msg_1", Contents = [new AIContent { Annotations = [annotation] }] });
+        }
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var citation = Assert.IsType<UrlCitationBody>(Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>()).Annotation);
+        Assert.Equal(6, citation.StartIndex);
+        Assert.Equal(11, citation.EndIndex);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConvertUpdatesToEventsAsync_StreamingTextParts_PreservesSpanAsync(bool wrapChatUpdate)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 6, EndIndex = 11 }]
+        };
+        var rawUpdate = new OpenAIStreamingResponseOutputTextDeltaUpdate
+        {
+            ItemId = "msg_1",
+            Delta = "Hello world",
+            OutputIndex = 0,
+            ContentIndex = 0
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("Hello "), new MeaiTextContent("world") { Annotations = [annotation] }],
+            RawRepresentation = wrapChatUpdate ? new ChatResponseUpdate { RawRepresentation = rawUpdate } : rawUpdate
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var citation = Assert.IsType<UrlCitationBody>(Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>()).Annotation);
+        Assert.Equal(6, citation.StartIndex);
+        Assert.Equal(11, citation.EndIndex);
+    }
+
     /// <summary>A <see cref="CitationAnnotation"/> without a URL is skipped (no annotation event emitted).</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_CitationAnnotationWithoutUrl_IsSkippedAsync()
