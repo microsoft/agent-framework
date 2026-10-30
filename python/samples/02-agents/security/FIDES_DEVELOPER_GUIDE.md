@@ -1100,9 +1100,10 @@ values only after the policy permits the call. `accepts_untrusted=True` permits 
 data to the model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to
 a public sink. Argument labels do not rewrite result labels.
 
-FIDES metadata values are exact and case-sensitive (`"trusted"`, `"untrusted"`, `"public"`, `"private"`, and
-`"user_identity"`). Unknown values and non-boolean `accepts_untrusted` declarations are blocked as an
-`invalid_policy` configuration violation instead of falling back to a less restrictive policy.
+FIDES metadata keys and values are exact and case-sensitive. Misspelled or incorrectly cased FIDES-like keys,
+unknown label values, and non-boolean `accepts_untrusted` declarations are blocked as an `invalid_policy`
+configuration violation instead of falling back to a less restrictive policy. Unrelated integration metadata remains
+allowed.
 
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.

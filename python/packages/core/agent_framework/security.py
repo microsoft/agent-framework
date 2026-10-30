@@ -28,6 +28,7 @@ from contextvars import ContextVar, Token
 from copy import copy, deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from difflib import get_close_matches
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 from weakref import WeakKeyDictionary
@@ -36,7 +37,6 @@ from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import (
-    _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE,  # pyright: ignore[reportPrivateUsage]
     FunctionInvocationContext,
     FunctionMiddleware,
     MiddlewareFailure,
@@ -115,6 +115,12 @@ _SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_security_policy_errors"
 _SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_security_arguments_materialized"
 _SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_security_materialized_authority"
 _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
+_TOOL_SECURITY_POLICY_KEYS = frozenset({
+    "accepts_untrusted",
+    "confidentiality",
+    "max_allowed_confidentiality",
+    "source_integrity",
+})
 
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
@@ -471,6 +477,12 @@ def _parse_tool_security_policy(
     """Parse FIDES metadata without silently accepting unknown values."""
     props = _get_additional_properties(function)
     errors: list[str] = []
+    for key in props:
+        if not isinstance(key, str) or key in _TOOL_SECURITY_POLICY_KEYS:
+            continue
+        matches = get_close_matches(key.casefold(), sorted(_TOOL_SECURITY_POLICY_KEYS), n=1, cutoff=0.9)
+        if matches:
+            errors.append(f"unknown FIDES policy key {key!r}; did you mean {matches[0]!r}?")
 
     def parse_enum(
         key: str,
@@ -977,8 +989,32 @@ def _strict_json_value(
         if not math.isfinite(value):
             raise ValueError(f"{path} contains a non-finite float")
         return value
+    if canonical and type(value) is bytes:
+        return ["bytes", value.hex()]
     if canonical and isinstance(value, AgentSession):
         return ["agent_session", value.session_id]
+    if canonical and isinstance(value, VariableReferenceContent):
+        return [
+            "variable_reference",
+            _strict_json_value(
+                value.to_dict(),
+                path=path,
+                canonical=True,
+                active_container_ids=active_container_ids,
+            ),
+        ]
+    if canonical and isinstance(value, BaseModel):
+        value_type = type(value)
+        return [
+            "pydantic",
+            f"{value_type.__module__}.{value_type.__qualname__}",
+            _strict_json_value(
+                value.model_dump(exclude_unset=True),
+                path=path,
+                canonical=True,
+                active_container_ids=active_container_ids,
+            ),
+        ]
     if allow_content and isinstance(value, Content):
         return _strict_json_value(
             value.to_dict(),
@@ -1081,8 +1117,11 @@ def _bindable_runtime_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
                 path=f"security policy runtime kwarg {key!r}",
                 canonical=True,
             )
-        except (TypeError, ValueError):
-            continue
+        except (RecursionError, TypeError, ValueError) as exc:
+            raise MiddlewareFailure(
+                "Cannot safely bind security policy to opaque runtime authority. "
+                "Use JSON-native values, bytes, or a supported framework identity."
+            ) from exc
     return bindable
 
 
@@ -2185,8 +2224,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             context.metadata["argument_label"] = argument_label
             context.metadata["effective_invocation_label"] = combine_labels(context_label, argument_label)
 
-            if not _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get():
-                self._materialize_arguments(context)
             materialization_token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set((
                 context,
                 self._materialize_arguments,
@@ -2194,16 +2231,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             try:
                 await call_next()
             except MiddlewareTermination:
-                if (
-                    _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get()
-                    and context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True
-                ):
+                if context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True:
                     self._ensure_preflight_authority_unchanged(context)
                 raise
-            if (
-                _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get()
-                and context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True
-            ):
+            if context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True:
                 self._ensure_preflight_authority_unchanged(context)
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 return
@@ -3312,17 +3343,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         }
         raise MiddlewareTermination("Invalid FIDES tool policy")
 
-    @staticmethod
-    def _materialize_security_arguments(context: FunctionInvocationContext) -> None:
-        if _ACTIVE_FUNCTION_MIDDLEWARE_PIPELINE.get():
-            return
-        active_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
-        if active_materialization is None:
-            return
-        active_context, materialize = active_materialization
-        if active_context is context:
-            materialize(context)
-
     async def process(
         self,
         context: FunctionInvocationContext,
@@ -3432,7 +3452,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             })
 
         if not violations:
-            self._materialize_security_arguments(context)
             await call_next()
             return
         for violation in violations:
@@ -3470,7 +3489,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         else:
             logger.warning("WARNING: Tool '%s' policy violation(s) [%s] (allowed)", function_name, disclosed)
 
-        self._materialize_security_arguments(context)
         await call_next()
 
     @staticmethod
