@@ -63,7 +63,7 @@ Some samples require extra tool-specific environment variables. See each sample 
 | [Middleware](./Agent_Step12_Middleware/) | Multiple middleware layers |
 | [Plugins](./Agent_Step13_Plugins/) | Plugins with dependency injection |
 | [Code interpreter](./Agent_Step14_CodeInterpreter/) | Code interpreter tool |
-| [Computer use](./Agent_Step15_ComputerUse/) | Computer use tool |
+| [Computer use (preview)](./Agent_Step15_ComputerUsePreview/) | Preview `computer_use_preview` tool |
 | [File search](./Agent_Step16_FileSearch/) | File search tool |
 | [OpenAPI tools](./Agent_Step17_OpenAPITools/) | OpenAPI tools |
 | [Bing custom search](./Agent_Step18_BingCustomSearch/) | Bing Custom Search tool |
