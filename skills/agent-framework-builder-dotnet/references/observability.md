@@ -15,6 +15,12 @@ runtime evidence; it does not determine whether output is correct.
   a generic host.
 - Keep sensitive payload capture (`EnableSensitiveData`) disabled unless the application explicitly accepts the
   exposure of prompts, responses, and tool arguments.
+- Workflows hosted through `AsAIAgent(...)` suppress generic workflow payload tags, including nested workflow spans,
+  by default, even when
+  `EnableSensitiveData` is enabled, because agent/model/tool instrumentation can emit the same content under canonical
+  GenAI attributes. Set `IncludeSensitiveDataWhenHostedAsAgent` on the hosted workflow only when the application
+  intentionally needs the additional `executor.input`, `executor.output`, and `message.content` copies and protects
+  their destination.
 - Redaction does not replace sanitization in custom telemetry, exporters, middleware, logs (`UseLogging`), or
   exception messages.
 

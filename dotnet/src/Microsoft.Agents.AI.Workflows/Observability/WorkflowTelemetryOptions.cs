@@ -22,6 +22,24 @@ public sealed class WorkflowTelemetryOptions
     public bool EnableSensitiveData { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether generic workflow spans should include sensitive data
+    /// when the workflow is hosted as an <see cref="AIAgent"/>.
+    /// </summary>
+    /// <value>
+    /// <see langword="true"/> to include raw executor inputs, executor outputs, and message content
+    /// on workflow spans when hosted as an agent; otherwise, <see langword="false"/>. The default is
+    /// <see langword="false"/>.
+    /// </value>
+    /// <remarks>
+    /// Agent, model, and tool instrumentation can emit the same content under canonical GenAI
+    /// attributes. Suppressing the generic workflow copies by default avoids duplicating sensitive
+    /// content under <c>executor.input</c>, <c>executor.output</c>, and <c>message.content</c>.
+    /// The setting applies to the hosted workflow execution, including nested workflow spans.
+    /// This option has no effect unless <see cref="EnableSensitiveData"/> is also enabled.
+    /// </remarks>
+    public bool IncludeSensitiveDataWhenHostedAsAgent { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether workflow build activities should be disabled.
     /// </summary>
     /// <value>

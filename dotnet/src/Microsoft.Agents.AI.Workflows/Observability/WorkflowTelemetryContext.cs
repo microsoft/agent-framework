@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Threading;
 
 namespace Microsoft.Agents.AI.Workflows.Observability;
 
@@ -14,6 +15,8 @@ internal sealed class WorkflowTelemetryContext
 {
     private const string DefaultSourceName = "Microsoft.Agents.AI.Workflows";
     private static readonly ActivitySource s_defaultActivitySource = new(DefaultSourceName);
+    // Subworkflows have distinct telemetry contexts, so suppression follows the logical hosted execution.
+    private static readonly AsyncLocal<int> s_sensitiveDataSuppressionDepth = new();
 
     /// <summary>
     /// Gets a shared instance representing disabled telemetry.
@@ -145,7 +148,7 @@ internal sealed class WorkflowTelemetryContext
             .SetTag(Tags.ExecutorType, executorType)
             .SetTag(Tags.MessageType, messageType);
 
-        if (this.Options.EnableSensitiveData)
+        if (this.ShouldIncludeSensitiveData)
         {
             activity.SetTag(Tags.ExecutorInput, SerializeForTelemetry(message));
         }
@@ -160,7 +163,7 @@ internal sealed class WorkflowTelemetryContext
     /// <param name="output">The output value to log.</param>
     public void SetExecutorOutput(Activity? activity, object? output)
     {
-        if (activity is not null && this.Options.EnableSensitiveData)
+        if (activity is not null && this.ShouldIncludeSensitiveData)
         {
             activity.SetTag(Tags.ExecutorOutput, SerializeForTelemetry(output));
         }
@@ -206,13 +209,29 @@ internal sealed class WorkflowTelemetryContext
             activity.SetTag(Tags.MessageTargetId, targetId);
         }
 
-        if (this.Options.EnableSensitiveData)
+        if (this.ShouldIncludeSensitiveData)
         {
             activity.SetTag(Tags.MessageContent, SerializeForTelemetry(message));
         }
 
         return activity;
     }
+
+    internal IDisposable? SuppressSensitiveDataForHostedAgent()
+    {
+        if (this.Options.EnableSensitiveData &&
+            this.Options.IncludeSensitiveDataWhenHostedAsAgent)
+        {
+            return null;
+        }
+
+        int previousDepth = s_sensitiveDataSuppressionDepth.Value;
+        s_sensitiveDataSuppressionDepth.Value = previousDepth + 1;
+        return new SensitiveDataSuppressionScope(previousDepth);
+    }
+
+    private bool ShouldIncludeSensitiveData =>
+        this.Options.EnableSensitiveData && s_sensitiveDataSuppressionDepth.Value == 0;
 
     [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050:RequiresDynamicCode", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
@@ -233,6 +252,20 @@ internal sealed class WorkflowTelemetryContext
         catch (Exception)
         {
             return $"[Unserializable: {value.GetType().FullName}]";
+        }
+    }
+
+    private sealed class SensitiveDataSuppressionScope(int previousDepth) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (!this._disposed)
+            {
+                s_sensitiveDataSuppressionDepth.Value = previousDepth;
+                this._disposed = true;
+            }
         }
     }
 }
