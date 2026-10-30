@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -27,7 +28,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// Requests must use HTTP or HTTPS and target a host explicitly allowed by the application, including after
 /// redirects. Every constructor requires an explicit allowlist; an empty list rejects all requests.
 /// Host matching is exact and case-insensitive, with internationalized names and trailing DNS dots normalized;
-/// wildcards and implicit subdomains are not supported. Hosts are allowed independently of scheme and port.
+/// wildcards and implicit subdomains are not supported. Entries may include a port; omitted ports default to 443.
+/// Authorization matches the host and port, independently of whether HTTP or HTTPS is used.
 /// The allowlist is copied at construction and applies before invoking the client provider.
 /// Workflow-supplied Host headers are rejected; the transport derives the authority from the request URL.
 /// DNS resolution and network routing are delegated to the HTTP transport, not classified by this handler.
@@ -58,7 +60,9 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// and an internally owned HTTP client, disposed when <see cref="DisposeAsync"/> is called.
     /// </summary>
     /// <param name="allowedHosts">
-    /// The exact DNS names or IP literals the application permits. An empty collection rejects all requests.
+    /// The exact DNS names or IP literals, optionally including a port, the application permits.
+    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
+    /// An empty collection rejects all requests.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="allowedHosts"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
@@ -72,8 +76,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// and an optional per-request client provider.
     /// </summary>
     /// <param name="allowedHosts">
-    /// The exact DNS names or IP literals the application permits. Supply host names only, without schemes,
-    /// ports, paths, or wildcards. An empty collection rejects all requests. The collection is copied.
+    /// The exact DNS names or IP literals, optionally including a port, the application permits.
+    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
+    /// Schemes, paths, and wildcards are not supported. An empty collection rejects all requests.
+    /// The collection is copied.
     /// </param>
     /// <param name="httpClientProvider">
     /// An optional callback returning a caller-owned client, or <see langword="null"/> to use the internal client.
@@ -95,12 +101,28 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         this._allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string host in allowedHosts)
         {
-            if (string.IsNullOrWhiteSpace(host) || Uri.CheckHostName(host) == UriHostNameType.Unknown)
+            string hostName = host;
+            int port = 443;
+            if (!string.IsNullOrWhiteSpace(host) && Uri.CheckHostName(host) == UriHostNameType.Unknown)
             {
-                throw new ArgumentException("Allowed hosts must be DNS names or IP literals without schemes, ports, paths, or wildcards.", nameof(allowedHosts));
+                int separator = host.LastIndexOf(':');
+                if (separator > 0 && (host.StartsWith("[", StringComparison.Ordinal) || host.IndexOf(':') == separator))
+                {
+                    hostName = host.Substring(0, separator);
+                    if (!int.TryParse(host.Substring(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out port))
+                    {
+                        port = -1;
+                    }
+                }
             }
 
-            this._allowedHosts.Add(NormalizeHost(new UriBuilder(Uri.UriSchemeHttps, host).Uri));
+            if (string.IsNullOrWhiteSpace(hostName) || Uri.CheckHostName(hostName) == UriHostNameType.Unknown ||
+                port is < 1 or > 65535)
+            {
+                throw new ArgumentException("Allowed hosts must be DNS names or IP literals with an optional port from 1 to 65535, without schemes, paths, or wildcards. IPv6 literals with a port must be bracketed.", nameof(allowedHosts));
+            }
+
+            this._allowedHosts.Add(NormalizeDestination(new UriBuilder(Uri.UriSchemeHttps, hostName, port).Uri));
         }
 
         this._httpClientProvider = httpClientProvider;
@@ -112,7 +134,9 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// and a caller-owned HTTP client.
     /// </summary>
     /// <param name="allowedHosts">
-    /// The exact DNS names or IP literals the application permits. An empty collection rejects all requests.
+    /// The exact DNS names or IP literals, optionally including a port, the application permits.
+    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
+    /// An empty collection rejects all requests.
     /// </param>
     /// <param name="httpClient">
     /// The caller-owned client. Disable automatic redirects or independently enforce the same allowlist on redirects.
@@ -175,9 +199,9 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         for (int redirectCount = 0; redirectCount <= MaxAutomaticRedirections; redirectCount++)
         {
-            if (!this._allowedHosts.Contains(NormalizeHost(currentUri)))
+            if (!this._allowedHosts.Contains(NormalizeDestination(currentUri)))
             {
-                throw new HttpRequestException("The request host is not in the allowed hosts list.");
+                throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
             }
 
             HttpClient? providedClient = null;
@@ -345,7 +369,8 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         });
     }
 
-    private static string NormalizeHost(Uri uri) => uri.IdnHost.TrimEnd('.');
+    private static string NormalizeDestination(Uri uri) =>
+        $"{uri.IdnHost.TrimEnd('.')}:{uri.Port.ToString(CultureInfo.InvariantCulture)}";
 
     private static Uri CreateAbsoluteUri(string requestUri)
     {

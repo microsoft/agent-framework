@@ -30,9 +30,14 @@ commitments.
   when supplying a client or client provider; an empty list allows no hosts. The handler copies the list and checks
   it before invoking the provider and on every handler-managed redirect. Workflow-supplied `Host` headers are
   rejected before provider invocation; the transport derives the authority from the allowed request URL.
-- Allowed hosts are exact DNS names or IP literals, without schemes, ports, paths, or wildcards. Matching is
+- Allowed hosts are exact DNS names or IP literals with optional ports, without schemes, paths, or wildcards. Matching is
   case-insensitive, normalizes internationalized names and trailing DNS dots, and does not implicitly include
-  subdomains. A host entry permits both HTTP and HTTPS and any port, subject to existing redirect restrictions.
+  subdomains. An omitted port defaults to 443; specify another port explicitly, for example `api.example.com:8443`
+  or `[::1]:8080` (IPv6 requires brackets when specifying a port). Ports must be from 1 to 65535.
+  The request's effective port must match before provider invocation and on every handler-managed redirect.
+  Both HTTP and HTTPS remain supported, subject to existing redirect restrictions; `api.example.com` also
+  permits `http://api.example.com:443`, but not `http://api.example.com` (port 80). Enforce HTTPS separately
+  before supplying an authenticated client if plaintext HTTP must not be allowed.
   Explicitly allowed internal hosts are supported on every target framework. Normal DNS resolution, proxy use,
   and routing are delegated to the HTTP transport; allowing a name trusts the host's DNS and network configuration.
 - To supply a client, use `new DefaultHttpRequestHandler(["api.example.com"], httpClient)` or the corresponding

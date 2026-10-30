@@ -229,9 +229,20 @@ public sealed class DefaultHttpRequestHandlerTests
     [InlineData("api.example.test", "https://api.example.test./resource")]
     [InlineData("b\u00fccher.example", "https://xn--bcher-kva.example/resource")]
     [InlineData("xn--bcher-kva.example", "https://b\u00fccher.example/resource")]
-    [InlineData("127.0.0.1", "http://127.1/resource")]
-    [InlineData("10.0.0.1", "http://10.0.0.1:8080/resource")]
-    [InlineData("::1", "http://[::1]/resource")]
+    [InlineData("api.example.test", "https://api.example.test:443/resource")]
+    [InlineData("api.example.test:443", "https://api.example.test/resource")]
+    [InlineData("api.example.test:1", "https://api.example.test:1/resource")]
+    [InlineData("api.example.test:65535", "https://api.example.test:65535/resource")]
+    [InlineData("api.example.test", "http://api.example.test:443/resource")]
+    [InlineData("API.EXAMPLE.TEST.:8443", "https://api.example.test:8443/resource")]
+    [InlineData("api.example.test:80", "http://api.example.test/resource")]
+    [InlineData("b\u00fccher.example:8443", "https://xn--bcher-kva.example:8443/resource")]
+    [InlineData("127.0.0.1", "https://127.1/resource")]
+    [InlineData("10.0.0.1:8080", "http://10.0.0.1:8080/resource")]
+    [InlineData("::1", "https://[::1]/resource")]
+    [InlineData("[::1]", "https://[::1]:443/resource")]
+    [InlineData("[::1]:8080", "http://[::1]:8080/resource")]
+    [InlineData("[2001:db8::1]:8443", "https://[2001:db8::1]:8443/resource")]
     public async Task SendAsyncAllowsExactConfiguredHostAsync(string allowedHost, string url)
     {
         // Arrange
@@ -275,12 +286,53 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Theory]
+    [InlineData("api.example.test", "http://api.example.test/")]
+    [InlineData("api.example.test", "https://api.example.test:8443/")]
+    [InlineData("api.example.test:8443", "https://api.example.test/")]
+    [InlineData("api.example.test:8443", "https://api.example.test:8080/")]
+    [InlineData("::1", "http://[::1]/")]
+    [InlineData("[::1]:8443", "https://[::1]/")]
+    public async Task SendAsyncRejectsUnlistedPortBeforeProviderAsync(string allowedHost, string url)
+    {
+        // Arrange
+        int providerCalls = 0;
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
+        using HttpClient client = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new([allowedHost], (_, _) =>
+        {
+            providerCalls++;
+#pragma warning disable CA2025
+            return Task.FromResult<HttpClient?>(client);
+#pragma warning restore CA2025
+        });
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = url });
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Equal(0, providerCalls);
+        Assert.Null(messageHandler.LastRequest);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData(" ")]
     [InlineData("*.example.test")]
     [InlineData("https://api.example.test")]
-    [InlineData("api.example.test:443")]
+    [InlineData("api.example.test:")]
+    [InlineData("api.example.test:abc")]
+    [InlineData("api.example.test:0")]
+    [InlineData("api.example.test:-1")]
+    [InlineData("api.example.test:+443")]
+    [InlineData("api.example.test:65536")]
+    [InlineData("api.example.test:999999999999")]
+    [InlineData("api.example.test:443/path")]
+    [InlineData("[::1]:")]
+    [InlineData("[::1]:65536")]
+    [InlineData("::1:00443")]
     [InlineData("api.example.test/path")]
     [InlineData("api.example.test?query")]
     [InlineData("user@api.example.test")]
@@ -319,14 +371,16 @@ public sealed class DefaultHttpRequestHandlerTests
         await Assert.ThrowsAsync<HttpRequestException>(actAsync);
     }
 
-    [Fact]
-    public async Task SendAsyncRejectsUnlistedRedirectBeforeProviderAsync()
+    [Theory]
+    [InlineData("https://other.example.test/next")]
+    [InlineData("https://api.example.test:8443/next")]
+    public async Task SendAsyncRejectsUnlistedRedirectBeforeProviderAsync(string redirectUrl)
     {
         // Arrange
         int providerCalls = 0;
         using HttpResponseMessage redirectResponse = new(HttpStatusCode.Found)
         {
-            Headers = { Location = new Uri("https://other.example.test/next") },
+            Headers = { Location = new Uri(redirectUrl) },
         };
 #pragma warning disable CA2025
         TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(redirectResponse));
@@ -344,6 +398,35 @@ public sealed class DefaultHttpRequestHandlerTests
         await Assert.ThrowsAsync<HttpRequestException>(actAsync);
         Assert.Equal(1, providerCalls);
         Assert.Single(messageHandler.RequestMethods);
+    }
+
+    [Fact]
+    public async Task SendAsyncAllowsExplicitlyConfiguredRedirectPortAsync()
+    {
+        // Arrange
+        List<string> providerUrls = [];
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.Found)
+        {
+            Headers = { Location = new Uri("https://api.example.test:8443/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK);
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromResult(providerUrls.Count == 1 ? redirectResponse : okResponse));
+#pragma warning restore CA2025
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler, (request, _) =>
+        {
+            providerUrls.Add(request.Url);
+            return Task.FromResult<HttpClient?>(null);
+        }, ["api.example.test", "api.example.test:8443"]);
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = TestUrl });
+
+        // Assert
+        Assert.True(result.IsSuccessStatusCode);
+        Assert.Equal([TestUrl, "https://api.example.test:8443/next"], providerUrls);
+        Assert.Equal(2, messageHandler.RequestMethods.Count);
     }
 
     [Theory]
@@ -370,7 +453,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         await using RawHttpServer server = new();
-        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"]);
+        await using DefaultHttpRequestHandler handler = new([new Uri(server.Url).Authority]);
 
         // Act
         HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = server.Url }, TestContext.Current.CancellationToken);
@@ -514,7 +597,7 @@ public sealed class DefaultHttpRequestHandlerTests
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using RawHttpServer server = new();
         using HttpClient httpClient = new();
-        await using DefaultHttpRequestHandler handler = new(["api.example.test", "127.0.0.1"], httpClient);
+        await using DefaultHttpRequestHandler handler = new(["api.example.test", new Uri(server.Url).Authority], httpClient);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -626,7 +709,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
-        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"]);
+        await using DefaultHttpRequestHandler handler = new([new Uri(server.SetCookieRedirectUrl).Authority]);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -651,7 +734,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
-        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"]);
+        await using DefaultHttpRequestHandler handler = new([new Uri(server.SetCookieUrl).Authority]);
         HttpRequestInfo victimRequest = new()
         {
             Method = "GET",
@@ -981,7 +1064,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         await using RawHttpServer server = new();
         int providerCallCount = 0;
-        await using DefaultHttpRequestHandler handler = new(["127.0.0.1"], (_, _) =>
+        await using DefaultHttpRequestHandler handler = new([new Uri(server.Url).Authority], (_, _) =>
         {
             providerCallCount++;
             return Task.FromResult<HttpClient?>(null);

@@ -18,7 +18,7 @@ vary across deployments. How should the default HTTP handler determine which des
 - Require explicit application authorization before any HTTP request or client-provider invocation.
 - Support intentionally configured internal services without classifying deployment-specific networks.
 - Preserve existing redirect, header, timeout, and client-ownership behavior.
-- Apply the same host policy across all supported target frameworks and client sources.
+- Apply the same host-and-port policy across all supported target frameworks and client sources.
 
 ## Considered Options
 
@@ -44,9 +44,13 @@ Bad: existing applications must configure their hosts, and allowing a hostname t
 Chosen option: "Require an application-owned host allowlist".
 
 Every constructor requires an explicit list; an empty list denies every request. Constructor overloads accept
-exact host names or IP literals, copy and normalize the list, and authorize the canonical URL before client selection and every
+exact host names or IP literals with optional ports, copy and normalize the list, and authorize the canonical URL before client selection and every
 handler-managed redirect. Matching is case-insensitive with IDN and trailing-dot normalization; wildcards and
-implicit subdomains are not supported. Entries authorize hosts, not individual schemes, ports, or IP ranges.
+implicit subdomains are not supported. Entries authorize exact host-and-port pairs; an omitted port defaults
+to 443. Explicit ports must be from 1 to 65535, and IPv6 literals must be bracketed when specifying a port.
+The request's effective port must match, including on redirects. Entries do not restrict schemes or IP ranges:
+both HTTP and HTTPS remain supported, so an entry for port 443 also permits an HTTP URL explicitly using port 443.
+Applications that require HTTPS must enforce that additional policy before supplying an authenticated client.
 Only HTTP(S) URLs are accepted, and existing redirect restrictions remain in effect. Workflow-supplied Host
 headers are rejected before client selection; the transport derives the authority from the allowed URL.
 
