@@ -5632,9 +5632,16 @@ def _stamp_mcp_error_carrier_label(
 
     security_meta = raw_carrier.private_metadata.pop(_MCP_RESULT_SECURITY_META_KEY, None)
     probe = Content.from_text("")
+    valid_server_ifc = False
     if security_meta is not None:
         probe.additional_properties[_MCP_RESULT_SECURITY_META_KEY] = security_meta
-    effective_local_label = fallback_label if security_meta is None else local_label
+        if isinstance(security_meta, Mapping):
+            security_meta_mapping = cast(Mapping[str, Any], security_meta)
+            if security_meta_mapping.get("retained") is True:
+                valid_server_ifc = _label_from_mcp_meta(security_meta_mapping.get("meta")) is not None
+    effective_local_label = (
+        fallback_label if security_meta is None or (valid_server_ifc and not trust_server_ifc) else local_label
+    )
     stamped = cast(
         list[Content],
         _stamp_mcp_content_labels([probe], effective_local_label, trust_server_ifc=trust_server_ifc),
