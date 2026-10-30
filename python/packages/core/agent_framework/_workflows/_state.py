@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import copy
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 
 class State:
@@ -28,6 +30,7 @@ class State:
         """Initialize the state."""
         self._committed: dict[str, Any] = {}
         self._pending: dict[str, Any] = {}
+        self._pending_mapping_updates: dict[str, dict[str, Any]] = {}
 
     def set(self, key: str, value: Any) -> None:
         """Set a value in the pending state buffer.
@@ -44,6 +47,7 @@ class State:
             in a superstep see the same committed state at the start.
         """
         self._pending[key] = copy.deepcopy(value)
+        self._pending_mapping_updates.pop(key, None)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value from state, checking pending first then committed.
@@ -56,14 +60,51 @@ class State:
             A deep copy of the value if found, otherwise the default value. Mutate
             the returned value and pass it to :meth:`set` to update workflow state.
         """
-        if key in self._pending:
-            value = self._pending[key]
-            if value is _DeleteSentinel:
-                return default
-            return copy.deepcopy(value)
-        if key in self._committed:
-            return copy.deepcopy(self._committed[key])
-        return default
+        value = self._get_value(key)
+        return default if value is _DeleteSentinel else copy.deepcopy(value)
+
+    def _get_value(self, key: str) -> Any:
+        value = self._pending.get(key, self._committed.get(key, _DeleteSentinel))
+        updates = self._pending_mapping_updates.get(key)
+        if updates:
+            merged: dict[str, Any] = dict(value)
+            for item_key, item_value in updates.items():
+                if item_value is _DeleteSentinel:
+                    merged.pop(item_key, None)
+                else:
+                    merged[item_key] = item_value
+            return merged
+        return value
+
+    def _get_mapping(self, key: str) -> dict[str, Any]:
+        value = self._pending.get(key, self._committed.get(key, _DeleteSentinel))
+        if value is _DeleteSentinel:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(f"Workflow state '{key}' must be a mapping.")
+        return cast(dict[str, Any], value)
+
+    def _get_mapping_item(self, key: str, item_key: str, default: Any = None) -> Any:
+        """Read one framework-owned mapping entry without copying its siblings."""
+        mapping = self._get_mapping(key)
+        value = self._pending_mapping_updates.get(key, {}).get(item_key, mapping.get(item_key, _DeleteSentinel))
+        return default if value is _DeleteSentinel else copy.deepcopy(value)
+
+    def _set_mapping_item(self, key: str, item_key: str, value: Any) -> None:
+        """Stage a detached mapping entry while preserving commit/discard semantics."""
+        self._get_mapping(key)
+        copied_value = copy.deepcopy(value)
+        if not self.has(key):
+            self._pending[key] = {}
+        self._pending_mapping_updates.setdefault(key, {})[item_key] = copied_value
+
+    def _pop_mapping_item(self, key: str, item_key: str) -> Any:
+        """Stage removal of one entry without copying or mutating committed siblings."""
+        value = self._get_mapping_item(key, item_key, _DeleteSentinel)
+        if value is not _DeleteSentinel:
+            self._pending_mapping_updates.setdefault(key, {})[item_key] = _DeleteSentinel
+            return value
+        return None
 
     def has(self, key: str) -> bool:
         """Check if a key exists in pending or committed state."""
@@ -77,7 +118,7 @@ class State:
         The internal validator must not mutate or retain the value. Missing and
         pending-deleted keys are not validated, matching ``get`` visibility.
         """
-        value = self._pending.get(key, self._committed.get(key, _DeleteSentinel))
+        value = self._get_value(key)
         if value is not _DeleteSentinel:
             validator(value)
 
@@ -97,11 +138,13 @@ class State:
         elif key in self._pending:
             # Only exists in pending, safe to just remove
             del self._pending[key]
+        self._pending_mapping_updates.pop(key, None)
 
     def clear(self) -> None:
         """Clear both committed and pending state."""
         self._committed.clear()
         self._pending.clear()
+        self._pending_mapping_updates.clear()
 
     def commit(self) -> None:
         """Commit pending changes to the committed state.
@@ -113,11 +156,20 @@ class State:
                 self._committed.pop(key, None)
             else:
                 self._committed[key] = value
+        for key, updates in self._pending_mapping_updates.items():
+            mapping = self._committed[key]
+            for item_key, value in updates.items():
+                if value is _DeleteSentinel:
+                    mapping.pop(item_key, None)
+                else:
+                    mapping[item_key] = value
         self._pending.clear()
+        self._pending_mapping_updates.clear()
 
     def discard(self) -> None:
         """Discard all pending changes without committing."""
         self._pending.clear()
+        self._pending_mapping_updates.clear()
 
     def export_state(self) -> dict[str, Any]:
         """Export a deepcopy of the committed state.

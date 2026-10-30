@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from agent_framework import (
     Executor,
     FinishReason,
     HistoryProvider,
+    InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
@@ -27,13 +29,16 @@ from agent_framework import (
     UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
+    WorkflowCheckpointException,
     WorkflowContext,
     WorkflowEvent,
+    WorkflowException,
     executor,
     handler,
     response_handler,
 )
 from agent_framework._types import _get_operation_state, _set_operation_state
+from agent_framework._workflows._const import WORKFLOW_AGENT_RUN_KEY, WORKFLOW_AGENT_SESSION_ID_KEY
 from agent_framework._workflows._typing_utils import deserialize_type
 
 
@@ -193,6 +198,176 @@ class ConversationHistoryCapturingExecutor(Executor):
 
 class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("explicit_session", [False, True])
+    async def test_direct_fresh_runs_clear_agent_session_id(self, streaming: bool, explicit_session: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        session = AgentSession() if explicit_session else None
+        await agent.run("Agent turn", session=session)
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == (
+            session.session_id if session is not None else None
+        )
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
+
+        for text in ("First direct run", "Second direct run"):
+            messages = [Message(role="user", contents=[Content.from_text(text)])]
+            if streaming:
+                await workflow.run(messages, stream=True).get_final_response()
+            else:
+                await workflow.run(messages)
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) is None
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is False
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_direct_continuations_preserve_agent_session_id(self, streaming: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=RequestingExecutor(id="request")).build()
+        storage = InMemoryCheckpointStorage()
+        session = AgentSession()
+        await workflow.as_agent().run("Agent turn", session=session, checkpoint_storage=storage)
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        pending_requests = await workflow._runner_context.get_pending_request_info_events()
+        assert len(pending_requests) == 1
+        responses = {request_id: "Answer" for request_id in pending_requests}
+
+        if streaming:
+            await workflow.run(responses=responses, stream=True).get_final_response()
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
+            await workflow.run(
+                checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=True
+            ).get_final_response()
+        else:
+            await workflow.run(responses=responses)
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("prior_agent_run", [False, True])
+    async def test_rejected_checkpoint_preserves_agent_context(self, streaming: bool, prior_agent_run: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        storage = InMemoryCheckpointStorage()
+        await agent.run("Checkpoint turn", session=AgentSession(), checkpoint_storage=storage)
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        checkpoint = await storage.load(checkpoint_id)
+        assert checkpoint is not None
+        checkpoint.graph_signature_hash = "different-graph"
+        await storage.save(checkpoint)
+
+        if prior_agent_run:
+            await agent.run("Live turn", session=AgentSession())
+        else:
+            await workflow.run([Message(role="user", contents=[Content.from_text("Live turn")])])
+        live_state = workflow._runner.state.export_state()
+
+        with pytest.raises(WorkflowCheckpointException, match="graph has changed"):
+            if streaming:
+                await agent.run(
+                    session=AgentSession(),
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_storage=storage,
+                    stream=True,
+                ).get_final_response()
+            else:
+                await agent.run(session=AgentSession(), checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        assert workflow._runner.state.export_state() == live_state
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("fresh_input", [False, True])
+    async def test_checkpoint_restore_uses_checkpoint_agent_context(self, streaming: bool, fresh_input: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        storage = InMemoryCheckpointStorage()
+        checkpoint_session = AgentSession()
+        await agent.run("Checkpoint turn", session=checkpoint_session, checkpoint_storage=storage)
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        await agent.run("Live turn", session=AgentSession())
+        caller_session = AgentSession()
+        message = "Fresh turn" if fresh_input else None
+
+        if streaming:
+            await agent.run(
+                message,
+                session=caller_session,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=storage,
+                stream=True,
+            ).get_final_response()
+        else:
+            await agent.run(message, session=caller_session, checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        expected_session = caller_session if fresh_input else checkpoint_session
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session.session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("rejected_streaming", [False, True])
+    @pytest.mark.parametrize("first_agent", [False, True])
+    async def test_rejected_concurrent_run_preserves_agent_session_id(
+        self, streaming: bool, rejected_streaming: bool, first_agent: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        session = AgentSession()
+        rejected_session = AgentSession()
+        original_has_messages = workflow._runner.context.has_messages
+
+        async def gated_has_messages() -> bool:
+            started.set()
+            await release.wait()
+            return await original_has_messages()
+
+        monkeypatch.setattr(workflow._runner.context, "has_messages", gated_has_messages)
+
+        async def run_agent(agent_session: AgentSession, stream: bool) -> AgentResponse:
+            if stream:
+                return await agent.run("Hello", session=agent_session, stream=True).get_final_response()
+            return await agent.run("Hello", session=agent_session)
+
+        async def run_first() -> AgentResponse:
+            if first_agent:
+                return await run_agent(session, streaming)
+            messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+            if streaming:
+                result = await workflow.run(messages, stream=True).get_final_response()
+            else:
+                result = await workflow.run(messages)
+            [output] = result.get_outputs()
+            assert isinstance(output, AgentResponse)
+            return output
+
+        expected_session_id = session.session_id if first_agent else None
+        task = asyncio.create_task(run_first())
+        try:
+            await started.wait()
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is first_agent
+            with pytest.raises(WorkflowException, match="Workflow is already running"):
+                await run_agent(rejected_session, rejected_streaming)
+            with pytest.raises(WorkflowException, match="Workflow is already running"):
+                await workflow.run([Message(role="user", contents=[Content.from_text("Rejected")])])
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is first_agent
+        finally:
+            release.set()
+            result = await task
+
+        assert result.text == "Accepted: Hello"
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is first_agent
+        await run_agent(rejected_session, rejected_streaming)
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == rejected_session.session_id
 
     async def test_end_to_end_basic_workflow(self):
         """Test basic end-to-end workflow execution with 2 executors emitting AgentResponse."""

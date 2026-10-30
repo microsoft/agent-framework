@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import copy
@@ -7,7 +9,7 @@ import functools
 import inspect
 import logging
 import types
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeVar, overload
 
 from ..observability import create_processing_span
@@ -17,6 +19,7 @@ from ._events import (
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
 from ._model_utils import DictConvertible
+from ._request_context import restore_request_context
 from ._request_info_mixin import RequestInfoMixin
 from ._runner_context import MessageType, RunnerContext, WorkflowMessage
 from ._state import State
@@ -30,6 +33,10 @@ from ._typing_utils import (
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 logger = logging.getLogger(__name__)
+
+# Metadata migrations are applied only after every validator in the tree succeeds.
+_ResponseBatchValidator = Callable[[Sequence[WorkflowEvent]], Callable[[], None] | None]
+_ResponseBatchValidation = tuple[_ResponseBatchValidator, Sequence[WorkflowEvent]]
 
 
 # region Executor
@@ -309,6 +316,8 @@ class Executor(RequestInfoMixin, DictConvertible):
                     invoke_event = WorkflowEvent.executor_invoked(self.id, copy.deepcopy(message))
                 await context.add_event(invoke_event)
                 try:
+                    if context.request_id is not None:
+                        restore_request_context(state, context.request_id)
                     await handler(message, context)
                 except Exception as exc:
                     # Surface structured executor failure before propagating
@@ -532,6 +541,17 @@ class Executor(RequestInfoMixin, DictConvertible):
     async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
         """Release executor-owned state for a cancelled workflow request."""
         del request_id, ctx
+
+    async def _get_response_validation_batches(
+        self, requests: Sequence[WorkflowEvent]
+    ) -> list[_ResponseBatchValidation]:
+        """Collect delegated response policies without changing pending requests."""
+        del requests
+        return []
+
+    async def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
+        """Validate a checkpoint snapshot without changing live executor state."""
+        del state, requests
 
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Hook called when the workflow is being saved to a checkpoint.

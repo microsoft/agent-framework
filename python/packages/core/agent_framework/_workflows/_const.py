@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 # Default maximum iterations for workflow execution.
 DEFAULT_MAX_ITERATIONS = 100
 
@@ -16,6 +18,19 @@ INTERNAL_SOURCE_PREFIX = "internal"
 # Used by all orchestration patterns (Sequential, Concurrent, GroupChat, Handoff, Magentic)
 # to pass kwargs from workflow.run() through to agent.run() and @tool functions.
 WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
+
+# State key for the AgentSession identity supplied through WorkflowAgent.
+WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
+
+# State key identifying WorkflowAgent turns, including turns without an AgentSession.
+WORKFLOW_AGENT_RUN_KEY = "_workflow_agent_run"
+
+# Checkpoint-backed workflow scope and the binding-specific scope inherited by a child.
+WORKFLOW_SESSION_ID_KEY = "_workflow_session_id"
+WORKFLOW_PARENT_SESSION_ID_KEY = "_workflow_parent_session_id"
+WORKFLOW_AGENT_SESSION_NAMESPACE_KEY = "_workflow_agent_session_namespace"
+WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY = "_workflow_request_parent_contexts"
+WORKFLOW_RESPONSE_SCOPE_KEY = "_workflow_response_scope"
 
 # Key used to store collision-free, executor-aware workflow invocation kwargs.
 # WORKFLOW_RUN_KWARGS_KEY remains in the legacy dict format for compatibility with

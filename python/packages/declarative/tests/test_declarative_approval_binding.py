@@ -177,7 +177,9 @@ class TestFunctionToolApprovalBinding:
 
         executor = InvokeFunctionToolExecutor(self._action(), tools={"my_tool": my_tool})
 
-        request = ToolApprovalRequest(request_id="r-1", function_name="my_tool", arguments={"x": 1})
+        request = ToolApprovalRequest(
+            request_id="r-1", function_name="my_tool", arguments={"x": 1}, workflow_session_id="workflow-a"
+        )
         await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
         assert call_log == [1]
@@ -193,7 +195,9 @@ class TestFunctionToolApprovalBinding:
             return x
 
         executor = InvokeFunctionToolExecutor(self._action(), tools={"my_tool": my_tool})
-        request = ToolApprovalRequest(request_id="r-bool", function_name="my_tool", arguments={"x": 1})
+        request = ToolApprovalRequest(
+            request_id="r-bool", function_name="my_tool", arguments={"x": 1}, workflow_session_id="workflow-a"
+        )
         response = object.__new__(ToolApprovalResponse)
         response.approved = "true"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         response.reason = None
@@ -214,8 +218,12 @@ class TestFunctionToolApprovalBinding:
 
         executor = InvokeFunctionToolExecutor(self._action(), tools={"my_tool": my_tool})
 
-        request_a = ToolApprovalRequest(request_id="r-A", function_name="my_tool", arguments={"x": 1})
-        request_b = ToolApprovalRequest(request_id="r-B", function_name="my_tool", arguments={"x": 999})
+        request_a = ToolApprovalRequest(
+            request_id="r-A", function_name="my_tool", arguments={"x": 1}, workflow_session_id="workflow-a"
+        )
+        request_b = ToolApprovalRequest(
+            request_id="r-B", function_name="my_tool", arguments={"x": 999}, workflow_session_id="workflow-b"
+        )
 
         # Deliver response for B first, then for A. Each invocation must use its own payload.
         await executor.handle_approval_response(request_b, ToolApprovalResponse(approved=True), mock_context)
@@ -238,7 +246,9 @@ class TestFunctionToolApprovalBinding:
         # Poison the old key shape (no longer read by the executor).
         mock_state._data["_tool_approval_state_fn_action"] = {"function_name": "other", "arguments": {"x": 999}}
 
-        request = ToolApprovalRequest(request_id="r-3", function_name="my_tool", arguments={"x": 7})
+        request = ToolApprovalRequest(
+            request_id="r-3", function_name="my_tool", arguments={"x": 7}, workflow_session_id="workflow-a"
+        )
         await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
         assert call_log == [7]
@@ -258,7 +268,9 @@ class TestFunctionToolApprovalBinding:
         # Pretend the executor that emitted the request is gone; a fresh one handles the response.
         fresh = InvokeFunctionToolExecutor(self._action(), tools={"my_tool": my_tool})
 
-        request = ToolApprovalRequest(request_id="r-4", function_name="my_tool", arguments={"x": 42})
+        request = ToolApprovalRequest(
+            request_id="r-4", function_name="my_tool", arguments={"x": 42}, workflow_session_id="workflow-a"
+        )
         await fresh.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
         assert call_log == [42]
@@ -275,7 +287,9 @@ class TestFunctionToolApprovalBinding:
 
         executor = InvokeFunctionToolExecutor(self._action(), tools={"my_tool": my_tool})
 
-        request = ToolApprovalRequest(request_id="r-5", function_name="my_tool", arguments={"x": 3})
+        request = ToolApprovalRequest(
+            request_id="r-5", function_name="my_tool", arguments={"x": 3}, workflow_session_id="workflow-a"
+        )
         await executor.handle_approval_response(
             request, ToolApprovalResponse(approved=False, reason="not authorized"), mock_context
         )
@@ -333,6 +347,7 @@ class TestMcpToolApprovalBinding:
             server_label="prod",
             arguments={"q": "x"},
             connection_name="conn-A",
+            workflow_session_id="workflow-a",
         )
         await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
@@ -358,6 +373,7 @@ class TestMcpToolApprovalBinding:
             server_label=None,
             arguments={"q": "x"},
             connection_name=None,
+            workflow_session_id="workflow-a",
         )
         response = object.__new__(ToolApprovalResponse)
         response.approved = 1  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
@@ -380,6 +396,7 @@ class TestMcpToolApprovalBinding:
             server_label=None,
             arguments={"q": "alpha"},
             connection_name="conn-A",
+            workflow_session_id="workflow-a",
         )
         request_b = MCPToolApprovalRequest(
             request_id="r-B",
@@ -388,6 +405,7 @@ class TestMcpToolApprovalBinding:
             server_label=None,
             arguments={"q": "beta"},
             connection_name="conn-B",
+            workflow_session_id="workflow-b",
         )
 
         await executor.handle_approval_response(request_b, ToolApprovalResponse(approved=True), mock_context)
@@ -416,6 +434,7 @@ class TestMcpToolApprovalBinding:
             server_label=None,
             arguments={"q": "x"},
             connection_name=None,
+            workflow_session_id="legacy-request:r-1",
         )
         await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
@@ -534,6 +553,7 @@ class TestMcpToolApprovalBinding:
             server_label=None,
             arguments={"q": "real"},
             connection_name=None,
+            workflow_session_id="workflow-a",
         )
         await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
@@ -557,6 +577,7 @@ class TestMcpToolApprovalBinding:
             server_label=None,
             arguments={"q": "fresh"},
             connection_name=None,
+            workflow_session_id="workflow-a",
         )
         await fresh.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
@@ -625,6 +646,7 @@ class TestMcpToolApprovalBinding:
             arguments={"q": "x"},
             connection_name=None,
             metadata={"conversation_id": "conv-original"},
+            workflow_session_id="workflow-a",
         )
         await executor.handle_approval_response(original_request, ToolApprovalResponse(approved=True), mock_context)
 
@@ -632,8 +654,10 @@ class TestMcpToolApprovalBinding:
         assert state.get("System.conversations.conv-mutated.messages") == []
 
     @pytest.mark.asyncio
-    async def test_resume_handles_legacy_request_without_new_fields(self, mock_state, mock_context) -> None:
-        """Resume tolerates payloads lacking ``connection_name`` / ``metadata`` (legacy pickle shape)."""
+    async def test_resume_handles_migrated_legacy_request_without_routing_fields(
+        self, mock_state, mock_context
+    ) -> None:
+        """Migrated legacy payloads may still lack ``connection_name`` / ``metadata``."""
 
         @dataclass
         class _LegacyMCPApprovalRequest:
@@ -643,6 +667,7 @@ class TestMcpToolApprovalBinding:
             server_label: str | None
             arguments: dict[str, Any]
             header_names: list[str]
+            workflow_session_id: str = "legacy-request:r-1"
 
         _seed_state(mock_state)
         handler = _RecordingMcpHandler()

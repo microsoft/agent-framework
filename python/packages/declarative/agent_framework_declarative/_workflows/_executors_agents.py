@@ -12,7 +12,8 @@ Aligned with .NET's InvokeAzureAgentExecutor behavior including:
 - AutoSend behavior control
 """
 
-import contextlib
+from __future__ import annotations
+
 import json
 import logging
 import uuid
@@ -33,6 +34,11 @@ from ._declarative_base import (
     ActionComplete,
     DeclarativeActionExecutor,
     DeclarativeWorkflowState,
+)
+from ._mcp_handler import (
+    get_or_create_workflow_session_id,
+    get_request_workflow_session_id,
+    restore_workflow_session_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -432,6 +438,8 @@ class AgentExternalInputRequest:
     iteration: int = 0
     messages: list[Message] = field(default_factory=lambda: cast(list[Message], []))
     function_calls: list[Content] = field(default_factory=lambda: cast(list[Content], []))
+    workflow_session_id: str | None = None
+    loop_state: ExternalLoopState | None = None
 
 
 @dataclass
@@ -469,8 +477,8 @@ class AgentExternalInputResponse:
 class ExternalLoopState:
     """State saved for external loop resumption.
 
-    Stored in workflow state to allow the response_handler to
-    continue the loop with the same configuration.
+    Retained by each pending request so interleaved continuations
+    preserve their own configuration.
     """
 
     agent_name: str
@@ -1006,8 +1014,6 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                     messages_path=messages_path,
                     max_iterations=max_iterations,
                 )
-                ctx.state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
-
                 # Emit request for external input - workflow will yield here
                 request = AgentExternalInputRequest(
                     request_id=str(uuid.uuid4()),
@@ -1016,6 +1022,8 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                     iteration=iteration,
                     messages=all_messages,
                     function_calls=tool_calls,
+                    workflow_session_id=get_or_create_workflow_session_id(ctx.state),
+                    loop_state=loop_state,
                 )
                 logger.info(f"InvokeAzureAgent: yielding for external input (iteration {iteration})")
                 await ctx.request_info(request, AgentExternalInputResponse)
@@ -1037,14 +1045,17 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         This is called when the workflow resumes after yielding for external input.
         It continues the agent invocation loop with the user's new input.
         """
+        restore_workflow_session_id(ctx.state, get_request_workflow_session_id(original_request.workflow_session_id))
         logger.debug(
             "handle_external_input_response: resuming with user_input='%s'",
             response.user_input[:100] if response.user_input else None,
         )
         state = self._get_state(ctx.state)
 
-        # Retrieve saved loop state
-        loop_state: ExternalLoopState | None = ctx.state.get(EXTERNAL_LOOP_STATE_KEY)
+        # Older checkpoints store the loop configuration in a single shared slot.
+        loop_state = original_request.loop_state
+        if loop_state is None:
+            loop_state = ctx.state.get(EXTERNAL_LOOP_STATE_KEY)
         if loop_state is None:
             logger.error("InvokeAzureAgent: external loop state not found, cannot resume")
             await ctx.send_message(ActionComplete())
@@ -1081,9 +1092,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         )
 
         if not should_continue:
-            # User input caused loop to exit - clean up and complete
-            with contextlib.suppress(KeyError):
-                ctx.state.delete(EXTERNAL_LOOP_STATE_KEY)
+            # User input caused loop to exit.
             await ctx.send_message(ActionComplete())
             return
 
@@ -1141,8 +1150,6 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 "InvokeAzureAgent: external loop exited due to condition=false "
                 "(sending ActionComplete to continue workflow)"
             )
-            with contextlib.suppress(KeyError):
-                ctx.state.delete(EXTERNAL_LOOP_STATE_KEY)
             await ctx.send_message(ActionComplete())
             return
 
@@ -1150,8 +1157,6 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         if iteration < max_iterations:
             # Update loop state for next iteration
             loop_state.iteration = iteration + 1
-            ctx.state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
-
             # Emit another request for external input
             request = AgentExternalInputRequest(
                 request_id=str(uuid.uuid4()),
@@ -1160,16 +1165,14 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 iteration=iteration,
                 messages=all_messages,
                 function_calls=tool_calls,
+                workflow_session_id=get_or_create_workflow_session_id(ctx.state),
+                loop_state=loop_state,
             )
             logger.info(f"InvokeAzureAgent: yielding for external input (iteration {iteration})")
             await ctx.request_info(request, AgentExternalInputResponse)
             return
 
         logger.warning(f"InvokeAzureAgent: external loop exceeded max iterations ({max_iterations})")
-
-        # Loop complete - clean up and send completion
-        with contextlib.suppress(KeyError):
-            ctx.state.delete(EXTERNAL_LOOP_STATE_KEY)
 
         await ctx.send_message(ActionComplete())
 

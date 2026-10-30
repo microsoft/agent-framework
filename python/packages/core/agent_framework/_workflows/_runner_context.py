@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
@@ -94,6 +94,24 @@ class WorkflowMessage:
             source_span_ids=data.get("source_span_ids"),
             original_request_info_event=data.get("original_request_info_event"),
         )
+
+
+def _get_queued_response_info_events(messages: Mapping[str, Sequence[WorkflowMessage]]) -> list[WorkflowEvent[Any]]:
+    return [
+        message.original_request_info_event
+        for batch in messages.values()
+        for message in batch
+        if message.type == MessageType.RESPONSE and message.original_request_info_event is not None
+    ]
+
+
+@runtime_checkable
+class _SupportsQueuedMessages(Protocol):
+    """Optional fast path for inspecting queued messages without building a snapshot."""
+
+    async def get_queued_messages(self) -> Mapping[str, Sequence[WorkflowMessage]]:
+        """Inspect queued messages without consuming them or copying their payloads."""
+        ...
 
 
 @runtime_checkable
@@ -610,6 +628,14 @@ class InProcRunnerContext:
             A dictionary mapping request IDs to their corresponding WorkflowEvent (type='request_info').
         """
         return dict(self._pending_request_info_events)
+
+    async def get_queued_response_info_events(self) -> list[WorkflowEvent[Any]]:
+        """Get original requests for queued responses without consuming messages."""
+        return _get_queued_response_info_events(self._messages)
+
+    async def get_queued_messages(self) -> dict[str, list[WorkflowMessage]]:
+        """Inspect queued messages without consuming them or copying their payloads."""
+        return {source_id: list(messages) for source_id, messages in self._messages.items()}
 
     async def cancel_request_info_events(self, request_ids: set[str]) -> dict[str, WorkflowEvent[Any]]:
         """Remove and return pending request_info events selected for cancellation."""

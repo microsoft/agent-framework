@@ -23,7 +23,31 @@ series because response caching and default-header integration use its internals
 
 ## MCP Handler Lifetimes
 
-`DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`.
+`DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`
+and with a non-empty `workflow_session_id`. Missing or empty IDs use the same
+per-invocation lifecycle as provider-backed calls, without cache reuse or coalescing.
+Cache identity includes a framework-owned workflow session ID in addition to
+endpoint, label, connection, and headers, so separate fresh runs do not share a
+stateful MCP protocol session while continuations and checkpoint restores do.
+Direct fresh runs reset this scope even for message-list inputs; only
+framework-marked WorkflowAgent turns retain the agent continuation scope.
+Executors manually composed with Core `WorkflowBuilder` use Core's active run scope,
+including inherited child scopes, rather than a cached declarative scope.
+Run scopes are selected before the initial entry checkpoint and preserved when
+Entry replays. Sessionless WorkflowAgent turns select their own checkpointed scope,
+independent of explicit agent sessions, direct runs, and restored approval scopes.
+Response-only continuations retain the originating workflow scope even when supplied
+a new `AgentSession` after checkpoint restoration.
+Nested workflow bindings derive their scopes from the checkpointed parent scope and
+binding ID, so replaying a parent entry checkpoint preserves child scopes without
+sharing them across sibling bindings.
+Forwarded child requests also checkpoint the originating context at each parent
+boundary. Interleaved continuations restore those ancestor scopes before forwarding
+outputs to subsequent bindings; responses from different parent scopes must be
+submitted separately.
+Ordinary Core `ctx.request_info()` requests before a child binding retain and
+restore their origins too, including when a queued response is replayed.
+Approval continuations keep their originating active scope until the next run with new input.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
 the session and any internally owned fallback client, never caller-owned HTTP clients.
@@ -31,6 +55,13 @@ Shutdown waits for active provider-backed invocations to clean up. Calling `aclo
 from an active invocation's context (including inherited child tasks and cleanup)
 raises `RuntimeError` before changing handler state; shutdown must run outside that
 context or after invocation completion.
+
+For cache-managed scopes, `cache_max_size` bounds live sessions including connecting and
+closing clients, not only idle cache entries. At capacity, the least-recently-used
+idle client is fully closed before its replacement connects. If every slot is
+busy, new scopes receive an explicit capacity error; same-scope cache reuse
+remains available.
+Provider-backed and unscoped per-invocation sessions do not use this cache bound.
 
 Per-invocation sessions intentionally add connection overhead and lose server
 session continuity between invocations;
@@ -43,6 +74,13 @@ workflow-local HMAC key held separately in trusted host checkpoint state.
 Only the opaque binding and header names enter the approval payload; raw headers
 are not checkpointed. Changed or unverifiable headers produce a replacement
 request for the same pinned operation, with a fresh request ID and no dispatch.
+Pending requests also retain their originating workflow session ID across later
+fresh runs and checkpoint restores. Resuming an MCP approval restores that scope
+for downstream actions instead of inheriting a later run's MCP session.
+Factory-built workflows reject response batches containing MCP approvals from
+different originating scopes before dispatch; resume each scope in a separate run.
+Response policies stage only the legacy scope-field updates until all nested
+policies pass; live request payloads are not deep-copied for preflight.
 Fresh executors verify unchanged approvals using the checkpointed key; legacy
 requests or missing verification state require reapproval for non-empty headers.
 Custom handlers remain responsible for identity changes
@@ -56,6 +94,37 @@ arguments. Explicit caller tool arguments in options are preserved.
 
 - **`ExternalInputRequest`** / **`ExternalInputResponse`** - Human-in-the-loop support
 - **`AgentExternalInputRequest`** / **`AgentExternalInputResponse`** - Agent-level input requests
+
+`Question`, `RequestExternalInput`, function approvals, MCP approvals, and agent
+external-input requests retain their originating workflow scope across fresh runs
+and checkpoint restores. Responses restore that scope before updating state or
+continuing execution. Agent external-input requests also retain their own
+`ExternalLoopState` rather than overwriting another pending request's configuration.
+Factory-built workflows reject response batches spanning different scopes across
+all four request families before consuming any responses.
+
+Legacy requests without an originating scope are rejected by default with recovery
+instructions. Hosts can opt in through
+`WorkflowFactory(migrate_legacy_request_scopes=True)`: each submitted legacy request
+receives a stable `legacy-request:<framework request ID>` scope. Migration never
+infers an origin from current state or recovers the old MCP session. Resume requests
+separately, preserve their framework IDs, and checkpoint the migrated continuation.
+The same validation and migration run before restoring ordinary queued checkpoint responses,
+including embedded child checkpoints. The complete nested tree is validated on a
+detached snapshot before any parent or child state, executor state, or queue is
+replaced; a rejected descendant does not partially restore earlier siblings.
+Newly submitted responses are validated together with ordinary queued responses
+before any pending request is consumed.
+Wrapped child replies instead select and validate their actual routes immediately
+before delivery, after earlier handlers and checkpoint restoration. All selected
+children must validate before that reply is delivered. A later rejected reply does
+not roll back earlier continuations or restored state; recover a partially executed
+failed run from a known-good checkpoint rather than retrying its remaining queue.
+The accepted parent scope persists across supersteps and mid-run checkpoint replay
+until all in-flight messages drain; later response-only runs may select other origins.
+Rejected mixed batches do not mutate request origins. Malformed stored origins
+are rejected even with migration enabled. Legacy agent loop configuration is read
+from the old checkpoint slot; newly emitted requests retain their own snapshot.
 
 ## Usage
 

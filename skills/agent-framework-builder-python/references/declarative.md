@@ -24,6 +24,17 @@ maturity. Check current package status and public docstrings before making compa
 - Allowlist external destinations and register only resources the definition may invoke.
 - Review the documented HTTP body limits and handler ownership rules; use a custom handler when host policy requires
   different authentication, retries, SSRF controls, or transport behavior.
+- Direct `DefaultMCPToolHandler` calls without a non-empty `workflow_session_id` use a fresh session per invocation;
+  only explicitly scoped calls without a client provider reuse cached MCP sessions.
+- Declarative children wrapped in `WorkflowExecutor` retain MCP session continuity across parent agent turns.
+  Each binding must own a unique child workflow instance; its MCP scope remains isolated from sibling bindings.
+  Replaying a parent entry checkpoint also retains child scopes when rebuilding the same workflow graph.
+  Declarative executors manually composed with Core `WorkflowBuilder` also follow Core's active run and inherited scopes.
+  Child responses restore the originating parent scope before invoking downstream bindings, including after
+  checkpoint restoration. Submit responses from different parent scopes in separate runs.
+  The same origin recovery applies to ordinary Core `ctx.request_info()` pauses before invoking a child.
+  Queued replies participate in response and cancellation preflight. Wrapped child replies are also validated
+  before live dispatch; do not combine different parent origins in one message or cancellation batch.
 
 ## Validation
 

@@ -372,6 +372,38 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   by that continuation, can atomically restore a supplied checkpoint before cancellation, and returns the resulting
   `WorkflowRunResult`. Cancelling a computer request also cancels the other pending requests in that agent's batch,
   retains already resolved sibling evidence in terminal output, and resets its session before new input.
+- **Nested workflow scopes** - Fresh runs select a checkpoint-backed scope before the entry snapshot.
+  `WorkflowExecutor` derives a child scope from the parent scope and binding ID after the child run is accepted.
+  Agent turns retain their session scope; direct fresh runs select a new scope. Entry replay therefore preserves
+  child scopes even when child execution had not started at the snapshot. Response-only continuations restore
+  their originating scope before further nested invocation. Every `WorkflowContext.request_info()` request
+  retains its run context in checkpointed shared state, including ordinary Core requests before a child binding.
+  Core restores and releases that context before invoking response or cancellation handlers, including queued
+  checkpoint replies. Wrapped child replies use the same helpers at their message boundary; propagated replies
+  are restored only once. Wrapped origins belong to their binding independently of external requests, even when
+  a coordinator relays the same request ID. Origin insertion and removal stage individual mapping entries;
+  committed snapshots remain unchanged until commit and discard rolls back pending changes.
+  Ordinary response and cancellation batches reject mixed parent scopes before consuming requests.
+  Wrapped child replies select routes immediately before delivery, after preceding handlers on compatible
+  edge runners have completed, without waiting for unrelated outgoing handlers, and validate all selected targets
+  together using each child's own policy. Predicates run once per delivery, not during checkpoint or queue
+  preflight. Fan-in aggregates are not individual wrapped replies.
+  Selected replies cannot introduce a different parent scope while a continuation has in-flight messages.
+  The accepted scope is checkpoint-backed across supersteps and clears at quiescence before the final
+  checkpoint, so a later response-only run can select another origin. A rejected reply
+  and subsequent messages remain queued, but earlier handlers and child continuations are not rolled back.
+  Recover a partially executed failed run from a known-good checkpoint rather than retrying its remaining queue.
+- **Nested checkpoint restoration** - Stored and embedded restores preflight a detached checkpoint tree before
+  replacing live state or queues. `WorkflowExecutor` delegates its async private validation hook to its child's runner,
+  so ordinary queued responses use each child's own policy and migration metadata stays in the candidate snapshot.
+  Wrapped-reply policies run only at delivery after executor restoration; rejection does not undo that restoration.
+- **Response policy staging** - Live response validation does not copy request payloads. Policies validate
+  without mutation and may return deferred metadata updates; all policies in the workflow tree must succeed
+  before those updates are applied. This preserves in-process non-copyable payloads and atomic legacy-scope
+  migration without imposing checkpoint serialization requirements on ordinary requests.
+- **Runner context compatibility** - Queued-message inspection is an optional capability, not a required
+  `RunnerContext` member. Contexts without it use their non-persisting `build_checkpoint` snapshot so response
+  validation still includes queued replies without draining messages or consuming pending requests.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
   `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
   is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless

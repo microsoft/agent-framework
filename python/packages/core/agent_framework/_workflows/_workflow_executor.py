@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import logging
 import sys
 import types
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -24,7 +26,12 @@ from ._events import (
     WorkflowRunState,
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
-from ._executor import Executor, handler
+from ._executor import (
+    Executor,
+    _ResponseBatchValidation,  # pyright: ignore[reportPrivateUsage]
+    handler,
+)
+from ._request_context import capture_request_context, restore_request_context
 from ._request_info_mixin import response_handler
 from ._runner_context import WorkflowMessage
 from ._typing_utils import is_instance_of
@@ -286,6 +293,8 @@ class WorkflowExecutor(Executor):
     - Event processing is ordered - outputs are forwarded before requests
     - Responses are forwarded to the sub-workflow as they arrive; the sub-workflow tracks its own
       pending requests and resumes when they are answered
+    - Forwarded requests retain their parent run context in checkpointed parent shared state.
+      Responses and cancellations restore it before forwarding resumed outputs.
     - The WorkflowExecutor keeps no per-execution bookkeeping; the sub-workflow is the single source
       of truth for its pending requests. Starting a new execution while the sub-workflow still has
       pending requests logs a warning and is only safe when the wrapped workflow is stateless
@@ -293,7 +302,7 @@ class WorkflowExecutor(Executor):
 
     def __init__(
         self,
-        workflow: "Workflow",
+        workflow: Workflow,
         id: str,
         allow_direct_output: bool = False,
         propagate_request: bool = False,
@@ -481,12 +490,15 @@ class WorkflowExecutor(Executor):
         fi_kwargs, ci_kwargs = self._get_child_invocation_kwargs(ctx)
 
         # Run the sub-workflow and collect all events, passing parent kwargs
-        result = await self.workflow.run(
+        child_run = self.workflow.run(
             input_data,
             tools=ctx.get_runtime_tools(),
             function_invocation_kwargs=fi_kwargs,
             client_kwargs=ci_kwargs,
         )
+        self.workflow._set_parent_run_context(ctx.state, self.id)  # pyright: ignore[reportPrivateUsage]
+        result = await child_run
+        self._remove_reemitted_pending_requests(result, pending_requests)
 
         logger.debug(f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} completed with {len(result)} events")
 
@@ -589,6 +601,21 @@ class WorkflowExecutor(Executor):
             # the parent checkpoints.
             "sub_workflow_checkpoint": await self.workflow._runner.build_checkpoint(),  # pyright: ignore[reportPrivateUsage]
         }
+
+    @override
+    async def _get_response_validation_batches(
+        self, requests: Sequence[WorkflowEvent]
+    ) -> list[_ResponseBatchValidation]:
+        pending = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
+        return await self.workflow._get_response_validation_batches([  # pyright: ignore[reportPrivateUsage]
+            pending[request.request_id] for request in requests if request.request_id in pending
+        ])
+
+    @override
+    async def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
+        sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
+        if sub_workflow_checkpoint is not None:
+            await self.workflow._runner._validate_checkpoint_tree(sub_workflow_checkpoint, requests)  # pyright: ignore[reportPrivateUsage]
 
     @override
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
@@ -699,6 +726,7 @@ class WorkflowExecutor(Executor):
             else:
                 # In a workflow where the parent workflow has an executor that may intercept the
                 # request and handle it directly, a message should be sent.
+                capture_request_context(ctx.state, request_id, boundary_id=self.id)
                 await ctx.send_message(SubWorkflowRequestMessage(source_event=event, executor_id=self.id))
 
         # Handle final state
@@ -756,5 +784,8 @@ class WorkflowExecutor(Executor):
             responses={request_id: response},
             tools=ctx.get_runtime_tools(),
         )
+        # Propagated replies already restored their context before their response handler.
+        if ctx.request_id != request_id:
+            restore_request_context(ctx.state, request_id, boundary_id=self.id)
         self._remove_reemitted_pending_requests(result, pending_requests)
         await self._process_workflow_result(result, ctx)

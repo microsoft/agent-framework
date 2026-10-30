@@ -98,6 +98,7 @@ class WorkflowFactory:
         mcp_tool_handler: MCPToolHandler | None = None,
         configuration: Mapping[str, str] | None = None,
         restrict_env_to_configuration: bool = True,
+        migrate_legacy_request_scopes: bool = False,
     ) -> None:
         """Initialize the workflow factory.
 
@@ -141,6 +142,12 @@ class WorkflowFactory:
                 discovered in PowerFx expressions inside the workflow
                 definition so unrelated environment variables never enter
                 the PowerFx scope.
+            migrate_legacy_request_scopes: Opt in to resuming legacy pending requests
+                without an originating workflow scope. Each request receives a stable,
+                isolated scope derived from its framework request ID, never the active
+                run's scope. The old MCP session cannot be recovered; resume requests
+                separately and checkpoint the migrated continuation. Defaults to
+                ``False``, which rejects unknown origins before consuming responses.
 
         Examples:
             .. code-block:: python
@@ -196,6 +203,7 @@ class WorkflowFactory:
         self._mcp_tool_handler = mcp_tool_handler
         self._configuration: dict[str, str] = dict(configuration) if configuration else {}
         self._restrict_env_to_configuration = restrict_env_to_configuration
+        self._migrate_legacy_request_scopes = migrate_legacy_request_scopes
 
     def create_workflow_from_yaml_path(
         self,
@@ -455,6 +463,7 @@ class WorkflowFactory:
                 http_request_handler=self._http_request_handler,
                 mcp_tool_handler=self._mcp_tool_handler,
                 env_config=env_config,
+                migrate_legacy_request_scopes=self._migrate_legacy_request_scopes,
             )
             workflow = graph_builder.build()
         except ValueError as e:
