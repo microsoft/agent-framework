@@ -62,4 +62,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
           DAYS_THRESHOLD: ${{ github.event.inputs.days_threshold || '4' }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
