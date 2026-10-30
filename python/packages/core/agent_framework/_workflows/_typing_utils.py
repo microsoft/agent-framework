@@ -457,6 +457,7 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     A type is compatible if values of source_type can be assigned to variables of target_type.
     For example:
     - list[Message] is compatible with list[str | Message]
+    - list[str] is compatible with Sequence[str]
     - str is compatible with str | int
     - int is compatible with Any
 
@@ -548,8 +549,22 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
         except TypeError:
             return False
 
-    # Case 5: different container types are not compatible
+    # Case 5: built-in containers can implement parameterized collection interfaces
     if source_origin != target_origin:
+        # Tuple-to-interface compatibility is not implemented. Supporting it would require
+        # handling fixed-length, variable-length (tuple[T, ...]), and empty (tuple[()]) tuples.
+        if (
+            source_origin in (list, set, frozenset, dict)
+            and isinstance(target_origin, type)
+            and target_origin.__module__ == "collections.abc"
+            and issubclass(source_origin, target_origin)
+            and len(source_args) == (2 if source_origin is dict else 1)
+        ):
+            interface_args = source_args[:1] if len(target_args) == 1 else source_args
+            return len(interface_args) == len(target_args) and all(
+                is_type_compatible(source_arg, target_arg)
+                for source_arg, target_arg in zip(interface_args, target_args, strict=False)
+            )
         return False
 
     # Case 6: same container type - check generic arguments
