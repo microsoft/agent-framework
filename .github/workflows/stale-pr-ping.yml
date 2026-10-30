@@ -58,7 +58,7 @@ jobs:
         run: pip install PyGithub==2.6.0
 
       - name: Run stale pull request lifecycle
-        run: python .github/scripts/stale_issue_pr_ping.py
+        run: python .github/scripts/stale_pr_ping.py
         env:
           GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
           DAYS_THRESHOLD: ${{ github.event.inputs.days_threshold || '4' }}

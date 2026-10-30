@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for stale_issue_pr_ping.py."""
+"""Tests for stale_pr_ping.py."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from github import GithubException
 # Ensure the script directory is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
-from stale_issue_pr_ping import (
+from stale_pr_ping import (
     CLOSING_COMMENT,
     CLOSING_THRESHOLD_DAYS,
     DONT_CLOSE_LABEL,
@@ -209,7 +209,7 @@ class TestWarn:
             call.add_to_labels(REQUESTED_INFO_LABEL),
         ]
 
-    @patch("stale_issue_pr_ping.time.sleep")
+    @patch("stale_pr_ping.time.sleep")
     def test_comment_retry_succeeds(self, mock_sleep):
         pull_request = _make_pull_request()
         pull_request.create_issue_comment.side_effect = [
@@ -222,7 +222,7 @@ class TestWarn:
         pull_request.add_to_labels.assert_called_once_with(REQUESTED_INFO_LABEL)
         mock_sleep.assert_called_once()
 
-    @patch("stale_issue_pr_ping.time.sleep")
+    @patch("stale_pr_ping.time.sleep")
     def test_label_retry_does_not_repeat_warning(self, mock_sleep):
         pull_request = _make_pull_request()
         pull_request.add_to_labels.side_effect = [
@@ -235,7 +235,7 @@ class TestWarn:
         assert pull_request.add_to_labels.call_count == 2
         mock_sleep.assert_called_once()
 
-    @patch("stale_issue_pr_ping.time.sleep")
+    @patch("stale_pr_ping.time.sleep")
     def test_warning_failure_never_applies_label(self, mock_sleep):
         pull_request = _make_pull_request()
         pull_request.create_issue_comment.side_effect = Exception("comment error")
@@ -244,7 +244,7 @@ class TestWarn:
         assert pull_request.create_issue_comment.call_count == 3
         pull_request.add_to_labels.assert_not_called()
 
-    @patch("stale_issue_pr_ping.time.sleep")
+    @patch("stale_pr_ping.time.sleep")
     def test_final_label_failure_reports_failure_without_repeating_warning(
         self,
         mock_sleep,
@@ -318,7 +318,7 @@ class TestClose:
             call.edit(state="closed"),
         ]
 
-    @patch("stale_issue_pr_ping.time.sleep")
+    @patch("stale_pr_ping.time.sleep")
     def test_close_retry_does_not_repeat_comment(self, mock_sleep):
         pull_request = _make_pull_request()
         pull_request.edit.side_effect = [Exception("close error"), None]
@@ -328,7 +328,7 @@ class TestClose:
         assert pull_request.edit.call_count == 2
         mock_sleep.assert_called_once()
 
-    @patch("stale_issue_pr_ping.time.sleep")
+    @patch("stale_pr_ping.time.sleep")
     def test_comment_failure_never_closes_pr(self, mock_sleep):
         pull_request = _make_pull_request()
         pull_request.create_issue_comment.side_effect = Exception("comment error")
@@ -337,7 +337,7 @@ class TestClose:
         assert pull_request.create_issue_comment.call_count == 3
         pull_request.edit.assert_not_called()
 
-    @patch("stale_issue_pr_ping.time.sleep")
+    @patch("stale_pr_ping.time.sleep")
     def test_final_close_failure_reports_failure_without_repeating_comment(
         self,
         mock_sleep,
@@ -423,7 +423,7 @@ class TestMain:
         },
         clear=True,
     )
-    @patch("stale_issue_pr_ping.Github")
+    @patch("stale_pr_ping.Github")
     def test_invalid_days_threshold_stops_before_github(self, mock_github, capsys):
         with pytest.raises(SystemExit):
             main()
@@ -440,9 +440,9 @@ class TestMain:
         },
         clear=True,
     )
-    @patch("stale_issue_pr_ping.datetime")
-    @patch("stale_issue_pr_ping.get_maintainers", return_value=MAINTAINERS)
-    @patch("stale_issue_pr_ping.Github")
+    @patch("stale_pr_ping.datetime")
+    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
+    @patch("stale_pr_ping.Github")
     def test_scans_only_open_prs_and_defers_new_warning(
         self,
         mock_github,
@@ -482,9 +482,9 @@ class TestMain:
         },
         clear=True,
     )
-    @patch("stale_issue_pr_ping.datetime")
-    @patch("stale_issue_pr_ping.get_maintainers", return_value=MAINTAINERS)
-    @patch("stale_issue_pr_ping.Github")
+    @patch("stale_pr_ping.datetime")
+    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
+    @patch("stale_pr_ping.Github")
     def test_existing_requested_info_pr_closes_before_warning_check(
         self,
         mock_github,
@@ -518,10 +518,10 @@ class TestMain:
         },
         clear=True,
     )
-    @patch("stale_issue_pr_ping.datetime")
-    @patch("stale_issue_pr_ping.warn", return_value=False)
-    @patch("stale_issue_pr_ping.get_maintainers", return_value=MAINTAINERS)
-    @patch("stale_issue_pr_ping.Github")
+    @patch("stale_pr_ping.datetime")
+    @patch("stale_pr_ping.warn", return_value=False)
+    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
+    @patch("stale_pr_ping.Github")
     def test_failed_warning_is_reported_and_exits(
         self,
         mock_github,
