@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from agent_framework import Filter, FilterGroup
+from agent_framework import Filter, FilterGroup, VectorStoreCollectionDefinition, VectorStoreField
 from agent_framework._vector_filters import validate_filter
 from qdrant_client import AsyncQdrantClient
 
@@ -73,6 +73,53 @@ def test_reject_non_equivalent_operations(collection, expression):
 def test_reject_unsafe_numeric_range(collection, value):
     with pytest.raises((TypeError, ValueError)):
         collection._prepare_filter(Filter("integer", "gt", value))
+
+
+def test_scalar_presence_and_null_do_not_depend_on_values_count(collection):
+    # Qdrant 1.19.0 counts a missing key as zero values; 1.19.1 also matches is_null on arrays containing null.
+    empty = {"is_empty": {"key": "body"}}
+    null = {"must": [{"is_null": {"key": "body"}}, empty]}
+    expected = {
+        "exists": {"should": [{"must_not": [empty]}, null]},
+        "is_null": null,
+        "is_not_null": {"must_not": [empty]},
+    }
+    for operator, condition in expected.items():
+        native = collection._prepare_filter(Filter("text", operator))
+        assert native is not None
+        assert native.model_dump(exclude_none=True) == {"must": [condition]}
+    native = collection._prepare_filter(Filter("tags", "is_null"))
+    assert native is not None
+    assert native.model_dump(exclude_none=True) == {
+        "must": [{"must": [{"is_null": {"key": "tags"}}, {"is_empty": {"key": "tags"}}]}]
+    }
+
+
+def test_dict_presence_and_null_do_not_depend_on_values_count():
+    # A dict field cannot hold [], so it takes the same is_empty-based path as scalars on Qdrant 1.19+.
+    client = AsyncMock(spec=AsyncQdrantClient)
+    client.init_options = {}
+    collection = QdrantCollection(
+        dict,
+        definition=VectorStoreCollectionDefinition([
+            VectorStoreField("key", name="id", type_="int"),
+            VectorStoreField("data", name="meta", type_="dict", storage_name="attributes"),
+        ]),
+        collection_name="test",
+        async_client=client,
+    )
+    empty = {"is_empty": {"key": "attributes"}}
+    null = {"must": [{"is_null": {"key": "attributes"}}, empty]}
+    expected = {
+        "exists": {"should": [{"must_not": [empty]}, null]},
+        "is_null": null,
+        "is_not_null": {"must_not": [empty]},
+    }
+    for operator, condition in expected.items():
+        native = collection._prepare_filter(Filter("meta", operator))
+        assert native is not None
+        assert native.model_dump(exclude_none=True) == {"must": [condition]}
+        assert "values_count" not in str(native.model_dump(exclude_none=True))
 
 
 def test_numeric_equality_preserves_bool_distinction(collection):

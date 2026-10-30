@@ -91,6 +91,9 @@ _READ_OPTIONS = {"consistency", "shard_key_selector", "timeout"}
 _WRITE_OPTIONS = {"ordering", "shard_key_selector", "timeout"}
 _BATCH_SIZE = 256
 _MAX_EXACT_INTEGER = 2**53 - 1
+_SCALAR_FIELD_TYPES = frozenset({"str", "int", "float", "bool"})
+# Data field types that can never hold an array, so ``is_empty`` alone separates a missing key from a value.
+_NON_ARRAY_FIELD_TYPES = _SCALAR_FIELD_TYPES | {"dict"}
 _CREATE_OPTIONS = {
     "shard_number",
     "replication_factor",
@@ -221,17 +224,36 @@ def _prepare_false_condition() -> models.HasIdCondition:
     return models.HasIdCondition(has_id=[])
 
 
-def _prepare_presence_condition(name: str) -> models.FieldCondition:
-    # Unlike is_empty, the server's values_count distinguishes missing from null and [].
+def _prepare_empty_condition(name: str) -> models.IsEmptyCondition:
+    # is_empty matches a missing key, null, and [] on every supported server version.
+    return models.IsEmptyCondition(is_empty=models.PayloadField(key=name))
+
+
+def _prepare_null_condition(name: str) -> models.Filter:
+    # Since Qdrant 1.19.1, is_null also matches arrays containing null; is_empty restricts it to an explicit null.
+    return models.Filter(
+        must=[models.IsNullCondition(is_null=models.PayloadField(key=name)), _prepare_empty_condition(name)]
+    )
+
+
+def _prepare_presence_condition(field: VectorStoreField) -> models.Condition:
+    name = field.storage_name or field.name
+    if field.type_ in _NON_ARRAY_FIELD_TYPES:
+        # Since Qdrant 1.19.0, values_count treats a missing key as zero values. A declared scalar or dict
+        # cannot hold [] ({} is not empty for Qdrant), so it is present exactly when it is non-empty or an
+        # explicit null.
+        return models.Filter(
+            should=[models.Filter(must_not=[_prepare_empty_condition(name)]), _prepare_null_condition(name)]
+        )
+    # Only values_count separates [] from a missing key, and only on Qdrant servers before 1.19.0.
     return models.FieldCondition(key=name, values_count=models.ValuesCount(gte=0))
 
 
-def _prepare_null_condition(name: str) -> models.IsNullCondition:
-    return models.IsNullCondition(is_null=models.PayloadField(key=name))
-
-
-def _prepare_non_null_condition(name: str) -> models.Filter:
-    return models.Filter(must=[_prepare_presence_condition(name)], must_not=[_prepare_null_condition(name)])
+def _prepare_non_null_condition(field: VectorStoreField) -> models.Filter:
+    name = field.storage_name or field.name
+    if field.type_ in _NON_ARRAY_FIELD_TYPES:
+        return models.Filter(must_not=[_prepare_empty_condition(name)])
+    return models.Filter(must=[_prepare_presence_condition(field)], must_not=[_prepare_null_condition(name)])
 
 
 def _prepare_range_operand(value: Any) -> float:
@@ -332,6 +354,8 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
     Portable filters require a server: Qdrant's local emulator has different
     null/missing and numeric matching behavior across supported SDK versions.
     Local mode supports unfiltered CRUD and dense search. Ordered retrieval is unsupported.
+    Qdrant 1.19+ servers cannot distinguish ``[]`` from a missing key, so ``exists``,
+    ``is_not_null``, and empty ``contains_all`` on collection fields also match points without the key.
     """
 
     supported_key_types: ClassVar[set[str] | None] = {"int", "str", "UUID"}
@@ -610,15 +634,15 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         name = field.storage_name or field.name
         operator, value = expression.operator, expression.value
         if operator == "exists":
-            return _prepare_presence_condition(name)
+            return _prepare_presence_condition(field)
         if operator == "is_null":
             return _prepare_null_condition(name)
         if operator == "is_not_null":
-            return _prepare_non_null_condition(name)
+            return _prepare_non_null_condition(field)
         if operator in {"eq", "ne"}:
             condition = _prepare_equality_condition(name, value, field)
             return (
-                models.Filter(must=[_prepare_presence_condition(name)], must_not=[condition])
+                models.Filter(must=[_prepare_presence_condition(field)], must_not=[condition])
                 if operator == "ne"
                 else condition
             )
@@ -638,15 +662,15 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 else _prepare_false_condition()
             )
             if operator == "not_in":
-                return models.Filter(must=[_prepare_non_null_condition(name)], must_not=[condition])
-            return models.Filter(must=[_prepare_non_null_condition(name), condition])
+                return models.Filter(must=[_prepare_non_null_condition(field)], must_not=[condition])
+            return models.Filter(must=[_prepare_non_null_condition(field), condition])
         if operator in {"contains", "contains_any", "contains_all"}:
             if field.type_ not in {"list", "tuple", "set", "Sequence"}:
                 raise NotImplementedError("Qdrant collection membership requires a declared collection field type.")
             operands: Sequence[Any] = [value] if operator == "contains" else value
             conditions = [_prepare_equality_condition(name, item, field, element=True) for item in operands]
             if operator == "contains_all":
-                return models.Filter(must=[_prepare_non_null_condition(name), *conditions])
+                return models.Filter(must=[_prepare_non_null_condition(field), *conditions])
             return models.Filter(should=conditions) if conditions else _prepare_false_condition()
         raise NotImplementedError(
             f"Qdrant does not support portable filter operator '{operator}'. "
