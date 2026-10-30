@@ -37,9 +37,9 @@ python client_advanced.py
 
 ### Agent Integration (`client_with_agent.py`)
 
-Best practice example using `Agent` wrapper with **AgentThread**
-- **AgentThread** maintains conversation state
-- Client-side conversation history management via `thread.message_store`
+Best practice example using `Agent` wrapper with **AgentSession**
+- **AgentSession** (from `agent.create_session()`) maintains conversation state
+- Client-side conversation history management through the session
 - **Hybrid tool execution**: client-side + server-side tools simultaneously
 - Full conversation history sent on each request
 - Tool calling with conversation context
@@ -320,6 +320,7 @@ Create a file named `client.py`:
 import asyncio
 import os
 
+from agent_framework import Message
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -350,7 +351,11 @@ async def main():
                 # Use metadata to maintain conversation continuity
                 metadata = {"thread_id": thread_id} if thread_id else None
 
-                async for update in client.get_response(message, metadata=metadata, stream=True):
+                async for update in client.get_response(
+                    [Message(role="user", contents=[message])],
+                    stream=True,
+                    options={"metadata": metadata} if metadata else None,
+                ):
                     # Extract thread ID from first update
                     if not thread_id and update.additional_properties:
                         thread_id = update.additional_properties.get("thread_id")

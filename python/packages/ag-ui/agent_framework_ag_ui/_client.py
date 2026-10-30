@@ -162,7 +162,7 @@ class AGUIChatClient(
             # Second message - server retrieves history using thread_id
             response2 = await client.get_response(
                 "How are you?",
-                metadata={"thread_id": thread_id}
+                options={"metadata": {"thread_id": thread_id}},
             )
 
         Recommended usage with Agent (client manages history):
