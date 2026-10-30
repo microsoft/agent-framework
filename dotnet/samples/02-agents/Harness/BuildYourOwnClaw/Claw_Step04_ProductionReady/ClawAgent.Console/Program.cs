@@ -17,7 +17,9 @@ var telemetryEnabled = !string.IsNullOrWhiteSpace(otlpEndpoint);
 // Export telemetry only when an OTLP endpoint is configured. We deliberately avoid the
 // console exporter: this is an interactive app whose UI is rendered by
 // HarnessConsole.RunAgentAsync, and streaming spans/metrics to stdout corrupts that UI.
-var resourceBuilder = ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0");
+var resourceBuilder = ResourceBuilder.CreateDefault()
+    .AddService(ServiceName, serviceVersion: "1.0.0")
+    .AddAttributes([new("microsoft.agent-framework", "True")]);
 using var tracerProvider = telemetryEnabled
     ? Sdk.CreateTracerProviderBuilder()
         .SetResourceBuilder(resourceBuilder)

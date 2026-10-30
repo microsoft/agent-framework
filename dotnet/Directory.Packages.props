@@ -7,7 +7,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <!-- Aspire -->
-    <AspireAppHostSdkVersion>13.6.1</AspireAppHostSdkVersion>
+    <AspireAppHostSdkVersion>13.6.3</AspireAppHostSdkVersion>
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
@@ -24,16 +24,16 @@
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.6.0" />
     <PackageVersion Include="MessagePack" Version="3.1.12" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.29" />
-    <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.6" />
-    <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.8" />
+    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.30" />
+    <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.7" />
+    <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.9" />
     <PackageVersion Include="Azure.Search.Documents" Version="12.0.0" />
-    <PackageVersion Include="Azure.AI.Projects" Version="3.0.0-beta.3" />
-    <!-- Azure.AI.Projects 3.0.0-beta.3 declares a dependency on an unpublished 3.0.0-alpha build of this package,
+    <PackageVersion Include="Azure.AI.Projects" Version="3.0.0-beta.5" />
+    <!-- Azure.AI.Projects 3.0.0-beta.5 declares a dependency on an unpublished 3.0.0-alpha build of this package,
          which makes NuGet raise NU1603 and fall back to the stale 3.0.0-beta.1. Pin the matching beta explicitly. -->
-    <PackageVersion Include="Azure.AI.Extensions.OpenAI" Version="3.0.0-beta.3" />
+    <PackageVersion Include="Azure.AI.Extensions.OpenAI" Version="3.0.0-beta.5" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
-    <PackageVersion Include="Azure.Core" Version="1.62.0" />
+    <PackageVersion Include="Azure.Core" Version="1.63.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageVersion Include="DotNetEnv" Version="3.2.0" />
@@ -50,7 +50,7 @@
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.12" />
-    <PackageVersion Include="System.ClientModel" Version="1.15.0" />
+    <PackageVersion Include="System.ClientModel" Version="1.16.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.12" />
     <PackageVersion Include="System.Collections.Immutable" Version="10.0.12" />
     <PackageVersion Include="System.CommandLine" Version="2.0.12" />
@@ -136,7 +136,7 @@
     <PackageVersion Include="OllamaSharp" Version="5.4.30" />
     <PackageVersion Include="OpenAI" Version="2.14.0" />
     <!-- Identity -->
-    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.89.0" />
+    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.90.0" />
     <!-- Workflows -->
     <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.5.5" />
     <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.5.5" />

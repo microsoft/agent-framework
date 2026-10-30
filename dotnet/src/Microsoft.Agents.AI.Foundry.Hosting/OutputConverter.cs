@@ -23,6 +23,7 @@ using OpenAIStreamingResponseOutputItemAddedUpdate = OpenAI.Responses.StreamingR
 using OpenAIStreamingResponseOutputItemDoneUpdate = OpenAI.Responses.StreamingResponseOutputItemDoneUpdate;
 using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.StreamingResponseOutputTextAnnotationAddedUpdate;
 using OpenAIStreamingResponseOutputTextDeltaUpdate = OpenAI.Responses.StreamingResponseOutputTextDeltaUpdate;
+using OpenAIStreamingResponseUpdate = OpenAI.Responses.StreamingResponseUpdate;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -138,6 +139,10 @@ internal static class OutputConverter
             }
 
             string? currentMessageId = ResolveMessageId(update);
+            // Completed messages retain independent text parts in one update. Provider streaming
+            // spans already address the generated text, including when a chunk has multiple parts.
+            bool isStreamingUpdate = update.RawRepresentation is ChatResponseUpdate or OpenAIStreamingResponseUpdate;
+            int textPartOffset = 0;
             foreach (var content in update.Contents)
             {
                 switch (content)
@@ -164,6 +169,7 @@ internal static class OutputConverter
 
                         if (currentMessageBuilder is null)
                         {
+                            textPartOffset = 0;
                             currentMessageBuilder = stream.AddOutputItemMessage();
                             yield return currentMessageBuilder.EmitAdded();
 
@@ -382,13 +388,18 @@ internal static class OutputConverter
                     && content.Annotations is { Count: > 0 }
                     && currentMessageBuilder is not null)
                 {
-                    foreach (var sdkAnnotation in ConvertToSdkAnnotations(content.Annotations))
+                    foreach (var sdkAnnotation in ConvertToSdkAnnotations(content.Annotations, isTextContent ? textPartOffset : 0))
                     {
                         if (accumulatedAnnotations?.Any(existing => AreEquivalentAnnotations(existing, sdkAnnotation)) is not true)
                         {
                             (accumulatedAnnotations ??= []).Add(sdkAnnotation);
                         }
                     }
+                }
+
+                if (!isStreamingUpdate && content is MeaiTextContent textPart)
+                {
+                    textPartOffset += textPart.Text.Length;
                 }
             }
         }
@@ -493,7 +504,7 @@ internal static class OutputConverter
     /// Converts MEAI <see cref="AIAnnotation"/> instances to Responses SDK <see cref="Annotation"/> objects.
     /// Only supported <see cref="CitationAnnotation"/> shapes are converted; all others are skipped.
     /// </summary>
-    private static IEnumerable<Annotation> ConvertToSdkAnnotations(IList<AIAnnotation> annotations)
+    private static IEnumerable<Annotation> ConvertToSdkAnnotations(IList<AIAnnotation> annotations, int textPartOffset)
     {
         foreach (var ann in annotations)
         {
@@ -544,8 +555,8 @@ internal static class OutputConverter
             {
                 yield return new UrlCitationBody(
                     citation.Url,
-                    region.StartIndex!.Value,
-                    region.EndIndex!.Value,
+                    region.StartIndex!.Value + textPartOffset,
+                    region.EndIndex!.Value + textPartOffset,
                     citation.Title ?? string.Empty);
             }
         }

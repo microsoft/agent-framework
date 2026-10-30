@@ -55,6 +55,7 @@ column records whether `pip install agent-framework` installs the workspace pack
 | `agent-framework-mistral` | `python/packages/mistral` | `beta` | `yes` |
 | `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` | `no` |
 | `agent-framework-monty` | `python/packages/monty` | `beta` | `yes` |
+| `agent-framework-nvidia` | `python/packages/nvidia` | `alpha` | `no` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` | `yes` |
 | `agent-framework-openai` | `python/packages/openai` | `released` | `yes` |
 | `agent-framework-oracle` | `python/packages/oracle` | `alpha` | `no` |
@@ -82,12 +83,14 @@ listed below.
 
 #### `AGENT_HOOKS`
 
-- `agent-framework-core`: `create_agent_hooks_middleware` and
-  `create_agent_hooks_middleware_from_emitter` from `agent_framework/_agent_hooks.py`,
+- `agent-framework-core`: `create_agent_hooks_middleware`,
+  `create_agent_hooks_middleware_from_emitter` and the host-declaration factory
+  `create_agent_hooks_middleware_from_declaration` from `agent_framework/_agent_hooks.py`,
   the AGENT-HOOKS-0.1 enforcement middleware bundle, and the `MiddlewareBundle`
-  container from `agent_framework/_middleware.py` that both factories produce
+  container from `agent_framework/_middleware.py` that the factories produce
   (`MiddlewareBundle` itself needs no optional dependency). Requires installing the
-  `agent-hooks-sdk` package separately. Known limitation: service-side (hosted) tool
+  `agent-hooks-sdk` package separately (0.1.0b2 or later for the host-declaration
+  factory). Known limitation: service-side (hosted) tool
   execution never passes through the framework's function-invocation seam, so the
   `pre_tool_call`/`post_tool_call` points cannot intercept it; hosted tool calls and
   outputs are surfaced in the `post_model_call` content projection instead.

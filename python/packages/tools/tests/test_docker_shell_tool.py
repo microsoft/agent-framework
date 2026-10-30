@@ -46,11 +46,23 @@ class _FakeProcess:
     ) -> None:
         self.pid = pid
         self.returncode = returncode
-        self.stdout = object()
-        self.stderr = object()
+        self._transport = MagicMock(spec=asyncio.SubprocessTransport)
+        self.stdout_transport = MagicMock(spec=asyncio.ReadTransport)
+        self.stderr_transport = MagicMock(spec=asyncio.ReadTransport)
+        self._transport.get_pipe_transport.side_effect = {1: self.stdout_transport, 2: self.stderr_transport}.get
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
         self.killed = False
         self._communicate_results = list(communicate_results or [(b"", b"")])
-        self._wait_results = list(wait_results or [returncode])
+        first = self._communicate_results[0]
+        self._wait_results = list(
+            wait_results or ([first, returncode] if isinstance(first, BaseException) else [returncode])
+        )
+        output = next((item for item in self._communicate_results if isinstance(item, tuple)), (b"", b""))
+        self.stdout.feed_data(output[0])
+        self.stderr.feed_data(output[1])
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
 
     async def communicate(self) -> tuple[bytes, bytes]:
         result = self._communicate_results.pop(0)
@@ -60,7 +72,7 @@ class _FakeProcess:
         return stdout, stderr
 
     async def wait(self) -> int | None:
-        result = self._wait_results.pop(0)
+        result = self._wait_results.pop(0) if self._wait_results else self.returncode
         if isinstance(result, BaseException):
             raise result
         self.returncode = result
@@ -309,7 +321,7 @@ async def test_start_and_close_are_noops_in_stateless_mode() -> None:
 
 
 async def test_start_creates_and_reuses_persistent_session() -> None:
-    tool = DockerShellTool(docker_binary="podman", shell="sh")
+    tool = DockerShellTool(docker_binary="podman", shell="sh", max_stdout_bytes=1024, max_stderr_bytes=2048)
     session = AsyncMock()
 
     with (
@@ -324,7 +336,8 @@ async def test_start_creates_and_reuses_persistent_session() -> None:
         ["podman", "exec", "-i", tool._container_name, "sh"],
         workdir=None,
         env=None,
-        max_output_bytes=tool._max_output_bytes,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=2048,
     )
     assert session.start.await_count == 2
 
@@ -436,6 +449,125 @@ async def test_run_stateless_builds_expected_argv() -> None:
     assert result.stderr == "warning\n"
     assert result.exit_code == 3
     assert result.timed_out is False
+
+
+@pytest.mark.parametrize(("max_stdout_bytes", "max_stderr_bytes"), [(17, 33), (33, 17)])
+async def test_docker_stateless_bounds_both_host_output_buffers(
+    max_stdout_bytes: int, max_stderr_bytes: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_framework_tools.shell._truncate import _OutputBuffer, truncate_head_tail
+
+    append = _OutputBuffer.append
+    observed: list[int] = []
+
+    def checked_append(self: _OutputBuffer, data: bytes) -> None:
+        append(self, data)
+        retained = len(self._head) + len(self._tail)
+        assert self._cap in (max_stdout_bytes, max_stderr_bytes)
+        assert retained <= self._cap
+        observed.append(retained)
+
+    monkeypatch.setattr(_OutputBuffer, "append", checked_append)
+    tool = DockerShellTool(mode="stateless", max_stdout_bytes=max_stdout_bytes, max_stderr_bytes=max_stderr_bytes)
+    proc = _FakeProcess(communicate_results=[(b"a" * 65536, b"b" * 65536)])
+    with patch("agent_framework_tools.shell._docker.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        result = await tool.run("unused")
+    assert result.truncated and result.exit_code == 0
+    assert result.stdout == truncate_head_tail(b"a" * 65536, max_stdout_bytes)[0]
+    assert result.stderr == truncate_head_tail(b"b" * 65536, max_stderr_bytes)[0]
+    assert observed
+
+
+@pytest.mark.parametrize("failure", ["cancel", "reader"])
+async def test_docker_stateless_failure_stops_container_and_local_client(failure: str) -> None:
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=None)
+    killer = _FakeProcess()
+    waiting = asyncio.Event()
+
+    async def wait() -> int:
+        waiting.set()
+        await asyncio.Event().wait()
+        return 0
+
+    if failure == "reader":
+        proc.stderr.set_exception(OSError("pipe failed"))
+    with (
+        patch.object(proc, "wait", wait),
+        patch(
+            "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=[proc, killer]),
+        ) as create_process,
+    ):
+        task = asyncio.create_task(tool.run("unused", timeout=5))
+        await waiting.wait()
+        if failure == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(OSError, match="pipe failed"):
+                await task
+    assert proc.killed
+    proc.stdout_transport.close.assert_called()
+    proc.stderr_transport.close.assert_called()
+    assert create_process.await_count == 2
+    assert create_process.await_args_list[1].args[1:4] == ("kill", "--signal", "KILL")
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_docker_rejects_invalid_output_limit_before_execution(cap: int, stream: str) -> None:
+    with pytest.raises(ValueError, match=f"max_{stream}_bytes must be positive"):
+        DockerShellTool(
+            max_stdout_bytes=cap if stream == "stdout" else 1024,
+            max_stderr_bytes=cap if stream == "stderr" else 1024,
+        )
+
+
+async def test_docker_cleanup_reader_failure_stops_cleanup_process() -> None:
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=None, wait_results=[asyncio.TimeoutError()])
+    killer = _FakeProcess(returncode=1)
+    reaper = _FakeProcess(returncode=None)
+    reaper.stderr.set_exception(OSError("cleanup pipe failed"))
+    with (
+        patch(
+            "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=[proc, killer, reaper]),
+        ),
+        pytest.raises(OSError, match="cleanup pipe failed"),
+    ):
+        await tool.run("unused", timeout=5)
+    assert reaper.killed and proc.killed
+
+
+@pytest.mark.parametrize("cleanup_command", ["kill", "rm"])
+async def test_docker_cancellation_stops_cleanup_process(cleanup_command: str) -> None:
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=None, wait_results=[asyncio.TimeoutError()])
+    cleanup = _FakeProcess(returncode=None)
+    waiting = asyncio.Event()
+
+    async def wait() -> int:
+        waiting.set()
+        await asyncio.Event().wait()
+        return 0
+
+    processes = [proc, cleanup] if cleanup_command == "kill" else [proc, _FakeProcess(returncode=1), cleanup]
+    with (
+        patch.object(cleanup, "wait", wait),
+        patch(
+            "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=processes),
+        ),
+    ):
+        task = asyncio.create_task(tool.run("unused", timeout=5))
+        await waiting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert cleanup.killed and proc.killed
 
 
 async def test_run_stateless_places_unsafe_extra_args_after_isolation_defaults() -> None:

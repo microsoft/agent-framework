@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from ._conversations import ConversationItemValidationError
 from ._deployment import DeploymentManager
 from ._discovery import EntityDiscovery
 from ._executor import AgentFrameworkExecutor
@@ -1084,6 +1085,8 @@ class DevServer:
                 items = request_data.get("items", [])
                 conv_items = await executor.conversation_store.add_items(conversation_id, items=items)
                 return {"object": "list", "data": [item.model_dump() for item in conv_items]}
+            except ConversationItemValidationError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
             except HTTPException:

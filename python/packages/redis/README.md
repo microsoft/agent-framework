@@ -18,7 +18,8 @@ records. Import them from `agent_framework.redis` or `agent_framework_redis`.
 
 ## Install
 
-Requires Python 3.10–3.14. RedisVL currently declares `Requires-Python <3.15`,
+Supports Python 3.11–3.14. Python 3.10 installation remains permitted, but
+compatibility is not guaranteed. RedisVL currently declares `Requires-Python <3.15`,
 so pip cannot install this connector on Python 3.15 yet:
 
 ```bash
@@ -52,6 +53,11 @@ Context retrieval requires Redis Search. Vector collections require Redis
 JSON collections additionally require RedisJSON.
 Redis Search indexes require logical database 0, so vector-store URLs and clients
 must select database 0 (the default).
+
+The beta `RedisContextProvider` scope schema is not backward compatible with
+indexes created by earlier releases. Delete the old index and its context
+hashes, let the provider create a new index, and re-ingest the context data.
+Incompatible indexes fail closed; `overwrite_index=True` does not migrate them.
 
 Choose `storage_type="hash"` for non-null records with binary vector storage,
 or `"json"` for nullable fields/vectors and native JSON data. HASH rejects
