@@ -41,7 +41,7 @@ part of this migration gallery.
 Each script is fully async and the `main()` routine runs both implementations back to back so you can observe their outputs in a single execution.
 
 ## Prerequisites
-- Python 3.10 or later.
+- Python 3.11–3.15, subject to Semantic Kernel's dependency requirements.
 - Access to the necessary model endpoints (Azure OpenAI, OpenAI, Azure AI, Copilot Studio, etc.).
 - Installed SDKs: `semantic-kernel` and the Microsoft Agent Framework (`pip install semantic-kernel agent-framework`), or the repo’s editable packages if you are developing locally.
 - Service credentials exposed through environment variables (for example `OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, or Copilot Studio auth settings).
@@ -57,7 +57,7 @@ Every script accepts no CLI arguments and will first call the SK implementation,
 Advanced comparisons are split between `samantic-kernel-migration/orchestrations` (Sequential, Concurrent, Magentic) and `samantic-kernel-migration/processes` (fan-out/fan-in, nested). You can run them directly, or isolate dependencies in a throwaway virtual environment:
 ```
 cd samples/semantic-kernel-migration
-uv venv --python 3.10 .venv-migration
+uv venv --python 3.11 .venv-migration
 source .venv-migration/bin/activate
 uv pip install semantic-kernel agent-framework
 uv run python orchestrations/sequential.py

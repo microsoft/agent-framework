@@ -150,7 +150,7 @@ public class ServiceCollectionExtensionsTests
     public void AddFoundryResponses_NullServices_ThrowsArgumentNullException()
     {
         Assert.Throws<ArgumentNullException>(
-            () => FoundryHostingExtensions.AddFoundryResponses(null!));
+            () => FoundryHostingExtensions.AddFoundryResponses((IServiceCollection)null!));
     }
 
     [Fact]

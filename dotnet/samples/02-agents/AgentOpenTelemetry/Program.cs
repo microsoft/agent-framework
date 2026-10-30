@@ -28,18 +28,18 @@ var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOI
 var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
 
 // Create a resource to identify this service
-var resource = ResourceBuilder.CreateDefault()
+var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(ServiceName, serviceVersion: "1.0.0")
     .AddAttributes(new Dictionary<string, object>
     {
         ["service.instance.id"] = Environment.MachineName,
-        ["deployment.environment"] = "development"
-    })
-    .Build();
+        ["deployment.environment"] = "development",
+        ["microsoft.agent-framework"] = "True"
+    });
 
 // Setup tracing with resource
 var tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
-    .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"))
+    .SetResourceBuilder(resourceBuilder)
     .AddSource(SourceName) // Our custom activity source
     .AddHttpClientInstrumentation() // Capture HTTP calls to OpenAI
     .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
@@ -53,7 +53,7 @@ using var tracerProvider = tracerProviderBuilder.Build();
 
 // Setup metrics with resource and instrument name filtering
 using var meterProvider = Sdk.CreateMeterProviderBuilder()
-    .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"))
+    .SetResourceBuilder(resourceBuilder)
     .AddMeter(SourceName) // Our custom meter source
     .AddHttpClientInstrumentation() // HTTP client metrics
     .AddRuntimeInstrumentation() // .NET runtime metrics
@@ -66,7 +66,7 @@ serviceCollection.AddLogging(loggingBuilder => loggingBuilder
     .SetMinimumLevel(LogLevel.Debug)
     .AddOpenTelemetry(options =>
     {
-        options.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"));
+        options.SetResourceBuilder(resourceBuilder);
         options.AddOtlpExporter(otlpOptions => otlpOptions.Endpoint = new Uri(otlpEndpoint));
         if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
         {

@@ -5,13 +5,13 @@
 # /python and /dotnet; each language-specific rule replaces it for that tree.
 
 # Default owners for paths outside Python and .NET
-*        @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @sophia-ramsey @TaoChenOSU @giles17 @baywet @peibekwe
+*        @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @jpalvarezl @sophia-ramsey @baywet @dargilco
 
 # Python owners
-/python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @sophia-ramsey @TaoChenOSU @giles17
+/python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @jpalvarezl @sophia-ramsey @dargilco
 
 # .NET owners
-/dotnet/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @baywet @peibekwe
+/dotnet/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @baywet
 
 # Public Python consumer skill
-/skills/agent-framework-builder-python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @sophia-ramsey @TaoChenOSU @giles17
+/skills/agent-framework-builder-python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @jpalvarezl @sophia-ramsey @dargilco

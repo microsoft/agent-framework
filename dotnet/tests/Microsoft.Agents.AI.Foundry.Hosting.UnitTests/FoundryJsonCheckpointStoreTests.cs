@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure;
 using Azure.AI.AgentServer.Core.Storage;
 using Azure.Core;
 using Microsoft.Agents.AI.Foundry.Hosting;
@@ -497,15 +498,15 @@ public sealed class FoundryJsonCheckpointStoreTests
             string key,
             IDictionary<string, BinaryData> value,
             IReadOnlyDictionary<string, string>? tags = null,
-            string? ifMatch = null,
+            ETag ifMatch = default,
             bool requireExists = false,
             CancellationToken cancellationToken = default)
         {
             if (key.StartsWith("wi-", StringComparison.Ordinal))
             {
-                if (ifMatch is not null)
+                if (ifMatch != default)
                 {
-                    this.ObservedIndexIfMatch.Add(ifMatch);
+                    this.ObservedIndexIfMatch.Add(ifMatch.ToString());
                 }
 
                 if (this.FailNextIndexWrites > 0)
@@ -521,7 +522,7 @@ public sealed class FoundryJsonCheckpointStoreTests
                 }
             }
 
-            if (ifMatch is not null && (!this.Items.TryGetValue(key, out var existing) || existing.Etag != ifMatch))
+            if (ifMatch != default && (!this.Items.TryGetValue(key, out var existing) || existing.Etag != ifMatch))
             {
                 throw new FoundryStoragePreconditionException("precondition failed");
             }
@@ -534,7 +535,7 @@ public sealed class FoundryJsonCheckpointStoreTests
                 ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: entry.Value, etag: entry.Etag)
                 : null);
 
-        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, string? ifMatch = null, CancellationToken cancellationToken = default)
+        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, ETag ifMatch = default, CancellationToken cancellationToken = default)
         {
             if (!this.Items.TryRemove(key, out _))
             {
@@ -545,7 +546,7 @@ public sealed class FoundryJsonCheckpointStoreTests
         }
 
         /// <summary>The item bodies currently held, so a test can assert what was deleted.</summary>
-        public ConcurrentDictionary<string, (IDictionary<string, BinaryData> Value, string Etag)> Items { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, (IDictionary<string, BinaryData> Value, ETag Etag)> Items { get; } = new(StringComparer.Ordinal);
 
         public void ReplaceIndexWithLegacyEntries(string sessionId, params CheckpointInfo[] checkpoints)
         {
@@ -567,8 +568,9 @@ public sealed class FoundryJsonCheckpointStoreTests
         private StateStoreItemRef Write(string key, IDictionary<string, BinaryData> value)
         {
             string etag = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"etag-{++this._etagCounter}");
-            this.Items[key] = (value, etag);
-            return AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: etag);
+            ETag typedEtag = new(etag);
+            this.Items[key] = (value, typedEtag);
+            return AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: typedEtag);
         }
     }
 }

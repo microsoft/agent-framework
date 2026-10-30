@@ -1,4 +1,8 @@
 ﻿#nullable enable
+Microsoft.Agents.AI.PerServiceCallChatHistoryPersistingChatClient
+const Microsoft.Agents.AI.PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId = "_agent_local_chat_history" -> string!
+override Microsoft.Agents.AI.PerServiceCallChatHistoryPersistingChatClient.GetResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.ChatResponse!>!
+override Microsoft.Agents.AI.PerServiceCallChatHistoryPersistingChatClient.GetStreamingResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate!>!
 [MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore
 [MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore.DelegatingAgentSessionStore(Microsoft.Agents.AI.AgentSessionStore! innerStore) -> void
 [MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore.InnerStore.get -> Microsoft.Agents.AI.AgentSessionStore!
