@@ -115,6 +115,116 @@ public class HandoffMessageFilterTests
         }
     }
 
+    [Theory]
+    [InlineData(false, HandoffToolCallFilteringBehavior.HandoffOnly)]
+    [InlineData(true, HandoffToolCallFilteringBehavior.HandoffOnly)]
+    [InlineData(false, HandoffToolCallFilteringBehavior.All)]
+    [InlineData(true, HandoffToolCallFilteringBehavior.All)]
+    public void Test_HandoffMessageFilter_DropsReasoningOnlyHandoffMessages(bool includeReasoning, HandoffToolCallFilteringBehavior behavior)
+    {
+        // Arrange
+        // Regression test for issue #7384: reasoning must not leave a handoff message after the user's request.
+        ChatMessage userMessage = new(ChatRole.User, "What is the status of my order?");
+        FunctionCallContent handoffCall = CreateHandoffCall(1, useCallId: true, callIdSuffix: "triage");
+        ChatMessage handoffMessage = new(ChatRole.Assistant, [handoffCall]);
+        if (includeReasoning)
+        {
+            handoffMessage.Contents.Insert(0, new TextReasoningContent("The orders specialist should answer this request."));
+        }
+
+        List<ChatMessage> messages =
+        [
+            userMessage,
+            handoffMessage,
+            new(ChatRole.Tool, [CreateHandoffResponse(handoffCall)]),
+        ];
+        HandoffMessagesFilter filter = new(behavior);
+
+        // Act
+        List<ChatMessage> filteredMessages = [.. filter.FilterMessages(messages)];
+
+        // Assert
+        AssertMessageShape(userMessage, Assert.Single(filteredMessages));
+        Assert.Contains(handoffCall, handoffMessage.Contents);
+        Assert.Equal(includeReasoning ? 2 : 1, handoffMessage.Contents.Count);
+    }
+
+    [Theory]
+    [InlineData(HandoffToolCallFilteringBehavior.None)]
+    [InlineData(HandoffToolCallFilteringBehavior.HandoffOnly)]
+    [InlineData(HandoffToolCallFilteringBehavior.All)]
+    public void Test_HandoffMessageFilter_PreservesStandaloneReasoning(HandoffToolCallFilteringBehavior behavior)
+    {
+        // Arrange
+        ChatMessage message = new(ChatRole.Assistant, [new TextReasoningContent("Thinking about the user's request.")]);
+        HandoffMessagesFilter filter = new(behavior);
+
+        // Act
+        List<ChatMessage> filteredMessages = [.. filter.FilterMessages([message])];
+
+        // Assert
+        AssertMessageShape(message, Assert.Single(filteredMessages));
+    }
+
+    [Theory]
+    [InlineData(HandoffToolCallFilteringBehavior.HandoffOnly)]
+    [InlineData(HandoffToolCallFilteringBehavior.All)]
+    public void Test_HandoffMessageFilter_PreservesTextAlongsideFilteredHandoffReasoning(HandoffToolCallFilteringBehavior behavior)
+    {
+        // Arrange
+        TextReasoningContent reasoning = new("The orders specialist should answer this request.");
+        TextContent text = new("I will transfer you to the orders specialist.");
+        FunctionCallContent handoffCall = CreateHandoffCall(1, useCallId: true, callIdSuffix: "triage");
+        ChatMessage message = new(ChatRole.Assistant, [reasoning, text, handoffCall]);
+        HandoffMessagesFilter filter = new(behavior);
+
+        // Act
+        List<ChatMessage> filteredMessages = [.. filter.FilterMessages(
+            [message, new(ChatRole.Tool, [CreateHandoffResponse(handoffCall)])])];
+
+        // Assert
+        AssertMessageShape(new(ChatRole.Assistant, [reasoning, text]), Assert.Single(filteredMessages));
+        Assert.Equal(3, message.Contents.Count);
+        Assert.Contains(handoffCall, message.Contents);
+    }
+
+    [Theory]
+    [InlineData(false, HandoffToolCallFilteringBehavior.None)]
+    [InlineData(true, HandoffToolCallFilteringBehavior.None)]
+    [InlineData(false, HandoffToolCallFilteringBehavior.HandoffOnly)]
+    [InlineData(false, HandoffToolCallFilteringBehavior.All)]
+    [InlineData(true, HandoffToolCallFilteringBehavior.All)]
+    public void Test_HandoffMessageFilter_ReasoningFollowsToolFiltering(bool isHandoff, HandoffToolCallFilteringBehavior behavior)
+    {
+        // Arrange
+        FunctionCallContent call = isHandoff
+            ? CreateHandoffCall(1, useCallId: true, callIdSuffix: "triage")
+            : CreateToolCall(useCallId: true, callIdSuffix: "orders");
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("Checking the order status."), call]),
+            new(ChatRole.Tool, [new FunctionResultContent(call.CallId, "Order shipped.")]),
+        ];
+        HandoffMessagesFilter filter = new(behavior);
+
+        // Act
+        List<ChatMessage> filteredMessages = [.. filter.FilterMessages(messages)];
+
+        // Assert
+        if (behavior == HandoffToolCallFilteringBehavior.All)
+        {
+            Assert.Empty(filteredMessages);
+        }
+        else
+        {
+            Assert.Equal(messages.Count, filteredMessages.Count);
+            for (int i = 0; i < messages.Count; i++)
+            {
+                AssertMessageShape(messages[i], filteredMessages[i]);
+            }
+        }
+    }
+
     private static void AssertMessageShape(ChatMessage expected, ChatMessage actual)
     {
         Assert.Equal(expected.Role, actual.Role);

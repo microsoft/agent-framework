@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import stat
+import uuid
 from base64 import b32encode
 from pathlib import Path
 
@@ -42,6 +44,33 @@ _WINDOWS_RESERVED_FILE_STEMS: frozenset[str] = frozenset({
 
 _MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH = 180
 _DIGEST_SEGMENT_MARKER = "sha256-"
+
+
+def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:  # pyright: ignore[reportUnusedFunction]
+    """Atomically write text through a securely created sibling temporary file.
+
+    Exclusive creation prevents an existing file or symbolic link from redirecting the write.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".maf-state-{uuid.uuid4().hex}.tmp")
+    cleanup_path: Path | None = None
+    file_descriptor: int | None = None
+    try:
+        file_descriptor = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+        cleanup_path = temp_path
+        file_handle = os.fdopen(file_descriptor, "w", encoding=encoding, closefd=False)
+        with file_handle:
+            file_handle.write(text)
+        descriptor_to_close = file_descriptor
+        file_descriptor = None
+        os.close(descriptor_to_close)
+        os.replace(temp_path, path)
+        cleanup_path = None
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        if cleanup_path is not None:
+            cleanup_path.unlink(missing_ok=True)
 
 
 def _is_link_or_reparse_point(path: Path) -> bool:  # pyright: ignore[reportUnusedFunction]

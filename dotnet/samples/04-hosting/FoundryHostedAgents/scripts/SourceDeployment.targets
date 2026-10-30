@@ -1,0 +1,27 @@
+﻿<Project>
+
+  <!-- Copy linked sample files into an isolated folder without duplicating their checked-in source. -->
+  <Target Name="PrepareSourceDeployment">
+    <Error Condition="'$(SourceDeploymentDirectory)' == ''"
+           Text="Set SourceDeploymentDirectory to a new folder outside the repository." />
+    <PropertyGroup>
+      <_SourceDeploymentDirectory>$([MSBuild]::NormalizeDirectory('$(SourceDeploymentDirectory)'))</_SourceDeploymentDirectory>
+      <_SourceDeploymentProjectDirectory>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)'))</_SourceDeploymentProjectDirectory>
+    </PropertyGroup>
+    <Error Condition="'$(_SourceDeploymentDirectory)' == '$(_SourceDeploymentProjectDirectory)'"
+           Text="SourceDeploymentDirectory must not be the sample source directory." />
+
+    <ItemGroup>
+      <_SourceDeploymentRootFile Include="*.cs;$(MSBuildProjectFile);azure.yaml;.agentignore;.env.example;README.md" />
+      <!-- Repository props also inject compile items; only the sample's own links belong in this upload. -->
+      <_SourceDeploymentLinkedFile Include="@(Compile->WithMetadataValue('DefiningProjectFullPath', '$(MSBuildProjectFullPath)'))" />
+      <_SourceDeploymentLinkedFile Include="@(Content->WithMetadataValue('DefiningProjectFullPath', '$(MSBuildProjectFullPath)'))" />
+      <_SourceDeploymentLinkedFile Remove="@(_SourceDeploymentLinkedFile)" Condition="'%(_SourceDeploymentLinkedFile.Link)' == ''" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(_SourceDeploymentRootFile)" DestinationFolder="$(_SourceDeploymentDirectory)" />
+    <Copy SourceFiles="@(_SourceDeploymentLinkedFile)"
+          DestinationFiles="@(_SourceDeploymentLinkedFile->'$(_SourceDeploymentDirectory)%(Link)')" />
+  </Target>
+
+</Project>

@@ -278,9 +278,37 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             {
                 mapped.Add(purviewContent);
             }
+
+            AddSupplementalContent(content, mapped);
         }
 
         return mapped;
+    }
+
+    /// <summary>
+    /// Add entries for user or model supplied data that <see cref="MapContent"/> does not carry:
+    /// annotations (for example citations), error details and the name of a data item.
+    /// </summary>
+    private static void AddSupplementalContent(AIContent content, List<ContentBase> mapped)
+    {
+        switch (content)
+        {
+            case TextContent or TextReasoningContent when content.Annotations is { Count: > 0 }:
+                foreach (AIAnnotation annotation in content.Annotations)
+                {
+                    mapped.Add(new PurviewTextContent(JsonSerializer.Serialize(annotation, AIJsonUtilities.DefaultOptions.GetTypeInfo(annotation.GetType()))));
+                }
+
+                break;
+
+            case ErrorContent { Details: { Length: > 0 } details }:
+                mapped.Add(new PurviewTextContent(details));
+                break;
+
+            case DataContent { Name: { Length: > 0 } name }:
+                mapped.Add(new PurviewTextContent(name));
+                break;
+        }
     }
 
     /// <summary>

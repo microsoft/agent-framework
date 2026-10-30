@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,8 +22,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// and the per-request <see cref="RequestConsentState.CancellationSource"/> is cancelled. This causes
 /// <see cref="FunctionInvokingChatClient"/> to stop the tool loop (it guards
 /// exceptions with <c>when (!ct.IsCancellationRequested)</c>) and surfaces an
-/// <see cref="System.OperationCanceledException"/> to the handler. The handler then emits the
-/// <c>mcp_approval_request</c> output item and marks the response as <c>incomplete</c>.
+/// <see cref="OperationCanceledException"/> to the handler. The handler then emits the
+/// <c>oauth_consent_request</c> output item and marks the response as <c>incomplete</c>.
 /// </para>
 /// </remarks>
 internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
@@ -59,7 +60,19 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
             var state = McpConsentContext.Current.Value;
             if (state is not null)
             {
-                state.Pending = new McpConsentInfo(this._toolboxName, this._inner.Name, ex.Message);
+                const string RemoteErrorPrefix = "Request failed (remote): ";
+                var consentUrl = ex.Data["detail"] switch
+                {
+                    string detail => detail,
+                    JsonElement { ValueKind: JsonValueKind.String } detail => detail.GetString()!,
+                    _ when !ex.Data.Contains("detail") => ex.Message.StartsWith(RemoteErrorPrefix, StringComparison.Ordinal)
+                        ? ex.Message[RemoteErrorPrefix.Length..]
+                        : ex.Message,
+                    // The detail field exists but is not a string. Use an empty URL so the
+                    // handler rejects this consent response instead of falling back to the message.
+                    _ => string.Empty,
+                };
+                state.Pending = new McpConsentInfo(this._toolboxName, this._inner.Name, consentUrl);
                 state.CancellationSource?.Cancel();
             }
 

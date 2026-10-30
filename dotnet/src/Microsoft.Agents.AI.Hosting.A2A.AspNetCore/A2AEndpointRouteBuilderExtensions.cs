@@ -88,13 +88,7 @@ public static class A2AEndpointRouteBuilderExtensions
                 $"No A2AServer is registered for agent '{agentName}'. " +
                 $"Call services.AddA2AServer(\"{agentName}\") or agentBuilder.AddA2AServer() during service registration to register one.");
 
-        // TODO: The stub AgentCard is temporary and will be removed once the A2A SDK either removes the
-        // agentCard parameter of MapHttpA2A or makes it optional. MapHttpA2A exposes the agent card via a
-        // GET {path}/card endpoint that is not part of the A2A spec, so it is not expected to be consumed
-        // by any agent - returning a stub agent card here is safe.
-        var stubAgentCard = new AgentCard { Name = "A2A Agent" };
-
-        IEndpointConventionBuilder endpoint = endpoints.MapHttpA2A(a2aServer, stubAgentCard, path);
+        IEndpointConventionBuilder endpoint = endpoints.MapHttpA2A(a2aServer, path);
         MarkFeatureUsed();
         return endpoint;
     }

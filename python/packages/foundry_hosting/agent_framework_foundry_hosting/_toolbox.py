@@ -12,7 +12,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2 as httpx
 from agent_framework import (
     CachingSkillsSource,
     DeduplicatingSkillsSource,
@@ -143,7 +143,7 @@ class _ToolboxAuth(httpx.Auth):
                 close()
             raise RuntimeError(
                 "An async credential cannot be used with the synchronous auth flow; "
-                "use a synchronous TokenCredential or drive the toolbox with an httpx.AsyncClient."
+                "use a synchronous TokenCredential or drive the toolbox with an httpx2.AsyncClient."
             )
         self._apply_headers(request, token)
         yield request
@@ -361,17 +361,13 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         """Read a Toolbox resource under the current platform-header identity."""
         headers = self._effective_resource_headers()
         async with self._call_headers_lock:
-            await self._ensure_session_identity(headers, {})
-            session = self.session
-            if session is None:
-                raise RuntimeError(
-                    "FoundryToolbox is not connected, so its resources cannot be read. "
-                    "Pass the toolbox to the agent (tools=...) or enter it as an async "
-                    "context manager before reading resources."
-                )
+            connection = self._require_connection()
+            if headers or connection.is_framework_owned:
+                await self._ensure_session_identity(headers, {})
+                connection = self._require_connection()
             self._active_call_headers = headers
             try:
-                return await session.read_resource(uri)
+                return await connection.read_resource(cast(str, uri))
             finally:
                 self._active_call_headers = None
 

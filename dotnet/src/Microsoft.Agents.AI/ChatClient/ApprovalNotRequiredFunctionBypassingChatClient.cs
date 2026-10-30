@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -239,10 +238,10 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
                 LogStaleAutoApprovalRejected(this._logger, (request.ToolCall as FunctionCallContent)?.Name ?? "unknown");
             }
 
-            approvalResponses.Add(request.CreateResponse(approved: stillApprovalNotRequired));
+            approvalResponses.Add(ToolApprovalHelpers.SnapshotRequest(request).CreateResponse(approved: stillApprovalNotRequired));
         }
 
-        return (messages.Concat([new ChatMessage(ChatRole.User, approvalResponses)]), true);
+        return (ToolApprovalHelpers.PrepareApprovalMessages(messages, approvalResponses), true);
     }
 
     /// <summary>

@@ -276,6 +276,18 @@ output item ID without changing the provider's `call_id`.
 Although screenshots are optional in shared `Content`, this Responses host requires them on computer results.
 The computer-use `Content` constructors and `ComputerSafetyCheck` type are experimental Agent Framework APIs.
 
+## Responses citation annotations
+
+`ResponsesHostServer` serializes supported framework URL and file citations into `output_text.annotations`.
+URL and container-file citation spans refer to character positions in the generated response text.
+Annotations with `annotated_regions_coordinate_space == "source"` retain source-document coordinates
+(for example, Anthropic character, page, or block locations); the host does not emit those regions as
+output-text spans. Other supported citation metadata, such as file citations with an explicit output index,
+is still converted.
+Completed provider responses retain separate text content parts, keeping citation offsets relative to
+their original part. Ordinary streaming deltas still merge within their existing text occurrence,
+without shifting citation offsets.
+
 ## State store
 
 ### Local persistence

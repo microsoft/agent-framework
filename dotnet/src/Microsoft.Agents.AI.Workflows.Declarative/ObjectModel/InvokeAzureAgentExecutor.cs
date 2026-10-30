@@ -127,7 +127,8 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
             bool requestInput;
             try
             {
-                requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
+                requestInput = this.GetNonSensitiveValue(
+                    this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When), "external loop condition");
             }
             catch (Exception exception) when (
                 responseObjectWasBlanked &&
@@ -290,7 +291,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         // autoSend or have no output block at all).
         if (this.AgentOutput is { AutoSendIsDefaultValue: false } output)
         {
-            return this.Evaluator.GetValue(output.AutoSend).Value;
+            return this.GetNonSensitiveValue(this.Evaluator.GetValue(output.AutoSend), "auto send");
         }
 
         return true;

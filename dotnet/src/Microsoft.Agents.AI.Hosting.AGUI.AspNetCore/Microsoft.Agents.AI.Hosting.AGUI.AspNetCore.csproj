@@ -7,6 +7,7 @@
     <NoWarn>$(NoWarn);MAAI001</NoWarn>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+    <InjectSharedHostedAgents>true</InjectSharedHostedAgents>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

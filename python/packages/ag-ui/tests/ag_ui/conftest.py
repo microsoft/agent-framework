@@ -344,6 +344,7 @@ def make_app() -> Callable[..., Any]:
             state_schema=state_schema,
             predict_state_config=predict_state_config,
             default_state=default_state,
+            single_user=True,
         )
         return app
 

@@ -7,15 +7,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from collections.abc import AsyncGenerator, Sequence
+import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import suppress
 from inspect import isawaitable
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 from ag_ui.core import RunErrorEvent
 from ag_ui.encoder import EventEncoder
 from agent_framework import CheckpointStorage, SupportsAgentRun, Workflow
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.params import Depends
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -33,9 +34,14 @@ from ._workflow import AgentFrameworkWorkflow
 
 logger = logging.getLogger(__name__)
 
+AuthorizationScopeResolver: TypeAlias = Callable[..., str | Awaitable[str]]
+"""FastAPI dependency callable that returns the authenticated AG-UI authorization scope."""
+
 _DETACHED_READER_START_TIMEOUT_SECONDS = 1.0
 _DETACHED_STREAM_QUEUE_SIZE = 16
 _KEEPALIVE_COMMENT = "keepalive"
+_AUTHORIZATION_SCOPE_STATE_KEY = "_agent_framework_ag_ui_authorization_scope"
+_SINGLE_USER_SCOPE_PREFIX = "ag-ui:single-user:"
 
 
 def _get_snapshot_store(
@@ -60,7 +66,6 @@ def _configure_snapshot_persistence(
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow,
     *,
     snapshot_store: AGUIThreadSnapshotStore | None,
-    snapshot_scope_resolver: SnapshotScopeResolver | None,
 ) -> None:
     existing_snapshot_store = _get_snapshot_store(protocol_runner)
     if snapshot_store is not None:
@@ -68,14 +73,6 @@ def _configure_snapshot_persistence(
             raise ValueError("snapshot_store is already configured on the AG-UI runner.")
         if existing_snapshot_store is None:
             _set_snapshot_store(protocol_runner, snapshot_store)
-        existing_snapshot_store = snapshot_store
-
-    if existing_snapshot_store is not None and snapshot_scope_resolver is None:
-        raise ValueError(
-            "snapshot_scope_resolver is required when snapshot_store is configured. "
-            "AG-UI Thread ids identify threads but do not authorize snapshot access; "
-            "provide a resolver that returns an explicit Snapshot Scope."
-        )
 
 
 def _validate_keepalive_seconds(keepalive_seconds: float | None) -> None:
@@ -88,6 +85,39 @@ def _validate_detached_run_options(max_detached_runs: int, detached_run_timeout_
         raise ValueError("max_detached_runs must be greater than 0.")
     if detached_run_timeout_seconds <= 0:
         raise ValueError("detached_run_timeout_seconds must be positive.")
+
+
+def _validate_authorization_scope_configuration(
+    *,
+    authorization_scope_resolver: AuthorizationScopeResolver | None,
+    snapshot_scope_resolver: SnapshotScopeResolver | None,
+    single_user: bool,
+) -> None:
+    if not isinstance(single_user, bool):
+        raise TypeError("single_user must be a bool.")
+    configured_modes = sum(
+        (
+            authorization_scope_resolver is not None,
+            snapshot_scope_resolver is not None,
+            single_user,
+        )
+    )
+    if configured_modes == 0:
+        raise ValueError(
+            "AG-UI endpoint authorization must be explicit. "
+            "Provide authorization_scope_resolver for authenticated applications, "
+            "reuse snapshot_scope_resolver for compatibility, or declare single_user=True."
+        )
+    if configured_modes > 1:
+        raise ValueError(
+            "Configure exactly one AG-UI authorization mode: authorization_scope_resolver, "
+            "snapshot_scope_resolver, or single_user=True."
+        )
+
+
+def _single_user_scope() -> str:
+    """Return one opaque scope that stays stable for an endpoint registration."""
+    return f"{_SINGLE_USER_SCOPE_PREFIX}{uuid.uuid4().hex}"
 
 
 def add_agent_framework_fastapi_endpoint(
@@ -108,6 +138,8 @@ def add_agent_framework_fastapi_endpoint(
     detached_runs: bool = False,
     max_detached_runs: int = 32,
     detached_run_timeout_seconds: float = 3600,
+    authorization_scope_resolver: AuthorizationScopeResolver | None = None,
+    single_user: bool = False,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -123,15 +155,16 @@ def add_agent_framework_fastapi_endpoint(
         tags: OpenAPI tags for endpoint categorization (defaults to ["AG-UI"])
         dependencies: Optional FastAPI dependencies for authentication/authorization.
             These dependencies run before the endpoint handler. Use this to add
-            authentication checks, rate limiting, or other middleware-like behavior.
+            authentication checks, rate limiting, or other middleware-like behavior. Their return values do not
+            establish the AG-UI authorization scope; use authorization_scope_resolver for that.
             Example: `dependencies=[Depends(verify_api_key)]`
-        snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence is opt-in and requires an
-            explicit Snapshot Scope resolver.
-        snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
-            a snapshot store is configured because an AG-UI Thread id is not an authorization boundary. Also scopes
-            the internal Agent Session id used by context providers and in-memory workflow_factory instances when
-            provided without a snapshot store. A configured resolver must return a non-empty string derived from
-            authorized request context; invalid results fail the request before accessing state or invoking the runner.
+        snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence is opt-in and requires either
+            an authorization resolver, the compatible Snapshot Scope resolver, or explicit single-user mode.
+        snapshot_scope_resolver: Compatible request-body resolver for the application-defined Snapshot Scope. Prefer
+            authorization_scope_resolver for new FastAPI applications because it can consume authenticated dependency
+            results. This resolver also scopes internal Agent Sessions, in-memory workflow_factory instances, and
+            approval state. It must return a non-empty string derived from authorized request context; invalid results
+            fail the request before accessing state or invoking the runner.
         checkpoint_storage: Optional workflow checkpoint storage, applied when the endpoint exposes a workflow.
             When provided, each run creates a checkpoint at the end of every superstep, and a run may resume from
             a persisted checkpoint by supplying its id in the AG-UI forwarded props
@@ -152,6 +185,16 @@ def add_agent_framework_fastapi_endpoint(
             Additional requests receive HTTP 503 until capacity is released.
         detached_run_timeout_seconds: Maximum time a producer may remain active after its SSE reader disconnects or
             never starts. Defaults to 3600 seconds. Expired producers are cancelled and release endpoint capacity.
+        authorization_scope_resolver: Optional FastAPI dependency callable that returns a non-empty authorization
+            scope derived from authenticated request context. The callable may declare normal FastAPI dependencies,
+            headers, security schemes, or the current Request. Its result scopes snapshots, internal Agent Sessions,
+            workflow instances and checkpoints, detached-run admission, and server-side approval state.
+        single_user: Explicitly declare that every caller of this endpoint belongs to one authorization principal.
+            The endpoint receives one opaque scope that remains stable for that registration and separates equal route
+            paths registered by other applications. Use an explicit resolver when scope continuity must survive process
+            restarts or when storage is shared beyond one registration. A single-user application can return its own
+            stable application scope from authorization_scope_resolver. Never enable this mode for callers with distinct
+            authorization.
     """
     _validate_keepalive_seconds(keepalive_seconds)
     _validate_detached_run_options(max_detached_runs, detached_run_timeout_seconds)
@@ -174,6 +217,12 @@ def add_agent_framework_fastapi_endpoint(
     else:
         raise TypeError("agent must be SupportsAgentRun, Workflow, AgentFrameworkAgent, or AgentFrameworkWorkflow.")
 
+    _validate_authorization_scope_configuration(
+        authorization_scope_resolver=authorization_scope_resolver,
+        snapshot_scope_resolver=snapshot_scope_resolver,
+        single_user=single_user,
+    )
+
     if checkpoint_storage is not None:
         if not isinstance(protocol_runner, AgentFrameworkWorkflow):
             raise ValueError("checkpoint_storage is only supported when the endpoint exposes a workflow.")
@@ -189,12 +238,28 @@ def add_agent_framework_fastapi_endpoint(
     _configure_snapshot_persistence(
         protocol_runner,
         snapshot_store=snapshot_store,
-        snapshot_scope_resolver=snapshot_scope_resolver,
     )
 
     background_tasks: set[asyncio.Task[Any]] = set()
     producer_tasks: set[asyncio.Task[None]] = set()
     active_runs: dict[tuple[str | None, str], asyncio.Task[None]] = {}
+    route_dependencies = list(dependencies or ())
+    single_user_scope = _single_user_scope() if single_user else None
+
+    if authorization_scope_resolver is not None:
+
+        async def capture_authorization_scope(
+            request: Request,
+            resolved_scope: Any = Depends(authorization_scope_resolver),
+        ) -> None:
+            if isawaitable(resolved_scope):
+                resolved_scope = await resolved_scope
+            if not isinstance(resolved_scope, str) or not resolved_scope:
+                logger.error("authorization_scope_resolver must return a non-empty string.")
+                raise HTTPException(status_code=500, detail="An internal error has occurred.")
+            setattr(request.state, _AUTHORIZATION_SCOPE_STATE_KEY, resolved_scope)
+
+        route_dependencies.append(Depends(capture_authorization_scope))
 
     def retain_background_task(task: asyncio.Task[Any]) -> None:
         background_tasks.add(task)
@@ -213,8 +278,8 @@ def add_agent_framework_fastapi_endpoint(
 
         task.add_done_callback(task_done)
 
-    @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies, response_model=None)  # type: ignore[arg-type]
-    async def agent_endpoint(request_body: AGUIRequest) -> Response:
+    @app.post(path, tags=tags or ["AG-UI"], dependencies=route_dependencies, response_model=None)  # type: ignore[arg-type]
+    async def agent_endpoint(request_body: AGUIRequest, request: Request) -> Response:
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
@@ -224,13 +289,19 @@ def add_agent_framework_fastapi_endpoint(
             input_data = request_body.model_dump(exclude_none=True)
             snapshot_persistence_active = _get_snapshot_store(protocol_runner) is not None
             snapshot_scope: str | None = None
-            if snapshot_scope_resolver is not None:
+            if authorization_scope_resolver is not None:
+                snapshot_scope = cast(str, getattr(request.state, _AUTHORIZATION_SCOPE_STATE_KEY))
+            elif snapshot_scope_resolver is not None:
                 resolved_scope = snapshot_scope_resolver(request_body)
                 if isawaitable(resolved_scope):
                     resolved_scope = await resolved_scope
                 if not isinstance(resolved_scope, str) or not resolved_scope:
                     raise ValueError("snapshot_scope_resolver must return a non-empty string.")
                 snapshot_scope = resolved_scope
+            elif single_user:
+                snapshot_scope = single_user_scope
+
+            if snapshot_scope is not None:
                 input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope
                 input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
             if default_state:

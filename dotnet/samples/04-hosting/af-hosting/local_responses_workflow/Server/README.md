@@ -11,7 +11,9 @@ This server supports **`previous_response_id` continuation only** and **rejects 
 with HTTP 400**. Because `previous_response_id` rotates every turn, the app owns a cursor that maps each
 response id to the stable workflow session id, so the whole rotating chain resumes the same checkpointed
 run. The first turn runs the workflow forward; later turns restore the latest checkpoint and run forward
-with the new brief. Binds to `http://localhost:5001` (override with `ASPNETCORE_URLS`).
+with the new brief. Binds to `http://localhost:5001`. To use a different address,
+change the URL passed to `app.Run` in `Program.cs` and set `RESPONSES_SERVER_URL` to the same address
+in the client shell.
 
 `HostedWorkflowState` is constructed with a **workflow factory** and `cacheWorkflow: false` (the default,
 shown explicitly), so it builds a fresh workflow instance for every run. This lets independent sessions run

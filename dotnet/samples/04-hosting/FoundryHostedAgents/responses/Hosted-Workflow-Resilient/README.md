@@ -11,7 +11,7 @@ needed.
 ## Key setting
 
 ```csharp
-builder.Services.AddFoundryResponses(
+builder.AddFoundryResponses(
     agent,
     configure: options => options.ResilientBackground = true);
 ```

@@ -12,7 +12,154 @@ or registered with the PowerFx engine when it is available.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any, cast
+
+
+def _skip_powerfx_opaque_token(formula: str, start: int) -> int:
+    """Return the end of an ordinary quoted token or comment, or start if neither."""
+    quote = formula[start]
+    if quote in ('"', "'"):
+        pos = start + 1
+        while pos < len(formula):
+            if formula[pos] == quote:
+                if pos + 1 < len(formula) and formula[pos + 1] == quote:
+                    pos += 2
+                    continue
+                return pos + 1
+            pos += 1
+        return pos
+    if formula.startswith("//", start):
+        pos = start + 2
+        while pos < len(formula) and formula[pos] not in "\r\n":
+            pos += 1
+        return pos
+    if formula.startswith("/*", start):
+        end = formula.find("*/", start + 2)
+        # An unterminated /* is not a complete comment: leave it as code so a
+        # trailing one is not mistaken for trivia following a complete call.
+        return start if end == -1 else end + 2
+    return start
+
+
+def _iter_powerfx_expression_indices(formula: str) -> Iterator[int]:
+    """Yield code positions, excluding literals/comments but including interpolation expressions."""
+    # None denotes interpolated text; integers track record braces in expression sections.
+    scopes: list[int | None] = [0]
+    cursor = 0
+    while cursor < len(formula):
+        depth = scopes[-1]
+        char = formula[cursor]
+        if depth is None:
+            if formula.startswith(('""', "{{", "}}"), cursor):
+                cursor += 2
+                continue
+            if char == "{":
+                scopes.append(0)
+            elif char == '"':
+                scopes.pop()
+            cursor += 1
+            continue
+
+        if formula.startswith('$"', cursor):
+            scopes.append(None)
+            cursor += 2
+            continue
+
+        token_end = _skip_powerfx_opaque_token(formula, cursor)
+        if token_end != cursor:
+            cursor = token_end
+            continue
+
+        if char == "{":
+            scopes[-1] = depth + 1
+        elif char == "}":
+            if depth > 0:
+                scopes[-1] = depth - 1
+            elif len(scopes) > 1:
+                scopes.pop()
+                cursor += 1
+                continue
+
+        yield cursor
+        cursor += 1
+
+
+def _after_trailing_trivia(formula: str, start: int) -> int:
+    """Return the index after trailing whitespace and complete comments.
+
+    Unlike the expression walker, this never skips a string literal: a quoted
+    token after the call's own closing paren is trailing code, not trivia, so it
+    stops the scan and leaves the formula to PowerFx.
+    """
+    index = start
+    while index < len(formula):
+        if formula[index].isspace():
+            index += 1
+            continue
+        if formula.startswith(("//", "/*"), index):
+            token_end = _skip_powerfx_opaque_token(formula, index)
+            if token_end == index:
+                # Unterminated /* is not a complete comment, so real code follows.
+                break
+            index = token_end
+            continue
+        break
+    return index
+
+
+def whole_call_args(formula: str, *names: str) -> str | None:
+    """Return the argument text when ``formula`` is exactly one ``Name(...)`` call.
+
+    A custom-function handler must not fire for a formula that merely *starts*
+    with its name: the closing parenthesis has to be the call's own and nothing
+    but trivia may follow it. Otherwise a trailing operator is swallowed into the
+    argument list and the formula is evaluated as something the author never
+    wrote, instead of being left to PowerFx.
+
+    Parentheses inside string literals and comments are data, not delimiters, so
+    the scan walks the formula with the shared PowerFx expression walker: it
+    skips those tokens whole and counts only parentheses that are real code,
+    including those inside an interpolated string's ``{...}`` expression sections.
+
+    Args:
+        formula: The stripped formula to inspect.
+        *names: Candidate function names, matched case-sensitively.
+
+    Returns:
+        The text between the call's parentheses - an empty string for an
+        argument-less call - or None when ``formula`` is not a single complete
+        call to one of ``names``. Callers that require an argument check the
+        result for emptiness so the call still falls through to PowerFx, which
+        reports the arity error.
+    """
+    for name in names:
+        prefix = f"{name}("
+        if not formula.startswith(prefix):
+            continue
+        positions = _iter_powerfx_expression_indices(formula)
+        depth = 0
+        close_index = -1
+        for index in positions:
+            char = formula[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    close_index = index
+                    break
+        if close_index == -1:
+            # Unbalanced: the call never closes, so it is not a whole call.
+            return None
+        # Only whitespace and complete comments may follow the call's own closing
+        # paren. The suffix scan deliberately does not reuse the literal-skipping
+        # walker: a trailing string literal (or any other code) there means the
+        # formula is a larger expression the caller must not claim.
+        if _after_trailing_trivia(formula, close_index + 1) != len(formula):
+            return None
+        return formula[len(prefix) : close_index]
+    return None
 
 
 def message_text(messages: Any) -> str:

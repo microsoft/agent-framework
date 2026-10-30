@@ -100,15 +100,15 @@ class SlidingWindowHistoryProvider(InMemoryHistoryProvider):
                 # Simple text message
                 total_tokens += self._estimate_any_object_token_count(msg.text)
 
-        if total_tokens > self.max_tokens / 2:
+        if total_tokens > self.max_tokens:
+            logger.opt(colors=True).warning(
+                f"<red>Total tokens {total_tokens} is over max tokens {self.max_tokens}. Will truncate messages.</red>"
+            )
+        elif total_tokens > self.max_tokens / 2:
             logger.opt(colors=True).warning(
                 f"<yellow>Total tokens {total_tokens} is "
                 f"{total_tokens / self.max_tokens * 100:.0f}% "
                 f"of max tokens {self.max_tokens}</yellow>"
-            )
-        elif total_tokens > self.max_tokens:
-            logger.opt(colors=True).warning(
-                f"<red>Total tokens {total_tokens} is over max tokens {self.max_tokens}. Will truncate messages.</red>"
             )
 
         return total_tokens

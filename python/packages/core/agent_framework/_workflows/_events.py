@@ -105,17 +105,19 @@ class WorkflowErrorDetails:
         cls,
         exc: BaseException,
         *,
+        include_sensitive_data: bool = True,
         executor_id: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> WorkflowErrorDetails:
         tb = None
-        try:
-            tb = "".join(_traceback.format_exception(type(exc), exc, exc.__traceback__))
-        except Exception:
-            tb = None
+        if include_sensitive_data:
+            try:
+                tb = "".join(_traceback.format_exception(type(exc), exc, exc.__traceback__))
+            except Exception:
+                tb = None
         return cls(
             error_type=exc.__class__.__name__,
-            message=str(exc),
+            message=str(exc) if include_sensitive_data else exc.__class__.__name__,
             traceback=tb,
             executor_id=executor_id,
             extra=extra,

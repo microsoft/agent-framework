@@ -150,12 +150,20 @@ class CosmosMemoryContextProvider(ContextProvider):
             SettingNotFoundError: If ``cosmos_endpoint``, ``foundry_endpoint``, ``embedding_model``,
                 or ``chat_model`` cannot be resolved from arguments or the environment (only when
                 ``memory_client`` is not supplied).
+            ValueError: If ``top_k`` is not positive, or ``min_confidence`` is outside 0.0-1.0.
         """
         super().__init__(source_id)
 
         # Track whether we created the client (and thus should close it in __aexit__)
         # vs. received a pre-created client (which the caller owns and should close)
         self._should_close_client = False
+        # Both values reach the toolkit on every retrieval, where bad ones fail silently: a
+        # non-positive top_k makes the toolkit raise (logged per turn, no memories), and a
+        # min_confidence outside 0.0-1.0 either matches nothing or drops the filter entirely.
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than 0")
+        if not 0.0 <= min_confidence <= 1.0:
+            raise ValueError("min_confidence must be between 0.0 and 1.0")
         self.top_k = top_k
         self.min_confidence = min_confidence
         self.memory_types: list[MemoryType] = list(memory_types) if memory_types else ["fact", "procedural"]

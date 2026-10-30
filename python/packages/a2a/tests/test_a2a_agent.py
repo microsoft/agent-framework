@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import warnings
 from collections.abc import AsyncIterator
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -443,6 +444,43 @@ def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
     assert contents[1].text == "Second part"
 
 
+def test_parse_snapshot_contents_replaces_once_then_appends_text_parts(a2a_agent: A2AAgent) -> None:
+    contents = a2a_agent._parse_contents_from_a2a(
+        [Part(text="Choose "), Part(text="blue")],
+        merge_mode="replace",
+    )
+
+    assert [content.merge_mode for content in contents] == ["replace", "append"]
+
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[Content.from_text("old")], role="assistant"),
+        AgentResponseUpdate(contents=contents, role="assistant"),
+    ])
+
+    assert response.text == "Choose blue"
+
+
+@mark.parametrize("data_first", [False, True], ids=["text-data", "data-text"])
+def test_parse_snapshot_contents_replaces_once_across_text_and_data_parts(
+    a2a_agent: A2AAgent, *, data_first: bool
+) -> None:
+    from google.protobuf.json_format import ParseDict
+    from google.protobuf.struct_pb2 import Value  # ty: ignore[unresolved-import]
+
+    data_part = Part(data=ParseDict({"choice": "blue"}, Value()))
+    parts = [data_part, Part(text=" selected")] if data_first else [Part(text="Selected "), data_part]
+    contents = a2a_agent._parse_contents_from_a2a(parts, merge_mode="replace")
+
+    assert [content.merge_mode for content in contents] == ["replace", "append"]
+
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[Content.from_text("old")], role="assistant"),
+        AgentResponseUpdate(contents=contents, role="assistant"),
+    ])
+
+    assert response.text == "".join(content.text or "" for content in contents)
+
+
 def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with ErrorContent."""
 
@@ -596,7 +634,7 @@ def test_prepare_message_for_a2a_forwards_context_id() -> None:
     message = Message(
         role="user",
         contents=[Content.from_text(text="Continue the task")],
-        additional_properties={"a2a_metadata": {"trace_id": "trace-456"}},
+        additional_properties={"a2a": {"trace_id": "trace-456"}},
     )
 
     session = A2AAgentSession(context_id="ctx-123")
@@ -604,6 +642,41 @@ def test_prepare_message_for_a2a_forwards_context_id() -> None:
 
     assert result.context_id == "ctx-123"
     assert result.metadata == {"trace_id": "trace-456"}
+
+
+def test_prepare_message_for_a2a_warns_for_legacy_metadata() -> None:
+    """Legacy-only A2A metadata remains readable but directs callers to the canonical namespace."""
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Continue the task")],
+        additional_properties={"a2a_metadata": {"trace_id": "trace-legacy"}},
+    )
+
+    with warns(FutureWarning, match=r"a2a_metadata.*deprecated"):
+        result = agent._prepare_message_for_a2a(message)
+
+    assert result.metadata == {"trace_id": "trace-legacy"}
+
+
+def test_prepare_message_for_a2a_prefers_canonical_metadata() -> None:
+    """Canonical metadata wins during the dual-written compatibility period."""
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Continue the task")],
+        additional_properties={
+            "a2a": {"trace_id": "trace-canonical"},
+            "a2a_metadata": {"trace_id": "trace-legacy"},
+        },
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = agent._prepare_message_for_a2a(message)
+
+    assert result.metadata == {"trace_id": "trace-canonical"}
+    assert not [warning for warning in caught if issubclass(warning.category, FutureWarning)]
 
 
 def test_prepare_message_for_a2a_uses_fallback_context_id() -> None:
@@ -1735,6 +1808,46 @@ async def test_streaming_artifact_update_event_yields_content(
     assert updates[0].raw_representation == update_event
 
 
+@mark.parametrize(
+    ("replacement_part", "expected_type"),
+    [
+        (Part(url="https://example.com/replacement", media_type="text/plain"), "uri"),
+        (Part(raw=b"replacement", media_type="application/octet-stream"), "data"),
+    ],
+    ids=["uri", "raw"],
+)
+async def test_streaming_artifact_replacement_discards_previous_heterogeneous_snapshot(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+    replacement_part: Part,
+    expected_type: str,
+) -> None:
+    first = TaskArtifactUpdateEvent(
+        task_id="task-art-replace",
+        context_id="ctx-art-replace",
+        artifact=Artifact(artifact_id="artifact-replace", parts=[Part(text="stale")]),
+        append=False,
+    )
+    replacement = TaskArtifactUpdateEvent(
+        task_id="task-art-replace",
+        context_id="ctx-art-replace",
+        artifact=Artifact(artifact_id="artifact-replace", parts=[replacement_part]),
+        append=False,
+    )
+    mock_a2a_client.responses.extend([
+        StreamResponse(artifact_update=first),
+        StreamResponse(artifact_update=replacement),
+    ])
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert [update.merge_mode for update in updates] == ["replace", "replace"]
+    assert len(response.messages) == 1
+    assert [content.type for content in response.messages[0].contents] == [expected_type]
+
+
 async def test_streaming_status_update_event_yields_content(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
@@ -1977,6 +2090,8 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
     updates: list[AgentResponseUpdate] = []
     async for update in stream:
         updates.append(update)
+    assert updates[0].contents[0].merge_mode == "replace"
+    assert updates[1].contents[0].merge_mode == "append"
     response = await stream.get_final_response()
 
     assert [update.text for update in updates] == ["Hello ", "world"]
@@ -2137,6 +2252,8 @@ async def test_message_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client:
     mock_a2a_client.responses.append(StreamResponse(message=msg))
 
     response = await a2a_agent.run("hello")
+    assert response.additional_properties["a2a"]["source"] == "server"
+    assert response.additional_properties["a2a"]["trace_id"] == "abc"
     assert response.additional_properties["a2a_metadata"]["source"] == "server"
     assert response.additional_properties["a2a_metadata"]["trace_id"] == "abc"
 
@@ -2210,6 +2327,10 @@ async def test_task_artifact_update_event_metadata_merged(a2a_agent: A2AAgent, m
 
     artifact_update = updates[0]
     assert artifact_update.additional_properties is not None
+    assert artifact_update.additional_properties["a2a"] == {
+        "from_artifact": True,
+        "from_event": True,
+    }
     metadata = artifact_update.additional_properties["a2a_metadata"]
     assert metadata["from_artifact"] is True
     assert metadata["from_event"] is True

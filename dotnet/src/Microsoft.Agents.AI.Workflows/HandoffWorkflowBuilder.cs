@@ -32,6 +32,11 @@ public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkfl
 /// <summary>
 /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
 /// </summary>
+/// <remarks>
+/// When control returns to an agent with its pending handoff result and no new user input, a participant-local
+/// continuation prompt resumes the existing request without resubmitting the original user command.
+/// The agent's session is retained, and the continuation prompt is not added to the shared conversation.
+/// </remarks>
 public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBuilder>
     where TBuilder : HandoffWorkflowBuilderCore<TBuilder>
 {
@@ -135,6 +140,11 @@ public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBu
     /// Sets the behavior for filtering <see cref="FunctionCallContent"/> and <see cref="ChatRole.Tool"/> contents from
     /// <see cref="ChatMessage"/>s flowing through the handoff workflow. Defaults to <see cref="HandoffToolCallFilteringBehavior.HandoffOnly"/>.
     /// </summary>
+    /// <remarks>
+    /// When control returns to a participant, its pending handoff result is preserved. If no new user request has
+    /// arrived, the latest user request is reissued to that participant with a fresh message identifier so it can
+    /// continue assisting. This participant-local request is not added to the shared workflow conversation.
+    /// </remarks>
     /// <param name="behavior">The filtering behavior to apply.</param>
     public TBuilder WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior behavior)
     {

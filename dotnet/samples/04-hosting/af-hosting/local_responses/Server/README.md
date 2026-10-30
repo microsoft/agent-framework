@@ -25,8 +25,9 @@ The route persists each turn under a continuation id chosen by how the caller co
   under the newly minted response id, so a later `previous_response_id` can branch from that exact point and
   two branches from the same prior response stay independent.
 
-The agent has a deterministic `lookup_weather` tool. Binds to `http://localhost:5000` (override with
-`ASPNETCORE_URLS`).
+The agent has a deterministic `lookup_weather` tool. Binds to `http://localhost:5000`. To use a different address,
+change the URL passed to `app.Run` in `Program.cs` and set `RESPONSES_SERVER_URL` to the same address
+in the client shell.
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"

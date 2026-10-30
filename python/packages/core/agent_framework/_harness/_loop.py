@@ -654,10 +654,11 @@ class AgentLoopMiddleware(AgentMiddleware):
                                 f"got {type(inner).__name__}."
                             )
 
-                        async for update in inner:
-                            yield update
+                        async with inner:
+                            async for update in inner:
+                                yield update
 
-                        holder["final"] = await inner.get_final_response()
+                            holder["final"] = await inner.get_final_response()
                     except MiddlewareTermination:
                         # The pipeline's MiddlewareTermination suppression is no longer active once
                         # process() has returned (the stream is consumed lazily), so a termination

@@ -4,13 +4,13 @@ Instructions for AI coding agents working in the Python codebase.
 
 **Key Documentation:**
 - [DEV_SETUP.md](DEV_SETUP.md) - Development environment setup and available poe tasks
-- [CODING_STANDARD.md](CODING_STANDARD.md) - Coding standards, docstring format, and performance guidelines
+- [CODING_STANDARD.md](CODING_STANDARD.md) - Canonical Python engineering and API-design standards
 - [samples/SAMPLE_GUIDELINES.md](samples/SAMPLE_GUIDELINES.md) - Sample structure and guidelines
 - [Python function-calling loop specification](../docs/specs/004-python-function-calling-loop.md) - Required
   behavior, scenario-to-test mapping, coverage gaps, and extra validation for function-loop changes
 
 **Agent Skills** (`.github/skills/`) — detailed, task-specific instructions loaded on demand:
-- `python-development` — coding standards, type annotations, docstrings, logging, performance
+- `python-development` — Python development workflow and routing to the canonical standards and task-specific skills
 - `python-testing` — test structure, fixtures, async mode, running tests
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
 - `python-feature-lifecycle` — package-stage meaning plus staged API decorators, enums, and feature promotion

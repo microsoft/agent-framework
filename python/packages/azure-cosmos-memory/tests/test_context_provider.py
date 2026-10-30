@@ -132,6 +132,25 @@ class TestInit:
         assert provider.context_prompt == DEFAULT_CONTEXT_PROMPT
         assert provider.auto_extract is True
 
+    def test_init_rejects_non_positive_top_k(self, mock_memory_client: AsyncMock) -> None:
+        """The toolkit rejects a non-positive top_k on every search, so fail at construction."""
+        for top_k in (0, -1):
+            with pytest.raises(ValueError, match="top_k must be greater than 0"):
+                CosmosMemoryContextProvider(memory_client=mock_memory_client, top_k=top_k)
+
+    def test_init_rejects_min_confidence_outside_documented_range(self, mock_memory_client: AsyncMock) -> None:
+        """Scores above 1.0 match no memory and negative scores drop the filter; both are silent."""
+        for min_confidence in (-0.1, 1.01, float("nan"), float("inf")):
+            with pytest.raises(ValueError, match="min_confidence must be between 0.0 and 1.0"):
+                CosmosMemoryContextProvider(memory_client=mock_memory_client, min_confidence=min_confidence)
+
+    def test_init_accepts_boundary_search_params(self, mock_memory_client: AsyncMock) -> None:
+        """The documented bounds are inclusive."""
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client, top_k=1, min_confidence=1.0)
+
+        assert provider.top_k == 1
+        assert provider.min_confidence == 1.0
+
     def test_init_creates_client_when_none(self) -> None:
         """When no client provided, creates AsyncCosmosMemoryClient with default credential."""
         with (

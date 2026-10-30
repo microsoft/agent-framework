@@ -112,6 +112,55 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         await this.ExecuteTestAsync(model, expectPrompt);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    [InlineData(SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue, true)]
+    [InlineData(SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue, false)]
+    [InlineData(SkipQuestionMode.AlwaysSkipIfVariableHasValue, true)]
+    [InlineData(SkipQuestionMode.AlwaysSkipIfVariableHasValue, false)]
+    public async Task QuestionRejectsLabeledSkipValueAsync(SkipQuestionMode? skipMode, bool isBlank)
+    {
+        // Arrange
+        this.State.Set(
+            "TestVariable",
+            isBlank ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New("existing-value"),
+            sensitivity: SensitivityLevel.Sensitive);
+        Question model = this.CreateModel(
+            nameof(QuestionRejectsLabeledSkipValueAsync), "TestVariable", skipMode: skipMode);
+        QuestionExecutor action = new(model, new MockAgentProvider().Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("question skip", exception.Message);
+        Assert.DoesNotContain("existing-value", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task QuestionPromptsUnconditionallyWithLabeledVariableAsync(bool alwaysPrompt, bool isBlank)
+    {
+        // Arrange
+        this.State.Set(
+            "TestVariable",
+            isBlank ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New("existing-value"),
+            sensitivity: SensitivityLevel.Sensitive);
+        Question model = this.CreateModel(
+            nameof(QuestionPromptsUnconditionallyWithLabeledVariableAsync),
+            "TestVariable",
+            alwaysPrompt: alwaysPrompt,
+            skipMode: alwaysPrompt ? SkipQuestionMode.AlwaysSkipIfVariableHasValue : SkipQuestionMode.AlwaysAsk);
+
+        // Act & Assert
+        await this.ExecuteTestAsync(model, expectPrompt: true);
+    }
+
     [Fact]
     public async Task QuestionPrepareResponseAsync()
     {
@@ -123,6 +172,39 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
 
         // Act & Assert
         await this.PrepareResponseTestAsync(model, expectedPrompt: "Provide input:");
+    }
+
+    [Theory]
+    [InlineData("always prompt")]
+    [InlineData("skip question mode")]
+    [InlineData("repeat count")]
+    public async Task QuestionRejectsSensitiveControlValueAsync(string location)
+    {
+        // Arrange
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        Question.Builder builder = this.CreateModel(
+            nameof(QuestionRejectsSensitiveControlValueAsync), "TestVariable").ToBuilder();
+        switch (location)
+        {
+            case "always prompt":
+                builder.AlwaysPrompt = BoolExpression.Expression("Local.Control").ToBuilder();
+                break;
+            case "skip question mode":
+                builder.SkipQuestionMode = EnumExpression<SkipQuestionModeWrapper>.Expression(
+                    """If(Local.Control, "AlwaysAsk", "AlwaysSkipIfVariableHasValue")""").ToBuilder();
+                break;
+            case "repeat count":
+                builder.RepeatCount = IntExpression.Expression("If(Local.Control, 2, 1)").ToBuilder();
+                break;
+        }
+        QuestionExecutor action = new(AssignParent<Question>(builder), new MockAgentProvider().Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains(location, exception.Message);
     }
 
     [Fact]

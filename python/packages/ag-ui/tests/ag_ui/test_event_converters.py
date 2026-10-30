@@ -65,6 +65,7 @@ class TestAGUIEventConverter:
         assert update.message_id == "msg_1"
         assert len(update.contents) == 1
         assert update.contents[0].text == "Hello"
+        assert update.contents[0].merge_mode == "append"
 
     def test_text_message_streaming(self) -> None:
         """Test streaming text across multiple TEXT_MESSAGE_CONTENT events."""
@@ -112,6 +113,7 @@ class TestAGUIEventConverter:
         assert update.contents[0].call_id == "call_123"
         assert update.contents[0].name == "get_weather"
         assert update.contents[0].arguments == ""
+        assert update.contents[0].merge_mode == "append"
         assert converter.current_tool_call_id == "call_123"
         assert converter.current_tool_name == "get_weather"
 
@@ -161,6 +163,8 @@ class TestAGUIEventConverter:
         assert all(update is not None for update in updates)
         assert updates[0].contents[0].arguments == '{"query": "'
         assert updates[1].contents[0].arguments == 'latest news"}'
+        assert updates[0].contents[0].merge_mode == "append"
+        assert updates[1].contents[0].merge_mode == "append"
         assert converter.accumulated_tool_args == '{"query": "latest news"}'
 
     def test_tool_call_end_event(self) -> None:

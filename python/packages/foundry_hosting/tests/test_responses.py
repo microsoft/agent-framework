@@ -34,6 +34,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    Annotation,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
@@ -60,6 +61,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions, OpenAIContinuationToken
 from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
@@ -79,9 +81,9 @@ from azure.ai.agentserver.responses.models import (
     ResponseObject,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
-from mcp.types import ErrorData
+from mcp import MCPError
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai.types.responses import ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
@@ -94,6 +96,7 @@ from agent_framework_foundry_hosting._responses import (
     CONSENT_ERROR_CODE,
     ConsentError,
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
+    _annotations_to_output_text,  # pyright: ignore[reportPrivateUsage]
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _container_file_citations_from_function_result,  # pyright: ignore[reportPrivateUsage]
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
@@ -116,6 +119,7 @@ from agent_framework_foundry_hosting._state_store import (
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
+_SESSION_STORAGE_ERROR_DETAIL = "session-storage-secret at C:\\sensitive\\session_store.py"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -148,7 +152,12 @@ def _make_function_approval_request_content(
 ) -> Content:
     """Build a function_approval_request Content with an embedded function_call."""
     function_call = Content.from_function_call(
-        call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
+        call_id,
+        name,
+        arguments=arguments,
+        hosted=True,
+        server_name=server_label,
+        additional_properties={"server_label": server_label},
     )
     return Content.from_function_approval_request(request_id, function_call)
 
@@ -235,6 +244,65 @@ def _expected_container_file_citation(
     }
 
 
+def _url_citation(
+    *,
+    url: str = "https://www.python.org/downloads/release/python-31315/",
+    title: str = "Python 3.13.15",
+    start_index: int = 0,
+    end_index: int = 6,
+) -> Annotation:
+    return Annotation(
+        type="citation",
+        url=url,
+        title=title,
+        annotated_regions=[{"type": "text_span", "start_index": start_index, "end_index": end_index}],
+    )
+
+
+def _expected_url_citation(
+    *,
+    url: str = "https://www.python.org/downloads/release/python-31315/",
+    title: str = "Python 3.13.15",
+    start_index: int = 0,
+    end_index: int = 6,
+) -> dict[str, Any]:
+    return {
+        "type": "url_citation",
+        "url": url,
+        "title": title,
+        "start_index": start_index,
+        "end_index": end_index,
+    }
+
+
+def _file_citation(
+    *,
+    file_id: str = "file_123",
+    filename: str = "brambleglass-kestrel-st731.txt",
+    index: int = 0,
+) -> Annotation:
+    return Annotation(
+        type="citation",
+        file_id=file_id,
+        url=filename,
+        additional_properties={"index": index},
+    )
+
+
+def _expected_file_citation(
+    *,
+    file_id: str = "file_123",
+    filename: str = "brambleglass-kestrel-st731.txt",
+    index: int = 0,
+) -> dict[str, Any]:
+    return {
+        "type": "file_citation",
+        "file_id": file_id,
+        "filename": filename,
+        "index": index,
+    }
+
+
 @pytest.mark.parametrize(
     "raw_citations",
     [
@@ -266,6 +334,177 @@ def test_container_file_citations_ignore_recursive_json() -> None:
 
     with patch("agent_framework_foundry_hosting._responses.json.loads", side_effect=RecursionError):
         assert _container_file_citations_from_function_result(function_result) == []
+
+
+def test_framework_annotations_convert_all_responses_citation_variants() -> None:
+    annotations = [
+        Annotation(
+            type="citation",
+            title="Source",
+            url="https://example.com/source",
+            annotated_regions=[
+                {"type": "text_span", "start_index": 0, "end_index": 6},
+                {"type": "text_span", "start_index": 12, "end_index": 18},
+            ],
+        ),
+        _file_citation(),
+        Annotation(
+            type="citation",
+            file_id="file_path_123",
+            additional_properties={"index": 7},
+        ),
+        Annotation(
+            type="citation",
+            file_id="container_file_123",
+            url="report.csv",
+            annotated_regions=[{"type": "text_span", "start_index": 20, "end_index": 30}],
+            additional_properties={"container_id": "container_123"},
+        ),
+    ]
+
+    assert _annotations_to_output_text(annotations) == [
+        {
+            "type": "url_citation",
+            "url": "https://example.com/source",
+            "title": "Source",
+            "start_index": 0,
+            "end_index": 6,
+        },
+        {
+            "type": "url_citation",
+            "url": "https://example.com/source",
+            "title": "Source",
+            "start_index": 12,
+            "end_index": 18,
+        },
+        _expected_file_citation(),
+        {
+            "type": "file_path",
+            "file_id": "file_path_123",
+            "index": 7,
+        },
+        {
+            "type": "container_file_citation",
+            "container_id": "container_123",
+            "file_id": "container_file_123",
+            "filename": "report.csv",
+            "start_index": 20,
+            "end_index": 30,
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("coordinate_space", "expected"),
+    [
+        pytest.param(None, [_expected_url_citation()], id="unmarked"),
+        pytest.param("content", [_expected_url_citation()], id="content"),
+        pytest.param("source", [], id="source"),
+    ],
+)
+def test_framework_annotations_respect_coordinate_space_without_raw_representation(
+    coordinate_space: Literal["content", "source"] | None, expected: list[dict[str, Any]]
+) -> None:
+    annotation = _url_citation()
+    if coordinate_space is not None:
+        annotation["annotated_regions_coordinate_space"] = coordinate_space
+    annotations = json.loads(json.dumps([annotation]))
+    original_annotations = copy.deepcopy(annotations)
+
+    assert _annotations_to_output_text(annotations) == expected
+    assert annotations == original_annotations
+
+
+def test_framework_annotations_preserve_file_citations_with_source_regions() -> None:
+    annotation = _file_citation()
+    annotation["annotated_regions"] = [{"type": "text_span", "start_index": 1, "end_index": 3}]
+    annotation["annotated_regions_coordinate_space"] = "source"
+    original_annotation = copy.deepcopy(annotation)
+
+    assert _annotations_to_output_text([annotation]) == [_expected_file_citation()]
+    assert annotation == original_annotation
+
+
+def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
+    annotations = cast(
+        Any,
+        [
+            None,
+            "not-an-annotation",
+            {
+                "type": "citation",
+                "url": "https://example.com/mixed",
+                "title": "Mixed",
+                "additional_properties": "not-a-mapping",
+                "annotated_regions": [
+                    None,
+                    "not-a-region",
+                    {"type": "source_block", "start_index": 0, "end_index": 5},
+                    {"type": "text_span", "start_index": True, "end_index": 5},
+                    {"type": "text_span", "start_index": -1, "end_index": 5},
+                    {"type": "text_span", "start_index": 8, "end_index": 7},
+                    {"type": "text_span", "start_index": 2, "end_index": 7},
+                ],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/non-string-title",
+                "title": 42,
+                "annotated_regions": [{"type": "text_span", "start_index": 8, "end_index": 9}],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/string-regions",
+                "annotated_regions": "not-a-sequence-of-regions",
+            },
+        ],
+    )
+
+    assert _annotations_to_output_text(annotations) == [
+        _expected_url_citation(
+            url="https://example.com/mixed",
+            title="Mixed",
+            start_index=2,
+            end_index=7,
+        ),
+        _expected_url_citation(
+            url="https://example.com/non-string-title",
+            title="",
+            start_index=8,
+            end_index=9,
+        ),
+    ]
+    assert _annotations_to_output_text(cast(Any, "not-an-annotation-sequence")) == []
+
+
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        pytest.param(42, id="integer"),
+        pytest.param(True, id="boolean"),
+        pytest.param(object(), id="object"),
+    ],
+)
+def test_framework_annotations_ignore_non_sequence_inputs(annotations: Any) -> None:
+    assert _annotations_to_output_text(annotations) == []
+
+
+def test_framework_annotations_ignore_unsupported_or_incomplete_values() -> None:
+    annotations = [
+        Annotation(type="citation", url="https://example.com/no-span"),
+        Annotation(
+            type="citation",
+            url="https://example.com/invalid-span",
+            annotated_regions=[{"type": "text_span", "start_index": 0}],
+        ),
+        Annotation(type="citation", file_id="file-without-index"),
+        Annotation(type="citation", file_id="file-without-index", url="document.txt"),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": True}}),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": -1}}),
+        cast(Annotation, {"type": "other", "url": "https://example.com/unsupported"}),
+    ]
+
+    assert _annotations_to_output_text(annotations) == []
 
 
 # region Helpers
@@ -563,7 +802,7 @@ class _FailingSessionStore(SessionStore):
     async def set(self, session_id: str, session: AgentSession) -> None:
         del session_id, session
         self.set_attempts += 1
-        raise OSError("session storage is full")
+        raise OSError(_SESSION_STORAGE_ERROR_DETAIL)
 
 
 class _ConflictingConversationStore(SessionStore):
@@ -616,6 +855,82 @@ async def test_output_item_tracker_emits_native_refusal_events_for_marked_text()
         "response.content_part.done",
         "response.output_item.done",
     ]
+
+
+@pytest.mark.parametrize(
+    ("outputs", "expected"),
+    [
+        (Content.from_uri("data:image/png;base64,iVBORw0KGgo="), "iVBORw0KGgo="),
+        ([Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        ((Content.from_uri("data:image/png;base64,iVBORw0KGgo="),), "iVBORw0KGgo="),
+        ([Content.from_text("caption"), Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        (["caption", Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        ("iVBORw0KGgo=", "iVBORw0KGgo="),
+        (Content.from_uri("data:image/png;name=cat.png;base64,iVBORw0KGgo="), "iVBORw0KGgo="),
+        (
+            [
+                Content.from_uri("data:image/png;base64,not-base64!"),
+                Content.from_uri("data:image/png;base64,iVBORw0KGgo="),
+            ],
+            "iVBORw0KGgo=",
+        ),
+        (Content.from_uri("https://example.com/cat.png", media_type="image/png"), ""),
+        (Content.from_uri("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"), ""),
+        (Content.from_uri("data:image/png;base64,not-base64!"), ""),
+        (Content.from_uri("data:image/png;base64,iVBORw0KGgo"), ""),
+        (Content.from_uri("data:image/png;base64,iVBOR\nw0KGgo="), ""),
+        (Content.from_uri("data:image/png;base64,"), ""),
+        (Content.from_uri("data:text/plain,x;base64,iVBORw0KGgo="), ""),
+        (Content.from_hosted_file("file_1"), ""),
+        ("https://example.com/cat.png", ""),
+        ("not-base64!", ""),
+        ("", ""),
+        (b"\x89PNG\r\n\x1a\n", ""),
+        ({"result": "iVBORw0KGgo="}, ""),
+    ],
+    ids=[
+        "data-uri-content",
+        "content-list",
+        "content-tuple",
+        "image-after-text",
+        "image-after-string",
+        "base64-string",
+        "data-uri-with-parameter",
+        "image-after-malformed-payload",
+        "https-uri-is-not-base64",
+        "data-uri-without-base64",
+        "data-uri-malformed-payload",
+        "data-uri-missing-padding",
+        "data-uri-whitespace-in-payload",
+        "data-uri-empty-payload",
+        "base64-marker-inside-payload",
+        "hosted-file",
+        "url-string-is-not-base64",
+        "malformed-string",
+        "empty-string",
+        "bytes",
+        "mapping",
+    ],
+)
+async def test_output_item_tracker_emits_image_generation_result_as_base64(
+    outputs: Any, expected: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    stream = ResponseEventStream(response_id="resp_image")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    events: list[Any] = []
+
+    with caplog.at_level(logging.WARNING):
+        async for event in tracker.handle(Content.from_image_generation_tool_result(image_id="ig_1", outputs=outputs)):
+            events.append(event)
+    events.extend(tracker.close())
+
+    done = [e for e in events if (e.get("type") if isinstance(e, Mapping) else e.type) == "response.output_item.done"]
+    assert len(done) == 1
+    assert done[0]["item"]["type"] == "image_generation_call"
+    assert done[0]["item"]["result"] == expected
+    assert ("has no base64 image" in caplog.text) is (expected == "")
 
 
 async def test_output_item_tracker_keeps_mixed_text_and_refusal_in_one_message() -> None:
@@ -675,7 +990,10 @@ async def test_item_to_message_marks_refusal_text() -> None:
 
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot help."
-    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert message.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 class _CapturingASGITransport:
@@ -1755,6 +2073,31 @@ class TestAgentSessionPersistence:
         assert "host-controlled" in response.json()["error"]["message"]
         agent.run.assert_not_called()
 
+    async def test_prepare_options_failure_is_sanitized(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        private_error_detail = "prepare-options-secret at C:\\sensitive\\prepare_options.py"
+
+        def prepare_options(_request: Any, _options: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError(private_error_detail)
+
+        agent = _make_agent()
+        server = _make_server(agent, prepare_options=prepare_options)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            response = await _post_json(server, {"input": "one shot", "store": False})
+
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in response.text
+        assert private_error_detail not in caplog.text
+        assert "phase=request preparation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        agent.run.assert_not_called()
+
     async def test_nested_extra_body_cannot_override_unstored_openai_request(self) -> None:
         outbound: list[dict[str, Any]] = []
 
@@ -1905,6 +2248,69 @@ class TestAgentSessionPersistence:
         assert len(updates) == 1
         assert updates[0].contents == []
         assert updates[0].finish_reason == "content_filter"
+
+    @pytest.mark.parametrize("annotate_prefix", [False, True])
+    async def test_provider_background_preserves_completed_text_part_citation_offsets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, annotate_prefix: bool
+    ) -> None:
+        response = AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text(
+                            "See ", annotations=[_url_citation(end_index=3)] if annotate_prefix else None
+                        ),
+                        Content.from_text("Python", annotations=[_url_citation()]),
+                    ],
+                )
+            ],
+            finish_reason="stop",
+        )
+        original_response = copy.deepcopy(response.to_dict())
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(messages: Any = None, *, session: AgentSession, **kwargs: Any) -> AgentResponse:
+            del messages, kwargs
+            session.service_session_id = "private-service-conversation"
+            return response
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="service",
+            background_source="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_response(request, context, asyncio.Event())
+                if isinstance(event, Mapping)
+            ]
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        message = next(item for item in completed["output"] if item["type"] == "message")
+        parts = [part for part in message["content"] if part["type"] == "output_text"]
+        assert len(parts) == len(message["content"])
+        assert [part["text"] for part in parts] == ["See ", "Python"]
+        assert parts[0]["annotations"] == ([_expected_url_citation(end_index=3)] if annotate_prefix else [])
+        assert parts[1]["annotations"] == [_expected_url_citation()]
+        annotation_events = [event for event in events if event["type"] == "response.output_text.annotation.added"]
+        assert [event["content_index"] for event in annotation_events] == ([0, 1] if annotate_prefix else [1])
+        assert annotation_events[-1]["annotation"] == _expected_url_citation()
+        content_done = next(
+            event for event in events if event["type"] == "response.content_part.done" and event["content_index"] == 1
+        )
+        assert content_done["part"] == parts[1]
+        output_done = next(event for event in events if event["type"] == "response.output_item.done")
+        assert output_done["item"] == message
+        assert response.to_dict() == original_response
 
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2786,7 +3192,7 @@ class TestAgentSessionPersistence:
         assert "private-provider-token" not in str(events)
         assert "private-provider-token" not in caplog.text
         for record in caplog.records:
-            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info is not None:
+            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info:
                 exception = record.exc_info[1]
                 assert exception is not None and exception.__cause__ is None and exception.__context__ is None
 
@@ -2964,7 +3370,7 @@ class TestAgentSessionPersistence:
             failed = await collect("failed-dispatch")
             blocked = await collect("retry-after-failure")
 
-        assert "provider timed out" in _failure_message(failed)
+        assert _failure_message(failed) == "An internal server error occurred."
         assert "in-flight turn" in _failure_message(blocked)
         agent.run.assert_called_once()
         head = await store.get(conversation_id)
@@ -3184,7 +3590,10 @@ class TestAgentSessionPersistence:
             response = await _post(server, input_text="first")
 
         assert response.json()["status"] == "failed"
-        assert "stored this turn server-side" in caplog.text
+        assert "stored this turn server-side" not in caplog.text
+        assert "phase=stored output validation" in caplog.text
+        assert f"response_id={response.json()['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
         assert await store.get(response.json()["id"]) is None
 
     async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
@@ -3324,9 +3733,11 @@ class TestAgentSessionPersistence:
         assert event_types.count("response.failed") == 1
         assert "response.completed" not in event_types
         error = failed_events[0]["data"]["response"]["error"]
-        assert "agent failed" in error["message"]
-        assert "session storage is full" in error["message"]
-        assert "Failed to produce response for agent" in caplog.text
+        assert error["message"] == "An internal server error occurred."
+        assert "agent failed" not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in caplog.text
+        assert "phase=agent execution" in caplog.text
         assert "Failed to persist the Agent Framework session after an agent failure" in caplog.text
 
     async def test_cancellation_is_preserved_when_best_effort_save_fails(
@@ -3719,6 +4130,33 @@ class TestNonStreaming:
         )
         assert preparing["annotations"] == []
         assert final["annotations"] == [_expected_container_file_citation()]
+
+    async def test_framework_url_and_file_citations_are_added_to_output_text(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["annotated_regions_coordinate_space"] = "source"
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "Python sources",
+                            annotations=[source_citation, _url_citation(), _file_citation()],
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citations",
+                )
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        message = next(item for item in resp.json()["output"] if item["type"] == "message")
+        assert message["content"][0]["annotations"] == [
+            _expected_url_citation(),
+            _expected_file_citation(),
+        ]
 
     async def test_latest_pending_container_file_citation_replaces_same_filename(self) -> None:
         agent = _make_agent(
@@ -4448,6 +4886,55 @@ class TestStreaming:
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
 
+    async def test_text_snapshot_emits_only_missing_delta(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello ", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello ", "world"]
+        assert done["data"]["text"] == "Hello world"
+
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_divergent_or_shrinking_text_snapshot_fails_stream(self, replacement: str) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text(replacement, merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello world"]
+        assert done["data"]["text"] == "Hello world"
+        assert events[-1]["event"] == "response.failed"
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+
     async def test_container_file_citation_is_consistent_across_stream_events(self) -> None:
         resp = await _post(
             _make_server(_make_agent(stream_updates=_container_file_citation_updates())),
@@ -4492,6 +4979,60 @@ class TestStreaming:
             for item in completed["output"]
             if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
         )
+        assert final_message["content"][0]["annotations"] == [expected_annotation]
+
+    async def test_framework_url_citation_is_consistent_across_stream_events(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["annotated_regions_coordinate_space"] = "source"
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("See ", annotations=[source_citation])],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "Python",
+                            annotations=[_url_citation(start_index=4, end_index=10)],
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("", annotations=[_url_citation(start_index=4, end_index=10)])],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "See Python",
+                            annotations=[_url_citation(start_index=4, end_index=10)],
+                            merge_mode="replace",
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        expected_annotation = _expected_url_citation(start_index=4, end_index=10)
+        annotation_events = [event for event in events if event["event"] == "response.output_text.annotation.added"]
+        assert [event["data"]["annotation"] for event in annotation_events] == [expected_annotation]
+
+        content_done = next(event for event in events if event["event"] == "response.content_part.done")
+        assert content_done["data"]["part"]["annotations"] == [expected_annotation]
+
+        completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        final_message = next(item for item in completed["output"] if item["type"] == "message")
         assert final_message["content"][0]["annotations"] == [expected_annotation]
 
     async def test_pending_container_file_citation_survives_tracker_recovery(self) -> None:
@@ -5068,6 +5609,9 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5348,6 +5892,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
@@ -5363,6 +5908,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -5382,6 +5928,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -5475,6 +6022,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         item = cast(
@@ -5541,6 +6089,7 @@ class TestOutputItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
@@ -5570,6 +6119,8 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "oauth_consent_request"
         assert msg.contents[0].consent_link == "https://example.com/consent"
+        assert msg.contents[0].additional_properties["openai"]["server_label"] == "my_server"
+        assert msg.contents[0].additional_properties["server_label"] == "my_server"
 
     async def test_structured_outputs_dict(self) -> None:
         from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
@@ -5686,6 +6237,9 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
         assert msg.contents[0].arguments == '{"city": "NYC"}'
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5978,6 +6532,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
@@ -5996,6 +6551,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -6016,6 +6572,7 @@ class TestItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -6096,6 +6653,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
@@ -6183,6 +6741,7 @@ class TestItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
@@ -7277,9 +7836,34 @@ class TestFunctionApprovalRoundTrip:
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
 
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+    @pytest.mark.parametrize("with_preamble", [False, True])
+    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self, with_preamble: bool) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
-        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[request_content], role="assistant")])
+        updates: list[AgentResponseUpdate] = []
+        preambles = ("Checking the refund policy.", "The refund requires approval.")
+        if with_preamble:
+            client = OpenAIChatClient(model="test-model", api_key="test-key")
+            for output_index, text in enumerate(preambles):
+                event_args: dict[str, Any] = {
+                    "content_index": 0,
+                    "item_id": f"message_{output_index}",
+                    "output_index": output_index,
+                    "sequence_number": output_index * 2,
+                }
+                for event in (
+                    ResponseTextDeltaEvent(type="response.output_text.delta", delta=text, logprobs=[], **event_args),
+                    ResponseTextDoneEvent(type="response.output_text.done", text=text, logprobs=[], **event_args),
+                ):
+                    update = client._parse_chunk_from_openai(event, {}, {})
+                    updates.append(
+                        AgentResponseUpdate(
+                            contents=update.contents,
+                            message_id=update.message_id,
+                            role="assistant",
+                        )
+                    )
+        updates.append(AgentResponseUpdate(contents=[request_content], role="assistant"))
+        agent = _make_agent(stream_updates=updates)
         server = _make_server(agent)
 
         resp = await _post(server, stream=True)
@@ -7289,6 +7873,11 @@ class TestFunctionApprovalRoundTrip:
         types = _sse_event_types(events)
         assert types[0] == "response.created"
         assert types[-1] == "response.completed"
+
+        if with_preamble:
+            assert [event["data"]["text"] for event in events if event["event"] == "response.output_text.done"] == list(
+                preambles
+            )
 
         approval_request_id: str | None = None
         for e in events:
@@ -7496,12 +8085,12 @@ def _make_consent_error(
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
     Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
-    which catches connection-time ``McpError``s and re-raises them as a
+    which catches connection-time ``MCPError``s and re-raises them as a
     ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
     original error attached via ``inner_exception``. ``consent_url_from_error``
-    then finds the wrapped ``McpError`` in ``exc.args``.
+    then finds the wrapped ``MCPError`` in ``exc.args``.
 
-    The McpError message uses the structured Foundry MCP gateway format:
+    The MCPError message uses the structured Foundry MCP gateway format:
     a human-readable prefix followed by a JSON document describing each
     failed tool source and its consent URL.
     """
@@ -7520,7 +8109,7 @@ def _make_consent_error(
         ]
     })
     message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
+    inner = MCPError(CONSENT_ERROR_CODE, message)
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
@@ -7543,21 +8132,21 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(Exception("boom")) is None
 
     def test_returns_none_when_mcp_error_has_different_code(self) -> None:
-        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        inner = MCPError(-32000, "some other error")
         exc = Exception("wrapped", inner)
         assert consent_url_from_error(exc) is None
 
     def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
-        # `args` of a bare McpError holds the message string, not an McpError
+        # `args` of a bare MCPError holds the message string, not an MCPError
         # instance, so it does not match the wrapping pattern produced by the
         # MCP client when it bubbles consent errors up.
-        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        bare = MCPError(CONSENT_ERROR_CODE, "https://x")
         assert consent_url_from_error(bare) is None
 
     def test_returns_none_when_message_has_no_json(self) -> None:
         from agent_framework.exceptions import ToolExecutionException
 
-        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        inner = MCPError(CONSENT_ERROR_CODE, "no json here")
         exc = ToolExecutionException("MCP consent required", inner_exception=inner)
         assert consent_url_from_error(exc) is None
 
@@ -7734,7 +8323,11 @@ class TestOAuthConsentSurfacing:
 
         assert body["status"] == "failed"
         assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
-        assert "must include an allowed safe HTTPS consent link" in caplog.text
+        assert "must include an allowed safe HTTPS consent link" in body["error"]["message"]
+        assert "must include an allowed safe HTTPS consent link" not in caplog.text
+        assert "phase=OAuth consent validation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=ValueError" in caplog.text
         agent.run.assert_not_called()
 
     async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
@@ -7882,7 +8475,7 @@ class TestOAuthConsentSurfacing:
 
         duplicate = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
         assert [event async for event in tracker.handle(duplicate)] == []
 
@@ -7921,7 +8514,7 @@ class TestOAuthConsentSurfacing:
     async def test_streaming_mid_run_consent_is_emitted_once_and_can_be_retried(self) -> None:
         consent = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
 
         async def consent_updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -8173,13 +8766,12 @@ class TestIncompleteFinishReasonSurfacing:
 
 class TestResponseFailedSurfacing:
     """Tests that exceptions raised by the hosted agent are converted into
-    terminal ``response.failed`` events carrying the exception message,
-    rather than propagating as 5xx HTTP errors or being replaced by the
-    orchestrator's generic ``"An internal server error occurred."``
-    fallback.
+    terminal ``response.failed`` events carrying a stable public message,
+    rather than propagating as 5xx HTTP errors or exposing exception details.
     """
 
     async def test_non_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "non-stream-secret at C:\\sensitive\\non_stream.py"
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
@@ -8187,7 +8779,7 @@ class TestResponseFailedSurfacing:
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("non-stream kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -8200,12 +8792,15 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "non-stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "stream-secret at C:\\sensitive\\stream.py"
+
         async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
-            raise RuntimeError("stream kaboom")
+            raise RuntimeError(private_error_detail)
 
         agent = _RawAgentMock()
         agent.id = "test-agent"
@@ -8244,7 +8839,9 @@ class TestResponseFailedSurfacing:
         assert len(failed) == 1
         response_payload: dict[str, Any] = failed[0]["data"].get("response") or {}
         error: dict[str, Any] = response_payload.get("error") or {}
-        assert error.get("message") == "stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert response_payload["id"] == events[0]["data"]["response"]["id"]
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_drains_pending_output_item(self) -> None:
         """If a streaming output item was open when the failure happens, the
@@ -8337,11 +8934,12 @@ class TestResponseFailedSurfacing:
         agent path.
         """
         workflow_agent = _build_text_workflow_agent("ignored")
+        private_error_detail = "workflow-secret at C:\\sensitive\\workflow.py"
 
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("workflow kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -8356,7 +8954,52 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "workflow kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+
+    @pytest.mark.parametrize("sensitive_data", [False, True])
+    async def test_failure_diagnostics_respect_sensitive_data(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        sensitive_data: bool,
+    ) -> None:
+        private_error_detail = "foundry-diagnostic-secret at C:\\sensitive\\foundry.py"
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_sensitive_data", sensitive_data)
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("unused")])])
+        )
+
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(
+                _raising_updates(private_error_detail),
+                finalizer=AgentResponse.from_updates,
+            )
+
+        agent.run = MagicMock(side_effect=run_failure)
+        server = _make_server(agent)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            resp = await _post(server, input_text="hello", stream=True)
+
+        body = _parse_sse_events(resp.text)[-1]["data"]["response"]
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "phase=response production" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        assert (private_error_detail in caplog.text) is sensitive_data
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "agent_framework_foundry_hosting._responses"
+            and "phase=response production" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert bool(records[0].exc_info) is sensitive_data
 
 
 # endregion

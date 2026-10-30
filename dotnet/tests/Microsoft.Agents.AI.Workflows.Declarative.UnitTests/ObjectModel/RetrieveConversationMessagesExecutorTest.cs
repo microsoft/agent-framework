@@ -42,6 +42,44 @@ public sealed class RetrieveConversationMessagesExecutorTest(ITestOutputHelper o
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task RetrieveMessagesRejectsSensitiveSelectionAsync(bool useLimit)
+    {
+        // Arrange
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider provider = new();
+        RetrieveConversationMessages.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            Messages = PropertyPath.Create(FormatVariablePath("TestMessages")),
+            ConversationId = StringExpression.Literal("DefaultConversationId"),
+        };
+        if (useLimit)
+        {
+            builder.Limit = IntExpression.Expression("If(Local.Control, 2, 1)");
+        }
+        else
+        {
+            builder.SortOrder = EnumExpression<AgentMessageSortOrderWrapper>.Expression(
+                """If(Local.Control, "NewestFirst", "OldestFirst")""");
+        }
+        RetrieveConversationMessagesExecutor action = new(AssignParent<RetrieveConversationMessages>(builder), provider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains(useLimit ? "message limit" : "message sort order", exception.Message);
+        provider.Verify(
+            p => p.GetMessagesAsync(
+                It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task RetrieveMessagesWithSensitiveCursorThrowsAsync(bool useAfter)
     {
         // Arrange

@@ -4,6 +4,7 @@ import importlib
 import sys
 from dataclasses import InitVar, dataclass, make_dataclass
 from dataclasses import field as dataclass_field
+from enum import Enum
 from types import ModuleType
 from typing import Annotated, Any, Generic, Literal, NewType, Optional, TypeVar, Union
 from unittest.mock import Mock
@@ -495,6 +496,38 @@ def test_type_compatibility_unions() -> None:
     # Source union - all members must be compatible with target
     assert is_type_compatible(Union[str, int], Union[str, int, float])
     assert not is_type_compatible(Union[str, int, bytes], Union[str, int])
+
+
+def test_type_compatibility_literals() -> None:
+    """Test that a Literal source is compatible when every literal value fits the target type."""
+
+    class Color(Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    user_id = NewType("user_id", str)
+    t = TypeVar("t")
+
+    assert is_type_compatible(Literal["approve", "reject"], str)
+    assert is_type_compatible(Literal[1, 2], int)
+    assert is_type_compatible(Literal[b"x"], bytes)
+    assert is_type_compatible(Literal["a", 1], Union[str, int])
+    assert is_type_compatible(Literal[None], Optional[str])
+    assert is_type_compatible(Literal["a"], Literal["a", "b"])
+    assert is_type_compatible(Literal["a"], Optional[Literal["a", "b"]])
+    assert is_type_compatible(Literal["a"], Union[user_id, str])
+    assert is_type_compatible(Literal[Color.RED], Color)
+    assert is_type_compatible(list[Literal["a", "b"]], list[str])
+
+    assert not is_type_compatible(Literal["a", 1], str)
+    assert not is_type_compatible(Literal["a", "c"], Literal["a", "b"])
+    # bool literal values do not match int literal members, the same as is_instance_of
+    assert not is_type_compatible(Literal[True], Literal[1])
+    # targets that isinstance() cannot check are handled like a plain str source, without raising
+    assert not is_type_compatible(Literal["a"], user_id)
+    assert not is_type_compatible(Literal["a"], t)
+    # a plain str can hold any string, so it still does not fit a Literal target
+    assert not is_type_compatible(str, Literal["a", "b"])
 
 
 def test_type_compatibility_collections() -> None:

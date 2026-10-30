@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Azure.AI.AgentServer.Core.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
 using Azure.Identity;
@@ -20,6 +21,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
@@ -34,6 +36,100 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class FoundryHostingExtensions
 {
+    private const string ResponsesServerSettingsSectionName = "ResponsesServer";
+
+    /// <summary>
+    /// Registers the Azure AI Responses Server SDK and <see cref="AgentFrameworkResponseHandler"/>
+    /// on a host application builder.
+    /// </summary>
+    /// <remarks>
+    /// Use this overload for applications that can access their host builder. In a Foundry hosted
+    /// environment it binds the response-storage and resilient-task-storage identity and endpoint
+    /// from the same <c>ResponsesServer</c> configuration section, as required by AgentServer.
+    /// <code>
+    /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
+    /// builder.AddFoundryResponses();
+    /// </code>
+    /// </remarks>
+    /// <param name="host">The host application builder.</param>
+    /// <param name="configure">Optional callback to configure <see cref="FoundryResponsesOptions"/>.</param>
+    /// <returns>The host application builder for chaining.</returns>
+    public static IHostApplicationBuilder AddFoundryResponses(
+        this IHostApplicationBuilder host,
+        Action<FoundryResponsesOptions>? configure = null)
+    {
+        _ = Throw.IfNull(host);
+        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(host, configure);
+        bool serverAdded = AddResponsesServerOnce(
+            host.Services,
+            host,
+            configuredOptions,
+            configure is not null);
+        host.Services.AddHealthChecks();
+        ConfigureFoundryListenPort(host.Services);
+        ConfigureFoundryResponsesOptions(
+            host.Services,
+            configuredOptions,
+            includeServerOptions: serverAdded,
+            applyOptions: serverAdded || configure is not null);
+        host.Services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
+        RegisterResponseHandler(host.Services);
+        MarkFeatureUsed();
+        return host;
+    }
+
+    /// <summary>
+    /// Registers the Azure AI Responses Server SDK and a specific <see cref="AIAgent"/> on a host
+    /// application builder.
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// builder.AddFoundryResponses(myAgent);
+    /// </code>
+    /// </remarks>
+    /// <param name="host">The host application builder.</param>
+    /// <param name="agent">The agent instance to register.</param>
+    /// <param name="agentSessionStore">The agent session store to use, or <see langword="null"/> for the default.</param>
+    /// <param name="configure">Optional callback to configure <see cref="FoundryResponsesOptions"/>.</param>
+    /// <returns>The host application builder for chaining.</returns>
+    public static IHostApplicationBuilder AddFoundryResponses(
+        this IHostApplicationBuilder host,
+        AIAgent agent,
+        AgentSessionStore? agentSessionStore = null,
+        Action<FoundryResponsesOptions>? configure = null)
+    {
+        _ = Throw.IfNull(host);
+        _ = Throw.IfNull(agent);
+
+        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(host, configure);
+        bool serverAdded = AddResponsesServerOnce(
+            host.Services,
+            host,
+            configuredOptions,
+            configure is not null);
+        host.Services.AddHealthChecks();
+        ConfigureFoundryListenPort(host.Services);
+        ConfigureFoundryResponsesOptions(
+            host.Services,
+            configuredOptions,
+            includeServerOptions: serverAdded,
+            applyOptions: serverAdded || configure is not null);
+        agentSessionStore ??= CreateDefaultAgentSessionStore();
+
+        if (!string.IsNullOrWhiteSpace(agent.Name))
+        {
+            host.Services.TryAddKeyedSingleton(agent.Name, agent);
+            host.Services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
+        }
+
+        host.Services.TryAddSingleton(agent);
+        host.Services.TryAddSingleton(agentSessionStore);
+
+        RegisterResponseHandler(host.Services);
+        MarkFeatureUsed();
+        return host;
+    }
+
     /// <summary>
     /// Registers the Azure AI Responses Server SDK and <see cref="AgentFrameworkResponseHandler"/>
     /// as the <see cref="ResponseHandler"/>. Agents are resolved from keyed DI services
@@ -41,8 +137,9 @@ public static class FoundryHostingExtensions
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This method calls <c>AddResponsesServer()</c> internally, so you do not need to
-    /// call it separately. Register your <see cref="AIAgent"/> instances before calling this.
+    /// This overload is for local or non-hosted scenarios. Foundry hosted applications must call
+    /// <see cref="AddFoundryResponses(IHostApplicationBuilder, Action{FoundryResponsesOptions}?)"/>
+    /// so AgentServer can bind response and task storage from the host configuration.
     /// </para>
     /// <para>
     /// Example:
@@ -68,6 +165,7 @@ public static class FoundryHostingExtensions
         FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
         bool serverAdded = AddResponsesServerOnce(
             services,
+            host: null,
             configuredOptions,
             configure is not null);
         services.AddHealthChecks();
@@ -89,9 +187,9 @@ public static class FoundryHostingExtensions
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Use this overload when hosting a single agent. The provided agent instance is
+    /// This overload is for local or non-hosted scenarios. Foundry hosted applications must use
+    /// the <see cref="IHostApplicationBuilder"/> overload. When used locally, the provided agent is
     /// registered as both a keyed service and the default <see cref="AIAgent"/>.
-    /// This method calls <c>AddResponsesServer()</c> internally.
     /// </para>
     /// <para>
     /// Example:
@@ -105,7 +203,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, <see cref="FoundryAgentSessionStore"/> is used: the Foundry durable state store when hosted, and the AgentServer SDK's local state-store fallback otherwise.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, <see cref="FoundryAgentSessionStore"/> uses the AgentServer SDK's local state-store fallback.</param>
     /// <param name="configure">
     /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
@@ -124,6 +222,7 @@ public static class FoundryHostingExtensions
         FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
         bool serverAdded = AddResponsesServerOnce(
             services,
+            host: null,
             configuredOptions,
             configure is not null);
         services.AddHealthChecks();
@@ -166,6 +265,27 @@ public static class FoundryHostingExtensions
     private static FoundryResponsesOptions CreateFoundryResponsesOptions(Action<FoundryResponsesOptions>? configure)
     {
         FoundryResponsesOptions options = new();
+        configure?.Invoke(options);
+        return options;
+    }
+
+    private static FoundryResponsesOptions CreateFoundryResponsesOptions(
+        IHostApplicationBuilder host,
+        Action<FoundryResponsesOptions>? configure)
+    {
+        FoundryResponsesOptions options = new();
+        IConfigurationSection section =
+            host.Configuration.GetSection(ResponsesServerSettingsSectionName);
+        if (bool.TryParse(section[nameof(FoundryResponsesOptions.ResilientBackground)], out bool resilientBackground))
+        {
+            options.ResilientBackground = resilientBackground;
+        }
+
+        if (bool.TryParse(section[nameof(FoundryResponsesOptions.SteerableConversations)], out bool steerableConversations))
+        {
+            options.SteerableConversations = steerableConversations;
+        }
+
         configure?.Invoke(options);
         return options;
     }
@@ -414,6 +534,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     private static bool AddResponsesServerOnce(
         IServiceCollection services,
+        IHostApplicationBuilder? host,
         FoundryResponsesOptions configuredOptions,
         bool hasConfigureCallback)
     {
@@ -437,11 +558,32 @@ public static class FoundryHostingExtensions
         services.AddSingleton(new FoundryResponsesServerMarker(
             configuredOptions.ResilientBackground,
             configuredOptions.SteerableConversations));
-        services.AddResponsesServer(options =>
+        if (host is not null)
         {
-            options.ResilientBackground = configuredOptions.ResilientBackground;
-            options.SteerableConversations = configuredOptions.SteerableConversations;
-        });
+#pragma warning disable SCME0002
+            host.AddResponsesServer(
+                ResponsesServerSettingsSectionName,
+                settings =>
+                {
+                    settings.ResilientBackground = configuredOptions.ResilientBackground;
+                    settings.SteerableConversations = configuredOptions.SteerableConversations;
+                });
+#pragma warning restore SCME0002
+        }
+        else
+        {
+            services.AddResponsesServer(options =>
+            {
+                options.ResilientBackground = configuredOptions.ResilientBackground;
+                options.SteerableConversations = configuredOptions.SteerableConversations;
+            });
+        }
+
+        if (configuredOptions.SteerableConversations)
+        {
+            services.SetResilientTasksEnabled();
+        }
+
         return true;
     }
 

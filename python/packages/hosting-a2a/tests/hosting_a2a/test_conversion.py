@@ -70,7 +70,10 @@ def test_a2a_to_run_converts_supported_parts() -> None:
     assert run["stream"] is True
     assert run["options"] == {}
     assert converted.message_id == "message-1"
-    assert converted.additional_properties == {"a2a_metadata": {"tenant_value": "kept"}}
+    assert converted.additional_properties == {
+        "a2a": {"tenant_value": "kept"},
+        "a2a_metadata": {"tenant_value": "kept"},
+    }
     assert [content.type for content in converted.contents] == ["text", "uri", "data", "text"]
     assert converted.contents[0].additional_properties == {"source": "text"}
     assert converted.contents[1].uri == "https://example.com/image.png"

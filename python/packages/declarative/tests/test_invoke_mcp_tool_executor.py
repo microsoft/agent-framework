@@ -11,7 +11,7 @@ No real MCP server or network is exercised. See
 import sys
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 try:

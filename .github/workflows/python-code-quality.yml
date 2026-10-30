@@ -141,3 +141,32 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Run tests/samples type checkers (mypy, pyrefly, ty)
         run: uv run --locked --group tool-runtime python -m scripts.workspace_poe_tasks ci-test-typing
+
+  declarative-httpx-compatibility:
+    name: Declarative HTTPX Compatibility (${{ matrix.httpx-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        httpx-version: ["0.27.0", "0.28.1"]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version-file: "python/pyproject.toml"
+      - name: Install isolated declarative test environment
+        run: |
+          uv venv .venv-httpx --python 3.11
+          uv pip install --python .venv-httpx/bin/python \
+            -e packages/core -e packages/declarative \
+            "httpx==${{ matrix.httpx-version }}" \
+            pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
+          uv pip check --python .venv-httpx/bin/python
+      - name: Test bounded HTTP handling
+        run: |
+          .venv-httpx/bin/python -m pytest \
+            packages/declarative/tests/test_default_http_request_handler.py \
+            -m "not integration" -q -o addopts=''

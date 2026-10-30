@@ -6,8 +6,8 @@ Mirrors the public API of ``HyperlightExecuteCodeTool`` for the subset that
 applies to a pure-Python interpreter (no backends to choose from). By default
 the Monty sandbox rejects OS / filesystem / network calls with
 ``PermissionError``; pass ``workspace_root`` or ``file_mounts`` to expose
-scoped host directories, and the tool will capture any files written under
-``read-write`` mounts as ``Content`` items in the response.
+scoped host directories, and the tool will capture files written under
+``read-write`` mounts as ``Content`` items within per-execution capture limits.
 """
 
 from __future__ import annotations
@@ -15,12 +15,15 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import os
+import stat
 from collections.abc import Callable, Iterator, Sequence
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from agent_framework import Content, FunctionTool
+from agent_framework._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
 from agent_framework._tools import (
     ApprovalMode,
     _normalize_tool_description_format,  # pyright: ignore[reportPrivateUsage]
@@ -53,9 +56,17 @@ _FIDES_TOOL_PROPERTY_KEYS = frozenset({
 #: matching the Hyperlight default. Use ``file_mounts`` for any other path.
 WORKSPACE_MOUNT_PATH = "/input"
 
-#: Maximum bytes per captured output file. Files larger than this are skipped
-#: and a ``Content.from_text`` warning is appended in their place.
+#: Maximum bytes per captured output file. Oversized files are skipped and
+#: reported in one omission summary per execution.
 MAX_CAPTURED_FILE_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+#: Maximum captured files across all read-write mounts in one execution.
+MAX_CAPTURED_FILES = 20
+
+#: Maximum raw captured bytes across all read-write mounts in one execution.
+MAX_CAPTURED_TOTAL_BYTES = 20 * 1024 * 1024  # 20 MiB
+
+_CAPTURE_OMISSION_MESSAGE = "[files omitted: capture file-count or byte limits exceeded]"
 
 EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -498,42 +509,111 @@ def _build_execution_contents(*, result: dict[str, Any]) -> list[Content]:
 
 
 def _iter_real_files(root: Path) -> Iterator[Path]:
-    """Walk ``root`` recursively, yielding only real (non-symlink) files.
+    """Walk ``root`` recursively, yielding only real regular files.
 
     ``Path.rglob`` follows directory symlinks by default, which combined with
     ``Path.is_file()`` / ``Path.read_bytes()`` (both follow symlinks) would let
     an attacker who controls the workspace pre-place a symlink to a host file
-    or directory and have our post-execution capture surface it. Skipping every
-    symlink at both the directory and file level closes that escape.
+    or directory and have our post-execution capture surface it. Skip symlinks,
+    Windows junctions, and other reparse points at every directory level.
     """
     stack: list[Path] = [root]
     while stack:
         current = stack.pop()
         try:
+            if _is_link_or_reparse_point(current):
+                continue
             entries = list(current.iterdir())
         except OSError:
             continue
         for entry in entries:
             try:
-                if entry.is_symlink():
+                if _is_link_or_reparse_point(entry):
                     continue
-                if entry.is_dir():
+                entry_stat = entry.lstat()
+                if stat.S_ISDIR(entry_stat.st_mode):
                     stack.append(entry)
-                elif entry.is_file():
+                elif stat.S_ISREG(entry_stat.st_mode):
                     yield entry
             except OSError:
                 continue
 
 
+def _safe_capture_file_stat(*, root: Path, entry: Path) -> os.stat_result | None:
+    """Return the verified stat for a real regular file beneath ``root``."""
+    try:
+        relative = entry.relative_to(root)
+    except ValueError:
+        return None
+
+    current = root
+    try:
+        if _is_link_or_reparse_point(current):
+            return None
+        for part in relative.parts:
+            current /= part
+            if _is_link_or_reparse_point(current):
+                return None
+        entry_stat = current.lstat()
+    except OSError:
+        return None
+    return entry_stat if stat.S_ISREG(entry_stat.st_mode) else None
+
+
+class _CaptureSizeLimitError(ValueError):
+    """A file exceeded its remaining capture byte allowance."""
+
+
+def _read_validated_file(
+    *,
+    root: Path,
+    entry: Path,
+    expected: os.stat_result,
+    max_bytes: int,
+) -> bytes | None:
+    """Read ``entry`` through one descriptor that is checked against the validated file.
+
+    ``Path.read_bytes()`` reopens the path, so a component swapped for a link or junction after
+    validation would be followed. Opening first, comparing the descriptor with the validated ``lstat``
+    identity, and revalidating the path afterwards rejects such a swap. Windows has no no-follow open,
+    so the check is not atomic there, but an undetected swap would have to be applied, reverted, and
+    applied again around the checks. Returns ``None`` when the file identity changed or cannot be read
+    safely. Raises ``_CaptureSizeLimitError`` if the file exceeds ``max_bytes``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(entry, flags)
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(fd)
+        identity = (opened.st_dev, opened.st_ino)
+        if not stat.S_ISREG(opened.st_mode) or identity != (expected.st_dev, expected.st_ino):
+            return None
+        rechecked = _safe_capture_file_stat(root=root, entry=entry)
+        if rechecked is None or (rechecked.st_dev, rechecked.st_ino) != identity:
+            return None
+        if opened.st_size > max_bytes:
+            raise _CaptureSizeLimitError("File exceeds the capture byte limit.")
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            data = handle.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise _CaptureSizeLimitError("File grew beyond the capture byte limit.")
+        return data
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str, tuple[int, int]]]:
-    """Capture (size, mtime_ns) for every real (non-symlink) host file under read-write mounts.
+    """Capture (size, mtime_ns) for every real host file under read-write mounts.
 
     Returns ``{mount_path: {relative_posix_path: (size, mtime_ns)}}``. Used by
     :func:`_capture_written_files` to detect new or modified files after the run.
     Read-only and overlay mounts are skipped because their writes do not
-    propagate to the host. Symlinks (file or directory) are deliberately skipped
-    so an attacker cannot escape the mount by pre-placing a symlink to a host
-    path outside the workspace.
+    propagate to the host. Links and reparse points are deliberately skipped so
+    an attacker cannot escape the mount through a host path outside the workspace.
     """
     snapshot: dict[str, dict[str, tuple[int, int]]] = {}
     for mount in mounts:
@@ -543,11 +623,11 @@ def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str
         per_mount: dict[str, tuple[int, int]] = {}
         for entry in _iter_real_files(host_root):
             try:
-                stat = entry.lstat()  # lstat: never follow symlinks (defensive)
+                entry_stat = entry.lstat()  # lstat: never follow symlinks (defensive)
             except OSError:
                 continue
             relative = entry.relative_to(host_root).as_posix()
-            per_mount[relative] = (int(stat.st_size), int(stat.st_mtime_ns))
+            per_mount[relative] = (int(entry_stat.st_size), int(entry_stat.st_mtime_ns))
         snapshot[mount.mount_path] = per_mount
     return snapshot
 
@@ -558,42 +638,43 @@ def _capture_written_files(
 ) -> list[Content]:
     """Return :class:`Content` items for files the sandbox wrote during the run.
 
-    Mirrors Hyperlight's ``/output`` capture flow: any new or modified real
-    (non-symlink) file under a read-write mount is read back as binary and
-    surfaced as ``Content.from_data`` with a ``path`` annotation in
-    ``additional_properties``. Symlinks are skipped at both directory and file
-    level so a malicious workspace cannot trick us into capturing host files
-    outside the configured mount root.
+    New or modified real regular files under read-write mounts are surfaced as
+    ``Content.from_data`` with a ``path`` annotation in ``additional_properties``.
+    File-count and raw-byte budgets apply across all mounts, with one summary
+    for files omitted by capture limits. Links and reparse points are skipped at
+    every directory level, and bounded reads use descriptors verified against
+    the validated paths.
     """
     captured: list[Content] = []
+    total_bytes = 0
+    omitted = False
     for mount in mounts:
         if mount.mode != "read-write":
             continue
         host_root = Path(mount.host_path)
         before = pre_state.get(mount.mount_path, {})
         for entry in sorted(_iter_real_files(host_root)):
-            try:
-                stat = entry.lstat()
-            except OSError:
+            entry_stat = _safe_capture_file_stat(root=host_root, entry=entry)
+            if entry_stat is None:
                 continue
             relative = entry.relative_to(host_root).as_posix()
-            current = (int(stat.st_size), int(stat.st_mtime_ns))
+            current = (int(entry_stat.st_size), int(entry_stat.st_mtime_ns))
             if before.get(relative) == current:
                 continue  # Unchanged.
+            if len(captured) >= MAX_CAPTURED_FILES:
+                captured.append(Content.from_text(_CAPTURE_OMISSION_MESSAGE))
+                return captured
             sandbox_path = f"{mount.mount_path.rstrip('/')}/{relative}"
-            if stat.st_size > MAX_CAPTURED_FILE_BYTES:
-                captured.append(
-                    Content.from_text(
-                        f"[file {sandbox_path} omitted: {stat.st_size} bytes "
-                        f"exceeds MAX_CAPTURED_FILE_BYTES={MAX_CAPTURED_FILE_BYTES}]"
-                    )
-                )
+            max_bytes = min(MAX_CAPTURED_FILE_BYTES, MAX_CAPTURED_TOTAL_BYTES - total_bytes)
+            if entry_stat.st_size > max_bytes:
+                omitted = True
                 continue
             try:
-                # _iter_real_files already excluded symlinks at every level of
-                # the walk; reading the file here is safe.
-                data = entry.read_bytes()
-            except OSError:
+                data = _read_validated_file(root=host_root, entry=entry, expected=entry_stat, max_bytes=max_bytes)
+            except _CaptureSizeLimitError:
+                omitted = True
+                continue
+            if data is None:
                 continue
             media_type = mimetypes.guess_type(entry.name)[0] or "application/octet-stream"
             captured.append(
@@ -603,4 +684,7 @@ def _capture_written_files(
                     additional_properties={"path": sandbox_path},
                 )
             )
+            total_bytes += len(data)
+    if omitted:
+        captured.append(Content.from_text(_CAPTURE_OMISSION_MESSAGE))
     return captured

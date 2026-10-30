@@ -78,8 +78,18 @@ def _oauth_consent_contents(raw_item: Any, consent_link: str) -> list[Content]:
         consent_link = _validate_consent_link(consent_link, item_id)
 
     if consent_link:
+        server_label = getattr(raw_item, "server_label", None)
+        additional_properties = (
+            {
+                "openai": {"server_label": server_label},
+                "server_label": server_label,
+            }
+            if isinstance(server_label, str) and server_label
+            else None
+        )
         content = Content.from_oauth_consent_request(
             consent_link=consent_link,
+            additional_properties=additional_properties,
             raw_representation=raw_item,
         )
         # The consent request is a user-input request: workflows (``AgentExecutor``) register it
