@@ -98,13 +98,19 @@ public static class AgentHooksChatClientExtensions
     /// </summary>
     /// <param name="chatClient">The chat client the agent talks to. It is decorated by the enforcement's chat
     /// seam before the agent's default pipeline is applied, so every model service call is bracketed.</param>
-    /// <param name="hooksOptions">The agent-hooks enforcement options; at least one interceptor is required.</param>
+    /// <param name="hooksOptions">The agent-hooks enforcement options: either code-path options with at least one
+    /// interceptor, or options built from a host declaration document
+    /// (<see cref="AgentHooksOptions.FromDeclaration"/> and its path, JSON and node variants), in which case the
+    /// document states the enforcement configuration and the interceptor bindings and every run's emitter is
+    /// built from it.</param>
     /// <param name="agentOptions">Optional agent options; a copy is used, with any configured history and
     /// context providers wrapped so durable writes obey verdict-before-durability.</param>
     /// <param name="services">Optional service provider passed through to the agent.</param>
     /// <returns>The enforced agent.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="chatClient"/> or <paramref name="hooksOptions"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="hooksOptions"/> has no interceptors.</exception>
+    /// <exception cref="DeclarationException">Thrown by <see cref="AIAgent.RunAsync(System.Collections.Generic.IEnumerable{ChatMessage}, AgentSession?, AgentRunOptions?, System.Threading.CancellationToken)"/>
+    /// on declaration-built options when a binding's kind resolver refuses the binding for that run; the run emits nothing.</exception>
     public static AIAgent AsAIAgentWithAgentHooks(
         this IChatClient chatClient,
         AgentHooksOptions hooksOptions,
@@ -113,7 +119,7 @@ public static class AgentHooksChatClientExtensions
     {
         _ = Throw.IfNull(chatClient);
         _ = Throw.IfNull(hooksOptions);
-        if (hooksOptions.Interceptors.Count == 0)
+        if (hooksOptions.Declaration is null && hooksOptions.Interceptors.Count == 0)
         {
             throw new ArgumentException(
                 "agent-hooks enforcement requires at least one interceptor (an emitter with zero interceptors " +
@@ -130,6 +136,8 @@ public static class AgentHooksChatClientExtensions
             IdentityProvider = hooksOptions.IdentityProvider,
             Timeout = hooksOptions.Timeout,
             RecordSink = hooksOptions.RecordSink,
+            Declaration = hooksOptions.Declaration,
+            Registry = hooksOptions.Registry,
         };
 
         return Compose(chatClient, configuration, agentOptions, services);
