@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
 import pytest
+
 from agent_framework import (
     Case,
     Default,
@@ -126,6 +128,68 @@ def selected_reply_workflow() -> Callable[
         for wrapper in wrappers.values():
             builder.add_edge(wrapper, coordinator)
         return builder.build(), children, requests, calls
+
+    return build
+
+
+@pytest.fixture
+def waiting_reply_workflow() -> Callable[[bool, bool], tuple[Workflow, Workflow, list[str]]]:
+    def build(targeted: bool, preceding_reply: bool) -> tuple[Workflow, Workflow, list[str]]:
+        started = asyncio.Event()
+        released = asyncio.Event()
+        completed: list[str] = []
+        requests: list[SubWorkflowRequestMessage] = []
+
+        class Requester(Executor):
+            @handler
+            async def start(self, message: str, ctx: WorkflowContext) -> None:
+                await ctx.request_info(message, bool, request_id="approval")
+
+            @response_handler
+            async def respond(self, original: str, approved: bool, ctx: WorkflowContext[Any, str]) -> None:
+                await started.wait()
+                released.set()
+                await ctx.yield_output(original)
+
+        class Waiter(Executor):
+            @handler
+            async def wait(self, message: str, ctx: WorkflowContext) -> None:
+                started.set()
+                await released.wait()
+                completed.append(message)
+
+        class ReplyWaiter(Waiter):
+            @handler
+            async def receive_reply(self, message: SubWorkflowResponseMessage, ctx: WorkflowContext) -> None:
+                completed.append("reply")
+
+        class Coordinator(Executor):
+            @handler
+            async def start(self, message: str, ctx: WorkflowContext[str]) -> None:
+                await ctx.send_message(message, target_id="child")
+
+            @handler
+            async def intercept(self, request: SubWorkflowRequestMessage, ctx: WorkflowContext) -> None:
+                requests.append(request)
+
+            @handler
+            async def reply(self, approved: bool, ctx: WorkflowContext[str | SubWorkflowResponseMessage]) -> None:
+                await ctx.send_message("wait", target_id="waiter")
+                if preceding_reply:
+                    await ctx.send_message(requests[0].create_response(approved), target_id="waiter")
+                await ctx.send_message(requests[0].create_response(approved), target_id="child" if targeted else None)
+
+        child = WorkflowBuilder(start_executor=Requester(id="requester")).build()
+        wrapper = WorkflowExecutor(child, id="child", allow_direct_output=True)
+        coordinator = Coordinator(id="coordinator")
+        parent = (
+            WorkflowBuilder(start_executor=coordinator)
+            .add_edge(coordinator, ReplyWaiter(id="waiter") if targeted else Waiter(id="waiter"))
+            .add_edge(coordinator, wrapper)
+            .add_edge(wrapper, coordinator)
+            .build()
+        )
+        return parent, child, completed
 
     return build
 

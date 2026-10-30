@@ -350,9 +350,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   a coordinator relays the same request ID. Origin insertion and removal stage individual mapping entries;
   committed snapshots remain unchanged until commit and discard rolls back pending changes.
   Ordinary response and cancellation batches reject mixed parent scopes before consuming requests.
-  Wrapped child replies select routes immediately before delivery, after preceding handlers on their source
-  have completed, and validate all selected targets together using each child's own policy. Predicates run once
-  per delivery, not during checkpoint or queue preflight. Fan-in aggregates are not individual wrapped replies.
+  Wrapped child replies select routes immediately before delivery, after preceding handlers on compatible
+  edge runners have completed, without waiting for unrelated outgoing handlers, and validate all selected targets
+  together using each child's own policy. Predicates run once per delivery, not during checkpoint or queue
+  preflight. Fan-in aggregates are not individual wrapped replies.
   Selected replies cannot introduce a different parent scope while a continuation has in-flight messages.
   The accepted scope is checkpoint-backed across supersteps and clears at quiescence before the final
   checkpoint, so a later response-only run can select another origin. A rejected reply

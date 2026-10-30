@@ -218,8 +218,8 @@ class RunnerImpl:
           a source by specifying the target, the messages will be delivered to the specified targets
           in the order they were sent. This is because all messages go through the same edge runner instance
           which preserves message order.
-        - Wrapped replies wait for preceding messages from their source, then select and validate all
-          targets before concurrent delivery. Other sources remain concurrent.
+        - Wrapped replies wait for preceding messages only on compatible edge runners, then select and
+          validate all targets before delivery. Unrelated edge runners remain concurrent.
         """
         from ._workflow_executor import SubWorkflowResponseMessage
 
@@ -228,19 +228,6 @@ class RunnerImpl:
 
         async def _deliver_messages(source_executor_id: str, source_messages: list[WorkflowMessage]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
-
-            async def _deliver_message_inner(edge_runner: EdgeRunner, message: WorkflowMessage) -> bool:
-                """Inner loop to deliver a single message through an edge runner."""
-                return await edge_runner.send_message(message, self._state, self._ctx)
-
-            async def _deliver_messages_for_edge_runner(
-                edge_runner: EdgeRunner, messages: Sequence[WorkflowMessage]
-            ) -> None:
-                # Preserve message order per edge runner (and therefore per routed target path)
-                # while still allowing parallelism across different edge runners.
-                for message in messages:
-                    await _deliver_message_inner(edge_runner, message)
-
             # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
             if not associated_edge_runners:
@@ -249,46 +236,53 @@ class RunnerImpl:
                 next_message[source_executor_id] = len(source_messages)
                 return
 
-            start = 0
+            selections: dict[int, dict[EdgeRunner, asyncio.Future[tuple[bool, list[str]]]]] = {}
+            validated: dict[int, asyncio.Event] = {}
             for index, message in enumerate(source_messages):
-                if not isinstance(message.data, SubWorkflowResponseMessage):
-                    continue
-                # Earlier handlers must finish before state-dependent reply routes are selected.
-                next_message[source_executor_id] = index
-                if index > start:
-                    await gather_cancelling_siblings_on_error(
-                        *(
-                            _deliver_messages_for_edge_runner(runner, source_messages[start:index])
-                            for runner in associated_edge_runners
-                        )
+                if isinstance(message.data, SubWorkflowResponseMessage):
+                    selections[index] = {
+                        runner: asyncio.get_running_loop().create_future()
+                        for runner in associated_edge_runners
+                        if runner._has_compatible_target(message)  # pyright: ignore[reportPrivateUsage]
+                    }
+                    validated[index] = asyncio.Event()
+
+            async def _deliver_messages_for_edge_runner(edge_runner: EdgeRunner) -> None:
+                for index, message in enumerate(source_messages):
+                    if index not in selections or edge_runner not in selections[index]:
+                        await edge_runner.send_message(message, self._state, self._ctx)
+                        continue
+                    # Select routes after this edge's earlier handlers, not unrelated outgoing handlers.
+                    delivery = await edge_runner._select_targets(message)  # pyright: ignore[reportPrivateUsage]
+                    selections[index][edge_runner].set_result(delivery)
+                    await validated[index].wait()
+                    await edge_runner._send_selected_message(  # pyright: ignore[reportPrivateUsage]
+                        message, self._state, self._ctx, delivery
                     )
-                deliveries = [
-                    (runner, await runner._select_targets(message))  # pyright: ignore[reportPrivateUsage]
-                    for runner in associated_edge_runners
-                ]
-                targets = {target for _, (_, target_ids) in deliveries for target in target_ids}
+
+            async def _validate_reply(index: int) -> None:
+                targets: set[str] = set()
+                for selection in selections[index].values():
+                    _, target_ids = await selection
+                    targets.update(target_ids)
+                message = source_messages[index]
                 if self._wrapped_response_validator is not None:
                     await self._wrapped_response_validator(
                         {target: [message.data.source_event] for target in targets}, scopes
                     )
-                next_message[source_executor_id] = index + 1
-                await gather_cancelling_siblings_on_error(
-                    *(
-                        runner._send_selected_message(  # pyright: ignore[reportPrivateUsage]
-                            message, self._state, self._ctx, delivery
-                        )
-                        for runner, delivery in deliveries
-                    )
-                )
-                start = index + 1
-            next_message[source_executor_id] = len(source_messages)
-            if start < len(source_messages):
-                await gather_cancelling_siblings_on_error(
-                    *(
-                        _deliver_messages_for_edge_runner(runner, source_messages[start:])
-                        for runner in associated_edge_runners
-                    )
-                )
+                validated[index].set()
+                # Independent paths may validate out of order; retain the earliest unvalidated reply on failure.
+                while next_message[source_executor_id] < len(source_messages):
+                    pending_index = next_message[source_executor_id]
+                    if pending_index in validated and not validated[pending_index].is_set():
+                        break
+                    next_message[source_executor_id] += 1
+
+            next_message[source_executor_id] = next(iter(selections), len(source_messages))
+            await gather_cancelling_siblings_on_error(
+                *(_validate_reply(index) for index in selections),
+                *(_deliver_messages_for_edge_runner(runner) for runner in associated_edge_runners),
+            )
 
         if self._queued_response_validator is not None:
             await self._queued_response_validator(scopes)

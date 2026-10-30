@@ -8,6 +8,8 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     FunctionExecutor,
@@ -27,7 +29,6 @@ from agent_framework import (
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflows._runner_context import InProcRunnerContext, WorkflowMessage
 from agent_framework._workflows._state import State
-from typing_extensions import Never
 
 
 # Test message types
@@ -554,6 +555,20 @@ async def test_wrapped_reply_routing_observes_earlier_same_edge_handler(
     assert outputs == ["first"]
     assert not await children["first"]._runner_context.get_pending_request_info_events()
     assert calls == {"condition": ["first"], "selection": ["selection"]}[routing]
+
+
+@pytest.mark.parametrize(("targeted", "preceding_reply"), [(False, False), (True, False), (True, True)])
+async def test_wrapped_reply_does_not_wait_for_unrelated_outgoing_handler(
+    waiting_reply_workflow, targeted: bool, preceding_reply: bool
+) -> None:
+    parent, child, completed = waiting_reply_workflow(targeted, preceding_reply)
+    await parent.run("start")
+
+    result = await asyncio.wait_for(parent.run(True), timeout=2.0)
+
+    assert result.get_outputs() == ["start"]
+    assert completed == (["wait", "reply"] if preceding_reply else ["wait"])
+    assert not await child._runner_context.get_pending_request_info_events()
 
 
 @pytest.mark.parametrize("routing", ["condition", "selection"])

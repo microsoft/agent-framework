@@ -108,6 +108,13 @@ class EdgeRunner(ABC):
         """Determine delivery targets without executing or buffering the message."""
         raise NotImplementedError
 
+    def _has_compatible_target(self, message: WorkflowMessage) -> bool:
+        """Check target and handler compatibility without evaluating routing predicates."""
+        return any(
+            (not message.target_id or message.target_id == edge.target_id) and self._can_handle(edge.target_id, message)
+            for edge in self._edge_group.edges
+        )
+
     @property
     def state_key(self) -> str:
         """Return a topology-derived key identifying this runner across workflow instances.
@@ -395,6 +402,9 @@ class FanInEdgeRunner(EdgeRunner):
     async def _select_targets(self, message: WorkflowMessage) -> tuple[bool, list[str]]:
         # Fan-in delivers an aggregate rather than the wrapped reply itself.
         return False, []
+
+    def _has_compatible_target(self, message: WorkflowMessage) -> bool:
+        return False
 
     async def _send_selected_message(
         self,
