@@ -39,6 +39,40 @@ Authenticate with `az login`.
 dotnet run
 ```
 
+## Configuring Cache Durations
+
+The MCP source caches the skill list and each resource separately using the server's time to live (TTL).
+The MCP specification requires a TTL, but some servers may not provide it. By default, a missing,
+zero, or negative TTL causes a fetch on every access. A positive TTL allows reuse for that duration,
+starting when the response arrives.
+
+Set `AgentMcpSkillsSourceOptions.TtlResolver` to override TTLs for the skill list, refreshed skill metadata,
+and resources.
+For example, use five minutes for missing, zero, or negative TTLs, and keep positive server TTLs unchanged:
+
+```csharp
+var options = new AgentMcpSkillsSourceOptions
+{
+    TtlResolver = static ttl =>
+        ttl is null || ttl.Value <= TimeSpan.Zero
+            ? TimeSpan.FromMinutes(5)
+            : ttl.Value,
+};
+
+var provider = new AgentSkillsProviderBuilder()
+    .UseMcpSkills(client, options)
+    .DisableCaching()
+    .Build();
+```
+
+The resolver receives the server TTL (`null` if missing) and returns a `TimeSpan`.
+A positive result sets the cache duration; zero or a negative result causes a fetch on the next access.
+Leaving `TtlResolver` unset keeps the default behavior.
+
+Use `.DisableCaching()`, as above, so the builder's cache does not prevent the MCP source from
+checking expiration. Longer cache durations delay observing server changes, but resource validation
+still applies.
+
 ## Security Considerations
 
 Discovering skills over MCP means an external MCP server controls what skill content (including
