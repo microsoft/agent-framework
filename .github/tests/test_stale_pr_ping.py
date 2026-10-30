@@ -26,6 +26,7 @@ from stale_pr_ping import (
     clear_requested_info,
     close,
     get_latest_comment,
+    get_latest_comment_with_retry,
     get_maintainers,
     get_runtime_thresholds,
     has_warning_marker,
@@ -102,6 +103,49 @@ class TestLatestComment:
         pull_request = _make_pull_request()
 
         assert get_latest_comment(pull_request) is None
+
+    @patch("stale_pr_ping.time.sleep")
+    def test_transient_lookup_failure_succeeds_on_retry(
+        self,
+        mock_sleep,
+        capsys,
+    ):
+        latest_comment = _make_comment("alice")
+        pull_request = _make_pull_request(comments=[latest_comment])
+        issue_comments = pull_request.get_issue_comments.return_value
+        pull_request.get_issue_comments.side_effect = [
+            GithubException(502, {"message": "Bad Gateway"}, None),
+            issue_comments,
+        ]
+
+        assert get_latest_comment_with_retry(pull_request) == (
+            True,
+            latest_comment,
+        )
+        assert pull_request.get_issue_comments.call_count == 2
+        mock_sleep.assert_called_once_with(2)
+        assert "lookup attempt 1/3 failed for PR #42" in capsys.readouterr().out
+
+    @patch("stale_pr_ping.time.sleep")
+    def test_final_lookup_failure_is_reported(
+        self,
+        mock_sleep,
+        capsys,
+    ):
+        pull_request = _make_pull_request()
+        pull_request.get_issue_comments.side_effect = GithubException(
+            502,
+            {"message": "Bad Gateway"},
+            None,
+        )
+
+        assert get_latest_comment_with_retry(pull_request) == (False, None)
+        assert pull_request.get_issue_comments.call_count == 3
+        assert mock_sleep.call_args_list == [call(2), call(4)]
+        assert (
+            "Failed to fetch the latest comment for PR #42 after 3 attempts"
+            in capsys.readouterr().out
+        )
 
 
 class TestWarningMarker:
@@ -834,3 +878,61 @@ class TestMain:
         output = capsys.readouterr().out
         assert "Scanned 1 PRs, warned 0, closed 0, failed 1" in output
         assert "Failed: #42" in output
+
+    @patch.dict(
+        os.environ,
+        {
+            "GITHUB_TOKEN": "tok",
+            "GITHUB_REPOSITORY": "org/repo",
+        },
+        clear=True,
+    )
+    @patch("stale_pr_ping.time.sleep")
+    @patch("stale_pr_ping.datetime")
+    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
+    @patch("stale_pr_ping.Github")
+    def test_lookup_failure_is_recorded_and_later_pr_is_processed(
+        self,
+        mock_github,
+        mock_get_maintainers,
+        mock_datetime,
+        mock_sleep,
+        capsys,
+    ):
+        failed_pull_request = _make_pull_request(number=41)
+        failed_pull_request.get_issue_comments.side_effect = GithubException(
+            502,
+            {"message": "Bad Gateway"},
+            None,
+        )
+        later_pull_request = _make_pull_request(
+            comments=[_make_comment("alice")],
+            number=42,
+            updated_at=NOW - timedelta(days=WARNING_THRESHOLD_DAYS),
+        )
+        repo = mock_github.return_value.get_repo.return_value
+        repo.get_pulls.return_value = [
+            failed_pull_request,
+            later_pull_request,
+        ]
+        mock_datetime.now.return_value = NOW
+
+        with pytest.raises(SystemExit):
+            main()
+
+        mock_get_maintainers.assert_called_once_with(repo)
+        assert failed_pull_request.get_issue_comments.call_count == 3
+        assert mock_sleep.call_args_list == [call(2), call(4)]
+        later_pull_request.create_issue_comment.assert_called_once_with(
+            WARNING_COMMENT.format(
+                author="external",
+                closing_days=CLOSING_THRESHOLD_DAYS,
+            )
+        )
+        later_pull_request.add_to_labels.assert_called_once_with(
+            REQUESTED_INFO_LABEL
+        )
+        output = capsys.readouterr().out
+        assert "Scanned 2 PRs, warned 1, closed 0, failed 1" in output
+        assert "Warned: #42" in output
+        assert "Failed: #41" in output

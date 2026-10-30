@@ -15,7 +15,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from github import Auth, Github
+from github import Auth, Github, GithubException
 from github.IssueComment import IssueComment
 from github.PullRequest import PullRequest
 from github.Repository import Repository
@@ -71,6 +71,33 @@ def get_maintainers(repo: Repository) -> set[str]:
 def get_latest_comment(pull_request: PullRequest) -> IssueComment | None:
     """Fetch only the newest page of regular PR conversation comments."""
     return next(iter(pull_request.get_issue_comments().reversed), None)
+
+
+def get_latest_comment_with_retry(
+    pull_request: PullRequest,
+) -> tuple[bool, IssueComment | None]:
+    """Fetch the latest comment, retrying transient GitHub API failures."""
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            return True, get_latest_comment(pull_request)
+        except GithubException as exc:
+            if attempt < max_retries:
+                wait = 2 ** attempt  # 2s, 4s
+                print(
+                    f"  WARN: Latest-comment lookup attempt "
+                    f"{attempt}/{max_retries} failed for "
+                    f"PR #{pull_request.number}: {exc}. "
+                    f"Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+            else:
+                print(
+                    f"  ERROR: Failed to fetch the latest comment for "
+                    f"PR #{pull_request.number} after {max_retries} "
+                    f"attempts: {exc}"
+                )
+                return False, None
 
 
 def has_warning_marker(comment: IssueComment | None) -> bool:
@@ -344,7 +371,13 @@ def main() -> None:
         if is_exempt(pull_request, maintainers):
             continue
 
-        latest_comment = get_latest_comment(pull_request)
+        lookup_succeeded, latest_comment = get_latest_comment_with_retry(
+            pull_request
+        )
+        if not lookup_succeeded:
+            failed.append(pull_request.number)
+            continue
+
         has_requested_info = any(
             label.name == REQUESTED_INFO_LABEL
             for label in pull_request.labels
