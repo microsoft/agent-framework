@@ -266,12 +266,52 @@ def _default_state_decoder(cls: type[Any]) -> StateDecoder:
 
         return decode_from_dict
 
-    from pydantic import BaseModel
+    from pydantic import AliasChoices, BaseModel, ValidationError
 
     if issubclass(cls, BaseModel):
 
         def decode_pydantic(payload: Mapping[str, Any]) -> Any:
-            return cls.model_validate({key: value for key, value in payload.items() if key != "type"})
+            raw = {key: value for key, value in payload.items() if key != "type"}
+            try:
+                return cls.model_validate(raw)
+            except ValidationError as exc:
+                # The encoder's payload items went through _serialize_value,
+                # so a nested registered value (e.g. Message) sits in the
+                # payload as its tagged dict. Restore only the field(s) pydantic
+                # blames; fields that already validate raw keep their payload
+                # untouched, so a field that legitimately holds a tag-shaped
+                # dict (e.g. plain dict[str, Any] data) is never converted or
+                # rejected by the retry.
+                failed_keys: set[str] = set()
+                for error in exc.errors():
+                    location = error.get("loc")
+                    if not location or not isinstance(location[0], str):
+                        continue
+                    field_name = location[0]
+                    if field_name in raw:
+                        failed_keys.add(field_name)
+                        continue
+                    field = cls.model_fields.get(field_name)
+                    if field is None:
+                        continue
+                    validation_alias = field.validation_alias
+                    aliases = [field.alias, field.serialization_alias]
+                    if isinstance(validation_alias, str):
+                        aliases.insert(0, validation_alias)
+                    elif isinstance(validation_alias, AliasChoices):
+                        aliases = [*validation_alias.choices, *aliases]
+                    failed_key = next(
+                        (alias for alias in aliases if isinstance(alias, str) and alias in raw),
+                        None,
+                    )
+                    if failed_key is not None:
+                        failed_keys.add(failed_key)
+                if not failed_keys:
+                    raise
+                return cls.model_validate({
+                    key: _deserialize_value(value, path=f"{cls.__name__}.{key}") if key in failed_keys else value
+                    for key, value in raw.items()
+                })
 
         return decode_pydantic
 
