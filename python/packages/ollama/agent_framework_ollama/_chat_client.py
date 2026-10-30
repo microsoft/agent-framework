@@ -394,9 +394,12 @@ class OllamaChatClient(
 
                 # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
                 # instead of leaving the response open until the generator is garbage collected.
+                has_tool_calls = False
                 try:
                     async for part in response_object:
-                        yield self._parse_streaming_response_from_ollama(part)
+                        if getattr(part, "message", None) and getattr(part.message, "tool_calls", None):
+                            has_tool_calls = True
+                        yield self._parse_streaming_response_from_ollama(part, has_tool_calls=has_tool_calls)
                 finally:
                     aclose = getattr(response_object, "aclose", None)
                     if aclose is not None:
@@ -650,12 +653,18 @@ class OllamaChatClient(
             contents.extend(tool_calls)
         return contents
 
-    def _get_finish_reason_from_ollama(self, response: OllamaChatResponse) -> FinishReason | None:
-        if response.message.tool_calls:
+    def _get_finish_reason_from_ollama(
+        self, response: OllamaChatResponse, *, has_tool_calls: bool = False
+    ) -> FinishReason | None:
+        if response.message and response.message.tool_calls:
+            return FinishReason("tool_calls")
+        if has_tool_calls and (not response.done_reason or response.done_reason == "stop"):
             return FinishReason("tool_calls")
         return FinishReason(response.done_reason) if response.done_reason else None
 
-    def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
+    def _parse_streaming_response_from_ollama(
+        self, response: OllamaChatResponse, *, has_tool_calls: bool = False
+    ) -> ChatResponseUpdate:
         contents = self._parse_contents_from_ollama(response, streaming=True)
         finish_reason = None
         if response.done:
@@ -674,7 +683,7 @@ class OllamaChatClient(
             )
             if usage_details:
                 contents.append(Content.from_usage(usage_details, merge_mode="replace", raw_representation=response))
-            finish_reason = self._get_finish_reason_from_ollama(response)
+            finish_reason = self._get_finish_reason_from_ollama(response, has_tool_calls=has_tool_calls)
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",

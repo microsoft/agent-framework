@@ -622,6 +622,126 @@ async def test_cmc_streaming_with_tool_call(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason="stop",
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "tool_calls"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_preserves_terminal_length(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason="length",
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "length"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_with_missing_terminal_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason=None,
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "tool_calls"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_with_dict_tool_passthrough(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
