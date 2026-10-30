@@ -56,7 +56,11 @@ from typing import (
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._tools import FunctionTool, normalize_tools
-from ._types import AgentResponse, Message
+from ._types import (
+    _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    AgentResponse,
+    Message,
+)
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
@@ -872,8 +876,44 @@ def _to_eval_item(
     all_msgs = list(input_msgs) + list(response.messages or [])
 
     typed_tools: list[FunctionTool] = []
-    if tools:
+    if tools is not None:
         typed_tools = [tool for tool in normalize_tools(tools) if isinstance(tool, FunctionTool)]
+    elif _EVALUATION_TOOLS_METADATA_KEY in response.additional_properties:
+        called_tools = {
+            content.name for message in all_msgs for content in message.contents if content.type == "function_call"
+        }
+        definitions = response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
+        if not isinstance(definitions, dict):
+            raise ValueError("Invalid agent_framework.evaluation metadata: expected tool definitions keyed by name.")
+        for name, definition in cast(dict[str, Any], definitions).items():
+            if not isinstance(name, str) or not name or not isinstance(definition, dict):
+                raise ValueError("Invalid agent_framework.evaluation metadata: expected named tool definition objects.")
+            definition = cast(dict[str, Any], definition)
+            description = definition.get("description")
+            schema = definition.get("input_schema")
+            if not isinstance(description, str) or not isinstance(schema, dict):
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation definition for {name!r}: "
+                    "expected a string description and an input_schema object."
+                )
+            schema_changed = definition.get("schema_changed", False)
+            if not isinstance(schema_changed, bool):
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation definition for {name!r}: schema_changed must be bool."
+                )
+            if schema_changed and name in called_tools:
+                raise ValueError(
+                    f"Tool {name!r} changed input schema during the captured conversation; "
+                    "automatic evaluation cannot represent multiple schemas for the same called tool. "
+                    "Use distinct tool names or supply an explicit tools= override."
+                )
+            try:
+                schema = json.loads(json.dumps(schema, allow_nan=False))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation input_schema for {name!r}: expected JSON-serializable data."
+                ) from exc
+            typed_tools.append(FunctionTool(name=name, description=description, input_model=schema))
     elif agent:
         raw_tools = getattr(agent, "default_options", {}).get("tools", [])
         typed_tools = [tool for tool in normalize_tools(raw_tools) if isinstance(tool, FunctionTool)]
@@ -1604,6 +1644,7 @@ async def evaluate_agent(
     expected_output: str | Sequence[str] | None = None,
     expected_tool_calls: Sequence[ExpectedToolCall] | Sequence[Sequence[ExpectedToolCall]] | None = None,
     responses: AgentResponse[Any] | Sequence[AgentResponse[Any]] | None = None,
+    tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
     evaluators: Evaluator | Callable[..., Any] | Sequence[Evaluator | Callable[..., Any]],
     eval_name: str | None = None,
     context: str | None = None,
@@ -1621,8 +1662,16 @@ async def evaluate_agent(
     or a list for convenience.
 
     If ``responses`` is provided, skips running the agent and evaluates those
-    responses directly — but still extracts tool definitions from the agent.
-    In this mode ``queries`` is required to construct the conversation.
+    responses directly. Tool definitions come from the original run when
+    available, including schema-only snapshots retained through JSON or pickle
+    serialization. Responses without captured definitions fall back to the
+    agent's configured tools; supply ``tools`` when those definitions are
+    unavailable or need to be overridden. In this mode ``queries`` is required
+    to construct the conversation.
+
+    Automatic discovery rejects a called tool whose captured input schema changed
+    under the same name, even if the schemas might be compatible. Use distinct
+    names for different schemas or supply an explicit ``tools`` override.
 
     Args:
         agent: An agent-framework agent instance.
@@ -1642,6 +1691,9 @@ async def evaluate_agent(
             running the agent. A single response is wrapped into a one-element
             list. When provided, ``queries`` must also be provided to
             construct the conversation for evaluation.
+        tools: Tool definitions for evaluation, overriding automatic discovery
+            for every item. These are not passed to ``agent.run``. An empty
+            sequence disables tool definitions.
         evaluators: One or more ``Evaluator`` instances.
         eval_name: Display name (defaults to agent name).
         context: Optional context for groundedness evaluation.
@@ -1746,6 +1798,7 @@ async def evaluate_agent(
                         query=q,
                         response=r,
                         agent=agent,
+                        tools=tools,
                         context=context,
                     )
                 )
@@ -1766,6 +1819,7 @@ async def evaluate_agent(
                         query=query,
                         response=response,
                         agent=agent,
+                        tools=tools,
                         context=context,
                     )
                 )
