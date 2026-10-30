@@ -2,6 +2,7 @@
 
 using System.ClientModel.Primitives;
 using System.Text.Json;
+using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 namespace Demo.ComputerUse;
@@ -23,16 +24,46 @@ internal sealed record ComputerActionRequest(string Type, string? Text, IReadOnl
 
 internal static class ComputerUseUtil
 {
-    internal static Dictionary<string, BinaryData> LoadScreenshots()
+    internal static async Task<Dictionary<string, string>> UploadScreenshotAssetsAsync(IHostedFileClient fileClient)
     {
         string assetsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
 
-        return new Dictionary<string, BinaryData>
+        (string Key, string FileName)[] files =
+        [
+            ("browser_search", "cua_browser_search.jpg"),
+            ("search_typed", "cua_search_typed.jpg"),
+            ("search_results", "cua_search_results.jpg")
+        ];
+
+        Dictionary<string, string> screenshots = [];
+
+        foreach ((string key, string fileName) in files)
         {
-            ["browser_search"] = BinaryData.FromBytes(File.ReadAllBytes(Path.Combine(assetsDir, "cua_browser_search.jpg"))),
-            ["search_typed"] = BinaryData.FromBytes(File.ReadAllBytes(Path.Combine(assetsDir, "cua_search_typed.jpg"))),
-            ["search_results"] = BinaryData.FromBytes(File.ReadAllBytes(Path.Combine(assetsDir, "cua_search_results.jpg"))),
-        };
+            HostedFileContent result = await fileClient.UploadAsync(
+                Path.Combine(assetsDir, fileName),
+                new HostedFileClientOptions { Purpose = "assistants" });
+            screenshots[key] = result.FileId;
+        }
+
+        return screenshots;
+    }
+
+    internal static async Task EnsureDeleteScreenshotAssetsAsync(
+        IHostedFileClient fileClient,
+        Dictionary<string, string> screenshots)
+    {
+        foreach ((string key, string fileId) in screenshots)
+        {
+            try
+            {
+                await fileClient.DeleteAsync(fileId);
+            }
+            catch (Exception exception)
+            {
+                // Continue so one failed deletion does not leave every remaining sample asset behind.
+                Console.Error.WriteLine($"Failed to delete screenshot '{key}' ({fileId}): {exception.Message}");
+            }
+        }
     }
 
     /// <summary>

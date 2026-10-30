@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- FoundryAITool.CreateComputerTool() provides the GA computer tool. -->
+    <!-- Provides the Foundry project client and FoundryAITool.CreateComputerTool(). -->
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
   </ItemGroup>
 

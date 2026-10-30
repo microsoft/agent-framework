@@ -1,30 +1,30 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use the generally available (GA) computer tool, created with the parameterless
-// FoundryAITool.CreateComputerTool(), with an AIAgent backed by Azure OpenAI Responses. Each computer call returned by
-// the model carries an ordered batch of actions; the application runs all of them and then sends back a single
-// screenshot.
+// FoundryAITool.CreateComputerTool(), with an AIAgent backed by the Microsoft Foundry project Responses endpoint.
+// Each computer call returned by the model carries an ordered batch of actions; the application runs all of them and
+// then sends back a single screenshot.
 
-using System.ClientModel.Primitives;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Demo.ComputerUse;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Responses;
 
-Uri endpoint = AzureOpenAIEndpoint.From(
-    Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT"))
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new OpenAIClient(
-    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
-    new OpenAIClientOptions { Endpoint = endpoint })
+AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+using IHostedFileClient fileClient = projectClient.GetProjectOpenAIClient().AsIHostedFileClient();
+
+AIAgent agent = projectClient
+    .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
     .AsAIAgent(
@@ -32,69 +32,86 @@ AIAgent agent = new OpenAIClient(
         instructions: "You are a computer automation assistant.",
         tools: [FoundryAITool.CreateComputerTool()]);
 
-Dictionary<string, BinaryData> screenshots = ComputerUseUtil.LoadScreenshots();
+Dictionary<string, string> screenshots = [];
 
-// Send the initial request with a screenshot of the browser.
-ChatMessage message = new(ChatRole.User, [
-    new TextContent("Search for 'OpenAI news'. Type it and submit. Once you see results, the task is complete."),
-    new DataContent(screenshots["browser_search"].ToMemory(), "image/jpeg")
-]);
-
-Console.WriteLine("Starting computer use session...");
-
-AgentSession session = await agent.CreateSessionAsync();
-AgentResponse response = await agent.RunAsync(message, session: session);
-
-SearchState currentState = SearchState.Initial;
-
-for (int i = 0; i < 10; i++)
+try
 {
-    // Find the next computer call.
-    ComputerCallResponseItem? computerCall = response.Messages
-        .SelectMany(m => m.Contents)
-        .Select(c => c.RawRepresentation as ComputerCallResponseItem)
-        .FirstOrDefault(item => item is not null);
+    // Foundry rejects large inline data URIs in computer_call_output, so upload the simulated screenshots once and
+    // reference their file IDs throughout the loop.
+    screenshots = await ComputerUseUtil.UploadScreenshotAssetsAsync(fileClient);
 
-    if (computerCall is null)
-    {
-        if (currentState == SearchState.PressedEnter)
+    // Send the initial request with a screenshot of the browser.
+    ChatMessage message = new(ChatRole.User, [
+        new TextContent("Search for 'OpenAI news'. Type it and submit. Once you see results, the task is complete."),
+        new AIContent
         {
-            Console.WriteLine("No more computer actions. Done.");
+            RawRepresentation = ResponseContentPart.CreateInputImagePart(
+                imageFileId: screenshots["browser_search"],
+                imageDetailLevel: ResponseImageDetailLevel.High)
+        }
+    ]);
+
+    Console.WriteLine("Starting computer use session...");
+
+    AgentSession session = await agent.CreateSessionAsync();
+    AgentResponse response = await agent.RunAsync(message, session: session);
+
+    SearchState currentState = SearchState.Initial;
+
+    for (int i = 0; i < 10; i++)
+    {
+        // Find the next computer call.
+        ComputerCallResponseItem? computerCall = response.Messages
+            .SelectMany(m => m.Contents)
+            .Select(c => c.RawRepresentation as ComputerCallResponseItem)
+            .FirstOrDefault(item => item is not null);
+
+        if (computerCall is null)
+        {
+            if (currentState == SearchState.PressedEnter)
+            {
+                Console.WriteLine("No more computer actions. Done.");
+                Console.WriteLine(response);
+                break;
+            }
+
+            // The model may ask for confirmation before acting. Answer and continue.
+            if (response.Text.Contains('?'))
+            {
+                Console.WriteLine($"Model asked: {response.Text}");
+                response = await agent.RunAsync("Please proceed.", session);
+                continue;
+            }
+
             Console.WriteLine(response);
             break;
         }
 
-        // The model may ask for confirmation before acting. Answer and continue.
-        if (response.Text.Contains('?'))
+        // Run every action of the batch in order, then capture a single screenshot.
+        foreach (ComputerActionRequest action in ComputerUseUtil.GetActions(computerCall))
         {
-            Console.WriteLine($"Model asked: {response.Text}");
-            response = await agent.RunAsync("Please proceed.", session);
-            continue;
+            Console.WriteLine($"[{i + 1}] Action: {action.Type}");
+            currentState = await ComputerUseUtil.ApplyAsync(action, currentState);
         }
 
-        Console.WriteLine(response);
-        break;
+        ComputerCallOutputResponseItem callOutput = new(
+            computerCall.CallId,
+            ComputerCallOutput.CreateScreenshotOutput(
+                screenshotImageFileId: screenshots[ComputerUseUtil.GetScreenshotKey(currentState)]));
+
+        // The model can flag an action as risky with pending safety checks. A real application must show them to the
+        // user and acknowledge them only after the user confirms; this simulation acknowledges them automatically.
+        foreach (ComputerCallSafetyCheck safetyCheck in computerCall.PendingSafetyChecks)
+        {
+            Console.WriteLine($"Acknowledging safety check: {safetyCheck.Code}");
+            callOutput.AcknowledgedSafetyChecks.Add(safetyCheck);
+        }
+
+        // Send the screenshot back as the computer call output.
+        response = await agent.RunAsync([new ChatMessage(ChatRole.User, [new AIContent { RawRepresentation = callOutput }])], session);
     }
-
-    // Run every action of the batch in order, then capture a single screenshot.
-    foreach (ComputerActionRequest action in ComputerUseUtil.GetActions(computerCall))
-    {
-        Console.WriteLine($"[{i + 1}] Action: {action.Type}");
-        currentState = await ComputerUseUtil.ApplyAsync(action, currentState);
-    }
-
-    ComputerCallOutputResponseItem callOutput = new(
-        computerCall.CallId,
-        ComputerCallOutput.CreateScreenshotOutput(screenshots[ComputerUseUtil.GetScreenshotKey(currentState)], "image/jpeg"));
-
-    // The model can flag an action as risky with pending safety checks. A real application must show them to the user
-    // and acknowledge them only after the user confirms; this simulation acknowledges them automatically.
-    foreach (ComputerCallSafetyCheck safetyCheck in computerCall.PendingSafetyChecks)
-    {
-        Console.WriteLine($"Acknowledging safety check: {safetyCheck.Code}");
-        callOutput.AcknowledgedSafetyChecks.Add(safetyCheck);
-    }
-
-    // Send the screenshot back as the computer call output.
-    response = await agent.RunAsync([new ChatMessage(ChatRole.User, [new AIContent { RawRepresentation = callOutput }])], session);
+}
+finally
+{
+    await ComputerUseUtil.EnsureDeleteScreenshotAssetsAsync(fileClient, screenshots);
 }
