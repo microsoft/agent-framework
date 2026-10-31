@@ -679,14 +679,17 @@ class FileCheckpointStorage:
             ) from exc
         expected_key = _fs_key(expected_name)
         variant = next((name for name in siblings if _fs_key(name) == expected_key), None)
-        if variant is None:
-            return
-        # Decomposing filesystems can return an exact spelling that still belongs to another ID.
+        # The persisted ID, not the filename, decides identity. The resolved
+        # destination exists, so whether it was reached through a case/Unicode
+        # fold or a path-bearing alias (``./Round-A``) whose basename never
+        # matches a sibling, a different checkpoint must not be replaced.
+        # Re-saving the same ID stays a normal update.
         if FileCheckpointStorage._read_stored_checkpoint_id(file_path) == checkpoint_id:
             return
+        colliding = (variant or file_path.name).removesuffix(".json")
         raise WorkflowCheckpointException(
             f"Checkpoint ID {checkpoint_id!r} collides with the existing checkpoint "
-            f"{variant.removesuffix('.json')!r}: on this filesystem both names "
+            f"{colliding!r}: on this filesystem both names "
             "resolve to one file, and saving would replace that checkpoint's data. "
             "Choose a checkpoint ID that differs by more than letter case or "
             "Unicode normalization form."

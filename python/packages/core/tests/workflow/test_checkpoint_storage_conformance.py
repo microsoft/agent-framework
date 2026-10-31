@@ -204,6 +204,39 @@ async def test_file_save_rejects_case_variant_checkpoint_id(tmp_path: Path) -> N
     assert (await storage.load("Round-A")).state["marker"] == "first-updated"
 
 
+async def test_file_save_rejects_path_bearing_alias_checkpoint_id(tmp_path: Path) -> None:
+    """A path-bearing ID that resolves to another checkpoint's file must not replace it.
+
+    ``./Round-A`` and ``Round-A`` resolve to the same ``Round-A.json`` but are
+    different IDs. The collision guard compared full IDs against basenames, so a
+    prefixed ID found no variant and skipped the persisted-identity check,
+    silently overwriting the first checkpoint on a folding filesystem (#9466).
+    """
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    first = WorkflowCheckpoint(
+        workflow_name="first-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id="Round-A",
+        state={"marker": "first"},
+    )
+    alias = WorkflowCheckpoint(
+        workflow_name="second-workflow",
+        graph_signature_hash="topology-b",
+        checkpoint_id="./Round-A",
+        state={"marker": "second"},
+    )
+
+    first_id = await storage.save(first)
+    with pytest.raises(WorkflowCheckpointException, match="collides"):
+        await storage.save(alias)
+
+    # The first checkpoint survives untouched.
+    restored = await storage.load(first_id)
+    assert restored.checkpoint_id == "Round-A"
+    assert restored.state["marker"] == "first"
+    assert await storage.list_checkpoint_ids(workflow_name="first-workflow") == ["Round-A"]
+
+
 async def test_file_load_rejects_case_variant_checkpoint_id(tmp_path: Path) -> None:
     """A variant ID must not read another checkpoint's data (#9466 review).
 
