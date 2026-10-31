@@ -7837,3 +7837,23 @@ def test_data_uri_readers_agree_on_the_base64_marker():
     payload_marker = f"data:image/png,x;base64,{png_b64}"
     with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
         detect_media_type_from_base64(data_uri=payload_marker)
+
+
+def test_agent_response_value_validates_by_alias_only() -> None:
+    """Structured output is validated with aliases only, matching the schema sent to providers."""
+    from pydantic import VERSION, ConfigDict
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) < (2, 11):
+        pytest.skip("validate_by_alias/validate_by_name require pydantic 2.11")
+
+    class Aliased(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(alias="itemCount")
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"itemCount": 3}'])],
+        response_format=Aliased,
+    )
+
+    assert response.value is not None
+    assert response.value.item_count == 3
