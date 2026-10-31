@@ -644,6 +644,12 @@ class AgentLoopMiddleware(AgentMiddleware):
             iteration = 0
             work_iterations = 0
             progress: list[str] = []
+            # Only a clean loop exit (should_continue stop, max_iterations, approval escape
+            # hatch, or MiddlewareTermination) should fire the turn-scoped after-providers. An
+            # exception unwinding the generator, or an early ``aclose()``, must not - otherwise
+            # they run with a stale prior-iteration final, diverging from the non-streaming path
+            # and the normal (non-loop) run contract (both of which skip after_run on error).
+            completed_cleanly = False
             stamped_options = dict(context.options) if context.options is not None else {}
             stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
             context.options = stamped_options
@@ -668,7 +674,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                         # process() has returned (the stream is consumed lazily), so a termination
                         # raised by a downstream middleware or during stream consumption surfaces here.
                         # Stop cleanly and keep whatever final response we have from a prior iteration.
-                        return
+                        break
 
                     iteration += 1
 
@@ -677,7 +683,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                     # Escape hatch: if this iteration is asking for tool approval, stop the loop and
                     # let the caller approve, instead of continuing or injecting next_message.
                     if self._has_pending_approval_request(final):
-                        return
+                        break
                     loop_kwargs = self._build_loop_kwargs(
                         context=context,
                         iteration=iteration,
@@ -711,7 +717,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                             feedback=feedback,
                         )
                     if stop:
-                        return
+                        break
                     if snapshot is not None and context.session is not None:
                         # Reset the session to the pre-loop baseline before the next run. The final
                         # response was already awaited above, so the service-side conversation id has
@@ -724,9 +730,13 @@ class AgentLoopMiddleware(AgentMiddleware):
                     # transcript that non-streaming runs return).
                     for message in next_messages:
                         yield self._message_to_update(message)
+                # Reached only by breaking out of the loop on a clean stop; an exception
+                # propagates past this point straight to ``finally`` with the flag unset.
+                completed_cleanly = True
             finally:
                 context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
-                await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
+                if completed_cleanly:
+                    await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
             if holder["final"] is not None:
