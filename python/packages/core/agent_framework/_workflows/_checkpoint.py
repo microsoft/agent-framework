@@ -915,6 +915,7 @@ class FileCheckpointStorage:
             paths: list[Path] = []
             directories: dict[Path, tuple[int, int, int]] = {}
             pending = [root]
+            is_root_iteration = True
             while pending:
                 directory = pending.pop().resolve()
                 if not directory.is_relative_to(root):
@@ -923,13 +924,21 @@ class FileCheckpointStorage:
                     )
                 if directory in directories:
                     continue
-                directories[directory] = _version(directory.stat())
-                with os.scandir(directory) as entries:
-                    for entry in entries:
-                        if entry.is_dir():
-                            pending.append(Path(entry.path))
-                        elif os.path.normcase(entry.name).endswith(".json"):
-                            paths.append(Path(entry.path))
+                try:
+                    directories[directory] = _version(directory.stat())
+                    with os.scandir(directory) as entries:
+                        for entry in entries:
+                            if entry.is_dir():
+                                pending.append(Path(entry.path))
+                            elif os.path.normcase(entry.name).endswith(".json"):
+                                paths.append(Path(entry.path))
+                except FileNotFoundError as e:
+                    if is_root_iteration:
+                        raise
+                    raise _CheckpointScanInvalidated(
+                        f"Checkpoint directory {directory} disappeared during the scan; retry get_latest"
+                    ) from e
+                is_root_iteration = False
             return paths, directories
 
         def _make_duplicate_capturing_hook() -> tuple[
@@ -959,18 +968,16 @@ class FileCheckpointStorage:
             """
             root_duplicate_keys: list[str] = []
             all_duplicate_keys: list[str] = []
-            is_root = [True]
 
             def hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-                target = root_duplicate_keys if is_root[0] else all_duplicate_keys
+                root_duplicate_keys.clear()
                 result: dict[str, Any] = {}
                 for key, value in pairs:
                     if key in result:
-                        target.append(key)
+                        root_duplicate_keys.append(key)
                         all_duplicate_keys.append(key)
                     else:
                         result[key] = value
-                is_root[0] = False
                 return result
 
             return hook, root_duplicate_keys, all_duplicate_keys
@@ -987,6 +994,7 @@ class FileCheckpointStorage:
                     if not stat.S_ISREG(info.st_mode):
                         raise ValueError("checkpoint path is not a regular file")
                     version = _version(info)
+                    versions[file_path] = version
                     hook, root_duplicate_keys, all_duplicate_keys = _make_duplicate_capturing_hook()
                     try:
                         with open(file_path, encoding="utf-8") as f:
@@ -1005,10 +1013,10 @@ class FileCheckpointStorage:
                             f"Skipping unidentifiable checkpoint file {file_path} (missing or non-string workflow_name)"
                         )
                         continue
-                    if "__pickled__" in stored or "__type__" in stored:
-                        raise ValueError("Top-level pickle markers are not checkpoint metadata")
                     if stored["workflow_name"] != workflow_name:
                         continue
+                    if "__pickled__" in stored or "__type__" in stored:
+                        raise ValueError("Top-level pickle markers are not checkpoint metadata")
                     if all_duplicate_keys:
                         raise ValueError(f"Duplicate checkpoint JSON key: {all_duplicate_keys[0]}")
                     timestamp = datetime.fromisoformat(stored["timestamp"])
@@ -1054,10 +1062,16 @@ class FileCheckpointStorage:
                         f"Checkpoint {file_path} changed during the scan; retry get_latest"
                     )
             current_paths, current_directories = _checkpoint_paths(root)
+            try:
+                directory_changed = any(_version(path.stat()) != version for path, version in directories.items())
+            except FileNotFoundError as e:
+                raise _CheckpointScanInvalidated(
+                    "Checkpoint directory disappeared during post-scan validation; retry get_latest"
+                ) from e
             if (
                 set(current_paths) != set(paths)
                 or current_directories != directories
-                or any(_version(path.stat()) != version for path, version in directories.items())
+                or directory_changed
                 or self.storage_path.resolve() != root
             ):
                 raise _CheckpointScanInvalidated(

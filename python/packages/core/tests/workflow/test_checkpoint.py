@@ -3927,7 +3927,7 @@ async def test_file_checkpoint_storage_get_latest_retries_when_checkpoint_disapp
     storage = FileCheckpointStorage(tmp_path)
     surviving_id = await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
     other_id = await storage.save(_stamped_checkpoint({"stage": "second"}, "2026-01-01T11:00:00+00:00"))
-    other_path = tmp_path / f"{other_id}.json"
+    other_path = (tmp_path / f"{other_id}.json").resolve()
 
     original_stat = Path.stat
     deleted = False
@@ -3935,7 +3935,7 @@ async def test_file_checkpoint_storage_get_latest_retries_when_checkpoint_disapp
     def delete_on_first_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
         nonlocal deleted
 
-        if not deleted and self.resolve() == other_path.resolve():
+        if not deleted and self == other_path:
             deleted = True
             other_path.unlink()
         return original_stat(self, *args, **kwargs)
@@ -3978,6 +3978,42 @@ async def test_file_checkpoint_storage_get_latest_surfaces_nested_duplicate_work
         '"pending_request_info_events": {}, '
         '"iteration_count": 0, '
         '"metadata": {"workflow_name": "a", "workflow_name": "b"}, '
+        '"version": "1.0"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(WorkflowCheckpointException, match="Duplicate checkpoint JSON key"):
+        await storage.get_latest(workflow_name="recovery-workflow")
+
+
+async def test_file_checkpoint_storage_get_latest_surfaces_nested_duplicate_workflow_name_in_first_nested_object(
+    tmp_path: Path,
+) -> None:
+    """A duplicate workflow_name in the first nested object parsed must still surface corruption.
+
+    object_pairs_hook runs bottom-up, so the first hook call is NOT the root.
+    If the first nested object contains a duplicate workflow_name, the old
+    is_root flag flipped to False on that call, misclassifying the duplicate
+    as root-level and quarantining the file as ambiguous ownership. The fix
+    clears root_duplicate_keys at the start of each call so only the final
+    call's duplicates survive.
+
+    This test puts metadata BEFORE the empty objects so it is the first nested
+    object parsed — the scenario the prior test missed.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    await storage.save(_stamped_checkpoint({"stage": "older"}, "2026-01-01T10:00:00+00:00"))
+    newer_id = "newer-corrupt-checkpoint-first-nested"
+    (tmp_path / f"{newer_id}.json").write_text(
+        '{"workflow_name": "recovery-workflow", '
+        '"metadata": {"workflow_name": "a", "workflow_name": "b"}, '
+        '"graph_signature_hash": "test-hash", '
+        '"checkpoint_id": "' + newer_id + '", '
+        '"previous_checkpoint_id": null, '
+        '"timestamp": "2026-01-01T11:00:00+00:00", '
+        '"messages": {}, '
+        '"state": {}, '
+        '"pending_request_info_events": {}, '
+        '"iteration_count": 0, '
         '"version": "1.0"}',
         encoding="utf-8",
     )
