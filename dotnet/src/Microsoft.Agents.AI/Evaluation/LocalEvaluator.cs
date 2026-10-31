@@ -42,18 +42,18 @@ public sealed class LocalEvaluator : IAgentEvaluator
 
             foreach (var check in this._checks)
             {
-                var EvalCheckResult = check(item);
-                evalResult.Metrics[EvalCheckResult.CheckName] = new BooleanMetric(
-                    EvalCheckResult.CheckName,
-                    EvalCheckResult.Passed,
-                    reason: EvalCheckResult.Reason)
+                var evalCheckResult = check(item);
+                evalResult.Metrics[evalCheckResult.CheckName] = new BooleanMetric(
+                    evalCheckResult.CheckName,
+                    evalCheckResult.Passed,
+                    reason: evalCheckResult.Reason)
                 {
                     Interpretation = new EvaluationMetricInterpretation
                     {
-                        Rating = EvalCheckResult.Passed
+                        Rating = evalCheckResult.Passed
                             ? EvaluationRating.Good
                             : EvaluationRating.Unacceptable,
-                        Failed = !EvalCheckResult.Passed,
+                        Failed = !evalCheckResult.Passed,
                     },
                 };
             }
