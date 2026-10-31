@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
 
@@ -16,6 +17,74 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 /// </summary>
 public class InProcessExecutionTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task FailedSuperStep_DiscardsPendingStateAsync(bool checkpointing, bool cancel)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        PendingStateExecutor executor = new(cancel ? cancellation : null);
+        Workflow workflow = new WorkflowBuilder(executor).Build();
+        InProcessExecutionEnvironment environment = checkpointing
+            ? InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory())
+            : InProcessExecution.Lockstep;
+        await using Run run = await environment.RunAsync(workflow, 0);
+        Assert.Null(executor.ObservedState);
+
+        // Act
+        await run.ResumeAsync<int>(cancellation.Token, 1);
+        await run.ResumeAsync<int>(default, 2);
+
+        // Assert
+        Assert.Equal(0, executor.ObservedState);
+        await run.ResumeAsync<int>(default, 3);
+        Assert.Equal(2, executor.ObservedState);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedSuperStep_AllowsCheckpointRestoreAsync(bool cancel)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        PendingStateExecutor executor = new(cancel ? cancellation : null);
+        Workflow workflow = new WorkflowBuilder(executor).Build();
+        InProcessExecutionEnvironment environment = InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        await using Run run = await environment.RunAsync(workflow, 0);
+        CheckpointInfo checkpoint = Assert.Single(run.Checkpoints);
+
+        // Act
+        await run.ResumeAsync<int>(cancellation.Token, 1);
+        await run.RestoreCheckpointAsync(checkpoint);
+        await run.ResumeAsync<int>(default, 2);
+
+        // Assert
+        Assert.Equal(0, executor.ObservedState);
+    }
+
+    private sealed class PendingStateExecutor(CancellationTokenSource? cancellation) : Executor<int>("stateful"), IResettableExecutor
+    {
+        public int? ObservedState { get; private set; }
+
+        public ValueTask ResetAsync() => default;
+
+        public override async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            this.ObservedState = await context.ReadStateAsync<int?>("value", cancellationToken: cancellationToken);
+            await context.QueueStateUpdateAsync("value", message, cancellationToken: cancellationToken);
+            if (message == 1)
+            {
+                cancellation?.Cancel();
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new InvalidOperationException("The superstep failed after queuing state.");
+            }
+        }
+    }
+
     /// <summary>
     /// The non-streaming version (RunAsync) should execute the workflow and produce events,
     /// similar to the streaming version (StreamAsync + TrySendMessageAsync).

@@ -228,9 +228,12 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                 await this.RunSuperstepAsync(currentStep, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
-            { }
+            {
+                this.RunContext.StateManager.DiscardQueuedUpdates();
+            }
             catch (Exception e)
             {
+                this.RunContext.StateManager.DiscardQueuedUpdates();
                 await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(e)).ConfigureAwait(false);
             }
 

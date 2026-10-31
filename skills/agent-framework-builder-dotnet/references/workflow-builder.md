@@ -44,6 +44,9 @@ between stages, final output, intermediate output, session ownership, and approv
 - Checkpoint resume (`CheckpointManager`) requires stable workflow, executor, and participant IDs and serializable
   state and message types.
 - Keep run-specific state in the workflow state APIs, not in fields shared across runs.
+- Queued workflow-state writes are published when a superstep completes. A failed or cancelled superstep discards
+  its pending writes so they do not leak into later input or block checkpoint restore. This does not roll back
+  external side effects or changes to executor fields.
 - Agent sessions are not automatically interchangeable between participants.
 - Tool approval (`ToolApprovalRequestContent`) and workflow human input (`RequestPort` external requests) are
   different suspension mechanisms.
