@@ -266,8 +266,10 @@ class Mem0ContextProvider(ContextProvider):
             }
 
             if isinstance(self.mem0_client, AsyncMemory):
-                add_kwargs["user_id"] = self.user_id
-                add_kwargs["agent_id"] = self.agent_id
+                if self.user_id:
+                    add_kwargs["user_id"] = self.user_id
+                if self.agent_id:
+                    add_kwargs["agent_id"] = self.agent_id
             else:
                 add_kwargs["filters"] = self._build_filters()
 

@@ -689,6 +689,31 @@ class TestAfterRun:
         assert call_kwargs["agent_id"] == "a1"
         assert "filters" not in call_kwargs
 
+    async def test_oss_storage_omits_unset_identity_fields(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS add must not forward unset identity fields as None kwargs.
+
+        _validate_filters permits configuring only one of user_id/agent_id, but
+        the OSS branch previously forwarded both unconditionally, passing
+        ``agent_id=None`` (or ``user_id=None``) to AsyncMemory.add and crashing
+        the run after the model had already produced a reply.
+        """
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
+        ctx._response = AgentResponse(messages=[])
+
+        await provider.after_run(
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        call_kwargs = mock_oss_mem0_client.add.call_args.kwargs
+        assert call_kwargs["user_id"] == "u1"
+        assert "agent_id" not in call_kwargs
+        assert "filters" not in call_kwargs
+
     async def test_oss_storage_rejects_application_id(self, mock_oss_mem0_client: AsyncMock) -> None:
         """OSS storage rejects Platform-only application_id because AsyncMemory.add has no app_id parameter."""
         provider = Mem0ContextProvider(
