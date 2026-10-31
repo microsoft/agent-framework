@@ -9,6 +9,7 @@ This module provides ``RedisHistoryProvider``, built on the new
 from __future__ import annotations
 
 import json
+import logging
 import warnings
 from collections.abc import Awaitable, Sequence
 from inspect import isawaitable
@@ -22,6 +23,8 @@ from agent_framework._telemetry import mark_feature_used
 from redis.credentials import CredentialProvider
 
 from ._feature_usage import FeatureIndex
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -271,7 +274,10 @@ class RedisHistoryProvider(HistoryProvider):
         redis_messages = cast("list[str]", await _redis_result(cast("Any", self._redis_client).lrange(key, 0, -1)))
         messages: list[Message] = []
         for serialized in redis_messages:
-            messages.append(Message.from_dict(self._deserialize_json(serialized)))
+            try:
+                messages.append(Message.from_dict(self._deserialize_json(serialized)))
+            except (ValueError, json.JSONDecodeError) as exc:
+                logger.warning("Skipping malformed Redis history entry: %s", exc)
         return messages
 
     async def save_messages(
