@@ -189,26 +189,13 @@ class TestCosmosHistoryProviderGetMessages:
 
         assert messages == []
 
-    async def test_none_session_id_generates_guid_partition_key(
-        self, mock_container: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        mock_container.query_items.return_value = _to_async_iter([])
-
+    async def test_none_session_id_raises_value_error(self, mock_container: MagicMock) -> None:
         provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
-        with caplog.at_level("WARNING"):
+
+        with pytest.raises(ValueError, match="session_id"):
             await provider.get_messages(None)
 
-        query_kwargs = mock_container.query_items.call_args.kwargs
-        session_key = query_kwargs["partition_key"]
-        assert isinstance(session_key, str)
-        assert session_key != ""
-        assert session_key != "default"
-        uuid.UUID(session_key)
-        assert query_kwargs["parameters"] == [
-            {"name": "@session_id", "value": session_key},
-            {"name": "@source_id", "value": "mem"},
-        ]
-        assert "Received empty session_id" in caplog.text
+        mock_container.query_items.assert_not_called()
 
     async def test_skips_non_dict_message_payload(self, mock_container: MagicMock) -> None:
         mock_container.query_items.return_value = _to_async_iter([{"message": "bad"}, {"message": None}])

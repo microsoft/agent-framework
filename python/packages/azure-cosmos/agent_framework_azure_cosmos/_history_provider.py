@@ -300,12 +300,6 @@ class CosmosHistoryProvider(HistoryProvider):
 
     @staticmethod
     def _session_partition_key(session_id: str | None) -> str:
-        if session_id:
-            return session_id
-
-        generated_session_id = str(uuid.uuid4())
-        logger.warning(
-            "Received empty session_id; generated temporary session id '%s' for Cosmos partition key.",
-            generated_session_id,
-        )
-        return generated_session_id
+        if not session_id:
+            raise ValueError("session_id must be a non-empty string.")
+        return session_id
