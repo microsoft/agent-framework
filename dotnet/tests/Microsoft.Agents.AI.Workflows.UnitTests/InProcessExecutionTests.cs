@@ -34,12 +34,12 @@ public class InProcessExecutionTests
         Assert.Null(executor.ObservedState);
 
         // Act
-        await run.ResumeAsync<int>(cancellation.Token, 1);
-        await run.ResumeAsync<int>(default, 2);
+        await run.ResumeAsync(cancellation.Token, 1);
+        await run.ResumeAsync(default, 2);
 
         // Assert
         Assert.Equal(0, executor.ObservedState);
-        await run.ResumeAsync<int>(default, 3);
+        await run.ResumeAsync(default, 3);
         Assert.Equal(2, executor.ObservedState);
     }
 
@@ -57,9 +57,9 @@ public class InProcessExecutionTests
         CheckpointInfo checkpoint = Assert.Single(run.Checkpoints);
 
         // Act
-        await run.ResumeAsync<int>(cancellation.Token, 1);
+        await run.ResumeAsync(cancellation.Token, 1);
         await run.RestoreCheckpointAsync(checkpoint);
-        await run.ResumeAsync<int>(default, 2);
+        await run.ResumeAsync(default, 2);
 
         // Assert
         Assert.Equal(0, executor.ObservedState);
