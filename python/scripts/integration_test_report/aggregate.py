@@ -478,7 +478,7 @@ def _generate_per_test_table(
     # Sort by module then test name
     for nodeid in sorted(all_tests, key=lambda n: (all_modules.get(n, ""), n)):
         module = all_modules.get(nodeid, "")
-        short = _short_name(nodeid)
+        short = _short_name(nodeid).replace("|", r"\|")
         if provider_filter:
             row = f"| `{short}` | `{module}` |"
         else:

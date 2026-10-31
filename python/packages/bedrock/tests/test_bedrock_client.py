@@ -78,6 +78,20 @@ def test_agent_accepts_bedrock_chat_client() -> None:
     assert agent.client is client
 
 
+@pytest.mark.parametrize("injected", [False, True])
+async def test_bedrock_client_context_ownership(injected: bool) -> None:
+    runtime = MagicMock(spec=BaseClient)
+    session = MagicMock(spec=Boto3Session)
+    session.region_name = "us-west-2"
+    session.client.return_value = runtime
+    client = BedrockChatClient(model="test-model", boto3_session=session, client=runtime if injected else None)
+    async with client as entered:
+        assert entered is client
+        runtime.close.assert_not_called()
+    await client.close()
+    assert runtime.close.call_count == (0 if injected else 1)
+
+
 async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
@@ -101,6 +115,71 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
     assert payload["messages"][0]["content"][0]["text"] == "hello"
     assert response.messages[0].contents[0].text == "Bedrock says hi"
     assert response.usage_details and response.usage_details["input_token_count"] == 10
+
+
+class _StubConverseWithoutModelId(_StubBedrockRuntime):
+    """Returns the real Converse response shape, which does not echo the model id."""
+
+    def converse(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4},
+        }
+
+
+@pytest.mark.parametrize("client_model", ["amazon.titan-text", None])
+async def test_get_response_reports_the_requested_model(client_model: str | None) -> None:
+    """A per-call model override must be the model reported on the response, like the streaming path."""
+    stub = _StubConverseWithoutModelId()
+    client = BedrockChatClient(
+        model=client_model,
+        region="us-west-2",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    response = await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hello")])],
+        options={"model": "us.openai.gpt-6-sol"},
+    )
+
+    assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
+    assert response.model == "us.openai.gpt-6-sol"
+
+
+class _StubConverseAndStreamWithoutModelId(_StubConverseWithoutModelId):
+    def converse_stream(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        events: list[dict[str, Any]] = [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "hi"}, "contentBlockIndex": 0}},
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+        return {"stream": _StubEventStream(events)}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_streaming_and_non_streaming_report_the_same_model(stream: bool) -> None:
+    """Both paths must report the per-call model override, not the client default."""
+    stub = _StubConverseAndStreamWithoutModelId()
+    client = BedrockChatClient(
+        model="amazon.titan-text",
+        region="us-west-2",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    if stream:
+        response_stream = client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"}, stream=True)
+        response = await response_stream.get_final_response()
+    else:
+        response = await client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"})
+
+    assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
+    assert response.text == "hi"
+    assert response.model == "us.openai.gpt-6-sol"
 
 
 async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:

@@ -39,14 +39,14 @@ This selective approach is useful when you know which integrations you need, and
 
 Supported Platforms:
 
-- Python: 3.10–3.15
+- Python: 3.11–3.15
 - OS: Windows, macOS, Linux
 
-Python 3.10 remains supported and tested for this release, but it is deprecated
-because upstream Python 3.10 has reached end of life. New environments should
-use Python 3.11 or later. A future Agent Framework release will raise the
-minimum version separately; this release does not remove Python 3.10 from
-package metadata or CI.
+Python 3.10 is no longer supported because it has reached upstream end of life.
+Package metadata still permits Python 3.10 installation, but CI no longer runs
+unit or integration tests on it and compatibility is not guaranteed. Use
+Python 3.11–3.15 for supported environments, subject to integration-specific
+limits below. Raising the installation minimum will be handled separately.
 
 ### Python 3.15 limitations
 
@@ -57,8 +57,6 @@ not provide exactly the same feature set as Python 3.14:
 | --- | --- |
 | Declarative Power Fx | `agent-framework-declarative` is installed, but its `powerfx` dependency is not. YAML values beginning with `=` produce a warning and remain unchanged instead of being evaluated. Declarative agents or workflows that rely on expressions may therefore use invalid literal values or fail later. |
 | Redis | `agent-framework-redis` is omitted from the standard install because RedisVL declares `Requires-Python <3.15`. Redis imports and Redis-backed history, context, and vector storage are unavailable. |
-| Hyperlight | `agent-framework-hyperlight` is omitted because no compatible Python 3.15 sandbox backend wheel is published. Hyperlight CodeAct and its `execute_code` tool are unavailable. |
-| AG-UI A2UI | The base `agent-framework-ag-ui` package works, but pip cannot install its optional `a2ui` extra because `ag-ui-a2ui-toolkit` declares `Requires-Python <3.15`. |
 
 ## 1. Setup API Keys
 
@@ -159,6 +157,46 @@ async def main():
 
 asyncio.run(main())
 ```
+
+### Connection and credential lifetimes
+
+Chat clients support async context managers for deterministic cleanup:
+
+```python
+from agent_framework import Agent, Message
+from agent_framework.openai import OpenAIChatClient
+
+async with OpenAIChatClient() as client:
+    response = await client.get_response([Message("user", ["Hello!"])])
+
+# Alternatively, let the agent enter and exit its chat client's context.
+async with Agent(client=OpenAIChatClient(), instructions="Be helpful.") as agent:
+    response = await agent.run("Hello!")
+```
+
+Calling clients without a context manager remains supported; use `await client.close()` when finished.
+Context exit releases connections created by the connector, including on exceptions. Caller-supplied SDK clients,
+HTTP transports, and credentials remain caller-owned. In particular, closing an Azure SDK connection does not
+close the credential supplied to it. Scope credentials outside the agent or client that uses them:
+
+```python
+from azure.identity.aio import AzureCliCredential
+
+async with AzureCliCredential() as credential:
+    async with OpenAIChatClient(
+        azure_endpoint="https://YOUR-RESOURCE.openai.azure.com",
+        model="YOUR-DEPLOYMENT",
+        credential=credential,
+    ) as client:
+        response = await client.get_response([Message("user", ["Hello!"])])
+```
+
+Treat closing a resource-owning client as the end of its lifetime; reopening is SDK-dependent. Avoid overlapping
+agent contexts sharing a connector-owned connection, since exiting either agent closes that connection. To share
+an SDK client across agents, inject it into their chat clients and manage its lifetime outside those agent contexts.
+`BaseChatClient` provides default context methods and a no-op `close()`, so custom subclasses do not need to
+implement lifecycle methods unless they own resources. Protocol-only chat clients do not need context methods.
+Inherited context exit also supports existing subclasses whose `close()` is synchronous.
 
 ## 4. Build an Agent with Tools and Functions
 

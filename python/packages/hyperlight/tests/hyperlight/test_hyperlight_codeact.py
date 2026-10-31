@@ -2631,7 +2631,7 @@ async def test_output_limits_are_isolated_when_registry_is_shared(
     assert len(_FakeSandbox.instances) == 2
     assert [
         (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) for sandbox in _FakeSandbox.instances
-    ] == [("4B", "10B", 20), ("3B", "10B", 20)]
+    ] == [("4", "10", 20), ("3", "10", 20)]
 
 
 async def test_default_output_limits_are_forwarded_to_hyperlight_sandbox(
@@ -2648,8 +2648,8 @@ async def test_default_output_limits_are_forwarded_to_hyperlight_sandbox(
 
     sandbox = _FakeSandbox.instances[0]
     assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == (
-        "5242880B",
-        "20971520B",
+        "5242880",
+        "20971520",
         20,
     )
 
@@ -2671,7 +2671,7 @@ async def test_custom_output_limits_are_forwarded_to_hyperlight_sandbox(
         _close_execute_code_registry(execute_code)
 
     sandbox = _FakeSandbox.instances[0]
-    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == ("7B", "11B", 3)
+    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == ("7", "11", 3)
 
 
 def test_execute_code_tool_uses_finite_default_output_limits() -> None:
@@ -2823,7 +2823,13 @@ async def test_execute_code_tool_rejects_sparse_file_with_real_sandbox(tmp_path:
     finally:
         _close_execute_code_registry(execute_code)
 
-    _assert_bounded_output_error(contents, "per-file output limit")
+    # Hyperlight 0.8 enforces the quota during the guest write, before the
+    # host-side materializer can report its more specific limit error.
+    assert not any(item.type == "data" and _decode_content_bytes(item) for item in contents)
+    errors = [item for item in contents if item.type == "error"]
+    assert len(errors) == 1
+    assert errors[0].message == "Execution error"
+    assert errors[0].error_details
 
 
 @pytest.mark.flaky
@@ -3495,3 +3501,124 @@ def test_sandbox_survives_external_thread_holding_stale_reference(
         gc.collect()
 
     assert drop_violations == []
+
+
+def test_run_snapshot_does_not_repeat_unchanged_fides_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." not in caplog.text
+
+
+def test_run_snapshot_warns_when_fides_metadata_keys_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["confidentiality"] = "private"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert codeact.get_tools()[0] is annotated_tool
+
+
+def test_run_snapshot_warns_when_fides_metadata_value_changes(caplog: pytest.LogCaptureFixture) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+
+    caplog.clear()
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+
+
+def test_fides_warning_cache_pruned_on_tool_removal() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=first, _registry=_FakeRuntime())
+    assert any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+    codeact.remove_tool(first.name)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_warning_cache_pruned_on_clear() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=first, _registry=_FakeRuntime())
+    codeact.clear_tools()
+
+    assert codeact._fides_warned_metadata == []
+
+
+def test_fides_warning_cache_pruned_on_replacement() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=first, _registry=_FakeRuntime())
+
+    @tool(
+        name=first.name,
+        additional_properties={"source_integrity": "trusted"},
+    )
+    def replacement(value: int) -> int:
+        return value
+
+    codeact.add_tools(replacement)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+    assert any(obj is replacement for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_metadata_change_warns_once_across_run_snapshots(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    warnings = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.getMessage()
+    ]
+    assert len(warnings) == 1

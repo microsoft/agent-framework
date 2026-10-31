@@ -30,6 +30,17 @@ graph TD
 
 ## Configuration
 
+### Shared telemetry resource
+
+Logs, traces, and metrics use a shared resource containing
+`"microsoft.agent-framework": "True"` (a string). The attribute also applies to HTTP and
+runtime instrumentation using these providers; it is not a per-span tag or metric
+dimension. Agent Framework does not configure resources for consuming .NET
+applications, so applications managing their own providers should add this
+attribute to their shared `ResourceBuilder`, or set
+`OTEL_RESOURCE_ATTRIBUTES=microsoft.agent-framework=True` before provider initialization
+(preserving any other configured resource attributes).
+
 ### Microsoft Foundry Setup
 Set the following environment variables:
 ```powershell

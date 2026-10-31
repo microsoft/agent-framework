@@ -18,20 +18,26 @@ from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     Annotation,
+    BaseChatClient,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
     Content,
+    ContextProvider,
+    FunctionInvocationLayer,
     FunctionTool,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     TextSpanRegion,
     ToolMode,
     UsageDetails,
+    agent_middleware,
     detect_media_type_from_base64,
     get_namespaced_value,
     merge_additional_properties,
@@ -48,6 +54,7 @@ from agent_framework._compaction import (
 from agent_framework._types import (
     _MODEL_OUTPUT_KIND_KEY,
     _append_instructions,
+    _get_annotation_text_span_regions,
     _get_data_bytes,
     _get_data_bytes_as_str,
     _get_operation_state,
@@ -2262,6 +2269,122 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+def test_response_only_update_does_not_create_message(response_type: Any, update_type: Any) -> None:
+    response = response_type()
+    raw = object()
+    update = update_type(
+        response_id="response-1",
+        created_at="2026-10-21T00:00:00Z",
+        finish_reason="stop",
+        additional_properties={"provider": {"key": "value"}},
+        continuation_token={"token": "next"},
+        raw_representation=raw,
+    )
+    _set_operation_state(update, "in_progress")
+    if isinstance(update, ChatResponseUpdate):
+        update.conversation_id = "conversation-1"
+        update.model = "model-1"
+    else:
+        update.agent_id = "agent-1"
+
+    _process_update(response, update)
+
+    assert response.messages == []
+    assert response.response_id == "response-1"
+    assert response.created_at == update.created_at
+    assert response.finish_reason == "stop"
+    assert response.additional_properties == {"provider": {"key": "value"}}
+    assert response.continuation_token == {"token": "next"}
+    assert response.raw_representation == [raw]
+    assert _get_operation_state(response) == "in_progress"
+    if isinstance(response, ChatResponse):
+        assert response.conversation_id == "conversation-1"
+        assert response.model == "model-1"
+    else:
+        assert response.agent_id == "agent-1"
+
+    terminal = update_type()
+    _set_operation_state(terminal, "terminal")
+    _process_update(response, terminal)
+    assert response.messages == []
+    assert response.continuation_token is None
+    assert _get_operation_state(response) == "terminal"
+
+
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+@mark.parametrize("with_content", [False, True])
+@mark.parametrize("from_generator", [False, True])
+async def test_response_only_updates_preserve_reconstructed_messages(
+    response_type: Any, update_type: Any, with_content: bool, from_generator: bool
+) -> None:
+    updates = [update_type(additional_properties={"provider": {"before": True}})]
+    if with_content:
+        updates.extend([
+            update_type(contents=[Content.from_text("Hello ")], role="assistant", message_id="m1"),
+            update_type(additional_properties={"provider": {"between": True}}),
+            update_type(contents=[Content.from_text("world")], message_id="m1"),
+        ])
+    updates.append(update_type(additional_properties={"provider": {"after": True}}, finish_reason="stop"))
+
+    async def generate() -> AsyncIterator[Any]:
+        for update in updates:
+            yield update
+
+    if from_generator:
+        response = await response_type.from_update_generator(generate())
+    else:
+        response = response_type.from_updates(updates)
+
+    assert response.additional_properties == {
+        "provider": {"before": True, "after": True, **({"between": True} if with_content else {})}
+    }
+    assert response.finish_reason == "stop"
+    assert len(response.messages) == int(with_content)
+    if with_content:
+        assert response.messages[0].text == "Hello world"
+        assert response.messages[0].role == "assistant"
+        assert response.messages[0].message_id == "m1"
+
+
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+@mark.parametrize("header", [{"role": "tool"}, {"author_name": "writer"}, {"message_id": "m1"}])
+def test_empty_message_header_is_preserved(response_type: Any, update_type: Any, header: dict[str, str]) -> None:
+    response = response_type()
+    _process_update(response, update_type(**header))
+    assert len(response.messages) == 1
+    for key, value in header.items():
+        assert getattr(response.messages[0], key) == value
+
+
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+def test_empty_replacement_still_clears_message(response_type: Any, update_type: Any) -> None:
+    response = response_type(messages=[Message("assistant", ["old"], message_id="m1")])
+    _process_update(response, update_type(merge_mode="replace"))
+    assert len(response.messages) == 1
+    assert response.messages[0].contents == []
+    assert response.messages[0].message_id == "m1"
+    assert (
+        response_type.from_updates([
+            update_type(contents=[Content.from_text("old")], message_id="m1"),
+            update_type(merge_mode="replace"),
+        ]).messages
+        == []
+    )
+
+
 @pytest.mark.parametrize(
     ("response_type", "update_type"),
     [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
@@ -4420,7 +4543,13 @@ def test_text_content_with_annotations_serialization():
     # Create multiple citations
     citation1 = Annotation(type="citation", title="Citation 1", url="http://example.com/1", annotated_regions=[region1])
 
-    citation2 = Annotation(type="citation", title="Citation 2", url="http://example.com/2", annotated_regions=[region2])
+    citation2 = Annotation(
+        type="citation",
+        title="Citation 2",
+        url="http://example.com/2",
+        annotated_regions=[region2],
+        annotated_regions_coordinate_space="source",
+    )
 
     # Create TextContent with multiple annotations
     content = Content.from_text(text="Hello world", annotations=[citation1, citation2])
@@ -4432,6 +4561,7 @@ def test_text_content_with_annotations_serialization():
     assert len(content_dict["annotations"]) == 2
     assert content_dict["annotations"][0]["title"] == "Citation 1"
     assert content_dict["annotations"][1]["title"] == "Citation 2"
+    assert content_dict["annotations"][1]["annotated_regions_coordinate_space"] == "source"
 
     # Deserialize
     reconstructed = Content.from_dict(content_dict)
@@ -4443,7 +4573,31 @@ def test_text_content_with_annotations_serialization():
     assert all(isinstance(ann, dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
     assert reconstructed.annotations[0]["title"] == "Citation 1"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
     assert reconstructed.annotations[1]["title"] == "Citation 2"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
+    assert reconstructed.annotations[1]["annotated_regions_coordinate_space"] == "source"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
     assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
+
+
+def test_get_annotation_text_span_regions_filters_coordinate_space_and_invalid_regions() -> None:
+    annotation = cast(
+        Annotation,
+        {
+            "type": "citation",
+            "annotated_regions_coordinate_space": "source",
+            "annotated_regions": [
+                {"type": "text_span", "start_index": 2, "end_index": 7},
+                {"type": "text_span", "start_index": True, "end_index": 7},
+                {"type": "text_span", "start_index": -1, "end_index": 7},
+                {"type": "text_span", "start_index": 8, "end_index": 7},
+                {"type": "source_block", "start_index": 0, "end_index": 1},
+                None,
+            ],
+        },
+    )
+
+    assert _get_annotation_text_span_regions(annotation) == []
+    assert _get_annotation_text_span_regions(annotation, coordinate_space="source") == [
+        {"type": "text_span", "start_index": 2, "end_index": 7}
+    ]
 
 
 # region FunctionTool.parse_result with Pydantic models
@@ -5615,6 +5769,51 @@ class TestResponseStreamCleanupHooks:
                 pass
 
         assert events == ["iterator"]
+
+    @pytest.mark.parametrize("buffered", [False, True])
+    @pytest.mark.parametrize("failure", [RuntimeError("hook failed"), asyncio.CancelledError()])
+    async def test_outer_stream_error_skips_after_run_with_agent_middleware(
+        self, span_exporter: Any, failure: BaseException, buffered: bool
+    ) -> None:
+        """An error in a middleware-wrapped agent stream reaches the inner stream, so after_run does not fire."""
+
+        class StreamingClient(FunctionInvocationLayer, BaseChatClient):
+            def _inner_get_response(self, *, messages: Any, stream: bool, options: Any, **kwargs: Any) -> Any:
+                async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                    for i in range(3):
+                        yield ChatResponseUpdate(contents=[Content.from_text(f"part{i} ")], role="assistant")
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        class RecordingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__("recorder")
+                self.after_run_calls = 0
+
+            async def after_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+                self.after_run_calls += 1
+
+        @agent_middleware
+        async def passthrough(context: Any, call_next: Any) -> None:
+            await call_next()
+
+        def failing_hook(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            raise failure
+
+        recorder = RecordingProvider()
+        history = InMemoryHistoryProvider()
+        agent = Agent(client=StreamingClient(), context_providers=[history, recorder], middleware=[passthrough])
+        session = agent.create_session()
+
+        stream = agent.run("hi", stream=True, session=session).with_transform_hook(failing_hook)
+        if buffered:
+            stream = stream.buffer_updates()
+        with pytest.raises(type(failure)):
+            async for _ in stream:
+                pass
+
+        assert recorder.after_run_calls == 0
+        assert await history.get_messages(session.session_id, state=session.state.get(history.source_id, {})) == []
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""

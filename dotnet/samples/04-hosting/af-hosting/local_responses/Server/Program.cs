@@ -113,7 +113,7 @@ app.MapPost("/responses", async (JsonElement body, HttpContext http, Cancellatio
 });
 
 // Bind to a fixed local URL so the paired client sample has a deterministic default.
-// Override with the ASPNETCORE_URLS environment variable when needed.
+// To use a different address, change the URL below and set RESPONSES_SERVER_URL in the client.
 app.Run("http://localhost:5000");
 
 // Application-owned trust decision. Replace with real authentication + authorization: verify the caller,

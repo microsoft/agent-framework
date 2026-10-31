@@ -618,6 +618,8 @@ def _offset_annotation_text_spans(annotations: list[dict[str, Any]], offset: int
     if offset == 0:
         return
     for annotation in annotations:
+        if annotation.get("annotated_regions_coordinate_space", "content") != "content":
+            continue
         regions = annotation.get("annotated_regions")
         if not isinstance(regions, list):
             continue
@@ -648,9 +650,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
         flow.text_delta_count = 0
         _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
-    elif flow.accumulated_text and content.text == flow.accumulated_text and (
-        flow.text_delta_count > 1
-    ):
+    elif flow.accumulated_text and content.text == flow.accumulated_text and (flow.text_delta_count > 1):
         # Guard against full-message replay chunks that can appear after streaming deltas.
         # A duplicate equal to the whole accumulated text is only a safe replay signal when
         # the text already streamed in more than one chunk. With a single prior chunk the

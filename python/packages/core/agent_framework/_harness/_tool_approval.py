@@ -130,10 +130,9 @@ class ToolApprovalRule(SerializationMixin):
             server_label: Optional hosted-tool server boundary. Hosted approvals
                 only match future approvals from the same server label.
         """
-        normalized_name = tool_name.strip()
-        if not normalized_name:
+        if not tool_name.strip():
             raise ValueError("Tool approval rule tool_name must be a non-empty string.")
-        self.tool_name = normalized_name
+        self.tool_name = tool_name
         self.arguments = dict(arguments) if arguments is not None else None
         self.server_label = server_label
 
@@ -563,6 +562,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
                         remaining_update = copy.copy(update)
                         remaining_update.contents = remaining_contents
                         yield remaining_update
+                    elif update.additional_properties:
+                        metadata_update = copy.copy(update)
+                        metadata_update.contents = []
+                        metadata_update.role = None
+                        metadata_update.author_name = None
+                        metadata_update.message_id = None
+                        metadata_update.merge_mode = None
+                        yield metadata_update
                 if not all_auto_approved or has_other_user_input:
                     return
                 context.messages = []

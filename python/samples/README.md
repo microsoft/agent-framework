@@ -54,9 +54,19 @@ pip install agent-framework-foundry
 Install only the specific Agent Framework distributions required by the sample you want to run.
 Individual sample READMEs and PEP 723 metadata list any additional packages.
 
+An explicit provider option type, such as
+`Agent[FoundryChatOptions](client=client, default_options={"store": False})`,
+keeps provider-specific options type checked without relying on type-checker inference.
+See [typed options](./02-agents/typed_options.py) for OpenAI and Anthropic examples.
+
 ### Environment Variables
 
-Samples call `load_dotenv()` to automatically load environment variables from a `.env` file in the `python/` directory. This is a convenience for local development and testing.
+Environment setup varies by sample. The [getting-started samples](./01-get-started/README.md#prerequisites) pass
+example `project_endpoint` and `model` values directly to `FoundryChatClient`; replace those values before
+running them. Setting environment variables alone does not override these explicit constructor arguments.
+
+For samples that call `load_dotenv()`, a `.env` file in the `python/` directory is a convenient way to load
+environment variables for local development and testing.
 
 **For local development**, set up your environment using any of these methods:
 
@@ -96,7 +106,9 @@ precedence is:
 If you keep both OpenAI and Azure variables in your shell, the generic clients stay on OpenAI until
 you pass an explicit Azure input.
 
-For the getting-started samples, you'll need at minimum:
+To use these environment variables in the getting-started samples, first remove the explicit `project_endpoint`
+and `model` arguments from the client constructor. For the `.env` setup in Option 1, also call `load_dotenv()`
+before creating the client:
 ```bash
 FOUNDRY_PROJECT_ENDPOINT="your-foundry-project-endpoint"
 FOUNDRY_MODEL="gpt-4o"

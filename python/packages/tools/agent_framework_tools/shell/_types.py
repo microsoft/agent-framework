@@ -21,8 +21,8 @@ class ShellResult:
         stderr: Captured standard error, possibly truncated.
         exit_code: The exit status reported by the shell or subprocess.
         duration_ms: How long the command took, in milliseconds.
-        truncated: ``True`` when stdout or stderr was truncated to fit
-            ``max_output_bytes``.
+        truncated: ``True`` when stdout or stderr was truncated to fit its
+            respective ``max_stdout_bytes`` or ``max_stderr_bytes`` allowance.
         timed_out: ``True`` when the command was killed because it exceeded
             the configured timeout.
     """

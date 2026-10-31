@@ -228,6 +228,22 @@ class CheckpointStorage(Protocol):
         ...
 
 
+def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
+    """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
+
+    Checkpoints taken at the same superstep boundary can share a timestamp. Among the
+    checkpoints with the newest timestamp, one that another of them names as its
+    ``previous_checkpoint_id`` is superseded, so the result does not depend on save order.
+    If several unsuperseded candidates remain, the one with the greatest ``checkpoint_id``
+    is returned, so the choice among them is stable too.
+    """
+    newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
+    candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
+    superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
+    leaves = [cp for cp in candidates if cp.checkpoint_id not in superseded_ids]
+    return max(leaves or candidates, key=lambda cp: cp.checkpoint_id)
+
+
 class InMemoryCheckpointStorage:
     """In-memory checkpoint storage for testing and development."""
 
@@ -266,13 +282,49 @@ class InMemoryCheckpointStorage:
         checkpoints = [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
         if not checkpoints:
             return None
-        latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
+        latest_checkpoint = _select_latest_checkpoint(checkpoints)
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
         return copy.deepcopy(latest_checkpoint)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
+
+
+def _encode_checkpoint_for_storage(checkpoint: WorkflowCheckpoint, allowed_types: frozenset[str]) -> dict[str, Any]:
+    """Encode a checkpoint for persistent storage, refusing one the storage could not restore.
+
+    Storages that persist encoded checkpoints decode them under their ``allowed_checkpoint_types``
+    on load, so the encoded payload is decoded here under the same allowlist before it is written.
+    A checkpoint that ``load`` would reject then fails at save time instead of when a workflow
+    tries to resume from it (#8181).
+
+    Args:
+        checkpoint: The checkpoint to encode.
+        allowed_types: The storage's ``allowed_checkpoint_types``, as passed to
+            ``decode_checkpoint_value`` on load.
+
+    Returns:
+        The encoded checkpoint, ready to be written.
+
+    Raises:
+        WorkflowCheckpointException: If the checkpoint cannot be encoded or would
+            fail to decode under ``allowed_types``.
+    """
+    from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+
+    checkpoint_dict = checkpoint.to_dict()
+    try:
+        encoded_checkpoint: dict[str, Any] = encode_checkpoint_value(checkpoint_dict)
+        decode_checkpoint_value(encoded_checkpoint, allowed_types=allowed_types)
+    except WorkflowCheckpointException:
+        raise
+    except Exception as ex:
+        raise WorkflowCheckpointException(
+            f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
+            "this storage's allowed types; refusing to save."
+        ) from ex
+    return encoded_checkpoint
 
 
 # Process-wide serialization of writes per destination file.
@@ -612,21 +664,8 @@ class FileCheckpointStorage:
             WorkflowCheckpointException: If the checkpoint cannot be encoded or would
                 fail to decode under this storage's ``allowed_checkpoint_types``.
         """
-        from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
-
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
-        checkpoint_dict = checkpoint.to_dict()
-        # Fail at save time if encoding or restore validation fails (#8181).
-        try:
-            encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
-            decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
-        except WorkflowCheckpointException:
-            raise
-        except Exception as ex:
-            raise WorkflowCheckpointException(
-                f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
-                "this storage's allowed types; refusing to save."
-            ) from ex
+        encoded_checkpoint = _encode_checkpoint_for_storage(checkpoint, self._allowed_types)
 
         def _replace_with_retry(tmp_path: Path) -> None:
             # On Windows, os.replace can transiently fail with PermissionError when a
@@ -986,7 +1025,7 @@ class FileCheckpointStorage:
             root = self.storage_path.resolve()
             paths, directories = _checkpoint_paths(root)
             versions: dict[Path, tuple[int, int, int]] = {}
-            latest: tuple[datetime, dict[str, Any]] | None = None
+            candidates: list[tuple[datetime, dict[str, Any]]] = []
             for file_path in paths:
                 try:
                     self._validate_file_path(str(file_path.relative_to(root))[:-5])
@@ -1002,7 +1041,6 @@ class FileCheckpointStorage:
                     except (json.JSONDecodeError, UnicodeDecodeError) as e:
                         logger.warning(f"Skipping unparseable checkpoint file {file_path}: {e}")
                         continue
-                    versions[file_path] = version
                     if "workflow_name" in root_duplicate_keys:
                         logger.warning(
                             f"Skipping checkpoint {file_path} with ambiguous workflow_name (duplicated at root)"
@@ -1029,8 +1067,7 @@ class FileCheckpointStorage:
                         raise ValueError(f"checkpoint_id does not resolve to a valid path: {e}") from e
                     if resolved_checkpoint_path != file_path.resolve():
                         raise ValueError("checkpoint_id does not match its checkpoint file")
-                    if latest is None or timestamp > latest[0]:
-                        latest = (timestamp, stored)
+                    candidates.append((timestamp, stored))
                 except FileNotFoundError as e:
                     raise _CheckpointScanInvalidated(
                         f"Checkpoint {file_path} disappeared during the scan; retry get_latest"
@@ -1077,7 +1114,17 @@ class FileCheckpointStorage:
                 raise _CheckpointScanInvalidated(
                     f"Checkpoint directory {self.storage_path} changed during the scan; retry get_latest"
                 )
-            return self._decode_checkpoint(latest[1]) if latest else None
+            if not candidates:
+                return None
+            newest_timestamp = max(ts for ts, _ in candidates)
+            newest_candidates = [c for c in candidates if c[0] == newest_timestamp]
+            superseded_ids = {c[1].get("previous_checkpoint_id") for c in newest_candidates}
+            leaves = [c for c in newest_candidates if c[1].get("checkpoint_id") not in superseded_ids]
+            chosen = max(
+                leaves or newest_candidates,
+                key=lambda c: c[1].get("checkpoint_id", ""),
+            )
+            return self._decode_checkpoint(chosen[1])
 
         attempt = 0
         while True:
