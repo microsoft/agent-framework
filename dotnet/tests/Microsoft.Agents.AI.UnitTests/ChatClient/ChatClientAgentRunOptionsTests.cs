@@ -45,6 +45,26 @@ public class ChatClientAgentRunOptionsTests
         Assert.Equal(200, retrievedOptions.MaxOutputTokens); // Ensure the change is reflected
     }
 
+    /// <summary>
+    /// Verify that Clone copies PersistPartialMessagesOnCancellation.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Clone_CopiesPersistPartialMessagesOnCancellation(bool? value)
+    {
+        // Arrange
+        var runOptions = new ChatClientAgentRunOptions { PersistPartialMessagesOnCancellation = value };
+
+        // Act
+        var clone = Assert.IsType<ChatClientAgentRunOptions>(runOptions.Clone());
+
+        // Assert
+        Assert.NotSame(runOptions, clone);
+        Assert.Equal(value, clone.PersistPartialMessagesOnCancellation);
+    }
+
     #region ChatClientFactory Tests
 
     /// <summary>

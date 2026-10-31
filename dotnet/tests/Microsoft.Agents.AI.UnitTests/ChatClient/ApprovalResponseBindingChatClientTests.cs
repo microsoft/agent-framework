@@ -1060,6 +1060,42 @@ public class ApprovalResponseBindingChatClientTests
         await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, "Hi")]);
     }
 
+    [Fact]
+    public async Task RemoveSettledPendingApprovalRequests_RemovesOnlySettledRequestsAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        await RecordRequestsAsync(session,
+        [
+            new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "toolA")),
+            new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "toolB")),
+        ]);
+
+        // Act
+        ApprovalResponseBindingChatClient.RemoveSettledPendingApprovalRequests(session, new HashSet<string>(StringComparer.Ordinal) { "call1" });
+
+        // Assert
+        Assert.True(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalResponseBindingChatClient.StateBagKey, out var pending));
+        var remaining = Assert.Single(pending!);
+        Assert.Equal("req2", remaining.RequestId);
+    }
+
+    [Fact]
+    public async Task RemoveSettledPendingApprovalRequests_AllSettled_RemovesStateAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        await RecordRequestsAsync(session, [new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "toolA"))]);
+
+        // Act
+        ApprovalResponseBindingChatClient.RemoveSettledPendingApprovalRequests(session, new HashSet<string>(StringComparer.Ordinal) { "call1" });
+
+        // Assert
+        Assert.False(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalResponseBindingChatClient.StateBagKey, out _));
+    }
+
     private static async Task RecordRequestsAsync(ChatClientAgentSession session, IList<ToolApprovalRequestContent> requests)
     {
         var inner = CreateMockChatClient((_, _, _) =>

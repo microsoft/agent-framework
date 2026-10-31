@@ -147,6 +147,7 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var (agent, session) = GetRequiredAgentAndSession();
+        var runOptions = AIAgent.CurrentRunContext?.RunOptions;
         options = StripLocalHistoryConversationId(options);
 
         bool isServiceManaged = !string.IsNullOrEmpty(options?.ConversationId);
@@ -185,12 +186,19 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
 
         bool loopExitedNormally = false;
         bool serviceErrorOccurred = false;
+        bool continuationTokenReceived = false;
         try
         {
             bool hasUpdates;
             try
             {
                 hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
+            {
+                serviceErrorOccurred = true;
+                await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
+                throw;
             }
             catch (Exception ex)
             {
@@ -203,6 +211,12 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
             {
                 var update = enumerator.Current;
                 responseUpdates.Add(update.Clone());
+
+                // Track continuation tokens on the original update, because ChatResponseUpdate.Clone() does not copy them.
+                if (update.ContinuationToken is not null)
+                {
+                    continuationTokenReceived = true;
+                }
 
                 // If the service returned a real ConversationId on any update, remember that.
                 // Otherwise stamp our sentinel so FICC treats this as service-managed —
@@ -221,6 +235,12 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
                 try
                 {
                     hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
+                {
+                    serviceErrorOccurred = true;
+                    await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -282,6 +302,26 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
             session.ConversationId = LocalHistoryConversationId;
         }
     }
+
+    /// <summary>
+    /// Determines whether providers should be notified of the partial messages of the current service call
+    /// after a cancellation, instead of being notified of a failure.
+    /// </summary>
+    /// <remarks>
+    /// This method is evaluated in exception filters, so it must not have side effects.
+    /// Callers pass <paramref name="skipPartialMessages"/> as <see langword="true"/> when chat history is not simulated by this
+    /// decorator (service-managed history, continuation or background runs) or when any received update carried a continuation
+    /// token. In the latter case, the caller can resume the run with the received token, and the resumed run persists the
+    /// request and the updates received so far, so persisting them here would duplicate them in the chat history.
+    /// </remarks>
+    private static bool ShouldNotifyProvidersOfPartialMessages(
+        ChatClientAgent agent,
+        Exception ex,
+        AgentRunOptions? runOptions,
+        bool skipPartialMessages,
+        CancellationToken cancellationToken) =>
+        !skipPartialMessages
+        && agent.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken);
 
     /// <summary>
     /// Notifies <see cref="ChatHistoryProvider"/>s of the input messages only (no response
