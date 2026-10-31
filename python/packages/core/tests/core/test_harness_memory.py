@@ -340,6 +340,21 @@ async def test_search_transcripts_returns_nothing_for_unknown_session(tmp_path) 
     )
 
 
+async def test_search_transcripts_non_positive_limit_returns_nothing(tmp_path) -> None:
+    """A non-positive limit must return no results, not a single row."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "user-1"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    await _write_transcript(store, session, "session-1", "Matching transcript.")
+
+    assert store.search_transcripts(
+        session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", limit=0
+    ) == []
+    assert store.search_transcripts(
+        session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", limit=-1
+    ) == []
+
+
 def test_memory_file_store_rejects_owner_path_traversal(tmp_path) -> None:
     """Owner IDs with path traversal segments should not escape ``base_path``."""
     session = AgentSession(session_id="session-1")

@@ -924,6 +924,8 @@ class MemoryFileStore(MemoryStore):
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("query must not be empty.")
+        if limit <= 0:
+            return []
         query_casefold = normalized_query.casefold()
         transcripts_directory = self.get_transcripts_directory(session, source_id=source_id)
         if not transcripts_directory.exists():
