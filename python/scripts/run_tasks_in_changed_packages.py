@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from rich import print
+
 from scripts.task_runner import build_work_items, discover_projects, run_tasks
 
 # Tasks that need to run in all packages when core changes (type info propagates)
@@ -24,15 +25,23 @@ def get_changed_packages(
     core_package_changed = False
 
     for file_path in changed_files:
-        # Strip 'python/' prefix if present (when git diff is run from repo root)
-        file_path_str = str(file_path)
-        if file_path_str.startswith("python/"):
-            file_path_str = file_path_str[7:]  # Remove 'python/' prefix
+        path = Path(file_path)
 
         # Convert to absolute path if relative
-        abs_path = Path(file_path_str)
-        if not abs_path.is_absolute():
-            abs_path = workspace_root / file_path_str
+        if not path.is_absolute():
+            # Strip 'python' prefix component if present (when git diff is run from repo root)
+            parts = path.parts
+            if parts and parts[0] == "python":
+                path = Path(*parts[1:])
+            elif str(file_path).startswith(("python/", "python\\")):
+                # Fallback for non-native path separators on POSIX platforms
+                normalized = str(file_path).replace("\\", "/")
+                parts = Path(normalized).parts
+                if parts and parts[0] == "python":
+                    path = Path(*parts[1:])
+            abs_path = workspace_root / path
+        else:
+            abs_path = path
 
         # Check which package this file belongs to
         for project in projects:
@@ -51,6 +60,7 @@ def get_changed_packages(
 
 
 def main() -> None:
+    """Run task runner CLI for changed packages."""
     parser = argparse.ArgumentParser(description="Run task(s) in changed packages, in parallel by default.")
     parser.add_argument("tasks", nargs="+", help="Task name(s) to run")
     parser.add_argument("--files", nargs="*", default=None, help="Changed files to determine which packages to run")
