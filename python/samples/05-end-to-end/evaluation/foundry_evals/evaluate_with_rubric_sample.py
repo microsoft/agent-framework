@@ -7,7 +7,7 @@ that you define for your domain. agent-framework consumes pre-existing rubric
 evaluators — they are authored in the Foundry portal (or via the dedicated
 SDK / REST surface) and referenced here by name and version.
 
-See: https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-evaluators/rubric-evaluators
+See: https://learn.microsoft.com/azure/foundry/concepts/evaluation-evaluators/rubric-evaluators
 
 This sample demonstrates:
 1. Connecting to a pre-existing Foundry agent (PromptAgent or HostedAgent).
