@@ -206,6 +206,9 @@ internal sealed class WorkflowSession : AgentSession
         // and does not need to be checked again here.
         if (this.LastCheckpoint is not null)
         {
+            // Only the resume point is needed once this run moves past it.
+            this._inMemoryCheckpointManager?.PruneOnResume(this.LastCheckpoint);
+
             // Use the internal resume path that suppresses pending request republishing.
             // WorkflowSession handles pending requests itself by converting matching responses
             // via SendMessagesWithResponseConversionAsync, so event-stream republishing would

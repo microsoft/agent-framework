@@ -53,6 +53,23 @@ internal sealed class SessionCheckpointCache<TStoreObject>
         return true;
     }
 
+    /// <summary>
+    /// Removes every checkpoint other than <paramref name="key"/>. Does nothing if <paramref name="key"/> is not stored.
+    /// </summary>
+    public void RetainOnly(CheckpointInfo key)
+    {
+        if (!this.Cache.TryGetValue(key, out TStoreObject? value))
+        {
+            return;
+        }
+
+        this.Cache.Clear();
+        this.Cache[key] = value;
+
+        this.CheckpointIndex.Clear();
+        this.CheckpointIndex.Add(key);
+    }
+
     [JsonIgnore]
     public bool HasCheckpoints => this.CheckpointIndex.Count > 0;
     public bool TryGetLastCheckpointInfo([NotNullWhen(true)] out CheckpointInfo? checkpointInfo)
