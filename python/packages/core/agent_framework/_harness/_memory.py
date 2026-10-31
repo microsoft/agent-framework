@@ -416,6 +416,10 @@ class MemoryTopicRecord:
         """
         return self._on_disk_stem or _topic_stem(self.topic, slug_override=self.slug)
 
+    def set_on_disk_stem(self, stem: str) -> None:
+        """Record the filename stem this record was read from or written to."""
+        self._on_disk_stem = stem
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the topic record for tool output.
 
@@ -921,7 +925,7 @@ class MemoryFileStore(MemoryStore):
                 topic_path.read_text(encoding="utf-8"),
                 fallback_topic=topic_path.stem.replace("-", " "),
             )
-            record._on_disk_stem = topic_path.stem
+            record.set_on_disk_stem(topic_path.stem)
             topics.append(record)
         return sorted(topics, key=lambda record: (record.topic.lower(), record.updated_at))
 
@@ -931,7 +935,7 @@ class MemoryFileStore(MemoryStore):
         if topic_path is None:
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         record = MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
-        record._on_disk_stem = topic_path.stem
+        record.set_on_disk_stem(topic_path.stem)
         return record
 
     def _writable_topic_path(self, session: AgentSession, *, source_id: str, record: MemoryTopicRecord) -> Path:
@@ -968,7 +972,7 @@ class MemoryFileStore(MemoryStore):
         previous_path = self._existing_topic_path(session, source_id=source_id, topic=record.topic)
         topic_path = self._writable_topic_path(session, source_id=source_id, record=record)
         _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
-        record._on_disk_stem = topic_path.stem
+        record.set_on_disk_stem(topic_path.stem)
         if previous_path is not None and previous_path != topic_path:
             previous_path.unlink(missing_ok=True)
 
