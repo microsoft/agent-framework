@@ -1025,6 +1025,188 @@ def test_align_tool_results_handles_pending_edge_cases() -> None:
     assert unmatched == []
 
 
+def test_prepare_bedrock_messages_preserves_separate_parallel_tool_results() -> None:
+    """Parallel tool results arriving as separate tool messages must not be lost."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments='{"arg": "value1"}'),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments='{"arg": "value2"}'),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="result2")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    # Should have assistant message with toolUse blocks and one user message with both toolResult blocks
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert len(conversation[0]["content"]) == 2
+    assert conversation[0]["content"][0]["toolUse"]["toolUseId"] == "c1"
+    assert conversation[0]["content"][1]["toolUse"]["toolUseId"] == "c2"
+
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 2
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+    assert conversation[1]["content"][1]["toolResult"]["toolUseId"] == "c2"
+
+
+def test_prepare_bedrock_messages_rejects_duplicate_and_unknown_tool_results() -> None:
+    """Duplicate tool results must be deduplicated; unknown IDs must be rejected."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="c1", name="tool_a", arguments="{}")],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="unknown-id", result="result2")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    # Should have assistant message and one user message with a single toolResult (c1)
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 1
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+
+
+def test_prepare_bedrock_messages_handles_single_tool_call() -> None:
+    """Single tool calls must continue working correctly."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="c1", name="tool_a", arguments="{}")],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 1
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+
+
+def test_prepare_bedrock_messages_handles_parallel_results_in_one_message() -> None:
+    """Parallel tool results in a single tool message must continue working."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="c1", result="result1"),
+                Content.from_function_result(call_id="c2", result="result2"),
+            ],
+        ),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 2
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+    assert conversation[1]["content"][1]["toolResult"]["toolUseId"] == "c2"
+
+
+def test_prepare_bedrock_messages_handles_three_parallel_separate_results() -> None:
+    """Three or more parallel tool calls with separate results must all be preserved."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+                Content.from_function_call(call_id="c3", name="tool_c", arguments="{}"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="result2")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c3", result="result3")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 3
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+    assert conversation[1]["content"][1]["toolResult"]["toolUseId"] == "c2"
+    assert conversation[1]["content"][2]["toolResult"]["toolUseId"] == "c3"
+
+
+def test_prepare_bedrock_messages_does_not_merge_unrelated_messages() -> None:
+    """Tool results followed by another assistant message must not merge incorrectly."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="result2")]),
+        Message(role="assistant", contents=[Content.from_text(text="next response")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    # Should have: assistant (toolUse), user (toolResult), assistant (text)
+    assert len(conversation) == 3
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert conversation[2]["role"] == "assistant"
+    assert len(conversation[1]["content"]) == 2
+
+
+def test_prepare_bedrock_messages_does_not_invent_missing_results() -> None:
+    """Missing tool results must not be fabricated."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        # c2 result is missing
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    # Only c1 result should be present
+    assert len(conversation[1]["content"]) == 1
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+
+
 def test_convert_content_to_bedrock_block_handles_errors_and_missing_items() -> None:
     """Function result conversion should serialize items, rich content warnings, and fallback results."""
     client = _make_client()
