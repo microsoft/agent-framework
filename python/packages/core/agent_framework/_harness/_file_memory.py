@@ -4,8 +4,9 @@
 
 :class:`FileMemoryProvider` gives an agent a session-scoped, file-based memory
 system. Each memory is stored as an individual file with a meaningful name, and
-large files can carry a companion description file (suffixed with
-``_description.md``) that provides a short summary used for discovery. A
+large files can carry a companion description file (the memory file name with
+``_description.md`` appended, so the sidecar of ``notes.md`` is
+``notes.md_description.md``) that provides a short summary used for discovery. A
 ``memories.md`` index file is maintained automatically and injected into the
 agent's context so the model knows what memories already exist.
 
@@ -95,12 +96,12 @@ _ENCODED_SCOPE_PREFIX = "~scope-"
 def _description_file_name(file_name: str) -> str:
     """Return the companion description file name for ``file_name``.
 
-    The suffix replaces the original extension when present (so ``notes.md``
-    becomes ``notes_description.md``); otherwise it is appended.
+    The suffix is appended to the *whole* memory file name, so ``notes.md``
+    becomes ``notes.md_description.md`` while ``notes`` becomes
+    ``notes_description.md``. Keeping the extension in the derivation makes
+    the mapping injective: distinct memory files always get distinct sidecars,
+    so writes and deletes can never clobber another memory's description.
     """
-    dot_index = file_name.rfind(".")
-    if dot_index > 0:
-        return f"{file_name[:dot_index]}{_DESCRIPTION_SUFFIX}"
     return f"{file_name}{_DESCRIPTION_SUFFIX}"
 
 

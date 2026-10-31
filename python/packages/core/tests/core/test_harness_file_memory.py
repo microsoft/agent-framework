@@ -55,12 +55,14 @@ async def _prepare(
     return context, tools
 
 
-def test_description_file_name_replaces_extension() -> None:
-    """The description sidecar replaces a known extension and appends otherwise."""
-    assert _description_file_name("notes.md") == "notes_description.md"
-    assert _description_file_name("data.json") == "data_description.md"
+def test_description_file_name_appends_to_full_name() -> None:
+    """The description sidecar appends to the whole file name, so it is injective."""
+    assert _description_file_name("notes.md") == "notes.md_description.md"
+    assert _description_file_name("notes") == "notes_description.md"
+    # Names that share a stem must not share a sidecar.
+    assert _description_file_name("notes.md") != _description_file_name("notes")
+    assert _description_file_name("data.json") == "data.json_description.md"
     assert _description_file_name("noext") == "noext_description.md"
-    # Leading-dot files have no stem, so the suffix is appended.
     assert _description_file_name(".hidden") == ".hidden_description.md"
 
 
@@ -152,7 +154,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
     )
     assert "with description" in _text(result)
 
-    sidecar = await store.read(_combine_paths("user-1", "arch_description.md"))
+    sidecar = await store.read(_combine_paths("user-1", "arch.md_description.md"))
     assert sidecar == "system architecture"
 
     listed = json.loads(_text(await list_files.invoke()))
@@ -160,7 +162,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
 
     # Re-saving without a description removes the sidecar.
     await save.invoke(arguments={"file_name": "arch.md", "content": "big content"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) is None
     listed_again = json.loads(_text(await list_files.invoke()))
     assert listed_again == [{"name": "arch.md", "type": "file", "description": None}]
 
@@ -172,10 +174,91 @@ async def test_delete_removes_sidecar() -> None:
     _, tools = await _prepare(provider)
 
     await tools["file_memory_write"].invoke(arguments={"file_name": "arch.md", "content": "x", "description": "desc"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) == "desc"
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) == "desc"
 
     await tools["file_memory_delete"].invoke(arguments={"file_name": "arch.md"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) is None
+
+
+async def test_sidecars_of_names_sharing_a_stem_do_not_collide() -> None:
+    """``notes.md`` and ``notes`` must not share one description sidecar."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "md body", "description": "markdown notes"})
+    await save.invoke(arguments={"file_name": "notes", "content": "plain body", "description": "plain notes"})
+
+    # Each memory file keeps its own sidecar, and the second write did not
+    # overwrite the first one's description.
+    assert await store.read(_combine_paths("user-1", "notes.md_description.md")) == "markdown notes"
+    assert await store.read(_combine_paths("user-1", "notes_description.md")) == "plain notes"
+    assert sorted(entry.name for entry in await store.list_children("user-1")) == [
+        "memories.md",
+        "notes",
+        "notes.md",
+        "notes.md_description.md",
+        "notes_description.md",
+    ]
+
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert sorted(listed, key=lambda entry: entry["name"]) == [
+        {"name": "notes", "type": "file", "description": "plain notes"},
+        {"name": "notes.md", "type": "file", "description": "markdown notes"},
+    ]
+
+    index = await store.read(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME))
+    assert index is not None
+    assert "- **notes.md**: markdown notes" in index
+    assert "- **notes**: plain notes" in index
+
+
+async def test_rewriting_one_file_without_description_keeps_sibling_sidecar() -> None:
+    """Dropping a description on one file must not delete another file's sidecar."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "md body", "description": "markdown notes"})
+    await save.invoke(arguments={"file_name": "notes", "content": "plain body", "description": "plain notes"})
+
+    # Rewrite ``notes.md`` without a description: only its own sidecar goes away.
+    await save.invoke(arguments={"file_name": "notes.md", "content": "rewritten"})
+    assert await store.read(_combine_paths("user-1", "notes.md_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "notes_description.md")) == "plain notes"
+
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert sorted(listed, key=lambda entry: entry["name"]) == [
+        {"name": "notes", "type": "file", "description": "plain notes"},
+        {"name": "notes.md", "type": "file", "description": None},
+    ]
+
+
+async def test_deleting_one_file_keeps_sibling_sidecar() -> None:
+    """Deleting one memory must not delete another memory's description."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+    delete = tools["file_memory_delete"]
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "md body", "description": "markdown notes"})
+    await save.invoke(arguments={"file_name": "notes", "content": "plain body", "description": "plain notes"})
+
+    await delete.invoke(arguments={"file_name": "notes"})
+    assert await store.read(_combine_paths("user-1", "notes_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "notes.md_description.md")) == "markdown notes"
+
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert listed == [{"name": "notes.md", "type": "file", "description": "markdown notes"}]
+
+    # The sidecars stay internal: they are neither listed nor valid write targets.
+    assert all(not _is_internal_file(entry["name"]) for entry in listed)
+    for reserved in ("notes.md_description.md", "notes_description.md"):
+        rejected = await save.invoke(arguments={"file_name": reserved, "content": "x"})
+        assert "reserved" in _text(rejected)
 
 
 async def test_index_is_rebuilt_and_injected_on_next_run() -> None:
