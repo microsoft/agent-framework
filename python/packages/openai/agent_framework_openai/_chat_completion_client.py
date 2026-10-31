@@ -311,13 +311,14 @@ class RawOpenAIChatCompletionClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-    ) -> None:
-        """Initialize a raw OpenAI Chat completion client.
+        timeout: float | None = None,
+) -> None:
+    """Initialize a raw OpenAI Chat completion client.
 
-        Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then ``OPENAI_MODEL``.
-            api_key: API key. When not provided explicitly, the constructor reads
+    Keyword Args:
+        model: Model identifier to use for the request. When not provided, the constructor
+            reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then ``OPENAI_MODEL``.
+        api_key: API key. When not provided explicitly, the constructor reads
                 ``OPENAI_API_KEY``. A callable API key is also supported.
             org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
                 ``OPENAI_ORG_ID``.
@@ -333,9 +334,9 @@ class RawOpenAIChatCompletionClient(
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
-            env_file_path: Optional ``.env`` file that is checked before the process environment
-                for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -359,6 +360,7 @@ class RawOpenAIChatCompletionClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI Chat completion client.
 
@@ -388,9 +390,9 @@ class RawOpenAIChatCompletionClient(
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
-            env_file_path: Optional ``.env`` file that is checked before process environment
-                variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -414,6 +416,7 @@ class RawOpenAIChatCompletionClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI Chat completion client.
 
@@ -456,6 +459,10 @@ class RawOpenAIChatCompletionClient(
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: HTTP timeout in seconds for requests. When not provided, the OpenAI SDK
+                default is used (connect: 5s, read/write/pool: 600s). A single value applies to
+                every phase, including connect. Ignored when ``async_client`` is provided;
+                configure the timeout on that client instead.
 
         Notes:
             Environment resolution and routing precedence are:
@@ -485,6 +492,7 @@ class RawOpenAIChatCompletionClient(
             env_file_encoding=env_file_encoding,
             openai_model_fields=("chat_completion_model", "model"),
             azure_model_fields=("chat_completion_model", "model"),
+            timeout=timeout,
         )
 
         self.client = client

@@ -85,6 +85,7 @@ class RawOpenAIEmbeddingClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI embedding client.
 
@@ -103,6 +104,8 @@ class RawOpenAIEmbeddingClient(
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -121,6 +124,7 @@ class RawOpenAIEmbeddingClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI embedding client.
 
@@ -146,6 +150,8 @@ class RawOpenAIEmbeddingClient(
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -164,6 +170,7 @@ class RawOpenAIEmbeddingClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI embedding client.
 
@@ -226,6 +233,7 @@ class RawOpenAIEmbeddingClient(
             env_file_encoding=env_file_encoding,
             openai_model_fields=("embedding_model", "model"),
             azure_model_fields=("embedding_model", "model"),
+            timeout=timeout,
         )
 
         self.client = client
@@ -371,6 +379,7 @@ class OpenAIEmbeddingClient(
         otel_provider_name: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI embedding client.
 
@@ -389,6 +398,8 @@ class OpenAIEmbeddingClient(
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -407,6 +418,7 @@ class OpenAIEmbeddingClient(
         otel_provider_name: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI embedding client.
 
@@ -432,6 +444,8 @@ class OpenAIEmbeddingClient(
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -450,6 +464,7 @@ class OpenAIEmbeddingClient(
         otel_provider_name: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI embedding client.
 
@@ -483,6 +498,10 @@ class OpenAIEmbeddingClient(
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: HTTP timeout in seconds for requests. When not provided, the OpenAI SDK
+                default is used (connect: 5s, read/write/pool: 600s). A single value applies to
+                every phase, including connect. Ignored when ``async_client`` is provided;
+                configure the timeout on that client instead.
 
         Notes:
             Environment resolution precedence is:
@@ -533,4 +552,5 @@ class OpenAIEmbeddingClient(
             otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
+            timeout=timeout,
         )
