@@ -197,6 +197,7 @@ def _make_response(
     total_tokens: int | None = 15,
     cached_tokens: int | None = None,
     thoughts_tokens: int | None = None,
+    tool_use_prompt_tokens: int | None = None,
 ) -> MagicMock:
     """Build a mock types.GenerateContentResponse."""
     response = MagicMock()
@@ -219,6 +220,7 @@ def _make_response(
         usage.total_token_count = total_tokens
         usage.cached_content_token_count = cached_tokens
         usage.thoughts_token_count = thoughts_tokens
+        usage.tool_use_prompt_token_count = tool_use_prompt_tokens
         response.usage_metadata = usage
     else:
         response.usage_metadata = None
@@ -721,7 +723,7 @@ async def test_get_response_usage_details_includes_cached_and_reasoning_tokens()
             [_make_part(text="Hi")],
             prompt_tokens=20,
             output_tokens=8,
-            total_tokens=28,
+            total_tokens=34,
             cached_tokens=12,
             thoughts_tokens=6,
         )
@@ -732,6 +734,74 @@ async def test_get_response_usage_details_includes_cached_and_reasoning_tokens()
     assert response.usage_details is not None
     assert response.usage_details["cache_read_input_token_count"] == 12
     assert response.usage_details["reasoning_output_token_count"] == 6
+
+
+async def test_get_response_output_token_count_includes_thinking_tokens() -> None:
+    """Gemini reports thinking tokens outside candidates_token_count; output_token_count must include them."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(text="Hi")],
+            prompt_tokens=1200,
+            output_tokens=80,
+            total_tokens=2180,
+            thoughts_tokens=900,
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    usage = response.usage_details
+    assert usage is not None
+    assert usage["output_token_count"] == 980
+    assert usage["reasoning_output_token_count"] == 900
+    assert usage["input_token_count"] + usage["output_token_count"] == usage["total_token_count"]
+
+
+async def test_get_response_input_token_count_includes_tool_use_prompt_tokens() -> None:
+    """Tool-use prompt tokens (e.g. Google Search results fed back to the model) count as input."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(text="Hi")],
+            prompt_tokens=1200,
+            output_tokens=80,
+            total_tokens=2530,
+            cached_tokens=1024,
+            thoughts_tokens=900,
+            tool_use_prompt_tokens=350,
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    usage = response.usage_details
+    assert usage is not None
+    assert usage["input_token_count"] == 1550
+    assert usage["output_token_count"] == 980
+    assert usage["total_token_count"] == 2530
+    assert usage["cache_read_input_token_count"] == 1024
+
+
+async def test_get_response_output_token_count_with_only_thinking_tokens() -> None:
+    """A response cut off while thinking has no candidates_token_count but still produced output tokens."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(text="")],
+            finish_reason="MAX_TOKENS",
+            prompt_tokens=10,
+            output_tokens=None,
+            total_tokens=110,
+            thoughts_tokens=100,
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 100
+    assert response.usage_details["reasoning_output_token_count"] == 100
 
 
 async def test_get_response_no_usage_when_metadata_absent() -> None:
@@ -2868,6 +2938,35 @@ async def test_streaming_get_final_response() -> None:
     assert final.usage_details is not None
     assert final.usage_details["input_token_count"] == 10
     assert final.usage_details["output_token_count"] == 5
+
+
+async def test_streaming_usage_includes_thinking_and_tool_use_prompt_tokens() -> None:
+    """The final streamed usage folds thinking and tool-use prompt tokens into output and input."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
+        _make_response(
+            [_make_part(text="world!")],
+            finish_reason="STOP",
+            prompt_tokens=1200,
+            output_tokens=80,
+            total_tokens=2530,
+            thoughts_tokens=900,
+            tool_use_prompt_tokens=350,
+        ),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])], stream=True)
+    async for _ in stream:
+        pass
+    final = await stream.get_final_response()
+
+    assert final.usage_details is not None
+    assert final.usage_details["input_token_count"] == 1550
+    assert final.usage_details["output_token_count"] == 980
+    assert final.usage_details["reasoning_output_token_count"] == 900
+    assert final.usage_details["total_token_count"] == 2530
 
 
 async def test_streaming_updates_have_assistant_role() -> None:
