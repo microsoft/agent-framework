@@ -56,10 +56,13 @@ from agent_framework.exceptions import (
 )
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.responses import (
+    Response,
     ResponseComputerToolCall,
     ResponseComputerToolCallOutputItem,
     ResponseContentPartDoneEvent,
+    ResponseCreatedEvent,
     ResponseErrorEvent,
+    ResponseFailedEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
     ResponseFunctionToolCall,
@@ -92,6 +95,7 @@ from agent_framework_openai import (
     OpenAIChatClient,
     OpenAIChatCompletionClient,
     OpenAIChatOptions,
+    OpenAIContinuationToken,
     RawOpenAIChatClient,
     RawOpenAIChatCompletionClient,
 )
@@ -10321,6 +10325,62 @@ async def test_resumed_stream_error_clears_continuation_token() -> None:
     assert "continuation_token" not in options
 
 
+@pytest.mark.parametrize("request_path", ["create", "structured", "resume"])
+@pytest.mark.parametrize("event_type", [None, "response.failed", "response.created"])
+@pytest.mark.parametrize("with_error", [True, False])
+async def test_failed_response_raises_and_clears_resume_token(
+    request_path: str, event_type: str | None, with_error: bool
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    response = Response.model_validate({
+        "id": "resp_failed",
+        "object": "response",
+        "created_at": 1.0,
+        "model": "test-model",
+        "status": "failed",
+        "error": {"code": "server_error", "message": "Generation failed."} if with_error else None,
+        "output": [],
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+    })
+    options: OpenAIChatOptions[Any] = {}
+    if request_path == "structured":
+        options["response_format"] = OutputStruct
+    if request_path == "resume":
+        options["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
+
+    if event_type is None:
+        raw_response = MagicMock()
+        raw_response.parse.return_value = response
+        method = {"create": "create", "structured": "parse", "resume": "retrieve"}[request_path]
+        request_patch = patch.object(client.client.responses.with_raw_response, method, return_value=raw_response)
+    else:
+        event_class = ResponseFailedEvent if event_type == "response.failed" else ResponseCreatedEvent
+        event = event_class.model_validate({"type": event_type, "sequence_number": 1, "response": response})
+        events = _FakeAsyncEventStream([event])
+        if request_path == "structured":
+            request_patch = patch.object(client.client.responses, "stream", return_value=events)
+        else:
+            method = "retrieve" if request_path == "resume" else "create"
+            request_patch = patch.object(client.client.responses.with_raw_response, method, return_value=events)
+
+    with request_patch, pytest.raises(ChatClientException, match="OpenAI response failed") as exc_info:
+        result = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], options=options, stream=event_type is not None
+        )
+        if isinstance(result, ResponseStream):
+            await result.get_final_response()
+        else:
+            await result
+
+    if with_error:
+        assert "server_error: Generation failed." in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    if request_path == "resume":
+        assert "continuation_token" not in options
+
+
 def test_streaming_response_created_with_in_progress_status_sets_continuation_token() -> None:
     """Test that response.created with in_progress status sets continuation_token."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -10341,7 +10401,7 @@ def test_streaming_response_created_with_in_progress_status_sets_continuation_to
     assert _response_id_from_token(update.continuation_token) == "resp_created_123"
 
 
-@pytest.mark.parametrize("status", ["completed", "failed", "incomplete", "cancelled"])
+@pytest.mark.parametrize("status", ["completed", "incomplete", "cancelled"])
 def test_streaming_response_created_with_terminal_status_clears_continuation_token(status: str) -> None:
     """A terminal status embedded in response.created should terminate the operation."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -10487,7 +10547,6 @@ def test_parse_response_from_openai_sets_finish_reason() -> None:
         ("response.completed", "completed", None, "function_call", "tool_calls"),
         ("response.incomplete", "incomplete", "max_output_tokens", None, "length"),
         ("response.incomplete", "incomplete", "content_filter", None, "content_filter"),
-        ("response.failed", "failed", None, None, None),
     ],
 )
 def test_streaming_terminal_response_sets_finish_reason(
@@ -10521,7 +10580,6 @@ def test_streaming_terminal_response_sets_finish_reason(
 @pytest.mark.parametrize(
     ("event_type", "status", "incomplete_reason"),
     [
-        ("response.failed", "failed", None),
         ("response.incomplete", "incomplete", "other"),
     ],
 )

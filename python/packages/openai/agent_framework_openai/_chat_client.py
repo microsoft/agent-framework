@@ -888,6 +888,16 @@ class RawOpenAIChatClient(
             inner_exception=ex,
         ) from ex
 
+    def _raise_for_failed_response(self, response: OpenAIResponse | ParsedResponse[BaseModel]) -> None:
+        """Surface terminal provider failures before returning any response output."""
+        if response.status == "failed":
+            error_details = (
+                f"{response.error.code}: {response.error.message}"
+                if response.error is not None
+                else "No error details."
+            )
+            self._handle_request_error(RuntimeError(f"OpenAI response failed: {error_details}"))
+
     @override
     async def close(self) -> None:
         """Close the connector-owned SDK connection, not caller-supplied credentials."""
@@ -1044,6 +1054,8 @@ class RawOpenAIChatClient(
                     response = raw_response.parse()
                 except Exception as ex:
                     self._handle_request_error(ex)
+                if response.status == "failed" and isinstance(options, dict):
+                    options.pop("continuation_token", None)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
                 # See note above on ``raw_stream_response.headers``.
                 served_model = self._extract_served_model(getattr(raw_response, "headers", None))
@@ -3512,6 +3524,7 @@ class RawOpenAIChatClient(
         options: dict[str, Any],
     ) -> ChatResponse:
         """Parse an OpenAI Responses API response into a ChatResponse."""
+        self._raise_for_failed_response(response)
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
@@ -4206,6 +4219,7 @@ class RawOpenAIChatClient(
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.created":
+                self._raise_for_failed_response(event.response)
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 if event.response.status in _TERMINAL_RESPONSE_STATUSES:
@@ -4217,6 +4231,7 @@ class RawOpenAIChatClient(
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.completed" | "response.incomplete" | "response.failed":
+                self._raise_for_failed_response(event.response)
                 operation_state = "terminal"
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
