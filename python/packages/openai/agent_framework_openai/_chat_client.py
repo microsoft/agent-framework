@@ -4929,6 +4929,7 @@ class OpenAIChatClient(
             instruction_role=instruction_role,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
+            timeout=timeout,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             compaction_strategy=compaction_strategy,

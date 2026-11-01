@@ -1473,6 +1473,7 @@ class OpenAIChatCompletionClient(
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -1519,6 +1520,7 @@ class OpenAIChatCompletionClient(
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -1546,10 +1548,12 @@ class OpenAIChatCompletionClient(
             message_preparer: Optional hook to customize outgoing request messages.
                 See ``OpenAIChatMessagePreparer``.
             env_file_path: Optional ``.env`` file that is checked before process environment
-                variables for ``AZURE_OPENAI_*`` values.
+                for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
             middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -1572,6 +1576,7 @@ class OpenAIChatCompletionClient(
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -1670,6 +1675,7 @@ class OpenAIChatCompletionClient(
             message_preparer=message_preparer,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
+            timeout=timeout,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
