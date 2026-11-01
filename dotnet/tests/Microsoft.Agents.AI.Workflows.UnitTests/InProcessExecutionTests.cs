@@ -209,6 +209,42 @@ public class InProcessExecutionTests
         Assert.Equal(43, executor.ObservedState);
     }
 
+    [Fact]
+    public async Task FailedSuperStep_ConflictingLifecycleStateIsReportedAndDiscardedAsync()
+    {
+        // Arrange
+        Func<int, int> forward = message => message;
+        var start = forward.BindAsExecutor("start");
+        ConflictingInitExecutor failing = new("failing", 1, fail: true);
+        ConflictingInitExecutor sibling = new("sibling", 2, fail: false);
+        Workflow workflow = new WorkflowBuilder(start).AddFanOutEdge(start, [failing, sibling]).Build();
+
+        // Act
+        await using Run run = await InProcessExecution.Lockstep.RunAsync(workflow, 1);
+        await run.ResumeAsync(default, 2);
+
+        // Assert: the step failure and the failed lifecycle publication are both reported,
+        // and the discarded updates do not block the following superstep.
+        List<Exception?> errors = run.OutgoingEvents.OfType<WorkflowErrorEvent>().Select(e => e.Exception).ToList();
+        Assert.Equal(3, errors.Count);
+        Assert.IsType<InvalidOperationException>(errors[0]);
+        Assert.IsType<InvalidOperationException>(errors[1]);
+        Assert.Contains(run.OutgoingEvents.OfType<ExecutorFailedEvent>(), e => e.Data?.Message == ConflictingInitExecutor.FailureMessage);
+    }
+
+    private sealed class ConflictingInitExecutor(string id, int value, bool fail) : Executor<int>(id), IResettableExecutor
+    {
+        public const string FailureMessage = "Failure after conflicting initialization.";
+
+        public ValueTask ResetAsync() => default;
+
+        protected internal override ValueTask InitializeAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+            => context.QueueStateUpdateAsync("value", value, "shared", cancellationToken);
+
+        public override ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
+            => fail ? throw new InvalidOperationException(FailureMessage) : default;
+    }
+
     private sealed class SuperstepStateExecutor(string id, CancellationTokenSource? cancellation) : Executor<int>(id), IResettableExecutor
     {
         protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)

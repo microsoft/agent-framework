@@ -230,14 +230,11 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             }
             catch (OperationCanceledException)
             {
-                this.RunContext.DiscardPendingMessages();
-                await this.RunContext.StateManager.DiscardSuperstepUpdatesAsync().ConfigureAwait(false);
+                await this.DiscardFailedSuperstepAsync(error: null).ConfigureAwait(false);
             }
             catch (Exception e)
             {
-                this.RunContext.DiscardPendingMessages();
-                await this.RunContext.StateManager.DiscardSuperstepUpdatesAsync().ConfigureAwait(false);
-                await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(e)).ConfigureAwait(false);
+                await this.DiscardFailedSuperstepAsync(e).ConfigureAwait(false);
             }
             finally
             {
@@ -309,6 +306,31 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             }
 
             return (value, messageType);
+        }
+    }
+
+    private async ValueTask DiscardFailedSuperstepAsync(Exception? error)
+    {
+        this.RunContext.DiscardPendingMessages();
+
+        Exception? cleanupError = null;
+        try
+        {
+            await this.RunContext.StateManager.DiscardSuperstepUpdatesAsync().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            cleanupError = e;
+        }
+
+        if (error is not null)
+        {
+            await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(error)).ConfigureAwait(false);
+        }
+
+        if (cleanupError is not null)
+        {
+            await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(cleanupError)).ConfigureAwait(false);
         }
     }
 

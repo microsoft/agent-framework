@@ -286,8 +286,16 @@ internal sealed class StateManager
             }
         }
 
-        // Publish only the retained lifecycle writes so checkpoint import is not blocked.
-        await this.PublishUpdatesAsync(tracer: null).ConfigureAwait(false);
+        try
+        {
+            // Publish only the retained lifecycle writes so checkpoint import is not blocked.
+            await this.PublishUpdatesAsync(tracer: null).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Conflicting retained writes must not remain queued after a failed publication.
+            this.DiscardQueuedUpdates();
+        }
     }
 
     internal void DiscardQueuedUpdates() => this._queuedUpdates.Clear();
