@@ -349,6 +349,46 @@ async def test_get_latest_breaks_ties_between_unsuperseded_checkpoints_by_id(
     assert latest.checkpoint_id == "leaf-b"
 
 
+@pytest.mark.parametrize("storage_kind", ["memory", "file"])
+async def test_get_latest_with_mixed_naive_and_aware_timestamps(tmp_path: Path, storage_kind: str) -> None:
+    storage = InMemoryCheckpointStorage() if storage_kind == "memory" else FileCheckpointStorage(tmp_path)
+    # Checkpoints with naive and timezone-aware timestamps
+    await storage.save(
+        WorkflowCheckpoint(
+            workflow_name="w",
+            graph_signature_hash="h",
+            checkpoint_id="older-naive",
+            timestamp="2026-01-01T00:00:00",
+        )
+    )
+    await storage.save(
+        WorkflowCheckpoint(
+            workflow_name="w",
+            graph_signature_hash="h",
+            checkpoint_id="newer-aware",
+            timestamp="2026-01-02T00:00:00+00:00",
+        )
+    )
+
+    latest = await storage.get_latest(workflow_name="w")
+    assert latest is not None
+    assert latest.checkpoint_id == "newer-aware"
+
+    # Save a newer naive checkpoint to verify naive-as-UTC selection
+    await storage.save(
+        WorkflowCheckpoint(
+            workflow_name="w",
+            graph_signature_hash="h",
+            checkpoint_id="newest-naive",
+            timestamp="2026-01-03T00:00:00",
+        )
+    )
+
+    latest = await storage.get_latest(workflow_name="w")
+    assert latest is not None
+    assert latest.checkpoint_id == "newest-naive"
+
+
 async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
     """Test that consecutive checkpoints created by a workflow are properly chained via previous_checkpoint_id."""
     from typing_extensions import Never
