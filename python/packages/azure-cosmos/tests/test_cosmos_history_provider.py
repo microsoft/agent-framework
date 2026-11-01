@@ -189,11 +189,14 @@ class TestCosmosHistoryProviderGetMessages:
 
         assert messages == []
 
-    async def test_none_session_id_raises_value_error(self, mock_container: MagicMock) -> None:
+    @pytest.mark.parametrize("session_id", [None, ""], ids=["none", "empty"])
+    async def test_missing_session_id_raises_value_error(
+        self, mock_container: MagicMock, session_id: str | None
+    ) -> None:
         provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
 
         with pytest.raises(ValueError, match="session_id"):
-            await provider.get_messages(None)
+            await provider.get_messages(session_id)
 
         mock_container.query_items.assert_not_called()
 
