@@ -689,7 +689,21 @@ class TestAfterRun:
         assert call_kwargs["agent_id"] == "a1"
         assert "filters" not in call_kwargs
 
-    async def test_oss_storage_omits_unset_identity_fields(self, mock_oss_mem0_client: AsyncMock) -> None:
+    @pytest.mark.parametrize(
+        ("configured", "expected_present", "expected_absent"),
+        [
+            ({"user_id": "u1"}, "user_id", "agent_id"),
+            ({"agent_id": "a1"}, "agent_id", "user_id"),
+        ],
+        ids=["user-only", "agent-only"],
+    )
+    async def test_oss_storage_omits_unset_identity_fields(
+        self,
+        mock_oss_mem0_client: AsyncMock,
+        configured: dict[str, str],
+        expected_present: str,
+        expected_absent: str,
+    ) -> None:
         """OSS add must not forward unset identity fields as None kwargs.
 
         _validate_filters permits configuring only one of user_id/agent_id, but
@@ -697,7 +711,7 @@ class TestAfterRun:
         ``agent_id=None`` (or ``user_id=None``) to AsyncMemory.add and crashing
         the run after the model had already produced a reply.
         """
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1")
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, **configured)
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
         ctx._response = AgentResponse(messages=[])
@@ -710,8 +724,8 @@ class TestAfterRun:
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_oss_mem0_client.add.call_args.kwargs
-        assert call_kwargs["user_id"] == "u1"
-        assert "agent_id" not in call_kwargs
+        assert call_kwargs[expected_present] == configured[expected_present]
+        assert expected_absent not in call_kwargs
         assert "filters" not in call_kwargs
 
     async def test_oss_storage_rejects_application_id(self, mock_oss_mem0_client: AsyncMock) -> None:
