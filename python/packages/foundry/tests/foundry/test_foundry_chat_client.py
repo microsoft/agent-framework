@@ -2392,3 +2392,11 @@ async def test_multi_message_response_attaches_reasoning_replay_to_owning_messag
     ]
     assert reasoning_contents[0].id == "rs_trailing"
     assert reasoning_contents[0].additional_properties.get("__foundry_reasoning_replay_item__") is not None
+    # Pin the owning message: a flattened check would also pass if the reasoning
+    # content (with its replay payload) were attached to message_0 instead.
+    owning_message_ids = [
+        message.message_id
+        for message in response.messages
+        if any(content.type == "text_reasoning" for content in message.contents)
+    ]
+    assert owning_message_ids == ["message_1"]
