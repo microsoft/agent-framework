@@ -892,6 +892,16 @@ class RawGeminiChatClient(
             if key == "stop" and isinstance(value, str):
                 # ChatOptions allows a single stop string; stop_sequences takes a list.
                 value = [value]
+            if key == "candidate_count" and value > 1:
+                # Both parsers read candidates[0] only, so more than one candidate
+                # would be billed but silently dropped. Reject explicitly rather
+                # than behave like candidate_count=1 (mirrors the Ollama client's
+                # unsupported-tool_choice rejection).
+                raise ChatClientInvalidRequestException(
+                    "Gemini chat client supports a single candidate. "
+                    f"candidate_count={value} would silently drop every candidate but the first; "
+                    "request one candidate (the default) instead."
+                )
             kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
 
         response_format = options.get("response_format")

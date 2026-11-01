@@ -3173,3 +3173,25 @@ async def test_streaming_closes_sdk_stream_when_consumer_stops_early() -> None:
             break
 
     assert closed
+
+
+def test_candidate_count_above_one_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``candidate_count > 1`` is rejected instead of silently dropping candidates.
+
+    Both the streaming and non-streaming parsers read ``candidates[0]`` only, so a
+    multi-candidate request would bill for every candidate while silently
+    discarding all but the first. Mirrors the explicit-rejection precedent for
+    unsupported provider options (e.g. Ollama's ``tool_choice`` handling).
+    """
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    client = GeminiChatClient(model="gemini-2.5-flash")
+
+    with pytest.raises(ChatClientInvalidRequestException, match="candidate_count"):
+        client._prepare_config({"candidate_count": 2}, None)
+
+    # A single candidate (the default) flows through unchanged.
+    config = client._prepare_config({"candidate_count": 1}, None)
+    assert config.candidate_count == 1
+
+    config = client._prepare_config({}, None)
+    assert config.candidate_count is None
