@@ -312,13 +312,13 @@ class RawOpenAIChatCompletionClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         timeout: float | None = None,
-) -> None:
-    """Initialize a raw OpenAI Chat completion client.
+    ) -> None:
+        """Initialize a raw OpenAI Chat completion client.
 
-    Keyword Args:
-        model: Model identifier to use for the request. When not provided, the constructor
-            reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then ``OPENAI_MODEL``.
-        api_key: API key. When not provided explicitly, the constructor reads
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
                 ``OPENAI_API_KEY``. A callable API key is also supported.
             org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
                 ``OPENAI_ORG_ID``.
