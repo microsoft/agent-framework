@@ -581,6 +581,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             tokenizer=tokenizer,
         )
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        evaluation_tool_capture = cast(
+            Callable[[Any], None] | None, merged_client_kwargs.pop("_evaluation_tool_capture", None)
+        )
+        if evaluation_tool_capture is not None:
+            evaluation_tool_capture((options or {}).get("tools"))
 
         if not compaction_overrides:
             return self._inner_get_response(
