@@ -84,6 +84,191 @@ public class InProcessExecutionTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledSuperStep_ReturningHandlerDiscardsStateAsync(bool checkpointing)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        SuperstepStateExecutor executor = new("start", cancellation) { CancelWithoutThrowing = true };
+        Workflow workflow = new WorkflowBuilder(executor).Build();
+        InProcessExecutionEnvironment environment = checkpointing
+            ? InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory())
+            : InProcessExecution.Lockstep;
+        await using Run run = await environment.RunAsync(workflow, 0);
+
+        // Act
+        await run.ResumeAsync(cancellation.Token, 1);
+        await run.ResumeAsync(default, 2);
+
+        // Assert
+        Assert.Equal(0, executor.ObservedState);
+        if (checkpointing)
+        {
+            Assert.Equal(2, run.Checkpoints.Count);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task FailedSuperStep_DiscardsDownstreamMessagesAsync(bool checkpointing, bool cancel)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        SuperstepStateExecutor source = new("source", cancel ? cancellation : null) { ForwardMessages = true };
+        List<int> deliveries = [];
+        Func<int, int> collect = message => { deliveries.Add(message); return message; };
+        var target = collect.BindAsExecutor("target");
+        Workflow workflow = new WorkflowBuilder(source).AddEdge(source, target).Build();
+        InProcessExecutionEnvironment environment = checkpointing
+            ? InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory())
+            : InProcessExecution.Lockstep;
+        await using Run run = await environment.RunAsync(workflow, 0);
+        Assert.Equal([0], deliveries);
+
+        // Act
+        await run.ResumeAsync(cancellation.Token, 1);
+        await run.ResumeAsync(default, 2);
+
+        // Assert
+        Assert.Equal([0, 2], deliveries);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    [InlineData(2, true)]
+    public async Task FailedSuperStep_PreservesSuccessfulLifecycleStateAsync(int lifecycle, bool cancel)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        SuperstepStateExecutor executor = new("stateful", cancel ? cancellation : null);
+        WorkflowBuilder builder;
+        if (lifecycle == 1)
+        {
+            SuperstepStateExecutor start = new("start", cancel ? cancellation : null) { ForwardMessages = true };
+            builder = new WorkflowBuilder(start).AddEdge(start, executor);
+        }
+        else
+        {
+            builder = new WorkflowBuilder(executor);
+        }
+        Workflow workflow = builder.Build();
+        InProcessExecutionEnvironment environment = InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        await using Run run = await environment.RunAsync(workflow, lifecycle == 2 ? 0 : 1, cancellationToken: cancellation.Token);
+        if (lifecycle == 2)
+        {
+            await run.RestoreCheckpointAsync(run.Checkpoints[0]);
+            await run.ResumeAsync(cancellation.Token, 1);
+        }
+
+        // Act
+        await run.ResumeAsync(default, 2);
+
+        // Assert
+        Assert.Equal(lifecycle == 2 ? 43 : 42, executor.ObservedState);
+        Assert.Equal(1, executor.Initializations);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CancelledSuperStep_HookDiscardsStateAndAllowsRestoreAsync(bool checkpointHook, bool returnNormally)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        SuperstepStateExecutor executor = new("stateful", cancellation)
+        {
+            CancelInCheckpointHook = checkpointHook,
+            CancelWithoutThrowing = returnNormally
+        };
+        Workflow workflow = new WorkflowBuilder(executor).Build();
+        InProcessExecutionEnvironment environment = InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        await using Run run = await environment.RunAsync(workflow, 0);
+        CheckpointInfo checkpoint = Assert.Single(run.Checkpoints);
+        executor.CancelInHook = true;
+
+        // Act
+        await run.ResumeAsync(cancellation.Token, 2);
+        executor.CancelInHook = false;
+        await run.ResumeAsync(default, 3);
+
+        // Assert
+        Assert.Equal(0, executor.ObservedState);
+        await run.RestoreCheckpointAsync(checkpoint);
+        await run.ResumeAsync(default, 4);
+        Assert.Equal(43, executor.ObservedState);
+    }
+
+    private sealed class SuperstepStateExecutor(string id, CancellationTokenSource? cancellation) : Executor<int>(id), IResettableExecutor
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => base.ConfigureProtocol(protocolBuilder).SendsMessage<int>();
+
+        public bool CancelWithoutThrowing { get; init; }
+        public bool ForwardMessages { get; init; }
+        public bool CancelInCheckpointHook { get; init; }
+        public bool CancelInHook { get; set; }
+        public int? ObservedState { get; private set; }
+        public int Initializations { get; private set; }
+
+        public ValueTask ResetAsync() => default;
+
+        protected internal override ValueTask InitializeAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            this.Initializations++;
+            return context.QueueStateUpdateAsync("value", 42, cancellationToken: cancellationToken);
+        }
+
+        protected internal override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+            => context.QueueStateUpdateAsync("value", 43, cancellationToken: cancellationToken);
+
+        protected internal override ValueTask OnMessageDeliveryStartingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+            => this.CancelInHook && !this.CancelInCheckpointHook ? this.CancelHookAsync(context, cancellationToken) : default;
+
+        protected internal override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+            => this.CancelInHook && this.CancelInCheckpointHook ? this.CancelHookAsync(context, cancellationToken) : default;
+
+        private async ValueTask CancelHookAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            await context.QueueStateUpdateAsync("value", -1, cancellationToken: cancellationToken);
+            cancellation!.Cancel();
+            if (!this.CancelWithoutThrowing)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }
+
+        public override async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            this.ObservedState = await context.ReadStateAsync<int?>("value", cancellationToken: cancellationToken);
+            await context.QueueStateUpdateAsync("value", message, cancellationToken: cancellationToken);
+            if (this.ForwardMessages)
+            {
+                await context.SendMessageAsync(message, cancellationToken: cancellationToken);
+            }
+            if (message == 1)
+            {
+                cancellation?.Cancel();
+                if (this.CancelWithoutThrowing)
+                {
+                    return;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new InvalidOperationException("Failure after state and message writes.");
+            }
+        }
+    }
+
     /// <summary>
     /// The non-streaming version (RunAsync) should execute the workflow and produce events,
     /// similar to the streaming version (StreamAsync + TrySendMessageAsync).

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -13,7 +14,8 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 internal sealed class StateManager
 {
     private readonly Dictionary<ScopeId, StateScope> _scopes = [];
-    private readonly Dictionary<UpdateKey, StateUpdate> _queuedUpdates = [];
+    private readonly ConcurrentDictionary<UpdateKey, StateUpdate> _queuedUpdates = new();
+    private ConcurrentDictionary<UpdateKey, StateUpdate>? _superstepInitialUpdates;
 
     private StateScope GetOrCreateScope(ScopeId scopeId)
     {
@@ -231,6 +233,7 @@ internal sealed class StateManager
         }
 
         this._queuedUpdates.Clear();
+        this._superstepInitialUpdates?.Clear();
     }
 
     private static IEnumerable<KeyValuePair<ScopeKey, PortableValue>> ExportScope(StateScope scope)
@@ -243,12 +246,48 @@ internal sealed class StateManager
 
     internal async ValueTask<Dictionary<ScopeKey, PortableValue>> ExportStateAsync()
     {
-        if (this._queuedUpdates.Count != 0)
+        if (!this._queuedUpdates.IsEmpty)
         {
             throw new InvalidOperationException("Cannot export state while there are queued updates. Call PublishUpdatesAsync() first.");
         }
 
         return this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    // Successful lifecycle writes precede handler execution, including initialization triggered
+    // while routing a message. Keep them separate from writes made by the failing superstep.
+    internal void BeginSuperstep()
+        => this._superstepInitialUpdates = new(this._queuedUpdates);
+
+    internal void PreserveExecutorInitialization(string executorId)
+    {
+        if (this._superstepInitialUpdates is { } initialUpdates)
+        {
+            foreach (var update in this._queuedUpdates)
+            {
+                if (string.Equals(update.Key.ScopeId.ExecutorId, executorId, StringComparison.Ordinal))
+                {
+                    initialUpdates[update.Key] = update.Value;
+                }
+            }
+        }
+    }
+
+    internal void CompleteSuperstep() => this._superstepInitialUpdates = null;
+
+    internal async ValueTask DiscardSuperstepUpdatesAsync()
+    {
+        this.DiscardQueuedUpdates();
+        if (this._superstepInitialUpdates is { } initialUpdates)
+        {
+            foreach (var update in initialUpdates)
+            {
+                this._queuedUpdates[update.Key] = update.Value;
+            }
+        }
+
+        // Publish only the retained lifecycle writes so checkpoint import is not blocked.
+        await this.PublishUpdatesAsync(tracer: null).ConfigureAwait(false);
     }
 
     internal void DiscardQueuedUpdates() => this._queuedUpdates.Clear();
@@ -262,7 +301,7 @@ internal sealed class StateManager
     internal ValueTask ImportStateAsync(Checkpoint checkpoint)
     {
         // TODO: Should this be a warning instead?
-        if (this._queuedUpdates.Count != 0)
+        if (!this._queuedUpdates.IsEmpty)
         {
             throw new InvalidOperationException("Cannot import state while there are queued updates. Call PublishUpdatesAsync() first.");
         }

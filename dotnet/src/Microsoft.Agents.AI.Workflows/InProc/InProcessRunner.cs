@@ -223,18 +223,25 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             this.RunContext.HasQueuedExternalDeliveries ||
             this.RunContext.JoinedRunnersHaveActions)
         {
+            this.RunContext.StateManager.BeginSuperstep();
             try
             {
                 await this.RunSuperstepAsync(currentStep, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                this.RunContext.StateManager.DiscardQueuedUpdates();
+                this.RunContext.DiscardPendingMessages();
+                await this.RunContext.StateManager.DiscardSuperstepUpdatesAsync().ConfigureAwait(false);
             }
             catch (Exception e)
             {
-                this.RunContext.StateManager.DiscardQueuedUpdates();
+                this.RunContext.DiscardPendingMessages();
+                await this.RunContext.StateManager.DiscardSuperstepUpdatesAsync().ConfigureAwait(false);
                 await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(e)).ConfigureAwait(false);
+            }
+            finally
+            {
+                this.RunContext.StateManager.CompleteSuperstep();
             }
 
             return true;
@@ -332,6 +339,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         await Task.WhenAll(subworkflowTasks).ConfigureAwait(false);
 
+        cancellationToken.ThrowIfCancellationRequested();
         await this.CheckpointAsync(cancellationToken).ConfigureAwait(false);
 
         await this.RaiseWorkflowEventAsync(this.StepTracer.Complete(this.RunContext.NextStepHasActions, this.RunContext.HasUnservicedRequests))
@@ -360,6 +368,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         Dictionary<EdgeId, PortableValue> edgeData = await this.RunContext.ExportEdgeStateAsync().ConfigureAwait(false);
 
         await prepareTask.ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         await this.RunContext.StateManager.PublishUpdatesAsync(this.StepTracer).ConfigureAwait(false);
 
         RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);

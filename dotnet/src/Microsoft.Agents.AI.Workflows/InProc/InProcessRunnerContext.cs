@@ -100,6 +100,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             await executor.InitializeAsync(this.BindWorkflowContext(executorId), cancellationToken: cancellationToken)
                           .ConfigureAwait(false);
 
+            this.StateManager.PreserveExecutorInitialization(executorId);
             tracer?.TraceActivated(executorId);
 
             if (executor is RequestInfoExecutor requestInputExecutor)
@@ -204,6 +205,13 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
 
         return Interlocked.Exchange(ref this._nextStep, new StepContext());
+    }
+
+    internal void DiscardPendingMessages()
+    {
+        // All receiver tasks have settled before failed-step cleanup runs. External input
+        // remains queued separately and can start a subsequent, healthy superstep.
+        Interlocked.Exchange(ref this._nextStep, new StepContext());
     }
 
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
