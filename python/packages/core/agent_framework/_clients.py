@@ -360,9 +360,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         # Get the base dict from SerializationMixin
         result = super().to_dict(exclude=exclude, exclude_none=exclude_none)
 
-        # Extract additional_properties to root level
-        if self.additional_properties:
-            result.update(self.additional_properties)
+        # Extract additional_properties to root level respecting exclusions and exclude_none
+        if self.additional_properties and (exclude is None or "additional_properties" not in exclude):
+            exclude_set = exclude or set()
+            for key, value in self.additional_properties.items():
+                if key in exclude_set:
+                    continue
+                if exclude_none and value is None:
+                    continue
+                result[key] = value
 
         return result
 
