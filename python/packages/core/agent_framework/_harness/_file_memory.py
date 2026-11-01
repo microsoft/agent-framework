@@ -43,6 +43,7 @@ per-invocation :class:`~agent_framework.SessionContext` in
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Annotated, Any
 
@@ -87,10 +88,16 @@ DEFAULT_FILE_MEMORY_INSTRUCTIONS = (
 _DESCRIPTION_SUFFIX = "_description.md"
 _MEMORY_INDEX_FILE_NAME = "memories.md"
 _MAX_INDEX_ENTRIES = 50
+# Filesystem name limits are commonly 255 bytes; the sidecar derivation must stay
+# within that budget so every valid memory file name also gets a writable sidecar.
+_MAX_DESCRIPTION_FILE_NAME_BYTES = 255
 # Prefix for scopes that are not usable verbatim as a folder name. Kept distinct
 # from the other harness prefixes so the same value under a different component
 # never lands in the same directory.
 _ENCODED_SCOPE_PREFIX = "~scope-"
+# Prefix for description sidecars of memory file names too long to carry the
+# suffix verbatim. Distinct from the other prefixes for the same reason.
+_DIGEST_DESCRIPTION_PREFIX = "~memory-desc-"
 
 
 def _description_file_name(file_name: str) -> str:
@@ -101,8 +108,19 @@ def _description_file_name(file_name: str) -> str:
     ``notes_description.md``. Keeping the extension in the derivation makes
     the mapping injective: distinct memory files always get distinct sidecars,
     so writes and deletes can never clobber another memory's description.
+
+    A memory file name long enough to push the appended sidecar past the
+    filesystem's name limit cannot carry the suffix verbatim, so such names
+    fall back to a SHA-256 digest (still suffixed, still injective in
+    practice). The two namespaces cannot collide: a memory file name whose
+    sidecar would look like a digest sidecar is itself far shorter than the
+    names that take the digest branch.
     """
-    return f"{file_name}{_DESCRIPTION_SUFFIX}"
+    sidecar = f"{file_name}{_DESCRIPTION_SUFFIX}"
+    if len(sidecar.encode("utf-8")) <= _MAX_DESCRIPTION_FILE_NAME_BYTES:
+        return sidecar
+    digest = hashlib.sha256(file_name.encode("utf-8")).hexdigest()
+    return f"{_DIGEST_DESCRIPTION_PREFIX}{digest}{_DESCRIPTION_SUFFIX}"
 
 
 def _is_internal_file(file_name: str) -> bool:

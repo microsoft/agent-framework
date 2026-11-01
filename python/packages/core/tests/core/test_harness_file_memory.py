@@ -66,6 +66,29 @@ def test_description_file_name_appends_to_full_name() -> None:
     assert _description_file_name(".hidden") == ".hidden_description.md"
 
 
+def test_description_file_name_stays_within_filesystem_name_limits() -> None:
+    """Sidecars of very long memory file names must stay writable and distinct."""
+    # "a"*235 + ".md" carries the suffix verbatim at exactly 254 bytes.
+    within_limit = "a" * 235 + ".md"
+    # "a"*238 + ".md" would push the appended sidecar to 256 bytes.
+    over_limit = "a" * 238 + ".md"
+    assert len(_description_file_name(within_limit).encode("utf-8")) <= 255
+    assert _description_file_name(within_limit) == within_limit + "_description.md"
+
+    bounded = _description_file_name(over_limit)
+    assert len(bounded.encode("utf-8")) <= 255
+    # The digest sidecar keeps the suffix, so listings still hide it.
+    assert _is_internal_file(bounded)
+
+    # Distinct long names must not share a digest sidecar.
+    other = "b" * 238 + ".md"
+    assert _description_file_name(over_limit) != _description_file_name(other)
+    # The derivation is stable, so reads and deletes resolve to the same sidecar.
+    assert _description_file_name(over_limit) == _description_file_name(over_limit)
+    # A digest sidecar never equals a verbatim sidecar of a shorter name.
+    assert _description_file_name(over_limit) != _description_file_name("~memory-desc-x")
+
+
 def test_is_internal_file_detects_sidecars_and_index() -> None:
     """Internal files are description sidecars and the memory index, case-insensitively."""
     assert _is_internal_file("notes_description.md")
