@@ -683,7 +683,16 @@ class TestRedisHistoryProviderGetMessages:
 
     async def test_skips_malformed_entries(self, mock_redis_client: MagicMock):
         msg = Message(role="user", contents=["Hello"])
-        mock_redis_client.lrange = AsyncMock(return_value=["", "not-json", json.dumps(msg.to_dict())])
+        mock_redis_client.lrange = AsyncMock(
+            return_value=[
+                "",
+                "not-json",
+                "null",  # valid JSON, but deserializes to None
+                "[]",  # valid JSON, but deserializes to a list
+                "{}",  # valid JSON, but missing the required "role" field
+                json.dumps(msg.to_dict()),
+            ]
+        )
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client

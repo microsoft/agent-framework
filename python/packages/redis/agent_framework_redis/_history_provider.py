@@ -275,8 +275,11 @@ class RedisHistoryProvider(HistoryProvider):
         messages: list[Message] = []
         for serialized in redis_messages:
             try:
-                messages.append(Message.from_dict(self._deserialize_json(serialized)))
-            except (ValueError, json.JSONDecodeError) as exc:
+                payload = self._deserialize_json(serialized)
+                if not isinstance(payload, dict):
+                    raise ValueError(f"Expected a JSON object, got {type(payload).__name__}")
+                messages.append(Message.from_dict(payload))
+            except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
                 logger.warning("Skipping malformed Redis history entry: %s", exc)
         return messages
 
