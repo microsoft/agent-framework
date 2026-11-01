@@ -202,7 +202,8 @@ public class InProcessExecutionTests
         executor.CancelInHook = false;
         await run.ResumeAsync(default, 3);
 
-        // Assert
+        // Assert: only the general failure path reports a workflow error.
+        Assert.DoesNotContain(run.OutgoingEvents, e => e is WorkflowErrorEvent);
         Assert.Equal(0, executor.ObservedState);
         await run.RestoreCheckpointAsync(checkpoint);
         await run.ResumeAsync(default, 4);
