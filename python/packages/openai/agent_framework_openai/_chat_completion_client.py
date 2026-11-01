@@ -38,6 +38,7 @@ from agent_framework._types import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FinishReasonLiteral,
     Message,
     ResponseStream,
     UsageDetails,
@@ -1061,7 +1062,14 @@ class RawOpenAIChatCompletionClient(
             role="assistant",
             model=chunk.model,
             additional_properties=merged_metadata,
-            finish_reason=next((update.finish_reason for update in reversed(updates) if update.finish_reason), None),
+            # Reading ``finish_reason`` back from an update widens the literal to ``str``
+            # (pyright widens literal types on inferred instance attributes), so narrow
+            # it back to the constructor parameter type; the values only ever come from
+            # that same parameter in ``_choice_update``.
+            finish_reason=cast(
+                "FinishReasonLiteral | FinishReason | None",
+                next((update.finish_reason for update in reversed(updates) if update.finish_reason), None),
+            ),
             raw_representation=chunk,
             response_id=chunk.id,
             message_id=chunk.id,
