@@ -277,8 +277,8 @@ class BedrockChatClient(
         """Create a Bedrock chat client and load AWS credentials.
 
         Args:
-            region: Region to send Bedrock requests to; falls back to BEDROCK_REGION, then to the region
-                of ``boto3_session``, then to us-east-1.
+            region: Region to send Bedrock requests to; falls back to the region of ``boto3_session``,
+                then to BEDROCK_REGION, then to us-east-1. A supplied ``client`` keeps its own region.
             model: Default model identifier; falls back to BEDROCK_CHAT_MODEL.
             access_key: Optional AWS access key for manual credential injection.
             secret_key: Optional AWS secret key paired with ``access_key``.
@@ -322,8 +322,12 @@ class BedrockChatClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        session_region = boto3_session.region_name if boto3_session and not client else None
-        region = settings.get("region") or session_region or DEFAULT_REGION
+        if client is not None:
+            client_region = getattr(getattr(client, "meta", None), "region_name", None)
+            region = client_region if isinstance(client_region, str) else (settings.get("region") or DEFAULT_REGION)
+        else:
+            session_region = boto3_session.region_name if boto3_session else None
+            region = region or session_region or settings.get("region") or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
         self._owns_client = client is None
