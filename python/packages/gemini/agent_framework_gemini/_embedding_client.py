@@ -13,7 +13,6 @@ from agent_framework import (
     EmbeddingGenerationOptions,
     GeneratedEmbeddings,
     UsageDetails,
-    load_settings,
 )
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import mark_feature_used
@@ -32,8 +31,8 @@ from typing_extensions import TypedDict
 
 from ._feature_usage import FeatureIndex
 from ._sdk_client import (
-    GoogleGeminiSettings,
     create_genai_client,
+    load_gemini_settings,
 )
 
 if sys.version_info >= (3, 13):
@@ -137,7 +136,8 @@ class RawGeminiEmbeddingClient(
         project: Enterprise (Vertex AI) project, or ``GOOGLE_CLOUD_PROJECT``.
         location: Enterprise (Vertex AI) region, or ``GOOGLE_CLOUD_LOCATION``.
         credentials: Google Cloud credentials for Enterprise; the SDK can also use ADC.
-        client: Preconfigured ``genai.Client``; the caller retains ownership of it.
+        client: Preconfigured ``genai.Client``; the caller retains ownership of it. When provided, the
+            API key, mode, project, and location arguments and environment settings are not read.
         additional_properties: Extra properties stored on the client instance.
         env_file_path: Optional ``.env`` file for settings.
         env_file_encoding: Encoding for the ``.env`` file.
@@ -161,9 +161,8 @@ class RawGeminiEmbeddingClient(
         env_file_encoding: str | None = None,
     ) -> None:
         """Initialize a raw Gemini embedding client."""
-        google_settings = load_settings(
-            GoogleGeminiSettings,
-            env_prefix="GOOGLE_",
+        google_settings = load_gemini_settings(
+            client=client,
             api_key=api_key,
             embedding_model=model,
             genai_use_enterprise=enterprise,

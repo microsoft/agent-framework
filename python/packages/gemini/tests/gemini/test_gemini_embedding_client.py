@@ -219,6 +219,25 @@ def test_injected_vertex_client_controls_service_url() -> None:
     assert client.service_url() == "https://aiplatform.googleapis.com"
 
 
+@pytest.mark.parametrize("env_var", ["GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI"])
+def test_injected_sdk_client_ignores_invalid_connection_settings(
+    clear_google_env: None,
+    env_var: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client is used as-is, so connection settings it does not need are never parsed."""
+    monkeypatch.setenv(env_var, "not-a-bool")
+    monkeypatch.setenv("GOOGLE_EMBEDDING_MODEL", "gemini-embedding-2-preview")
+    sdk = _make_sdk_client()
+
+    client = RawGeminiEmbeddingClient(client=sdk)
+
+    assert client._genai_client is sdk
+    assert client._vertexai is False
+    assert client.service_url() == "https://generativelanguage.googleapis.com"
+    assert client.model == "gemini-embedding-2-preview"
+
+
 async def test_close_only_closes_owned_sdk_client(clear_google_env: None) -> None:
     owned_sdk = _make_sdk_client()
     with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=owned_sdk):

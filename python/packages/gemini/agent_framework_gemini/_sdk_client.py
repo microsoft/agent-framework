@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_framework._settings import SecretString
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
 from google import genai
 from google.auth.credentials import Credentials
@@ -21,6 +21,19 @@ class GoogleGeminiSettings(TypedDict, total=False):
     genai_use_vertexai: bool | None
     cloud_project: str | None
     cloud_location: str | None
+
+
+class _GoogleGeminiModelSettings(TypedDict, total=False):
+    """The only connector settings an injected ``genai.Client`` still needs."""
+
+    model: str | None
+    embedding_model: str | None
+
+
+def load_gemini_settings(*, client: genai.Client | None, **kwargs: Any) -> GoogleGeminiSettings:
+    """Load ``GOOGLE_*`` settings, skipping auth, mode, project, and location for an injected client."""
+    settings_type: type[Any] = GoogleGeminiSettings if client is None else _GoogleGeminiModelSettings
+    return load_settings(settings_type, env_prefix="GOOGLE_", **kwargs)
 
 
 _GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
