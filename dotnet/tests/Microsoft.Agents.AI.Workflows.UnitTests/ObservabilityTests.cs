@@ -56,7 +56,7 @@ public sealed class ObservabilityTests : IDisposable
     /// ---- ActivityNames.MessageSend
     /// </remarks>
     /// <returns>The created workflow.</returns>
-    private static Workflow CreateWorkflow()
+    private static Workflow CreateWorkflow(string? name = null)
     {
         // Create the executors
         Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
@@ -68,6 +68,10 @@ public sealed class ObservabilityTests : IDisposable
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        if (name is not null)
+        {
+            builder.WithName(name);
+        }
 
         return builder.WithOpenTelemetry().Build();
     }
@@ -159,17 +163,23 @@ public sealed class ObservabilityTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Lockstep", false)]
-    [InlineData("Lockstep", true)]
-    [InlineData("OffThread", false)]
-    [InlineData("OffThread", true)]
-    [InlineData("Concurrent", false)]
-    [InlineData("Concurrent", true)]
-    public async Task WorkflowRunActivity_UsesSemanticConventionNameAsync(string executionEnvironmentName, bool streaming)
+    [InlineData("Lockstep", false, null)]
+    [InlineData("Lockstep", true, null)]
+    [InlineData("OffThread", false, null)]
+    [InlineData("OffThread", true, null)]
+    [InlineData("Concurrent", false, null)]
+    [InlineData("Concurrent", true, null)]
+    [InlineData("Lockstep", false, "customer_support_pipeline")]
+    [InlineData("Lockstep", true, "customer_support_pipeline")]
+    [InlineData("OffThread", false, "customer_support_pipeline")]
+    [InlineData("OffThread", true, "customer_support_pipeline")]
+    [InlineData("Concurrent", false, "customer_support_pipeline")]
+    [InlineData("Concurrent", true, "customer_support_pipeline")]
+    public async Task WorkflowRunActivity_UsesSemanticConventionNameAsync(string executionEnvironmentName, bool streaming, string? workflowName)
     {
         // Arrange
         using var testActivity = new Activity("WorkflowRunSpanNameTest").Start();
-        var workflow = CreateWorkflow();
+        var workflow = CreateWorkflow(workflowName);
         var executionEnvironment = GetExecutionEnvironment(executionEnvironmentName);
 
         // Act
@@ -187,10 +197,35 @@ public sealed class ObservabilityTests : IDisposable
         }
 
         // Assert
-        var workflowRunActivity = Assert.Single(this._capturedActivities, a =>
-            a.RootId == testActivity.RootId &&
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var workflowRunActivity = Assert.Single(capturedActivities, a =>
             a.Events.Any(e => e.Name == EventNames.WorkflowStarted));
         Assert.Equal("invoke_workflow", workflowRunActivity.OperationName);
+        Assert.Equal(workflowName, workflowRunActivity.GetTagItem("gen_ai.workflow.name"));
+
+        var workflowBuildActivity = Assert.Single(capturedActivities, a => a.OperationName == ActivityNames.WorkflowBuild);
+        Assert.Equal(workflowName, workflowBuildActivity.GetTagItem("gen_ai.workflow.name"));
+        Assert.All(capturedActivities, a => Assert.DoesNotContain(a.TagObjects, tag => tag.Key == "workflow.name"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task WorkflowActivities_WithoutMeaningfulName_OmitWorkflowNameAsync(string workflowName)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowNameOmissionTest").Start();
+        var workflow = CreateWorkflow(workflowName);
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello, World!");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        Assert.Contains(capturedActivities, a => a.OperationName == ActivityNames.WorkflowInvoke);
+        Assert.All(capturedActivities, a => Assert.DoesNotContain(a.TagObjects,
+            tag => tag.Key is "gen_ai.workflow.name" or "workflow.name"));
     }
 
     [Fact]

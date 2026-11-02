@@ -63,7 +63,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         Activity.Current = this._sessionActivity;
 
         // Not 'using' — must dispose explicitly in finally for deterministic export.
-        Activity? runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
+        Activity? runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity(this._stepRunner.WorkflowName);
         runActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
         try

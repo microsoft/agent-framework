@@ -15,6 +15,8 @@ runtime evidence; it does not determine whether output is correct.
   a generic host.
 - Keep sensitive payload capture (`EnableSensitiveData`) disabled unless the application explicitly accepts the
   exposure of prompts, responses, and tool arguments.
+- Name workflows with `WorkflowBuilder.WithName(...)`. Workflow build and invocation activities record this name as
+  `gen_ai.workflow.name` (replacing `workflow.name`); the attribute is omitted when no meaningful name is configured.
 - Redaction does not replace sanitization in custom telemetry, exporters, middleware, logs (`UseLogging`), or
   exception messages.
 

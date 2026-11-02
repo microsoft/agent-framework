@@ -109,15 +109,22 @@ internal sealed class WorkflowTelemetryContext
     /// Starts a workflow run activity if enabled. This represents a single
     /// input-to-halt cycle within a workflow session.
     /// </summary>
+    /// <param name="workflowName">The optional application-defined workflow name.</param>
     /// <returns>An activity if workflow run telemetry is enabled, otherwise null.</returns>
-    public Activity? StartWorkflowRunActivity()
+    public Activity? StartWorkflowRunActivity(string? workflowName)
     {
         if (!this.IsEnabled || this.Options.DisableWorkflowRun)
         {
             return null;
         }
 
-        return this.ActivitySource.StartActivity(ActivityNames.WorkflowInvoke);
+        ActivityTagsCollection? tags = null;
+        if (!string.IsNullOrWhiteSpace(workflowName))
+        {
+            tags = new() { { Tags.WorkflowName, workflowName } };
+        }
+
+        return this.ActivitySource.StartActivity(ActivityNames.WorkflowInvoke, ActivityKind.Internal, parentContext: default, tags: tags);
     }
 
     /// <summary>
