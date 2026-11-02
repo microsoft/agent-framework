@@ -176,14 +176,74 @@ async def test_connection_failure_does_not_chain_unwrapped_secrets():
         {"env_file_encoding": "utf-16"},
     ],
 )
-def test_injected_client_rejects_conflicting_settings(constructor, kwargs):
+def test_injected_client_ignores_conflicting_settings(constructor, kwargs):
     connection = duckdb.connect(":memory:")
     try:
-        with (
-            patch.object(module, "load_settings", side_effect=AssertionError("settings must not be loaded")),
-            pytest.raises(ValueError, match="cannot be combined"),
-        ):
-            constructor(client=connection, **kwargs)
+        with patch.object(module, "load_settings", side_effect=AssertionError("settings must not be loaded")):
+            instance = constructor(client=connection, **kwargs)
+        assert instance._client._connection is connection
+        assert instance._client._address is None
+        assert instance._client.owned is False
+        assert instance.managed_client is False
+    finally:
+        connection.close()
+
+
+def test_injected_client_valid_config_ignored(constructor):
+    connection = duckdb.connect(":memory:")
+    try:
+        instance = constructor(client=connection, config={"threads": "2"})
+        assert instance._client._connection is connection
+    finally:
+        connection.close()
+
+
+def test_injected_client_invalid_config_ignored(constructor):
+    connection = duckdb.connect(":memory:")
+    try:
+        instance = constructor(client=connection, config={"threads": object()})
+        assert instance._client._connection is connection
+    finally:
+        connection.close()
+
+
+def test_injected_client_invalid_env_path_ignored(constructor, tmp_path):
+    connection = duckdb.connect(":memory:")
+    try:
+        instance = constructor(client=connection, env_file_path=str(tmp_path / "missing.env"))
+        assert instance._client._connection is connection
+    finally:
+        connection.close()
+
+
+def test_injected_client_invalid_env_encoding_ignored(constructor):
+    connection = duckdb.connect(":memory:")
+    try:
+        instance = constructor(client=connection, env_file_encoding="bogus-encoding")
+        assert instance._client._connection is connection
+    finally:
+        connection.close()
+
+
+def test_injected_client_environment_variables_ignored(constructor, monkeypatch):
+    monkeypatch.setenv("DUCKDB_CONNECTION_STRING", "md:should-not-be-opened")
+    connection = duckdb.connect(":memory:")
+    try:
+        with patch.object(module, "load_settings", side_effect=AssertionError("settings must not be loaded")):
+            instance = constructor(client=connection)
+        assert instance._client._connection is connection
+    finally:
+        connection.close()
+
+
+async def test_duckdb_connect_not_called_when_client_injected(constructor):
+    connection = duckdb.connect(":memory:")
+    try:
+        with patch.object(module.duckdb, "connect", side_effect=AssertionError("duckdb.connect must not be called")):
+            instance = constructor(client=connection)
+            assert instance._client._connection is connection
+            result = await instance._client.run(lambda c: c.execute("SELECT 1").fetchone())
+            assert result == (1,)
     finally:
         connection.close()
 

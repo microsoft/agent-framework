@@ -70,13 +70,14 @@ by DuckDB, not by this connector.
 
 Alternatively, use `DuckDBStore(client=duckdb.connect(...))` or
 `DuckDBCollection(Record, client=...)` to **borrow** an existing connection.
-The caller owns and closes that connection; `client` cannot be combined with
-`connection_string`, `config`, or `.env` options. Collections obtained from a
-store borrow its client, so keep the store open while using them. All connector
-operations on one store/collection run serially on one worker thread, not on
-the event loop. Coordinate any *external* use of an injected connection
-yourself. Cancelling an awaiter does not stop a DuckDB query already running
-on that thread; `aclose()` waits for it to finish.
+The caller owns and closes that connection; `client` takes precedence over
+`connection_string`, `config`, and `.env` options, which are ignored when a
+client is supplied. Collections obtained from a store borrow its client, so keep
+the store open while using them. All connector operations on one store/collection
+run serially on one worker thread, not on the event loop. Coordinate any
+*external* use of an injected connection yourself. Cancelling an awaiter does
+not stop a DuckDB query already running on that thread; `aclose()` waits for it
+to finish.
 
 ## Example
 
