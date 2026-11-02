@@ -2977,7 +2977,6 @@ class MCPTool:
             await self._load_prompts_locked()
 
     async def _load_prompts_locked(self) -> None:
-        from anyio import ClosedResourceError
         from mcp import types
 
         if not self._supports_prompts:
@@ -2997,52 +2996,7 @@ class MCPTool:
         retained_prompt_names: set[str] = set()
         new_functions: list[FunctionTool] = []
 
-        params: types.PaginatedRequestParams | None = None
-        while True:
-            prompt_list: types.ListPromptsResult | None = None
-            for attempt in range(2):
-                try:
-                    # Ensure connection is still valid before each page request
-                    await self._ensure_connected()
-                    if not self._supports_prompts:
-                        logger.debug(
-                            "Skipping MCP prompt loading because the server did not advertise prompts support."
-                        )
-                        return
-                    with create_mcp_client_span(
-                        "prompts/list",
-                        attributes=self._mcp_base_span_attributes(),
-                        capture_unhandled_exceptions=False,
-                    ) as list_span:
-                        try:
-                            prompt_list = await self._require_connection().list_prompts_page(params)
-                        except Exception as list_ex:
-                            set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
-                            raise
-                    break
-                except ClosedResourceError as cl_ex:
-                    if attempt == 0:
-                        await self._recover_connection_after_loss(
-                            operation="prompt discovery",
-                            inner_exception=cl_ex,
-                            load_configured=False,
-                        )
-                        continue
-                    _log_mcp_exception(
-                        logging.ERROR,
-                        cl_ex,
-                        "MCP connection closed unexpectedly after reconnection: %s",
-                        cl_ex,
-                        redacted_message="MCP prompt discovery connection closed after reconnection",
-                    )
-                    raise _mcp_tool_execution_exception(
-                        "Failed to load prompts - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-
-            if prompt_list is None:
-                raise _mcp_tool_execution_exception("Failed to load prompts.")
-
+        def stage_prompt_page(prompt_list: types.ListPromptsResult) -> None:
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
@@ -3088,10 +3042,26 @@ class MCPTool:
                 prompt_functions.append(func)
                 new_functions.append(func)
 
-            # Check if there are more pages
-            if not prompt_list.next_cursor:
-                break
-            params = types.PaginatedRequestParams(cursor=prompt_list.next_cursor)
+        prompt_list = await self._try_list_prompts_page_with_recovery(None)
+        if prompt_list is None:
+            return
+        pages_loaded = 1
+        stage_prompt_page(prompt_list)
+        cursor = prompt_list.next_cursor
+
+        while cursor is not None:
+            if self._max_discovery_pages is not None and pages_loaded >= self._max_discovery_pages:
+                raise _mcp_tool_execution_exception(
+                    f"MCP prompt discovery reached the configured maximum of "
+                    f"{self._max_discovery_pages} pages before the server completed pagination."
+                )
+
+            prompt_list = await self._try_list_prompts_page_with_recovery(types.PaginatedRequestParams(cursor=cursor))
+            if prompt_list is None:
+                return
+            pages_loaded += 1
+            stage_prompt_page(prompt_list)
+            cursor = prompt_list.next_cursor
 
         current_functions = [func for func in self._functions if not _is_mcp_prompt_function(func)]
         current_functions.extend(prompt_functions)
@@ -3103,6 +3073,61 @@ class MCPTool:
         # Only prompts that keep the same remote identity retain their progressive-load state; a
         # different remote prompt that normalizes to the same local name must start unloaded.
         self._progressive_loaded_tool_names.difference_update(existing_prompts.keys() - retained_prompt_names)
+
+    async def _try_list_prompts_page_with_recovery(
+        self, params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult | None:
+        """Fetch a page of prompts, retrying after connection loss."""
+        from anyio import ClosedResourceError
+        from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
+
+        async def recover_connection(retry_state: RetryCallState) -> None:
+            outcome = retry_state.outcome
+            exception = outcome.exception() if outcome else None
+
+            if not isinstance(exception, ClosedResourceError):
+                return
+
+            await self._recover_connection_after_loss(
+                operation="prompt discovery", inner_exception=exception, load_configured=False
+            )
+
+        @retry(
+            retry=retry_if_exception_type(ClosedResourceError),
+            stop=stop_after_attempt(2),
+            before_sleep=recover_connection,
+            reraise=True,
+        )
+        async def request_page() -> types.ListPromptsResult | None:
+            await self._ensure_connected()
+
+            if not self._supports_prompts:
+                logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
+                return None
+
+            with create_mcp_client_span(
+                "prompts/list", attributes=self._mcp_base_span_attributes(), capture_unhandled_exceptions=False
+            ) as list_span:
+                try:
+                    return await self._require_connection().list_prompts_page(params)
+                except Exception as exc:
+                    set_mcp_span_error(list_span, type(exc).__name__, str(exc))
+                    raise
+
+        try:
+            return await request_page()
+        except ClosedResourceError as exc:
+            _log_mcp_exception(
+                logging.ERROR,
+                exc,
+                "MCP connection closed unexpectedly after reconnection: %s",
+                exc,
+                redacted_message="MCP prompt discovery connection closed after reconnection",
+            )
+            raise _mcp_tool_execution_exception(
+                "Failed to load prompts - connection lost.",
+                inner_exception=exc,
+            ) from exc
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
