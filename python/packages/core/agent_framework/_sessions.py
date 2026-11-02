@@ -33,7 +33,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
+from types import UnionType
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, Union, cast, get_args, get_origin
 
 import msgspec
 from typing_extensions import TypedDict
@@ -257,6 +258,180 @@ def _default_state_encoder(cls: type[Any]) -> StateEncoder:
     )
 
 
+_RESTORE_LEAF: Any = object()
+_LocationTree: TypeAlias = dict[Any, Any]
+
+
+def _field_alias_names(field: Any) -> list[str]:
+    """Return every serialized key one pydantic field may legitimately appear under."""
+    names: list[str] = []
+    validation_alias = getattr(field, "validation_alias", None)
+    if isinstance(validation_alias, str):
+        names.append(validation_alias)
+    else:
+        names.extend(choice for choice in getattr(validation_alias, "choices", ()) if isinstance(choice, str))
+    for alias in (getattr(field, "alias", None), getattr(field, "serialization_alias", None)):
+        if isinstance(alias, str) and alias not in names:
+            names.append(alias)
+    return names
+
+
+def _model_fields(value_cls: Any) -> Mapping[str, Any]:
+    fields = cast("Mapping[str, Any] | None", getattr(value_cls, "model_fields", None))
+    return fields if isinstance(fields, Mapping) else {}
+
+
+def _descend_classes(annotation: Any) -> tuple[Any | None, Any | None]:
+    """Name the classes one location segment meets: this value's, then its items'.
+
+    Pydantic reports locations as field names and container indexes, so walking
+    one needs to know what governs each level. A ``Child`` field is a model, so
+    its own fields resolve the keys beneath it. ``dict[str, Item]`` and
+    ``list[Item]`` are containers instead: their keys or positions are
+    application data, and the item class is what resolves names further down.
+    """
+    annotation_origin = getattr(annotation, "__origin__", None)
+    if getattr(annotation, "__metadata__", None) is not None and annotation_origin is not None:
+        return _descend_classes(annotation_origin)
+    origin = get_origin(annotation)
+    if origin is Union or origin is UnionType:
+        for arg in get_args(annotation):
+            if arg is None or arg is type(None):
+                continue
+            keyed_cls, item_cls = _descend_classes(arg)
+            if keyed_cls is not None or item_cls is not None:
+                return keyed_cls, item_cls
+        return None, None
+    if origin is not None:
+        # A container defers to its item type; the container itself is not a model.
+        for arg in get_args(annotation):
+            if arg is None or arg is type(None) or arg in (str, bytes):
+                continue
+            keyed_cls, item_cls = _descend_classes(arg)
+            if keyed_cls is not None or item_cls is not None:
+                return None, item_cls if item_cls is not None else keyed_cls
+        return None, None
+    if annotation is Any or annotation in (str, bytes) or not isinstance(annotation, type):
+        return None, None
+    return annotation, annotation
+
+
+def _location_tree(errors: Sequence[Mapping[str, Any]]) -> _LocationTree | None:
+    """Collapse validation-error locations into a tree of segments to restore.
+
+    A deeper location supersedes a shallower one on the same path. When pydantic
+    blames both ``child`` and ``child.message``, only ``child.message`` is
+    repaired, because restoring ``child`` would again sweep up its siblings.
+    """
+    tree: _LocationTree = {}
+    found = False
+    for error in errors:
+        location = cast("Sequence[Any] | None", error.get("loc"))
+        if location is None or not location:
+            continue
+        node: _LocationTree = tree
+        for segment in location[:-1]:
+            child = node.get(segment)
+            subtree: _LocationTree = cast("_LocationTree", child) if isinstance(child, dict) else {}
+            node[segment] = subtree
+            node = subtree
+        last = location[-1]
+        if not isinstance(node.get(last), dict):
+            node[last] = _RESTORE_LEAF
+        found = True
+    return tree if found else None
+
+
+def _restore_at_loc_tree(
+    value: Any, tree: Any, *, classes: tuple[Any | None, Any | None], path: str
+) -> tuple[Any, bool]:
+    keyed_cls, item_cls = classes
+    if tree is _RESTORE_LEAF:
+        return _deserialize_value(value, path=path), True
+    subtree = cast("_LocationTree | None", tree)
+    if subtree is None or not subtree:
+        return value, False
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[str, Any]", value)
+        if (
+            keyed_cls is not None
+            and _STATE_CLASS_REGISTRY.get(keyed_cls) is not None
+            and _STATE_TYPE_REGISTRY.get(str(mapping.get("type", ""))) is not None
+        ):
+            # The location reaches inside a payload owned by a registered codec.
+            # Only that codec knows the shape, so restore the value as a whole.
+            return _deserialize_value(mapping, path=path), True
+        return _restore_mapping(mapping, subtree, keyed_cls=keyed_cls, item_cls=item_cls, path=path)
+    if isinstance(value, list):
+        return _restore_list(cast("list[Any]", value), subtree, item_cls=item_cls, path=path)
+    return value, False
+
+
+def _restore_mapping(
+    value: Mapping[str, Any],
+    tree: Mapping[Any, Any],
+    *,
+    keyed_cls: Any,
+    item_cls: Any,
+    path: str,
+) -> tuple[Any, bool]:
+    fields = _model_fields(keyed_cls)
+    out = dict(value)
+    changed = False
+    for segment, sub in tree.items():
+        field_name, field = next(
+            (
+                (name, candidate)
+                for name, candidate in fields.items()
+                if name == segment or segment in _field_alias_names(candidate)
+            ),
+            (None, None),
+        )
+        candidates = [segment]
+        if field_name is not None:
+            candidates.append(field_name)
+            candidates.extend(_field_alias_names(field))
+        raw_key = next((key for key in candidates if key in value), None)
+        if raw_key is None:
+            continue
+        restored, key_changed = _restore_at_loc_tree(
+            out[raw_key],
+            sub,
+            classes=_descend_classes(getattr(field, "annotation", None)) if field is not None else (item_cls, item_cls),
+            path=f"{path}.{raw_key}",
+        )
+        if key_changed:
+            out[raw_key] = restored
+            changed = True
+    return (out, True) if changed else (value, False)
+
+
+def _restore_list(value: Sequence[Any], tree: Mapping[Any, Any], *, item_cls: Any, path: str) -> tuple[Any, bool]:
+    out = list(value)
+    changed = False
+    for segment, sub in tree.items():
+        if not isinstance(segment, int) or not 0 <= segment < len(out):
+            continue
+        restored, item_changed = _restore_at_loc_tree(
+            out[segment], sub, classes=(item_cls, item_cls), path=f"{path}[{segment}]"
+        )
+        if item_changed:
+            out[segment] = restored
+            changed = True
+    return (out, True) if changed else (value, False)
+
+
+def _restore_failed_values(
+    cls: type[Any], raw: Mapping[str, Any], errors: Sequence[Mapping[str, Any]], *, path: str
+) -> Mapping[str, Any] | None:
+    """Repair only the values pydantic blamed, or ``None`` when none can be located."""
+    tree = _location_tree(errors)
+    if tree is None:
+        return None
+    restored, changed = _restore_at_loc_tree(raw, tree, classes=(cls, cls), path=path)
+    return cast(Mapping[str, Any], restored) if changed else None
+
+
 def _default_state_decoder(cls: type[Any]) -> StateDecoder:
     """Create the default decoder for one explicitly registered state type."""
     if callable(getattr(cls, "from_dict", None)):
@@ -266,7 +441,7 @@ def _default_state_decoder(cls: type[Any]) -> StateDecoder:
 
         return decode_from_dict
 
-    from pydantic import AliasChoices, BaseModel, ValidationError
+    from pydantic import BaseModel, ValidationError
 
     if issubclass(cls, BaseModel):
 
@@ -277,41 +452,17 @@ def _default_state_decoder(cls: type[Any]) -> StateDecoder:
             except ValidationError as exc:
                 # The encoder's payload items went through _serialize_value,
                 # so a nested registered value (e.g. Message) sits in the
-                # payload as its tagged dict. Restore only the field(s) pydantic
-                # blames; fields that already validate raw keep their payload
-                # untouched, so a field that legitimately holds a tag-shaped
-                # dict (e.g. plain dict[str, Any] data) is never converted or
-                # rejected by the retry.
-                failed_keys: set[str] = set()
-                for error in exc.errors():
-                    location = error.get("loc")
-                    if not location or not isinstance(location[0], str):
-                        continue
-                    field_name = location[0]
-                    if field_name in raw:
-                        failed_keys.add(field_name)
-                        continue
-                    field = cls.model_fields.get(field_name)
-                    if field is None:
-                        continue
-                    validation_alias = field.validation_alias
-                    aliases = [field.alias, field.serialization_alias]
-                    if isinstance(validation_alias, str):
-                        aliases.insert(0, validation_alias)
-                    elif isinstance(validation_alias, AliasChoices):
-                        aliases = [*validation_alias.choices, *aliases]
-                    failed_key = next(
-                        (alias for alias in aliases if isinstance(alias, str) and alias in raw),
-                        None,
-                    )
-                    if failed_key is not None:
-                        failed_keys.add(failed_key)
-                if not failed_keys:
+                # payload as its tagged dict. Restore only the values pydantic
+                # actually blames: the complete error location is walked, so a
+                # failure deep inside a nested model or a container repairs that
+                # one value and leaves every sibling untouched. A sibling that
+                # legitimately holds a tag-shaped dict (e.g. plain
+                # dict[str, Any] data) therefore keeps its payload instead of
+                # being converted or rejected by the retry.
+                restored = _restore_failed_values(cls, raw, exc.errors(), path=cls.__name__)
+                if restored is None:
                     raise
-                return cls.model_validate({
-                    key: _deserialize_value(value, path=f"{cls.__name__}.{key}") if key in failed_keys else value
-                    for key, value in raw.items()
-                })
+                return cls.model_validate(restored)
 
         return decode_pydantic
 

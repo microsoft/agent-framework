@@ -965,6 +965,117 @@ class TestStateTypeRegistry:
         assert restored.state["value"].message.text == "persisted"
         assert restored.state["value"].data == {"type": "message", "note": "plain data"}
 
+    def test_registered_pydantic_state_restores_only_the_failing_nested_value(self) -> None:
+        """A nested failure restores that nested value only, not its tag-shaped sibling."""
+        from pydantic import BaseModel, ConfigDict
+
+        class NestedMixed(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            message: Message
+            data: dict[str, Any]
+
+        class WithNestedMixed(BaseModel):
+            child: NestedMixed
+
+        register_state_type(WithNestedMixed, type_id="pydantic_nested_mixed_state_test")
+        session = AgentSession(session_id="nested-mixed-restore")
+        # Pydantic blames `child.message` only. Restoring the whole `child`
+        # would also run the codec over `child.data`, whose `type` merely
+        # happens to name a registered type, and either convert it or fail.
+        session.state["value"] = WithNestedMixed(
+            child=NestedMixed(
+                message=Message(role="user", contents=["persisted"]),
+                data={"type": "message", "note": "plain data"},
+            )
+        )
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], WithNestedMixed)
+        assert isinstance(restored.state["value"].child.message, Message)
+        assert restored.state["value"].child.message.text == "persisted"
+        assert restored.state["value"].child.data == {"type": "message", "note": "plain data"}
+
+    def test_registered_pydantic_state_restores_nested_value_behind_alias_and_index(self) -> None:
+        """The failing value is found through a container index and a serialized alias."""
+        from pydantic import BaseModel, ConfigDict, Field
+
+        class AliasedItem(BaseModel):
+            model_config = ConfigDict(
+                arbitrary_types_allowed=True,
+                serialize_by_alias=True,
+                loc_by_alias=False,
+            )
+
+            last_message: Message = Field(alias="lastMessage")
+            data: dict[str, Any]
+
+        class AliasedWrapper(BaseModel):
+            model_config = ConfigDict(serialize_by_alias=True, loc_by_alias=False)
+
+            items: list[AliasedItem]
+
+        register_state_type(AliasedWrapper, type_id="pydantic_aliased_wrapper_state_test")
+        session = AgentSession(session_id="aliased-wrapper-restore")
+        # The error loc reports the field name `last_message` while the payload
+        # holds the alias `lastMessage`, two levels down past a list index.
+        session.state["value"] = AliasedWrapper(
+            items=[
+                AliasedItem(
+                    lastMessage=Message(role="user", contents=["persisted"]),
+                    data={"type": "message", "note": "plain data"},
+                )
+            ]
+        )
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], AliasedWrapper)
+        item = restored.state["value"].items[0]
+        assert isinstance(item.last_message, Message)
+        assert item.last_message.text == "persisted"
+        assert item.data == {"type": "message", "note": "plain data"}
+
+    def test_registered_pydantic_state_restores_value_inside_a_keyed_container(self) -> None:
+        """A keyed container resolves aliases on its value type, not against the key."""
+        from pydantic import BaseModel, ConfigDict, Field
+
+        class KeyedItem(BaseModel):
+            model_config = ConfigDict(
+                arbitrary_types_allowed=True,
+                serialize_by_alias=True,
+                loc_by_alias=False,
+            )
+
+            last_message: Message = Field(alias="lastMessage")
+            data: dict[str, Any]
+
+        class KeyedWrapper(BaseModel):
+            model_config = ConfigDict(serialize_by_alias=True, loc_by_alias=False)
+
+            by_key: dict[str, KeyedItem]
+
+        register_state_type(KeyedWrapper, type_id="pydantic_keyed_wrapper_state_test")
+        session = AgentSession(session_id="keyed-wrapper-restore")
+        # The key is application data; the class governing the value is what
+        # resolves `last_message` onto the serialized `lastMessage`.
+        session.state["value"] = KeyedWrapper(
+            by_key={
+                "first": KeyedItem(
+                    lastMessage=Message(role="user", contents=["persisted"]),
+                    data={"type": "message", "note": "plain data"},
+                )
+            }
+        )
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        item = restored.state["value"].by_key["first"]
+        assert isinstance(item.last_message, Message)
+        assert item.last_message.text == "persisted"
+        assert item.data == {"type": "message", "note": "plain data"}
+
     def test_conflicting_type_identifier_is_rejected(self) -> None:
         class FirstState:
             def to_dict(self) -> dict[str, Any]:
