@@ -34,6 +34,9 @@ outer chat client's error policy and sensitive-data logging.
 
 The policy is captured in each run snapshot and serialized state. Sandbox cache
 keys include it, so detailed-error callbacks are not reused for redacted runs.
+Initialization, snapshot restore, and execution failures follow the same policy.
+Failed sandbox entries are retired; cancellation and system-exit signals still
+propagate without becoming ordinary execution errors.
 
 ## Installation
 

@@ -1539,13 +1539,15 @@ async def test_cleanup_failed_entry_disposes_directories_without_blocking_result
         _close_execute_code_registry(execute_code)
 
 
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
 async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    include_detailed_errors: bool,
 ) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
-    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, include_detailed_errors=include_detailed_errors)
     config = execute_code._build_run_config()
     registry = cast(Any, execute_code._registry)
     output_root = Path(registry._get_or_create_entry(config).output_dir.name)
@@ -1568,7 +1570,8 @@ async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     monkeypatch.setattr(execute_code_module, "_build_execution_contents", fail_build_contents)
 
     try:
-        with pytest.raises(RuntimeError, match="primary build failure"):
+        expected = "primary build failure" if include_detailed_errors else "Code execution failed."
+        with pytest.raises(RuntimeError, match=expected):
             await execute_code.invoke(arguments={"code": "create-output"})
         assert registry._entries == {}
     finally:
@@ -3297,6 +3300,59 @@ async def test_error_policy_preserves_callback_cancellation(
 
     with pytest.raises(asyncio.CancelledError):
         callback()
+
+
+@pytest.mark.parametrize(
+    "failure_stage", ["build", "register_tool", "allow_domain", "warmup", "snapshot", "restore", "run"]
+)
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_lifecycle_failures_obey_error_policy_and_retire_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_sandbox_factory: Callable[..., type[Any]],
+    host_error_detail: str,
+    failure_stage: str,
+    include_detailed_errors: bool,
+) -> None:
+    sandbox_cls = lifecycle_sandbox_factory(failure_stage)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: sandbox_cls)
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[lambda: "ok"], allowed_domains=["example.com"], include_detailed_errors=include_detailed_errors
+    )
+    registry = cast(Any, execute_code._registry)
+    try:
+        with pytest.raises(ValueError if include_detailed_errors else RuntimeError) as error:
+            await execute_code.invoke(arguments={"code": "print('ok')"})
+        assert (host_error_detail in str(error.value)) is include_detailed_errors
+        if not include_detailed_errors:
+            assert str(error.value) == "Code execution failed."
+        assert registry._entries == {}
+    finally:
+        _close_execute_code_registry(execute_code)
+    gc.collect()
+    owner_threads = {ident for _, ident in sandbox_cls.events}
+    assert len(owner_threads) == 1
+    assert threading.get_ident() not in owner_threads
+
+
+@pytest.mark.parametrize("signal_type", [asyncio.CancelledError, SystemExit, KeyboardInterrupt])
+@pytest.mark.parametrize("failure_stage", ["warmup", "restore", "run"])
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_lifecycle_error_policy_preserves_system_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_sandbox_factory: Callable[..., type[Any]],
+    host_error_detail: str,
+    signal_type: type[BaseException],
+    failure_stage: str,
+    include_detailed_errors: bool,
+) -> None:
+    sandbox_cls = lifecycle_sandbox_factory(failure_stage, signal_type)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: sandbox_cls)
+    execute_code = HyperlightExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    try:
+        with pytest.raises(signal_type, match=host_error_detail):
+            await execute_code.invoke(arguments={"code": "print('ok')"})
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 @pytest.mark.parametrize("include_detailed_errors", [False, True])

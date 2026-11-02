@@ -175,7 +175,8 @@ class _SandboxWorker:
     are dropped on the wrong thread and PyO3 panics. To prevent this, every
     exception raised inside a worker closure is caught on the worker, the
     traceback is dropped while still on the worker thread, and a sanitized
-    copy (preserving message and exception type) is re-raised on the caller.
+    copy is re-raised on the caller. Ordinary failures expose their original
+    type and message only when detailed errors are enabled.
     """
 
     __slots__ = ("_executor", "_initialized", "_reusable", "_sandbox", "_snapshot")
@@ -188,20 +189,23 @@ class _SandboxWorker:
         self._initialized = False
         self._reusable = True
 
-    def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
+    def _run_on_worker(self, fn: Callable[[], _T], *, include_detailed_errors: bool = False) -> _T:
         """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
 
         If ``fn`` raises, the exception's ``__traceback__`` is dropped on the worker
         thread (so any PyO3 unsendable locals captured in frame locals are released
-        on the owner thread) and a fresh exception of the same type is raised on
-        the caller's thread carrying only the original message.
+        on the owner thread). Ordinary failures are replaced with a generic
+        exception unless detailed errors are enabled. Cancellation and other
+        system signals retain their type.
         """
 
         def _wrapped() -> tuple[bool, Any]:
             try:
                 return True, fn()
             except BaseException as exc:
-                exc_type = type(exc)
+                self._reusable = False
+                exc_type: type[BaseException]
+                exc_args: tuple[str, ...]
                 # Capture args (usually (message,)) so the re-raised exception keeps the
                 # original shape for types whose constructor doesn't accept a single str.
                 # Coerce each arg to ``str`` on the worker thread: if a caller-supplied
@@ -209,7 +213,12 @@ class _SandboxWorker:
                 # unsendable object in args, forwarding it as-is would re-introduce the
                 # same cross-thread Drop hazard the traceback nulling avoids. Strings
                 # are always sendable. Fall back to the str() form if args is empty.
-                exc_args: tuple[str, ...] = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
+                if isinstance(exc, Exception) and not include_detailed_errors:
+                    exc_type = RuntimeError
+                    exc_args = ("Code execution failed.",)
+                else:
+                    exc_type = type(exc)
+                    exc_args = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
                 # Drop the traceback on the worker thread so frame locals (which
                 # may include PyO3 unsendable objects) are released here, not on
                 # the caller thread that will receive the wrapped exception.
@@ -226,11 +235,12 @@ class _SandboxWorker:
         # If the exception type's constructor rejects the captured args (rare), fall
         # back to a RuntimeError carrying the string form so we never lose the signal.
         try:
-            raise exc_type(*exc_args)
+            error = exc_type(*exc_args)
         except TypeError:
             raise RuntimeError(f"{exc_type.__name__}: {exc_args}") from None
+        raise error
 
-    def initialize(self, build_fn: Callable[[], tuple[Any, Any]]) -> None:
+    def initialize(self, build_fn: Callable[[], tuple[Any, Any]], *, include_detailed_errors: bool = False) -> None:
         """Build and install the sandbox+snapshot on the worker thread.
 
         ``build_fn`` is invoked with no arguments on the worker thread. It must
@@ -246,7 +256,7 @@ class _SandboxWorker:
             # Locals fall out of scope on the worker thread; the worker-local
             # attributes hold the only strong refs from now on.
 
-        self._run_on_worker(_init_on_worker)
+        self._run_on_worker(_init_on_worker, include_detailed_errors=include_detailed_errors)
 
     def execute(
         self,
@@ -317,7 +327,7 @@ class _SandboxWorker:
                     if contents is not None and not any(item.type == "error" for item in contents):
                         contents.append(_output_cleanup_error_content(exc))
 
-        return self._run_on_worker(_on_worker)
+        return self._run_on_worker(_on_worker, include_detailed_errors=include_detailed_errors)
 
     def is_reusable(self) -> bool:
         return self._reusable
@@ -1529,7 +1539,7 @@ class _SandboxRegistry(SandboxRuntime):
 
         worker = _SandboxWorker()
         try:
-            worker.initialize(_build_sandbox)
+            worker.initialize(_build_sandbox, include_detailed_errors=config.include_detailed_errors)
         except BaseException:
             worker.dispose()
             raise
@@ -1904,5 +1914,11 @@ class HyperlightExecuteCodeTool(FunctionTool):
         )
 
     async def _run_code(self, *, code: str) -> list[Content]:
-        config = self._build_run_config()
-        return await asyncio.to_thread(self._registry.execute, config=config, code=code)
+        include_detailed_errors = self._include_detailed_errors
+        try:
+            config = self._build_run_config()
+            return await asyncio.to_thread(self._registry.execute, config=config, code=code)
+        except Exception:
+            if include_detailed_errors:
+                raise
+            raise RuntimeError("Code execution failed.") from None
