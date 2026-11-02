@@ -88,7 +88,7 @@ The sample implements a ChatKit server using the `ChatKitServer` base class from
 - **`WeatherChatKitServer`**: Custom ChatKit server implementation that:
 
   - Extends `ChatKitServer[dict[str, Any]]`
-  - Uses Agent Framework's `Agent` with Azure OpenAI
+  - Uses Agent Framework's `Agent` with `FoundryChatClient`
   - Converts ChatKit messages to Agent Framework format using `ThreadItemConverter`
   - Streams responses back to ChatKit using `stream_agent_response`
   - Creates and streams interactive widgets after agent responses
@@ -135,7 +135,7 @@ async for event in stream_widget(thread_id=thread.id, widget=widget):
 
 - Python 3.11–3.15
 - Node.js 18.18+ and npm 9+
-- Azure OpenAI service configured
+- A Microsoft Foundry project with a deployed model
 - Azure CLI for authentication (`az login`)
 
 ### Network Requirements
@@ -172,12 +172,11 @@ cd python/samples/05-end-to-end/chatkit-integration
 pip install agent-framework-chatkit fastapi uvicorn azure-identity
 ```
 
-2. **Configure Azure OpenAI:**
+2. **Configure Microsoft Foundry:**
 
 ```bash
-export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_API_VERSION="2024-06-01"
-export AZURE_OPENAI_MODEL="gpt-4o"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
+export FOUNDRY_MODEL="gpt-4o"
 ```
 
 3. **Authenticate with Azure:**
