@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -24,27 +25,17 @@ _OPENAI_CLIENTS = [
 ]
 
 
-def _azure_sdk_client(deployment: str | None) -> AsyncAzureOpenAI:
-    kwargs: dict[str, Any] = {
-        "api_key": "dummy",
-        "azure_endpoint": "https://example.openai.azure.com",
-        "api_version": "2025-01-01-preview",
-    }
-    if deployment is not None:
-        kwargs["azure_deployment"] = deployment
-    return AsyncAzureOpenAI(**kwargs)
-
-
 @pytest.mark.parametrize(("client_cls", "specific_env"), _AZURE_CLIENTS)
 def test_injected_azure_deployment_wins_over_environment(
     client_cls: type[Any],
     specific_env: str,
     monkeypatch: pytest.MonkeyPatch,
     azure_openai_unit_test_env: dict[str, str],
+    azure_sdk_client_factory: Callable[[str | None], AsyncAzureOpenAI],
 ) -> None:
     monkeypatch.setenv(specific_env, "env-specific")
     monkeypatch.setenv("AZURE_OPENAI_MODEL", "env-generic")
-    sdk_client = _azure_sdk_client("client-deployment")
+    sdk_client = azure_sdk_client_factory("client-deployment")
 
     client = client_cls(async_client=sdk_client)
 
@@ -60,10 +51,11 @@ def test_explicit_model_wins_over_injected_deployment_and_environment(
     specific_env: str,
     monkeypatch: pytest.MonkeyPatch,
     azure_openai_unit_test_env: dict[str, str],
+    azure_sdk_client_factory: Callable[[str | None], AsyncAzureOpenAI],
 ) -> None:
     monkeypatch.setenv(specific_env, "env-specific")
     monkeypatch.setenv("AZURE_OPENAI_MODEL", "env-generic")
-    sdk_client = _azure_sdk_client("client-deployment")
+    sdk_client = azure_sdk_client_factory("client-deployment")
 
     client = client_cls(model="explicit-deployment", async_client=sdk_client)
 
@@ -78,8 +70,9 @@ def test_injected_azure_client_without_deployment_keeps_environment_fallback(
     client_cls: type[Any],
     specific_env: str,
     azure_openai_unit_test_env: dict[str, str],
+    azure_sdk_client_factory: Callable[[str | None], AsyncAzureOpenAI],
 ) -> None:
-    sdk_client = _azure_sdk_client(None)
+    sdk_client = azure_sdk_client_factory(None)
 
     client = client_cls(async_client=sdk_client)
 
