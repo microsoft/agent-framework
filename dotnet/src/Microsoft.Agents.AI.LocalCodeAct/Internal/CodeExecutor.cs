@@ -39,18 +39,15 @@ internal sealed class CodeExecutor
     /// <summary>Immutable snapshot of provider state captured at the start of an invocation.</summary>
     public sealed class RunSnapshot
     {
-        public RunSnapshot(IReadOnlyList<AIFunction> tools, IReadOnlyList<FileMount> fileMounts, bool includeDetailedErrors = false)
+        public RunSnapshot(IReadOnlyList<AIFunction> tools, IReadOnlyList<FileMount> fileMounts)
         {
             this.Tools = tools;
             this.FileMounts = fileMounts;
-            this.IncludeDetailedErrors = includeDetailedErrors;
         }
 
         public IReadOnlyList<AIFunction> Tools { get; }
 
         public IReadOnlyList<FileMount> FileMounts { get; }
-
-        public bool IncludeDetailedErrors { get; }
     }
 
     public async Task<List<AIContent>> ExecuteAsync(RunSnapshot snapshot, string code, CancellationToken cancellationToken)
@@ -68,8 +65,7 @@ internal sealed class CodeExecutor
             snapshot.Tools,
             this._limits,
             this._environment,
-            this._workingDirectory,
-            snapshot.IncludeDetailedErrors);
+            this._workingDirectory);
 
         var result = await bridge.RunAsync(code, cancellationToken).ConfigureAwait(false);
 

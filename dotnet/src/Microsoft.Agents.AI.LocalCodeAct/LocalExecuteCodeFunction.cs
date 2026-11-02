@@ -72,7 +72,7 @@ public sealed class LocalExecuteCodeFunction : AIFunction
             options.Environment,
             options.WorkingDirectory);
 
-        this._snapshot = new CodeExecutor.RunSnapshot(tools, fileMounts, options.IncludeDetailedErrors);
+        this._snapshot = new CodeExecutor.RunSnapshot(tools, fileMounts);
         this._inner = AIFunctionFactory.Create(
             this.ExecuteCodeAsync,
             new AIFunctionFactoryOptions

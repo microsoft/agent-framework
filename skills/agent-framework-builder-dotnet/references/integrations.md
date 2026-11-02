@@ -40,11 +40,6 @@ otherwise see [Extensibility](extensibility.md#custom-providers).
 - Durable agents and workflows run on Azure Functions and Durable Task; see
   [Hosting and deployment](hosting-and-deployment.md).
 
-LocalCodeAct and Hyperlight redact host tool exception diagnostics by default. Enable
-`IncludeDetailedErrors` on their provider options only for a trusted channel. This is separate from the
-outer `FunctionInvokingChatClient` error policy and sensitive-data logging; outer redaction cannot repair
-diagnostics already caught and returned by generated code.
-
 For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
 application owns authorization, durable snapshots, scaling, and rendering policy.
 

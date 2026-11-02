@@ -37,7 +37,6 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
 
     private readonly CodeExecutor _executor;
     private readonly LocalCodeActApprovalMode _approvalMode;
-    private readonly bool _includeDetailedErrors;
 
     private readonly ConcurrentDictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FileMount> _fileMounts = new(StringComparer.Ordinal);
@@ -69,7 +68,6 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
         }
 
         this._approvalMode = options.ApprovalMode;
-        this._includeDetailedErrors = options.IncludeDetailedErrors;
 
         this._executor = new CodeExecutor(
             pythonExecutablePath,
@@ -192,8 +190,7 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
         this.ThrowIfDisposed();
         snapshot = new CodeExecutor.RunSnapshot(
             this._tools.Values.ToList(),
-            this._fileMounts.Values.ToList(),
-            this._includeDetailedErrors);
+            this._fileMounts.Values.ToList());
 
         FeatureUsageMarker.MarkUsed();
         var approvalRequired = ComputeApprovalRequired(this._approvalMode, snapshot.Tools);
