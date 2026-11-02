@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import json
 import logging
 import os
 import re
 from pathlib import Path
+from types import MappingProxyType
 from typing import Annotated, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -912,6 +914,126 @@ def test_prepare_message_for_anthropic_mcp_server_tool_result_none_output(
     assert result["content"][0]["type"] == "mcp_tool_result"
     assert result["content"][0]["tool_use_id"] == "mcp_call_789"
     assert result["content"][0]["content"] == ""
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_content_list(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """List-based MCP results must replay as text blocks, not Content objects."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_list",
+                output=[
+                    Content.from_text("Found 3 results."),
+                    {"type": "text", "text": "Second block."},
+                    Content.from_uri("https://example.com/a.png", media_type="image/png"),
+                ],
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "user"
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["content"] == [
+        {"type": "text", "text": "Found 3 results."},
+        {"type": "text", "text": "Second block."},
+    ]
+    # The request body must remain JSON serializable.
+    json.dumps(result)
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_top_level_text_mapping(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A top-level text-block mapping must replay as a text block, not a Python repr."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_top_level",
+                output={"type": "text", "text": "top-level"},
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"][0]["content"] == [{"type": "text", "text": "top-level"}]
+    json.dumps(result)
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_top_level_non_text_mapping(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A non-dict Mapping must be JSON-encoded rather than stringified as a Python repr."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_json",
+                output=MappingProxyType({"result": "ok", "count": 2}),
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert json.loads(result["content"][0]["content"]) == {"result": "ok", "count": 2}
+    json.dumps(result)
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_list_content(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A parsed list-content MCP result must be replayed as serializable text blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_text_block = MagicMock()
+    mock_text_block.type = "text"
+    mock_text_block.text = "Result text"
+
+    mock_block = MagicMock()
+    mock_block.type = "mcp_tool_result"
+    mock_block.tool_use_id = "call_123"
+    mock_block.content = [mock_text_block]
+
+    parsed = client._parse_contents_from_anthropic([mock_block])
+    result = client._prepare_message_for_anthropic(Message(role="tool", contents=parsed))
+
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["content"] == [{"type": "text", "text": "Result text"}]
+    json.dumps(result)
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_after_round_trip(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Persisted MCP results must replay after Content.from_dict rebuilds nested Content."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_roundtrip",
+                output=[Content.from_text("round-trip output")],
+            )
+        ],
+    )
+    restored = Message.from_dict(message.to_dict())
+
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["content"] == [{"type": "text", "text": "round-trip output"}]
+    json.dumps(result)
 
 
 def test_prepare_messages_for_anthropic_with_system(
