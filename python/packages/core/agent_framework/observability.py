@@ -295,7 +295,7 @@ class OtelAttr(str, Enum):
     WORKFLOW_ID = "workflow.id"
     WORKFLOW_BUILDER_NAME = "workflow_builder.name"
     WORKFLOW_BUILDER_DESCRIPTION = "workflow_builder.description"
-    WORKFLOW_NAME = "workflow.name"
+    WORKFLOW_NAME = "gen_ai.workflow.name"
     WORKFLOW_DESCRIPTION = "workflow.description"
     WORKFLOW_DEFINITION = "workflow.definition"
     WORKFLOW_BUILD_SPAN = "workflow.build"

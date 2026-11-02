@@ -121,21 +121,24 @@ class FanInAggregator(Executor):
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("functional", [False, True])
+@pytest.mark.parametrize(
+    ("functional", "workflow_name"),
+    [(False, "customer_support_pipeline"), (True, "customer_support_pipeline"), (True, None)],
+)
 async def test_workflow_run_span_uses_semantic_convention_name(
-    span_exporter: InMemorySpanExporter, streaming: bool, functional: bool
+    span_exporter: InMemorySpanExporter, streaming: bool, functional: bool, workflow_name: str | None
 ) -> None:
-    """Graph and functional workflow invocations use the standard span name."""
+    """Graph and functional workflow invocations use standard span and workflow attribute names."""
     workflow_instance: Workflow | FunctionalWorkflow
     if functional:
 
-        @workflow
+        @workflow(name=workflow_name)
         async def simple_workflow(message: str) -> str:
             return message
 
         workflow_instance = simple_workflow.build()
     else:
-        workflow_instance = WorkflowBuilder(start_executor=MockExecutor()).build()
+        workflow_instance = WorkflowBuilder(start_executor=MockExecutor(), name=workflow_name).build()
 
     span_exporter.clear()
     if streaming:
@@ -151,6 +154,10 @@ async def test_workflow_run_span_uses_semantic_convention_name(
     ]
     assert len(run_spans) == 1
     assert run_spans[0].name == "invoke_workflow"
+    attributes = run_spans[0].attributes
+    assert attributes is not None
+    assert "workflow.name" not in attributes
+    assert attributes["gen_ai.workflow.name"] == (workflow_name or "simple_workflow")
 
 
 async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter) -> None:
