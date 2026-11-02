@@ -2480,7 +2480,7 @@ async def test_tool_result_compaction_preserves_hosted_tool_results(result_kind:
             outputs=[Content.from_shell_command_output(stdout="hello from shell", stderr="warning", exit_code=1)],
         )
         expected = ["hello from shell", "warning", "exit_code: 1"]
-        excluded = []
+        excluded: list[str] = []
     elif result_kind == "code_interpreter":
         call = Content.from_code_interpreter_tool_call(
             call_id="code-1", inputs=[Content.from_text(text="print('hello')")]
