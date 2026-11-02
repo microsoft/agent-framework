@@ -319,6 +319,18 @@ def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
     )
 
 
+def test_mcp_transport_subclasses_default_discovery_page_limit() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        tools = [
+            MCPStdioTool(name="stdio", command="python"),
+            MCPStreamableHTTPTool(name="http", url="https://example.com/mcp"),
+            MCPWebsocketTool(name="websocket", url="wss://example.com/mcp"),  # ty: ignore[deprecated]
+        ]
+
+    assert all(tool._max_discovery_pages == 100 for tool in tools)
+
+
 @pytest.mark.parametrize("configured_name", ["search_docs", "docs_search_docs"])
 async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration(configured_name: str):
     """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
@@ -6871,6 +6883,37 @@ async def test_load_tools_with_pagination():
     assert mock_session.list_tools.call_count == 3
     assert len(tool._functions) == 4
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
+
+
+async def test_load_tools_rejects_catalog_exceeding_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        cursor = params.cursor if params is not None else None
+        if cursor is None:
+            return types.ListToolsResult(
+                tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                next_cursor="second",
+            )
+        if cursor == "second":
+            return types.ListToolsResult(
+                tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})],
+                next_cursor="third",
+            )
+        pytest.fail(f"Unexpected tools/list cursor: {cursor!r}")
+
+    mock_session.list_tools = AsyncMock(side_effect=list_tools)
+
+    with pytest.raises(ToolExecutionException, match="configured maximum of 2 pages"):
+        await tool.load_tools()
+
+    assert mock_session.list_tools.await_count == 2
+    assert tool.functions == []
 
 
 async def test_load_tools_adds_properties_to_zero_arg_tool_schema():

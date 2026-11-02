@@ -250,6 +250,8 @@ MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY = 0.1
 _MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
+
+_DEFAULT_MCP_DISCOVERY_MAX_PAGES = 100
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
 
 
@@ -1181,6 +1183,7 @@ class MCPTool:
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
         *,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
     ) -> None:
@@ -1205,6 +1208,8 @@ class MCPTool:
                 object_name="MCP progressive disclosure",
                 category=ExperimentalWarning,
             )
+        if max_discovery_pages is not None and max_discovery_pages <= 0:
+            raise ValueError("max_discovery_pages must be positive or None.")
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
         if request_timeout is not None and request_timeout <= 0:
@@ -1233,6 +1238,7 @@ class MCPTool:
         self.tool_result_content = tool_result_content
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
+        self._max_discovery_pages = max_discovery_pages
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
@@ -3135,13 +3141,12 @@ class MCPTool:
         tool_param_names_by_name: dict[str, set[str]] = {}
         tool_annotations_by_name: dict[str, Any] = {}
 
-        params: types.PaginatedRequestParams | None = None
+        tool_list = await self._try_list_tools_page_with_recovery(None)
+        if tool_list is None:
+            return
+        pages_loaded = 1
+
         while True:
-            tool_list = await self._try_list_tools_page_with_recovery(params)
-
-            if tool_list is None:
-                return
-
             for tool in tool_list.tools:
                 task_support = getattr(getattr(tool, "execution", None), "task_support", None)
                 if task_support == "required":
@@ -3219,10 +3224,21 @@ class MCPTool:
                 )
                 new_functions.append(func)
 
-            # Check if there are more pages
-            if not tool_list.next_cursor:
+            if tool_list.next_cursor is None:
                 break
-            params = types.PaginatedRequestParams(cursor=tool_list.next_cursor)
+
+            if self._max_discovery_pages is not None and pages_loaded >= self._max_discovery_pages:
+                raise _mcp_tool_execution_exception(
+                    f"MCP tool discovery reached the configured maximum of "
+                    f"{self._max_discovery_pages} pages before the server completed pagination."
+                )
+
+            tool_list = await self._try_list_tools_page_with_recovery(
+                types.PaginatedRequestParams(cursor=tool_list.next_cursor)
+            )
+            if tool_list is None:
+                return
+            pages_loaded += 1
 
         current_functions = [
             func
@@ -3772,6 +3788,7 @@ class MCPStdioTool(MCPTool):
         additional_properties: dict[str, Any] | None = None,
         task_options: Any | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -3880,6 +3897,8 @@ class MCPStdioTool(MCPTool):
                 ``function_invocation_kwargs`` - for example through ``env`` - for servers whose
                 process you do not control.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
+            max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
+                ``None`` disables the limit.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -3935,6 +3954,7 @@ class MCPStdioTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
+            max_discovery_pages=max_discovery_pages,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -4030,6 +4050,7 @@ class MCPStreamableHTTPTool(MCPTool):
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         task_options: Any = None,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -4209,6 +4230,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 still allows a different value per request), or configure a custom
                 ``http_client``.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
+            max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
+                ``None`` disables the limit.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -4264,6 +4287,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
+            max_discovery_pages=max_discovery_pages,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -4695,6 +4719,7 @@ class MCPWebsocketTool(MCPTool):
         additional_properties: dict[str, Any] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         task_options: Any = None,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -4788,6 +4813,8 @@ class MCPWebsocketTool(MCPTool):
                 transport has no header hook, so source credentials outside
                 ``function_invocation_kwargs`` for servers you do not control.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
+            max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
+                ``None`` disables the limit.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -4815,6 +4842,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
+            max_discovery_pages=max_discovery_pages,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
