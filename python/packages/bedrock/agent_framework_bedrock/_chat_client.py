@@ -554,8 +554,11 @@ class BedrockChatClient(
                 )
             elif message.role == "tool":
                 content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
-                pending_tool_use_ids.clear()
                 if not content_blocks:
+                    continue
+                # Merge consecutive tool messages into a single user message
+                if conversation and conversation[-1]["role"] == "user":
+                    conversation[-1]["content"].extend(content_blocks)
                     continue
             else:
                 pending_tool_use_ids.clear()
@@ -576,7 +579,6 @@ class BedrockChatClient(
             ]
 
         aligned_blocks: list[dict[str, Any]] = []
-        pending = deque(pending_tool_use_ids)
         for block in content_blocks:
             if not isinstance(block, MutableMapping):
                 aligned_blocks.append(block)
@@ -585,18 +587,18 @@ class BedrockChatClient(
             if not tool_result:
                 aligned_blocks.append(block)
                 continue
-            if not pending:
+            if not pending_tool_use_ids:
                 logger.debug("Dropping extra tool result block due to missing pending tool uses: %s", block)
                 continue
             tool_use_id = tool_result.get("toolUseId")
             if tool_use_id:
                 try:
-                    pending.remove(tool_use_id)
+                    pending_tool_use_ids.remove(tool_use_id)
                 except ValueError:
                     logger.debug("Tool result references unknown toolUseId '%s'. Dropping block.", tool_use_id)
                     continue
             else:
-                tool_result["toolUseId"] = pending.popleft()
+                tool_result["toolUseId"] = pending_tool_use_ids.popleft()
             aligned_blocks.append(block)
 
         return aligned_blocks

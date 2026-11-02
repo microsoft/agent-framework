@@ -576,7 +576,7 @@ async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptu
                 ),
                 types.Tool(
                     name="optional",
-                    input_schema={"type": "object", "properties": {}},
+                    input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
                     execution=types.ToolExecution(task_support="optional"),
                     _meta={"mode": "optional"},
                 ),
@@ -598,14 +598,30 @@ async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptu
 
     assert [function.name for function in tool.functions] == ["optional", "forbidden", "ordinary"]
     assert tool._tool_call_meta_by_name == {"optional": {"mode": "optional"}}
-    assert set(tool._tool_param_names_by_name) == {"optional", "forbidden", "ordinary"}
-    skip_messages = [message for message in caplog.messages if message.startswith("Skipping MCP tool")]
-    assert skip_messages == [
+    assert tool._tool_param_names_by_name == {
+        "optional": {"query"},
+        "forbidden": set(),
+        "ordinary": set(),
+    }
+    assert "required" not in tool._tool_call_meta_by_name
+    assert "required" not in tool._tool_param_names_by_name
+    assert caplog.messages == [
         "Skipping MCP tool 'required' because it requires the Tasks extension, which this client does not support."
     ]
 
-    for function in tool.functions:
-        await function.invoke(arguments={})
+    optional_function = tool.functions[0]
+    optional_result = await optional_function.invoke(arguments={"query": "search term"})
+    assert _mcp_result_to_text(optional_result) == "ok"
+    optional_call = mock_session.call_tool.await_args
+    assert optional_call is not None
+    assert optional_call.args == ("optional",)
+    assert set(optional_call.kwargs) == {"arguments", "meta"}
+    assert optional_call.kwargs["arguments"] == {"query": "search term"}
+    assert optional_call.kwargs["meta"]["mode"] == "optional"
+
+    for function in tool.functions[1:]:
+        result = await function.invoke(arguments={})
+        assert _mcp_result_to_text(result) == "ok"
 
     assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["optional", "forbidden", "ordinary"]
 
