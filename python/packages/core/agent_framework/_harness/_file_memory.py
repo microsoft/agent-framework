@@ -97,6 +97,9 @@ _MAX_DESCRIPTION_FILE_NAME_BYTES = 255
 _ENCODED_SCOPE_PREFIX = "~scope-"
 # Prefix for description sidecars of memory file names too long to carry the
 # suffix verbatim. Distinct from the other prefixes for the same reason.
+# Memory file names that already start with this prefix also take the digest
+# branch, so the verbatim namespace never contains the prefix and the two
+# branches cannot produce the same sidecar.
 _DIGEST_DESCRIPTION_PREFIX = "~memory-desc-"
 
 
@@ -112,12 +115,15 @@ def _description_file_name(file_name: str) -> str:
     A memory file name long enough to push the appended sidecar past the
     filesystem's name limit cannot carry the suffix verbatim, so such names
     fall back to a SHA-256 digest (still suffixed, still injective in
-    practice). The two namespaces cannot collide: a memory file name whose
-    sidecar would look like a digest sidecar is itself far shorter than the
-    names that take the digest branch.
+    practice). Names that already start with the reserved digest prefix take
+    the digest branch too: otherwise a short memory named after another name's
+    digest stem would share that name's sidecar without any hash collision.
     """
     sidecar = f"{file_name}{_DESCRIPTION_SUFFIX}"
-    if len(sidecar.encode("utf-8")) <= _MAX_DESCRIPTION_FILE_NAME_BYTES:
+    if (
+        not file_name.startswith(_DIGEST_DESCRIPTION_PREFIX)
+        and len(sidecar.encode("utf-8")) <= _MAX_DESCRIPTION_FILE_NAME_BYTES
+    ):
         return sidecar
     digest = hashlib.sha256(file_name.encode("utf-8")).hexdigest()
     return f"{_DIGEST_DESCRIPTION_PREFIX}{digest}{_DESCRIPTION_SUFFIX}"
