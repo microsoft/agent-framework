@@ -202,10 +202,41 @@ public sealed class ObservabilityTests : IDisposable
             a.Events.Any(e => e.Name == EventNames.WorkflowStarted));
         Assert.Equal("invoke_workflow", workflowRunActivity.OperationName);
         Assert.Equal(workflowName, workflowRunActivity.GetTagItem("gen_ai.workflow.name"));
+        Assert.Equal("invoke_workflow", workflowRunActivity.GetTagItem("gen_ai.operation.name"));
+        Assert.All(capturedActivities.Where(a => a != workflowRunActivity), a =>
+            Assert.DoesNotContain(a.TagObjects, tag => tag.Key == "gen_ai.operation.name"));
 
         var workflowBuildActivity = Assert.Single(capturedActivities, a => a.OperationName == ActivityNames.WorkflowBuild);
         Assert.Equal(workflowName, workflowBuildActivity.GetTagItem("gen_ai.workflow.name"));
         Assert.All(capturedActivities, a => Assert.DoesNotContain(a.TagObjects, tag => tag.Key == "workflow.name"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("customer_support_pipeline")]
+    public void WorkflowRunActivity_ProvidesOperationNameAtCreation(string? workflowName)
+    {
+        // Arrange
+        using var activitySource = new ActivitySource("WorkflowOperationNameSamplingTest");
+        object? operationNameAtCreation = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == activitySource,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                operationNameAtCreation = options.Tags?.FirstOrDefault(tag => tag.Key == "gen_ai.operation.name").Value;
+                return ActivitySamplingResult.AllData;
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var telemetryContext = new WorkflowTelemetryContext(new WorkflowTelemetryOptions(), activitySource);
+
+        // Act
+        using Activity? activity = telemetryContext.StartWorkflowRunActivity(workflowName);
+
+        // Assert
+        Assert.NotNull(activity);
+        Assert.Equal("invoke_workflow", operationNameAtCreation);
     }
 
     [Theory]

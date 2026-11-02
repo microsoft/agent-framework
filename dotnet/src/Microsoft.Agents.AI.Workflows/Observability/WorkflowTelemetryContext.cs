@@ -118,10 +118,10 @@ internal sealed class WorkflowTelemetryContext
             return null;
         }
 
-        ActivityTagsCollection? tags = null;
+        ActivityTagsCollection tags = new() { { Tags.OperationName, ActivityNames.WorkflowInvoke } };
         if (!string.IsNullOrWhiteSpace(workflowName))
         {
-            tags = new() { { Tags.WorkflowName, workflowName } };
+            tags.Add(Tags.WorkflowName, workflowName);
         }
 
         return this.ActivitySource.StartActivity(ActivityNames.WorkflowInvoke, ActivityKind.Internal, parentContext: default, tags: tags);
