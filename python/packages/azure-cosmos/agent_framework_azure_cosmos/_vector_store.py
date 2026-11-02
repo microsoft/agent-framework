@@ -102,6 +102,23 @@ class AzureCosmosSettings(TypedDict, total=False):
     key: SecretString | None
 
 
+class _CosmosResourceSettings(TypedDict, total=False):
+    name: str | None
+
+
+def _resolve_resource_name(value: str | None, kind: str) -> str:
+    if value is None:
+        settings = load_settings(
+            _CosmosResourceSettings,
+            env_prefix=f"AZURE_COSMOS_{kind.upper()}_",
+            required_fields=["name"],
+        )
+        value = settings.get("name")
+    if not isinstance(value, str):
+        raise TypeError(f"{kind} name must be a string.")
+    return _validate_resource_name(value, kind)
+
+
 def _validate_operation_options(options: Mapping[str, Any] | None, allowed: set[str]) -> dict[str, Any]:
     result = dict(options or {})
     if unknown := result.keys() - allowed:
@@ -245,12 +262,6 @@ def _connection_from_clients(
     if cosmos_client is not None and database_client is not None:
         raise ValueError("Provide at most one of cosmos_client or database_client.")
     if database_client is not None:
-        if any(value is not None for value in (endpoint, database_name, credential, env_file_path, env_file_encoding)):
-            raise ValueError(
-                "database_client cannot be combined with endpoint, database_name, credential, or env_file options."
-            )
-        if create_database:
-            raise ValueError("create_database cannot be used with an injected database_client.")
         resolved_name = getattr(database_client, "id", None)
         if not isinstance(resolved_name, str) or not resolved_name:
             raise ValueError("Injected database_client must expose a non-empty string id.")
@@ -262,14 +273,10 @@ def _connection_from_clients(
             create_database=False,
         )
     if cosmos_client is not None:
-        if any(value is not None for value in (endpoint, credential, env_file_path, env_file_encoding)):
-            raise ValueError("cosmos_client cannot be combined with endpoint, credential, or env_file options.")
-        if database_name is None:
-            raise ValueError("database_name is required with an injected cosmos_client.")
         return _CosmosConnection(
             cosmos_client=cosmos_client,
             database_client=None,
-            database_name=_validate_resource_name(database_name, "database"),
+            database_name=_resolve_resource_name(database_name, "database"),
             owns_client=False,
             create_database=create_database,
         )
@@ -750,20 +757,8 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
         resolved_name = collection_name
         owns_connection = False
         if container_client is not None:
-            if (
-                any(
-                    value is not None
-                    for value in (endpoint, database_name, credential, env_file_path, env_file_encoding)
-                )
-                or create_database
-            ):
-                raise ValueError(
-                    "container_client cannot be combined with connection, database, env_file, or creation options."
-                )
             client_name = getattr(container_client, "id", None)
             if isinstance(client_name, str) and client_name:
-                if resolved_name is not None and resolved_name != client_name:
-                    raise ValueError("collection_name must match the injected container_client id.")
                 resolved_name = client_name
             self._connection = None
         elif _connection is not None:
@@ -800,6 +795,13 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
                 create_database=create_database,
             )
             owns_connection = True
+
+        if container_client is not None or cosmos_client is not None or database_client is not None:
+            registered_definition = definition or getattr(record_type, "__vectorstoremodel_definition__", None)
+            configured_name = (
+                resolved_name if resolved_name is not None else getattr(registered_definition, "collection_name", None)
+            )
+            resolved_name = _resolve_resource_name(configured_name, "container")
 
         super().__init__(
             record_type,

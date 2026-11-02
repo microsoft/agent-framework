@@ -218,6 +218,41 @@ async def test_owned_store_closes_client() -> None:
     client.close.assert_awaited_once()
 
 
+@pytest.mark.parametrize("target", ["store", "collection"])
+async def test_owned_clients_resolve_settings_and_close(
+    target: str, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file = tmp_path / "cosmos.env"
+    env_file.write_text(
+        "AZURE_COSMOS_ENDPOINT=https://file.documents.azure.com/\n"
+        "AZURE_COSMOS_DATABASE_NAME=file-db\n"
+        "AZURE_COSMOS_CONTAINER_NAME=file-container\n"
+        "AZURE_COSMOS_KEY=file-key\n"
+    )
+    monkeypatch.setenv("AZURE_COSMOS_ENDPOINT", "https://env.documents.azure.com/")
+    monkeypatch.setenv("AZURE_COSMOS_KEY", "env-key")
+    client = MagicMock()
+    client.close = AsyncMock()
+    resource: CosmosStore | CosmosCollection[Any]
+    with patch.object(vector_store_module, "CosmosClient", return_value=client) as factory:
+        if target == "store":
+            resource = CosmosStore(database_name="explicit-db", env_file_path=str(env_file))
+            assert resource.database_name == "explicit-db"
+        else:
+            definition = VectorStoreCollectionDefinition(_definition().fields)
+            resource = CosmosCollection(
+                dict, definition=definition, database_name="explicit-db", env_file_path=str(env_file)
+            )
+            assert resource.collection_name == "file-container"
+            assert resource._connection is not None
+            assert resource._connection.database_name == "explicit-db"
+    assert factory.call_args.kwargs["url"] == "https://file.documents.azure.com/"
+    assert factory.call_args.kwargs["credential"] == "file-key"
+    await resource.close()
+    await resource.close()
+    client.close.assert_awaited_once()
+
+
 async def test_injected_clients_bypass_settings_and_remain_open() -> None:
     client = MagicMock()
     client.close = AsyncMock()
@@ -237,39 +272,133 @@ async def test_injected_clients_bypass_settings_and_remain_open() -> None:
 
 
 @pytest.mark.parametrize(
-    "kwargs,match",
+    "target", ["store-account", "store-database", "collection-account", "collection-database", "collection-container"]
+)
+@pytest.mark.parametrize("file_option", ["missing", "invalid-encoding"])
+async def test_injected_clients_ignore_connection_settings(target: str, file_option: str, tmp_path: Any) -> None:
+    client = MagicMock()
+    client.id = "injected"
+    client.close = AsyncMock()
+    env_file = tmp_path / "ignored.env"
+    if file_option == "invalid-encoding":
+        env_file.write_bytes(b"\xff")
+    kwargs: dict[str, Any] = {
+        "endpoint": "ignored",
+        "credential": object(),
+        "database_name": "explicit-db",
+        "create_database": True,
+        "env_file_path": str(env_file),
+        "env_file_encoding": "invalid-encoding",
+    }
+    kind = target.split("-")[1]
+    kwargs[{"account": "cosmos_client", "database": "database_client", "container": "container_client"}[kind]] = client
+    with patch.object(vector_store_module, "CosmosClient") as factory:
+        if target.startswith("store"):
+            store = CosmosStore(**kwargs)
+            assert store.database_name == ("explicit-db" if kind == "account" else "injected")
+            await store.close()
+        else:
+            collection = CosmosCollection(
+                dict, definition=_definition(), collection_name="explicit-container", **kwargs
+            )
+            assert collection.collection_name == ("injected" if kind == "container" else "explicit-container")
+            await collection.close()
+        factory.assert_not_called()
+    client.close.assert_not_called()
+
+
+@pytest.mark.parametrize("target", ["store", "collection"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_injected_account_resolves_database_independently(
+    target: str, explicit: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AZURE_COSMOS_DATABASE_NAME", "env-db")
+    kwargs: dict[str, Any] = {"cosmos_client": MagicMock()}
+    if explicit:
+        kwargs["database_name"] = "explicit-db"
+    if target == "store":
+        assert CosmosStore(**kwargs).database_name == ("explicit-db" if explicit else "env-db")
+    else:
+        collection = CosmosCollection(dict, definition=_definition(), **kwargs)
+        assert collection._connection is not None
+        assert collection._connection.database_name == ("explicit-db" if explicit else "env-db")
+
+
+@pytest.mark.parametrize("kind", ["account", "database"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_injected_collection_resolves_container_independently(
+    kind: str, explicit: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AZURE_COSMOS_CONTAINER_NAME", "env-container")
+    client = MagicMock()
+    client.id = "db"
+    kwargs: dict[str, Any] = {"database_name": "db"} if kind == "account" else {}
+    kwargs["cosmos_client" if kind == "account" else "database_client"] = client
+    definition = VectorStoreCollectionDefinition(_definition().fields)
+    collection = CosmosCollection(
+        dict, definition=definition, collection_name="explicit-container" if explicit else None, **kwargs
+    )
+    assert collection.collection_name == ("explicit-container" if explicit else "env-container")
+
+
+@pytest.mark.parametrize(
+    "target", ["store-account", "collection-account", "collection-account-container", "collection-database"]
+)
+def test_injected_clients_report_missing_selector(target: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AZURE_COSMOS_DATABASE_NAME", raising=False)
+    monkeypatch.delenv("AZURE_COSMOS_CONTAINER_NAME", raising=False)
+    client = MagicMock()
+    client.id = "db"
+    kwargs: dict[str, Any] = {"database_client" if target.endswith("database") else "cosmos_client": client}
+    if target.endswith("container"):
+        kwargs["database_name"] = "db"
+    selector = "AZURE_COSMOS_DATABASE_NAME" if target.endswith("account") else "AZURE_COSMOS_CONTAINER_NAME"
+    with pytest.raises((ValueError, SettingNotFoundError), match=selector):
+        if target.startswith("store"):
+            CosmosStore(**kwargs)
+        else:
+            CosmosCollection(dict, definition=VectorStoreCollectionDefinition(_definition().fields), **kwargs)
+
+
+@pytest.mark.parametrize(
+    "target", ["store-account", "store-database", "collection-account", "collection-database", "collection-container"]
+)
+def test_injected_clients_ignore_invalid_ambient_settings(target: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_COSMOS_ENDPOINT", "")
+    monkeypatch.setenv("AZURE_COSMOS_KEY", "")
+    monkeypatch.setenv("AZURE_COSMOS_DATABASE_NAME", "x" * 256)
+    monkeypatch.setenv("AZURE_COSMOS_CONTAINER_NAME", "x" * 256)
+    client = MagicMock()
+    client.id = "injected"
+    kind = target.split("-")[1]
+    kwargs: dict[str, Any] = {"database_name": "db"} if kind == "account" else {}
+    kwargs[{"account": "cosmos_client", "database": "database_client", "container": "container_client"}[kind]] = client
+    with patch.object(vector_store_module, "CosmosClient") as factory:
+        if target.startswith("store"):
+            store = CosmosStore(**kwargs)
+            assert store.database_name == ("db" if kind == "account" else "injected")
+        else:
+            collection = CosmosCollection(dict, definition=_definition(), **kwargs)
+            assert collection.collection_name == ("injected" if kind == "container" else "items")
+        factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "clients",
     [
-        ({"cosmos_client": MagicMock()}, "database_name"),
-        ({"cosmos_client": MagicMock(), "database_client": MagicMock()}, "at most one"),
-        ({"database_client": MagicMock(), "database_name": "db"}, "cannot be combined"),
-        ({"database_client": MagicMock(), "create_database": True}, "create_database"),
-        ({"cosmos_client": MagicMock(), "database_name": "db", "endpoint": "https://x"}, "cannot be combined"),
+        ("cosmos_client", "database_client"),
+        ("cosmos_client", "container_client"),
+        ("database_client", "container_client"),
+        ("cosmos_client", "database_client", "container_client"),
     ],
 )
-def test_store_rejects_conflicting_injection(kwargs: dict[str, Any], match: str) -> None:
-    if "database_client" in kwargs:
-        kwargs["database_client"].id = "db"
-    with pytest.raises(ValueError, match=match):
-        CosmosStore(**kwargs)
-
-
-def test_container_injection_rejects_settings_and_name_mismatch() -> None:
-    container = MagicMock()
-    container.id = "actual"
-    with pytest.raises(ValueError, match="cannot be combined"):
-        CosmosCollection(
-            dict,
-            definition=_definition(),
-            container_client=container,
-            endpoint="https://account.documents.azure.com/",
-        )
-    with pytest.raises(ValueError, match="must match"):
-        CosmosCollection(
-            dict,
-            definition=_definition(),
-            collection_name="other",
-            container_client=container,
-        )
+def test_rejects_multiple_injected_clients(clients: tuple[str, ...]) -> None:
+    kwargs = {name: MagicMock() for name in clients}
+    with pytest.raises(ValueError, match="at most one"):
+        CosmosCollection(dict, definition=_definition(), **kwargs)
+    if "container_client" not in clients:
+        with pytest.raises(ValueError, match="at most one"):
+            CosmosStore(**kwargs)
 
 
 def test_missing_settings_and_invalid_credential(monkeypatch: pytest.MonkeyPatch) -> None:
