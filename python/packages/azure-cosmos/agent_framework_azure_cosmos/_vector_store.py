@@ -265,6 +265,8 @@ def _connection_from_clients(
         resolved_name = getattr(database_client, "id", None)
         if not isinstance(resolved_name, str) or not resolved_name:
             raise ValueError("Injected database_client must expose a non-empty string id.")
+        if database_name is not None and database_name != resolved_name:
+            raise ValueError("database_name must match the injected database_client id.")
         return _CosmosConnection(
             cosmos_client=None,
             database_client=database_client,
@@ -759,6 +761,8 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
         if container_client is not None:
             client_name = getattr(container_client, "id", None)
             if isinstance(client_name, str) and client_name:
+                if resolved_name is not None and resolved_name != client_name:
+                    raise ValueError("collection_name must match the injected container_client id.")
                 resolved_name = client_name
             self._connection = None
         elif _connection is not None:

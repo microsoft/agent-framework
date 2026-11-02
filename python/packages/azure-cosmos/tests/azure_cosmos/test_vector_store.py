@@ -285,12 +285,13 @@ async def test_injected_clients_ignore_connection_settings(target: str, file_opt
     kwargs: dict[str, Any] = {
         "endpoint": "ignored",
         "credential": object(),
-        "database_name": "explicit-db",
         "create_database": True,
         "env_file_path": str(env_file),
         "env_file_encoding": "invalid-encoding",
     }
     kind = target.split("-")[1]
+    if kind == "account":
+        kwargs["database_name"] = "explicit-db"
     kwargs[{"account": "cosmos_client", "database": "database_client", "container": "container_client"}[kind]] = client
     with patch.object(vector_store_module, "CosmosClient") as factory:
         if target.startswith("store"):
@@ -299,12 +300,52 @@ async def test_injected_clients_ignore_connection_settings(target: str, file_opt
             await store.close()
         else:
             collection = CosmosCollection(
-                dict, definition=_definition(), collection_name="explicit-container", **kwargs
+                dict,
+                definition=_definition(),
+                collection_name=None if kind == "container" else "explicit-container",
+                **kwargs,
             )
             assert collection.collection_name == ("injected" if kind == "container" else "explicit-container")
             await collection.close()
         factory.assert_not_called()
     client.close.assert_not_called()
+
+
+@pytest.mark.parametrize("target", ["store-database", "collection-database", "collection-container"])
+def test_injected_proxy_rejects_mismatched_name(target: str) -> None:
+    client = MagicMock()
+    client.id = "injected"
+    if target.endswith("database"):
+        kwargs: dict[str, Any] = {"database_client": client, "database_name": "other"}
+        message = "database_name must match the injected database_client id."
+    else:
+        kwargs = {"container_client": client, "collection_name": "other"}
+        message = "collection_name must match the injected container_client id."
+    with pytest.raises(ValueError) as exc:
+        if target.startswith("store"):
+            CosmosStore(**kwargs)
+        else:
+            CosmosCollection(dict, definition=_definition(), **kwargs)
+    assert str(exc.value) == message
+
+
+@pytest.mark.parametrize("target", ["store-database", "collection-database", "collection-container"])
+def test_injected_proxy_accepts_matching_name(target: str) -> None:
+    client = MagicMock()
+    client.id = "injected"
+    if target.endswith("database"):
+        kwargs: dict[str, Any] = {"database_client": client, "database_name": "injected"}
+    else:
+        kwargs = {"container_client": client, "collection_name": "injected"}
+    if target.startswith("store"):
+        assert CosmosStore(**kwargs).database_name == "injected"
+    else:
+        collection = CosmosCollection(dict, definition=_definition(), **kwargs)
+        if target.endswith("container"):
+            assert collection.collection_name == "injected"
+        else:
+            assert collection._connection is not None
+            assert collection._connection.database_name == "injected"
 
 
 @pytest.mark.parametrize("target", ["store", "collection"])
