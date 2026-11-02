@@ -49,7 +49,7 @@
     <!-- System.* -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-    <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.13" />
     <PackageVersion Include="System.ClientModel" Version="1.16.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.12" />
     <PackageVersion Include="System.Collections.Immutable" Version="10.0.12" />
@@ -65,7 +65,7 @@
     <PackageVersion Include="AGUI.Client" Version="1.0.0" />
     <PackageVersion Include="AGUI.Server" Version="1.0.0" />
     <PackageVersion Include="System.Text.Json" Version="10.0.13" />
-    <PackageVersion Include="System.Threading.Channels" Version="10.0.12" />
+    <PackageVersion Include="System.Threading.Channels" Version="10.0.13" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="System.Net.Security" Version="4.3.2" />
     <!-- OpenTelemetry -->
@@ -84,12 +84,12 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.11.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.10.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.11.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.10.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
