@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using OpenTelemetry;
 
 namespace Microsoft.Agents.AI.Workflows.Observability;
 
@@ -124,6 +125,16 @@ internal sealed class WorkflowTelemetryContext
         {
             tags.Add(Tags.WorkflowName, workflowName);
             activityName += " " + workflowName;
+        }
+
+        string? conversationId = Baggage.GetBaggage(Tags.ConversationId);
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            conversationId = Activity.Current?.GetBaggageItem(Tags.ConversationId);
+        }
+        if (!string.IsNullOrWhiteSpace(conversationId))
+        {
+            tags.Add(Tags.ConversationId, conversationId);
         }
 
         return this.ActivitySource.StartActivity(activityName, ActivityKind.Internal, parentContext: default, tags: tags);

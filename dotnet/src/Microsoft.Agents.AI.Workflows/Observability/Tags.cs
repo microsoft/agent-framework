@@ -5,6 +5,7 @@ namespace Microsoft.Agents.AI.Workflows.Observability;
 internal static class Tags
 {
     public const string OperationName = "gen_ai.operation.name";
+    public const string ConversationId = "gen_ai.conversation.id";
     public const string WorkflowId = "workflow.id";
     public const string WorkflowName = "gen_ai.workflow.name";
     public const string WorkflowDescription = "workflow.description";

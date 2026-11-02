@@ -20,6 +20,10 @@ runtime evidence; it does not determine whether output is correct.
 - Workflow invocation activities are named `invoke_workflow {gen_ai.workflow.name}`, or `invoke_workflow` when no
   meaningful workflow name exists. `gen_ai.operation.name` remains `invoke_workflow` and is available at creation for
   sampling.
+- To correlate workflow invocations with an existing conversation, supply `gen_ai.conversation.id` through
+  OpenTelemetry baggage or the current `Activity`'s baggage. Non-blank OpenTelemetry baggage takes precedence.
+  Invocation activities record the ID at creation; without supplied context, the attribute is omitted.
+  Workflow execution `session.id` is separate and is not used as a fallback conversation ID.
 - Redaction does not replace sanitization in custom telemetry, exporters, middleware, logs (`UseLogging`), or
   exception messages.
 

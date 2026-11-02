@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Extensions.AI;
+using OpenTelemetry;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -179,6 +180,7 @@ public sealed class ObservabilityTests : IDisposable
     {
         // Arrange
         using var testActivity = new Activity("WorkflowRunSpanNameTest").Start();
+        testActivity.AddBaggage("gen_ai.conversation.id", "application-thread");
         var workflow = CreateWorkflow(workflowName);
         var executionEnvironment = GetExecutionEnvironment(executionEnvironmentName);
 
@@ -205,8 +207,10 @@ public sealed class ObservabilityTests : IDisposable
         Assert.Equal(expectedSpanName, workflowRunActivity.DisplayName);
         Assert.Equal(workflowName, workflowRunActivity.GetTagItem("gen_ai.workflow.name"));
         Assert.Equal("invoke_workflow", workflowRunActivity.GetTagItem("gen_ai.operation.name"));
+        Assert.Equal("application-thread", workflowRunActivity.GetTagItem("gen_ai.conversation.id"));
+        Assert.IsType<string>(workflowRunActivity.GetTagItem("session.id"));
         Assert.All(capturedActivities.Where(a => a != workflowRunActivity), a =>
-            Assert.DoesNotContain(a.TagObjects, tag => tag.Key == "gen_ai.operation.name"));
+            Assert.DoesNotContain(a.TagObjects, tag => tag.Key is "gen_ai.operation.name" or "gen_ai.conversation.id"));
 
         var workflowBuildActivity = Assert.Single(capturedActivities, a => a.OperationName == ActivityNames.WorkflowBuild);
         Assert.Equal(workflowName, workflowBuildActivity.GetTagItem("gen_ai.workflow.name"));
@@ -244,6 +248,88 @@ public sealed class ObservabilityTests : IDisposable
         Assert.NotNull(activity);
         Assert.Equal(expectedSpanName, spanNameAtCreation);
         Assert.Equal("invoke_workflow", operationNameAtCreation);
+    }
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("", null, null)]
+    [InlineData(" ", null, null)]
+    [InlineData("otel-thread", null, "otel-thread")]
+    [InlineData("otel-thread", "activity-thread", "otel-thread")]
+    [InlineData(null, "activity-thread", "activity-thread")]
+    [InlineData("", "activity-thread", "activity-thread")]
+    [InlineData(" ", "activity-thread", "activity-thread")]
+    public void WorkflowRunActivity_UsesConversationContextAtCreation(
+        string? otelConversationId, string? activityConversationId, string? expectedConversationId)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowConversationContextTest").Start();
+        testActivity.AddBaggage("gen_ai.conversation.id", activityConversationId);
+        using var activitySource = new ActivitySource("WorkflowConversationSamplingTest");
+        object? conversationIdAtCreation = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == activitySource,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                conversationIdAtCreation = options.Tags?.FirstOrDefault(tag => tag.Key == "gen_ai.conversation.id").Value;
+                return ActivitySamplingResult.AllData;
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var telemetryContext = new WorkflowTelemetryContext(new WorkflowTelemetryOptions(), activitySource);
+        Baggage previousBaggage = Baggage.Current;
+
+        try
+        {
+            Baggage.SetBaggage("gen_ai.conversation.id", otelConversationId);
+
+            // Act
+            using Activity? activity = telemetryContext.StartWorkflowRunActivity("customer_support_pipeline");
+
+            // Assert
+            Assert.NotNull(activity);
+            Assert.Equal(expectedConversationId, conversationIdAtCreation);
+            Assert.Equal(expectedConversationId, activity.GetTagItem("gen_ai.conversation.id"));
+            if (expectedConversationId is null)
+            {
+                Assert.DoesNotContain(activity.TagObjects, tag => tag.Key == "gen_ai.conversation.id");
+            }
+        }
+        finally
+        {
+            Baggage.Current = previousBaggage;
+        }
+    }
+
+    [Theory]
+    [InlineData("Lockstep", null)]
+    [InlineData("OffThread", null)]
+    [InlineData("Concurrent", null)]
+    [InlineData("Lockstep", "execution-only-session")]
+    [InlineData("OffThread", "execution-only-session")]
+    [InlineData("Concurrent", "execution-only-session")]
+    public async Task WorkflowRunActivity_WithoutConversationContext_DoesNotUseSessionIdAsync(string executionEnvironmentName, string? sessionId)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowConversationOmissionTest").Start();
+        var workflow = CreateWorkflow("customer_support_pipeline");
+        var executionEnvironment = GetExecutionEnvironment(executionEnvironmentName);
+
+        // Act
+        Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!", sessionId);
+        await run.DisposeAsync();
+
+        // Assert
+        var workflowRunActivity = Assert.Single(this._capturedActivities, a =>
+            a.RootId == testActivity.RootId &&
+            a.Events.Any(e => e.Name == EventNames.WorkflowStarted));
+        Assert.DoesNotContain(workflowRunActivity.TagObjects, tag => tag.Key == "gen_ai.conversation.id");
+        Assert.IsType<string>(workflowRunActivity.GetTagItem("session.id"));
+        if (sessionId is not null)
+        {
+            Assert.Equal(sessionId, workflowRunActivity.GetTagItem("session.id"));
+        }
     }
 
     [Theory]
