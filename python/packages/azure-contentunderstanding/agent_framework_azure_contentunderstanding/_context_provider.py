@@ -14,10 +14,9 @@ import asyncio
 import json
 import logging
 import re
-import sys
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -41,15 +40,11 @@ from ._feature_usage import FeatureIndex
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
+
 from ._detection import (
     detect_and_strip_files,
 )
 from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.azure_contentunderstanding")
 

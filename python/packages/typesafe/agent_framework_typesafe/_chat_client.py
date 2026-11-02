@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Mapping, Sequence
 from types import TracebackType
-from typing import Any, ClassVar, Literal, NoReturn, cast, overload
+from typing import Any, ClassVar, Literal, NoReturn, Self, cast, overload
 from uuid import uuid4
 
 from agent_framework import (
@@ -51,7 +51,7 @@ from typesafe_sdk import (
     TypeSafePermissionDeniedError,
     TypeSafeUnprocessableEntityError,
 )
-from typing_extensions import Self, TypedDict, override
+from typing_extensions import TypedDict, override
 
 from ._tool_calls import compile_tool_call_plan
 

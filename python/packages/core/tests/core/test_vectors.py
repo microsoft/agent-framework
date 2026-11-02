@@ -9,7 +9,7 @@ from collections.abc import AsyncIterable, Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, dataclass, field
 from decimal import Decimal
-from typing import Annotated, Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, TypeVar, cast
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -17,7 +17,6 @@ import msgspec
 import pytest
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
-from typing_extensions import TypeVar
 
 from agent_framework import (
     DISTANCE_FUNCTION_DIRECTION_HELPER,

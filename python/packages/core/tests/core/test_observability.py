@@ -3,13 +3,12 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, cast
+from typing import Any, Self, cast
 from unittest.mock import Mock, patch
 
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
-from typing_extensions import Self
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,

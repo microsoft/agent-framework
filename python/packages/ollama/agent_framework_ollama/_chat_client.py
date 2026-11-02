@@ -63,11 +63,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
-
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
 

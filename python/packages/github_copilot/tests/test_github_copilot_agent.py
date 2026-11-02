@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# ruff: noqa: E402
-
 import base64
 import inspect
 import json
@@ -17,9 +15,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-
-copilot = pytest.importorskip("copilot")
-
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,

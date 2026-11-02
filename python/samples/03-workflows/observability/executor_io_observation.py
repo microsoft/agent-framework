@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Any, cast
+from typing import Any, Never, cast
 
 from agent_framework import (
     Executor,
@@ -9,7 +9,6 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from typing_extensions import Never
 
 """
 Executor I/O Observation

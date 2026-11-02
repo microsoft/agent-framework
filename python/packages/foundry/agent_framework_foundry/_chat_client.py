@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, cast
 
 from agent_framework import (
     ChatMiddlewareLayer,
@@ -75,10 +75,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes

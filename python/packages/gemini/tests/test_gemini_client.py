@@ -7,7 +7,7 @@ import datetime
 import json
 import logging
 import os
-from typing import Any, cast
+from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +22,7 @@ from agent_framework.exceptions import (
 from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from agent_framework_gemini import (
     GeminiChatClient,
