@@ -321,7 +321,7 @@ class _Client:
                     for name, value in (("user", self._user), ("password", self._password), ("dsn", self._dsn))
                     if value is not None
                 }
-                pool_parameters = {
+                pool_parameters: dict[str, Any] = {
                     "min": 0,
                     "max": 4,
                     **{

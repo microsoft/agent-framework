@@ -3,7 +3,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.anthropic import AnthropicClient
+from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -40,7 +40,7 @@ async def main() -> None:
     # Create web search tool configuration using instance method
     web_search_tool = client.get_web_search_tool()
 
-    agent = Agent(
+    agent = Agent[AnthropicChatOptions](
         client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
