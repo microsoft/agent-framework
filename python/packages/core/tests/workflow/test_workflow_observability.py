@@ -153,11 +153,12 @@ async def test_workflow_run_span_uses_semantic_convention_name(
         if any(event.name == "workflow.started" for event in span.events)
     ]
     assert len(run_spans) == 1
-    assert run_spans[0].name == "invoke_workflow"
+    expected_name = workflow_name or "simple_workflow"
+    assert run_spans[0].name == f"invoke_workflow {expected_name}"
     attributes = run_spans[0].attributes
     assert attributes is not None
     assert "workflow.name" not in attributes
-    assert attributes["gen_ai.workflow.name"] == (workflow_name or "simple_workflow")
+    assert attributes["gen_ai.workflow.name"] == expected_name
     assert attributes["gen_ai.operation.name"] == "invoke_workflow"
 
 
@@ -403,7 +404,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Should have workflow span, processing spans, and sending spans
     # Processing spans now use executor_id as the span name, filter by executor.id attribute
-    workflow_spans = [s for s in spans if s.name == "invoke_workflow"]
+    workflow_spans = [s for s in spans if s.name == f"invoke_workflow {workflow.name}"]
     processing_spans = [s for s in spans if _span_attributes(s).get("executor.id") is not None]
     sending_spans = [s for s in spans if s.name == "message.send"]
     build_spans_after_run = [s for s in spans if s.name == "workflow.build"]
@@ -508,7 +509,7 @@ async def test_workflow_error_handling_in_tracing(
     spans = span_exporter.get_finished_spans()
 
     # Find workflow span
-    workflow_spans = [s for s in spans if s.name == "invoke_workflow"]
+    workflow_spans = [s for s in spans if s.name == f"invoke_workflow {workflow.name}"]
     assert len(workflow_spans) == 1
 
     workflow_span = workflow_spans[0]
@@ -586,7 +587,7 @@ async def test_functional_workflow_error_respects_sensitive_data(
     _assert_workflow_error_details(executor_failed_events[0].details, private_error_detail, enable_sensitive_data)
 
     spans = span_exporter.get_finished_spans()
-    workflow_spans = [span for span in spans if span.name == "invoke_workflow"]
+    workflow_spans = [span for span in spans if span.name == f"invoke_workflow {workflow_instance.name}"]
     assert len(workflow_spans) == 1
     span = workflow_spans[0]
     assert span.attributes is not None

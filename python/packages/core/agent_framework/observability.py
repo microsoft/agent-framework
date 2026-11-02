@@ -3657,17 +3657,19 @@ def workflow_tracer() -> Tracer:
     return get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
 
 
-def _workflow_span_attributes(
+def _prepare_workflow_span(
     name: str,
     attributes: Mapping[str, str | int] | None = None,
-) -> dict[str, str | int] | None:
+) -> tuple[str, dict[str, str | int] | None]:
     span_attributes: dict[str, str | int] = dict(attributes) if attributes is not None else {}
     conversation_id = _TELEMETRY_CONVERSATION_ID.get()
     if name == OtelAttr.WORKFLOW_RUN_SPAN:
         span_attributes[OtelAttr.OPERATION] = "invoke_workflow"
         if conversation_id is not None:
             span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
-    return span_attributes or None
+        if workflow_name := span_attributes.get(OtelAttr.WORKFLOW_NAME):
+            name = f"{name} {workflow_name}"
+    return name, span_attributes or None
 
 
 @contextlib.contextmanager
@@ -3695,11 +3697,12 @@ def create_workflow_span(
     generator is later closed on GC from a different ``Context``. Streaming
     workflow runs should use :func:`start_workflow_span` instead.
     """
+    name, span_attributes = _prepare_workflow_span(name, attributes)
     return _capture_span_exceptions(
         workflow_tracer().start_as_current_span(
             name,
             kind=kind,
-            attributes=_workflow_span_attributes(name, attributes),
+            attributes=span_attributes,
             record_exception=False,
             set_status_on_exception=False,
         )
@@ -3719,7 +3722,8 @@ def start_workflow_span(
     across a yield causes ``ValueError: Token was created in a different
     Context`` when the generator is garbage-collected.
     """
-    return workflow_tracer().start_span(name, kind=kind, attributes=_workflow_span_attributes(name, attributes))
+    name, span_attributes = _prepare_workflow_span(name, attributes)
+    return workflow_tracer().start_span(name, kind=kind, attributes=span_attributes)
 
 
 def create_processing_span(

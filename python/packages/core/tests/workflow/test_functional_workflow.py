@@ -648,7 +648,7 @@ class TestStreaming:
         assert result.get_outputs() == [6]
 
         spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
-        run_spans = [s for s in spans if s.name == OtelAttr.WORKFLOW_RUN_SPAN]
+        run_spans = [s for s in spans if s.name == f"invoke_workflow {pipeline.name}"]
         process_spans = [s for s in spans if s.name == f"{OtelAttr.EXECUTOR_PROCESS_SPAN} traced_add"]
         assert len(run_spans) == 1
         assert len(process_spans) == 1
