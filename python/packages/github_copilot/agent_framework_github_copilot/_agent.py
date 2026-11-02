@@ -1263,7 +1263,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
                 queue.put_nowait(update)
             elif event.type == SessionEventType.SESSION_IDLE:
-                queue.put_nowait(None)
+                # A sub-agent going idle must not end the run; only the root agent's idle does.
+                if not getattr(event, "agent_id", None):
+                    queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
                 error_data: Any = event.data
                 error_msg = error_data.message or "Unknown error"

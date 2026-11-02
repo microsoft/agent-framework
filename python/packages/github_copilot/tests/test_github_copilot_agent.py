@@ -1363,6 +1363,39 @@ class TestGitHubCopilotAgentStructuredOutput:
         assert "child chatter" in "".join(texts)
         assert response.value == self.Answer(value=9)
 
+    async def test_streaming_ignores_subagent_idle_before_root_answer(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """A sub-agent idle event does not end the stream or drop the root structured answer."""
+        child_idle = create_session_event(SessionEventType.SESSION_IDLE)
+        child_idle.agent_id = "sub-agent"
+        events = [
+            create_session_event(SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content="preamble", message_id="pre"),
+            child_idle,
+            create_session_event(
+                SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 11}', message_id="root"
+            ),
+            create_session_event(SessionEventType.SESSION_IDLE),
+        ]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Answer}))
+        texts = [u.text async for u in stream]
+        response = await stream.get_final_response()
+
+        assert '{"value": 11}' in "".join(texts)
+        assert response.value is not None
+        assert response.value.value == 11
+
     async def test_streaming_passes_response_format_and_parses_value(
         self,
         mock_client: MagicMock,
