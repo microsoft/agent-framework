@@ -254,7 +254,7 @@ public sealed partial class AgentMcpSkillTests
                     cts.Cancel();
                 }
             });
-        using var catalog = CreateCatalog(clock);
+        var catalog = CreateCatalog(clock);
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
             [Resource(SkillUri, Content)], client.Object, catalog, logger.Object, timeProvider: clock);
         if (cached)
@@ -532,7 +532,7 @@ public sealed partial class AgentMcpSkillTests
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
             .Callback(cts.Cancel);
-        using var catalog = CreateCatalog(clock);
+        var catalog = CreateCatalog(clock);
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
             [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
             client.Object, catalog, logger.Object, timeProvider: clock);

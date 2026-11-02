@@ -167,6 +167,8 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             ? Throw.IfNullOrWhitespace(selector(context))
             : null;
 
+        ObjectDisposedException.ThrowIf(this._disposed, this);
+
         McpSkillsCatalog catalog = key is null
             ? this._catalog
             : this.GetOrCreateCatalog(key);
@@ -205,7 +207,6 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         if (disposing && !this._disposed)
         {
             this._disposed = true;
-            this._catalog.Dispose();
             this._catalogs.Dispose();
         }
 

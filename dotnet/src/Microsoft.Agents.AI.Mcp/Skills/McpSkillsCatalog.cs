@@ -46,11 +46,10 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Only one caller can fetch or update the skill list at a time; other callers wait and then check the cache again.
-/// No refreshes run in the background. Disposing the catalog clears its cached list and pending requests,
-/// but does not dispose the MCP client or prevent previously returned skills from reading resources.
+/// No refreshes run in the background.
 /// </para>
 /// </remarks>
-internal sealed partial class McpSkillsCatalog : IDisposable
+internal sealed partial class McpSkillsCatalog
 {
     private const string CatalogKey = "catalog";
     private const string CompleteResultType = "complete";
@@ -68,7 +67,6 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     private readonly bool _hasIsolationKey;
     private readonly McpCache<string, IList<AgentSkill>> _catalogCache;
     private readonly ConcurrentDictionary<AgentMcpSkill, byte> _skillsToRefresh = new();
-    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="McpSkillsCatalog"/> class.
@@ -103,7 +101,6 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// <returns>The shared mutable skill list for the cached or updated catalog.</returns>
     public async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(this._disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         IList<AgentSkill> skills = await this._catalogCache.GetOrRefreshAsync(
@@ -118,31 +115,20 @@ internal sealed partial class McpSkillsCatalog : IDisposable
         return skills;
     }
 
-    /// <inheritdoc/>
-    public void Dispose()
-    {
-        if (!this._disposed)
-        {
-            this._disposed = true;
-            this._catalogCache.Clear();
-            this._skillsToRefresh.Clear();
-        }
-    }
-
     /// <summary>
     /// Queues a skill from the cached list for refresh on the next <see cref="GetSkillsAsync"/> call.
     /// </summary>
     /// <remarks>
     /// Called after a resource's size or content hash differs from the values recorded for its owning skill.
-    /// Requests for skill objects no longer in the cached list, or made after disposal, are ignored.
+    /// Requests for skill objects no longer in the cached list are ignored.
     /// </remarks>
     /// <param name="skill">The skill object whose server-provided details need to be fetched again.</param>
     public void QueueSkillRefresh(AgentMcpSkill skill)
     {
         _ = Throw.IfNull(skill);
 
-        // Ignore refresh requests after disposal or when the skill is no longer in the cache.
-        if (!this._disposed && this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
+        // Ignore refresh requests when the skill is no longer in the cache.
+        if (this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
         {
             this._skillsToRefresh.TryAdd(skill, 0);
         }

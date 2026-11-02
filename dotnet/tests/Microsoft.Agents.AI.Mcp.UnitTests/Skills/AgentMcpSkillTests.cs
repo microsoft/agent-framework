@@ -36,7 +36,7 @@ public sealed partial class AgentMcpSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        using var catalog = CreateCatalog();
+        var catalog = CreateCatalog();
         var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client, catalog);
 
         // Assert
@@ -51,7 +51,7 @@ public sealed partial class AgentMcpSkillTests
         // Arrange
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, SkillContent)));
         await using var client = await server.CreateClientAsync();
-        using var catalog = CreateCatalog();
+        var catalog = CreateCatalog();
         McpCacheLifetime? lifetime = provideLifetime
             ? new McpCacheLifetime(TimeProvider.System.GetTimestamp(), TimeSpan.FromSeconds(1))
             : null;
@@ -76,7 +76,7 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Nested instructions."));
         });
         await using var client = await server.CreateClientAsync();
-        using var catalog = CreateCatalog();
+        var catalog = CreateCatalog();
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
         [
             Resource(NestedUri, "Nested instructions."),
@@ -111,7 +111,7 @@ public sealed partial class AgentMcpSkillTests
         McpSkillResourceEntry[] resources = includeNestedInstructions
             ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
             : [];
-        using var catalog = CreateCatalog();
+        var catalog = CreateCatalog();
         var skill = new AgentMcpSkill(frontmatter, SkillUri, resources, client, catalog);
 
         // Act
@@ -464,7 +464,7 @@ public sealed partial class AgentMcpSkillTests
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
-        using var catalog = CreateCatalog();
+        var catalog = CreateCatalog();
         var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client, catalog);
 
         // Act
@@ -902,7 +902,7 @@ public sealed partial class AgentMcpSkillTests
 
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        using var catalog = CreateCatalog();
+        var catalog = CreateCatalog();
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client, catalog);
 
         // Act & Assert
