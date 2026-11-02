@@ -19,6 +19,22 @@ Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
 > Sandbox isolation does not supply FIDES enforcement.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
 
+## Error diagnostics
+
+Host tool callbacks expose a generic `RuntimeError("Host tool execution failed.")`
+by default, before diagnostics reach generated code. Raw sandbox failure details
+are omitted from error contents. Successful outputs and known-safe output-limit
+or cleanup errors retain their existing behavior.
+
+Both `HyperlightCodeActProvider` and `HyperlightExecuteCodeTool` accept the
+host-side option `include_detailed_errors=True` for trusted channels. It preserves
+original callback exceptions and sandbox error details, which may contain
+sensitive data. It is not a parameter of `execute_code` and is independent of the
+outer chat client's error policy and sensitive-data logging.
+
+The policy is captured in each run snapshot and serialized state. Sandbox cache
+keys include it, so detailed-error callbacks are not reused for redacted runs.
+
 ## Installation
 
 ```bash

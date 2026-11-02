@@ -56,4 +56,43 @@ public sealed class CodeActEndToEndTests
         Assert.Contains("hi", doc.RootElement.GetProperty("stdout").GetString()!);
         Assert.Equal(0, doc.RootElement.GetProperty("exit_code").GetInt32());
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteCode_HostErrorDetailsRequireOptInAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        if (string.IsNullOrWhiteSpace(GuestPath))
+        {
+            Assert.Skip(SkipReason);
+            return;
+        }
+
+        const string Detail = "synthetic backend diagnostic";
+        var options = HyperlightCodeActProviderOptions.CreateForWasm(GuestPath!);
+        options.IncludeDetailedErrors = includeDetailedErrors;
+        options.Tools = [AIFunctionFactory.Create(
+            (Func<string>)(() => throw new InvalidOperationException(Detail)), name: "failing_tool")];
+        using var function = new HyperlightExecuteCodeFunction(options);
+
+        // Act
+        var result = await function.InvokeAsync(new AIFunctionArguments
+        {
+            ["code"] = """
+                try:
+                    print(call_tool('failing_tool'))
+                except Exception as exc:
+                    print(str(exc))
+                """,
+        });
+
+        // Assert
+        var json = Assert.IsType<string>(result);
+        Assert.Equal(includeDetailedErrors, json.Contains(Detail, StringComparison.Ordinal));
+        if (!includeDetailedErrors)
+        {
+            Assert.Contains("Host tool execution failed.", json, StringComparison.Ordinal);
+        }
+    }
 }

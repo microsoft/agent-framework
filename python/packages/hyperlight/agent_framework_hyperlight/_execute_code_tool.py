@@ -112,6 +112,7 @@ class _RunConfig:
     max_output_files: int = DEFAULT_MAX_OUTPUT_FILES
     max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES
     max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES
+    include_detailed_errors: bool = False
 
     @property
     def mounted_paths(self) -> tuple[str, ...]:
@@ -135,6 +136,7 @@ class _RunConfig:
             self.max_output_files,
             self.max_output_file_bytes,
             self.max_output_total_bytes,
+            self.include_detailed_errors,
         )
 
 
@@ -255,6 +257,7 @@ class _SandboxWorker:
         max_output_files: int,
         max_output_file_bytes: int,
         max_output_total_bytes: int,
+        include_detailed_errors: bool = False,
     ) -> list[Content]:
         """Restore + run + build sendable contents — all on the worker thread.
 
@@ -290,6 +293,7 @@ class _SandboxWorker:
                         max_output_files=max_output_files,
                         max_output_file_bytes=max_output_file_bytes,
                         max_output_total_bytes=max_output_total_bytes,
+                        include_detailed_errors=include_detailed_errors,
                     )
                     if output_dir is not None and not any(item.type == "data" for item in contents):
                         # Isolate any file that becomes visible after the finite discovery window
@@ -1209,6 +1213,7 @@ def _build_execution_contents(
     max_output_files: int,
     max_output_file_bytes: int,
     max_output_total_bytes: int,
+    include_detailed_errors: bool = False,
 ) -> list[Content]:
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
@@ -1246,7 +1251,7 @@ def _build_execution_contents(
             outputs.append(Content.from_text("Code executed successfully without output."))
         return outputs
 
-    error_details = stderr or "Unknown sandbox error"
+    error_details = (stderr or "Unknown sandbox error") if include_detailed_errors else None
     outputs.append(
         Content.from_error(
             message="Execution error",
@@ -1257,7 +1262,7 @@ def _build_execution_contents(
     return outputs
 
 
-def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
+def _make_sandbox_callback(tool_obj: FunctionTool, *, include_detailed_errors: bool = False) -> Callable[..., Any]:
     sandbox_tool = copy(tool_obj)
 
     def _callback(**kwargs: Any) -> Any:
@@ -1282,6 +1287,8 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         worker.start()
         worker.join()
         if error_box:
+            if not include_detailed_errors and isinstance(error_box[0], Exception):
+                raise RuntimeError("Host tool execution failed.") from None
             raise error_box[0]
         # Return the raw value. The Hyperlight FFI marshals primitives (dict, list,
         # str, int, float, bool, None) natively into the guest, and falls back to
@@ -1418,6 +1425,7 @@ class _SandboxRegistry(SandboxRuntime):
                 max_output_files=config.max_output_files,
                 max_output_file_bytes=config.max_output_file_bytes,
                 max_output_total_bytes=config.max_output_total_bytes,
+                include_detailed_errors=config.include_detailed_errors,
             )
         finally:
             if not entry.worker.is_reusable():
@@ -1487,7 +1495,10 @@ class _SandboxRegistry(SandboxRuntime):
 
         def _configure_sandbox(*, sandbox: Any, expand_missing_scheme: bool) -> None:
             for tool_obj in config.tools:
-                sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
+                sandbox.register_tool(
+                    tool_obj.name,
+                    _make_sandbox_callback(tool_obj, include_detailed_errors=config.include_detailed_errors),
+                )
 
             for allowed_domain in config.allowed_domains:
                 for target in _allowed_domain_registration_targets(
@@ -1573,6 +1584,8 @@ class HyperlightExecuteCodeTool(FunctionTool):
             or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
             compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
             Mappings are copied, including entries for tools registered later.
+        include_detailed_errors: Expose host exception and execution diagnostics only for a trusted
+            channel. Defaults to ``False`` and is independent of outer-client error/logging settings.
     """
 
     def __init__(
@@ -1580,6 +1593,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -1593,6 +1607,8 @@ class HyperlightExecuteCodeTool(FunctionTool):
         _registry: SandboxRuntime | None = None,
         _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
     ) -> None:
+        if not isinstance(include_detailed_errors, bool):
+            raise TypeError("include_detailed_errors must be a bool.")
         normalized_description_format = _normalize_tool_description_format(tool_description_format)
         max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
         max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
@@ -1608,6 +1624,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._tool_description_format: _NormalizedToolDescriptionFormat = normalized_description_format
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._include_detailed_errors = include_detailed_errors
         self._workspace_root = _resolve_workspace_root(workspace_root)
         self._backend: str = backend
         self._module: str | None = module
@@ -1785,6 +1802,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             tools=tools,
             tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
+            include_detailed_errors=self._include_detailed_errors,
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
             allowed_domains=allowed_domains or None,
@@ -1805,6 +1823,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "module": config.module,
             "module_path": config.module_path,
             "approval_mode": config.approval_mode,
+            "include_detailed_errors": config.include_detailed_errors,
             "max_output_files": config.max_output_files,
             "max_output_file_bytes": config.max_output_file_bytes,
             "max_output_total_bytes": config.max_output_total_bytes,
@@ -1852,6 +1871,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             max_output_files = self._max_output_files
             max_output_file_bytes = self._max_output_file_bytes
             max_output_total_bytes = self._max_output_total_bytes
+            include_detailed_errors = self._include_detailed_errors
             approval_mode = _resolve_execute_code_approval_mode(
                 base_approval_mode=self._default_approval_mode,
                 tools=managed_tools,
@@ -1880,6 +1900,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             max_output_files=max_output_files,
             max_output_file_bytes=max_output_file_bytes,
             max_output_total_bytes=max_output_total_bytes,
+            include_detailed_errors=include_detailed_errors,
         )
 
     async def _run_code(self, *, code: str) -> list[Content]:

@@ -22,6 +22,24 @@ Monty-backed CodeAct integrations for Microsoft Agent Framework.
 > enforce authorization and destination restrictions inside host functions.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
 
+## Error diagnostics
+
+Host tool failures raise a generic `RuntimeError("Host tool execution failed.")`
+inside generated code by default. Execution error contents omit raw diagnostic
+details. This applies to both direct tool calls and `call_tool(...)`, including
+failures that generated code catches and prints or returns.
+
+Both `MontyCodeActProvider` and `MontyExecuteCodeTool` accept the host-side option
+`include_detailed_errors=True` to retain original host exception types/messages
+and execution diagnostics. Enable it only for a trusted channel: exception
+messages can contain credentials or other sensitive data. This option is not a
+parameter of `execute_code` and is independent of the outer chat client's error
+policy and sensitive-data logging. Run snapshots and serialized state retain it.
+
+Code that catches a specific host exception type, such as `ValueError`, must
+instead handle the generic `RuntimeError` in the default mode. Failure signaling
+and successful tool results are unchanged.
+
 ## Installation
 
 ```bash

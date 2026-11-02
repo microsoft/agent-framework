@@ -82,6 +82,16 @@ public sealed class HyperlightCodeActProviderOptions
     public CodeActApprovalMode ApprovalMode { get; set; } = CodeActApprovalMode.NeverRequire;
 
     /// <summary>
+    /// Gets or sets whether host exception details are exposed to generated code and in execution errors.
+    /// Defaults to <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// Enable only for a trusted channel: diagnostics can contain sensitive host data.
+    /// This is independent of the outer chat client's error policy and sensitive-data logging.
+    /// </remarks>
+    public bool IncludeDetailedErrors { get; set; }
+
+    /// <summary>
     /// Gets or sets an optional host directory exposed to the sandbox as its
     /// <c>/input</c> directory.
     /// </summary>
