@@ -496,6 +496,19 @@ class TestRedisHistoryProviderClose:
         await borrowed.aclose()
 
 
+def _seed_history(mock_redis_client: MagicMock, rows: list[str]) -> None:
+    """Seed stored history on the parent client and on the pipeline connection.
+
+    ``save_messages`` reads the watched history through the pipeline's reserved
+    connection (the parent client would need a second one), while ``get_messages``
+    reads through the parent. Tests about deduplication and trimming care about the
+    history they seed, not about which connection reads it, so both are seeded.
+    The single-connection behaviour itself has its own regression.
+    """
+    mock_redis_client.lrange = AsyncMock(return_value=rows)
+    mock_redis_client.pipeline.return_value.__aenter__.return_value.lrange = AsyncMock(return_value=rows)
+
+
 class TestRedisHistoryProviderRedisKey:
     def test_scoped_key_is_deterministic_and_encodes_opaque_components(self, mock_redis_client: MagicMock):
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
@@ -613,8 +626,12 @@ class TestRedisHistoryProviderRedisKey:
         await provider.clear("session")
 
         expected_range_call = ((expected_key, 0, -1),)
-        assert mock_redis_client.lrange.call_args_list == [expected_range_call, expected_range_call]
+        # `get_messages` reads through the parent client; `save_messages` reads the
+        # watched history through the pipeline's reserved connection. Either way the
+        # scoped key is the one used.
+        assert mock_redis_client.lrange.call_args_list == [expected_range_call]
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert pipeline.lrange.call_args_list == [expected_range_call]
         pipeline.rpush.assert_awaited_once_with(expected_key, provider._serialize_json(message))
         mock_redis_client.delete.assert_awaited_once_with(expected_key)
         assert expected_key != "chat_messages:session"
@@ -638,6 +655,92 @@ class TestRedisHistoryProviderRedisKey:
         key = provider._redis_key("s")
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
         pipeline.ltrim.assert_awaited_once_with(key, 2, -1)
+
+    async def test_trim_keeps_a_retained_approval_request_and_response_pair(self, mock_redis_client: MagicMock) -> None:
+        # Approval wrappers carry no `call_id`; they pair through `Content.id` and the
+        # embedded function call. Treating them as unpairable made a valid recent
+        # approval sequence look orphaned and let the trim discard it.
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=2,
+            )
+        function_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+        request = Content.from_function_approval_request(id="c1", function_call=function_call)
+        response = Content.from_function_approval_response(approved=True, id="c1", function_call=function_call)
+        request_message = Message(role="assistant", contents=[function_call, request])
+        response_message = Message(role="user", contents=[response])
+        mock_redis_client.llen = AsyncMock(return_value=2)
+        await provider.save_messages("s", [request_message, response_message])
+        # The pair is exactly max_messages, so nothing is trimmed away.
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.ltrim.assert_not_awaited()
+
+    async def test_trim_pairs_call_and_result_by_occurrence_when_an_id_is_reused(
+        self, mock_redis_client: MagicMock
+    ) -> None:
+        # A provider that reuses a call_id must not let the second call legitimize the
+        # first result after the first call has been trimmed: pairing is by occurrence.
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=2,
+            )
+        first_call = Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")])
+        first_result = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="one")])
+        second_call = Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")])
+        mock_redis_client.llen = AsyncMock(return_value=3)
+        await provider.save_messages("s", [first_call, first_result, second_call])
+        # Keeping the last two would leave [first_result, second_call]: the result is
+        # paired by occurrence with first_call, which is outside the window. The trim
+        # must advance past that result and keep [second_call] alone.
+        key = provider._redis_key("s")
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.ltrim.assert_awaited_once_with(key, 2, -1)
+
+    async def test_save_reads_the_watched_history_through_the_pipeline_connection(
+        self, mock_redis_client: MagicMock
+    ) -> None:
+        # WATCH has reserved the pipeline connection. Going back out through the parent
+        # client needs a second one, so a borrowed client with max_connections=1 would
+        # fail every non-empty save.
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=2,
+            )
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.lrange = AsyncMock(return_value=[])
+        message = Message(role="user", contents=["hi"])
+        await provider.save_messages("s", [message])
+        pipeline.lrange.assert_awaited_once_with(provider._redis_key("s"), 0, -1)
+        mock_redis_client.lrange.assert_not_awaited()
+
+    async def test_save_raises_after_the_watch_retries_are_exhausted(self, mock_redis_client: MagicMock) -> None:
+        # Falling off the retry loop reported success while every transaction had been
+        # aborted and nothing was persisted.
+        from redis.exceptions import WatchError
+
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=2,
+            )
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.lrange = AsyncMock(return_value=[])
+        pipeline.execute = AsyncMock(side_effect=WatchError("aborted"))
+        message = Message(role="user", contents=["hi"])
+        with pytest.raises(WatchError, match="aborted"):
+            await provider.save_messages("s", [message])
+        assert pipeline.execute.await_count == 8
 
     def test_legacy_format_warns_and_preserves_historical_keys(self, mock_redis_client: MagicMock):
         with (
@@ -678,7 +781,7 @@ class TestRedisHistoryProviderGetMessages:
     async def test_returns_deserialized_messages(self, mock_redis_client: MagicMock):
         msg1 = Message(role="user", contents=["Hello"])
         msg2 = Message(role="assistant", contents=["Hi!"])
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
+        _seed_history(mock_redis_client, [json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -692,7 +795,7 @@ class TestRedisHistoryProviderGetMessages:
         assert messages[1].text == "Hi!"
 
     async def test_empty_returns_empty(self, mock_redis_client: MagicMock):
-        mock_redis_client.lrange = AsyncMock(return_value=[])
+        _seed_history(mock_redis_client, [])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -835,7 +938,7 @@ class TestRedisHistoryProviderBeforeAfterRun:
 
     async def test_before_run_loads_history(self, mock_redis_client: MagicMock):
         msg = Message(role="user", contents=["old msg"])
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg.to_dict())])
+        _seed_history(mock_redis_client, [json.dumps(msg.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -906,7 +1009,7 @@ class TestRedisHistoryProviderDeduplication:
         msg1 = Message(role="user", contents=["hello"])
         msg2 = Message(role="assistant", contents=["hi there"])
 
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
+        _seed_history(mock_redis_client, [json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -923,7 +1026,7 @@ class TestRedisHistoryProviderDeduplication:
         msg2 = Message(role="assistant", contents=["hi there"])
         msg3 = Message(role="user", contents=["how are you?"])
 
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
+        _seed_history(mock_redis_client, [json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -941,7 +1044,7 @@ class TestRedisHistoryProviderDeduplication:
     async def test_different_roles_same_text_not_deduplicated(self, mock_redis_client: MagicMock):
         msg1 = Message(role="user", contents=["ping"], message_id="original-ping")
 
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict())])
+        _seed_history(mock_redis_client, [json.dumps(msg1.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -957,7 +1060,7 @@ class TestRedisHistoryProviderDeduplication:
 
     async def test_repeated_user_turn_is_not_deduplicated(self, mock_redis_client: MagicMock):
         previous = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg.to_dict()) for msg in previous])
+        _seed_history(mock_redis_client, [json.dumps(msg.to_dict()) for msg in previous])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -980,7 +1083,7 @@ class TestRedisHistoryProviderDeduplication:
         msg_old = Message(role="user", contents=["old"])
         msg_new = Message(role="assistant", contents=["new"])
 
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg_new.to_dict())])
+        _seed_history(mock_redis_client, [json.dumps(msg_new.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
@@ -997,7 +1100,7 @@ class TestRedisHistoryProviderDeduplication:
         yes_1 = Message(role="user", contents=["yes"])
         yes_2 = Message(role="user", contents=["yes"])
 
-        mock_redis_client.lrange = AsyncMock(return_value=[])
+        _seed_history(mock_redis_client, [])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client

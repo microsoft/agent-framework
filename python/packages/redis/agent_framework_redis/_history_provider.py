@@ -47,32 +47,91 @@ def _is_source_content(content_type: str) -> bool:
     return content_type.endswith("_call") or content_type == "function_approval_request"
 
 
-def _content_call_id(content: Any) -> str | None:
-    """Return the call/request id a content pairs with, when it carries one."""
-    call_id = getattr(content, "call_id", None)
-    return call_id if isinstance(call_id, str) and call_id else None
+def _content_pair_id(content: Any) -> str | None:
+    """Return the identifier a content pairs with, when it carries one.
 
-
-def _window_is_self_contained(window: Sequence[Message]) -> bool:
-    """Return True when every deferred output in ``window`` has its matching source there too.
-
-    A model replay rejects an output whose call/request was trimmed away, so the retained window
-    must keep each output paired with its own source (matched by call id), not merely contain some
-    source somewhere. Non-adjacent pairs count: a result is only safe when its own call survives.
+    Tool calls and their results pair on ``call_id``. Approval request and
+    response wrappers carry no ``call_id`` at all: they pair through ``Content.id``
+    and the embedded function call, and by convention the wrapper's own id is the
+    function call's id. Without the fallback every approval wrapper looked
+    unpairable, which made a window holding only a valid approval sequence look
+    orphaned and let the trim discard it.
     """
-    source_ids: set[str] = set()
-    for message in window:
+    call_id = getattr(content, "call_id", None)
+    if isinstance(call_id, str) and call_id:
+        return call_id
+    function_call = getattr(content, "function_call", None)
+    if function_call is not None:
+        nested = getattr(function_call, "call_id", None) or getattr(function_call, "id", None)
+        if isinstance(nested, str) and nested:
+            return nested
+    content_id = getattr(content, "id", None)
+    return content_id if isinstance(content_id, str) and content_id else None
+
+
+def _pair_outputs_to_sources(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    """Pair each deferred output with the source it belongs to, by occurrence.
+
+    Pairing runs over the whole transcript, not over the candidate window, so an
+    output is joined to *its own* source: a provider that reuses a ``call_id`` must
+    not have an earlier result legitimized by a later call that happens to still be
+    in the window after the earlier call was trimmed.
+
+    Returns ``(output_position, source_position)`` pairs in content order, where the
+    positions count every source and output content in the transcript.
+    """
+    unmatched: dict[str, list[int]] = {}
+    pairs: list[tuple[int, int]] = []
+    position = 0
+    sources_at: list[int] = []
+    for message in messages:
         for content in message.contents:
-            if _is_source_content(content.type):
-                call_id = _content_call_id(content)
-                if call_id is not None:
-                    source_ids.add(call_id)
-    for message in window:
-        for content in message.contents:
-            if _is_deferred_output_content(content.type):
-                call_id = _content_call_id(content)
-                if call_id is None or call_id not in source_ids:
-                    return False
+            is_source = _is_source_content(content.type)
+            is_output = _is_deferred_output_content(content.type)
+            if not is_source and not is_output:
+                continue
+            pair_id = _content_pair_id(content)
+            if is_source:
+                sources_at.append(position)
+                if pair_id is not None:
+                    unmatched.setdefault(pair_id, []).append(position)
+            elif pair_id is not None:
+                queue = unmatched.get(pair_id)
+                if queue:
+                    pairs.append((position, queue.pop(0)))
+                else:
+                    pairs.append((position, -1))
+            else:
+                pairs.append((position, -1))
+            position += 1
+    return pairs
+
+
+def _window_is_self_contained(window: Sequence[Message], start: int) -> bool:
+    """Return True when every deferred output kept from ``start`` has its source kept too.
+
+    ``start`` is an index into ``window``, which is the full message list. A model replay
+    rejects an output whose call/request was trimmed away, so the retained window must keep
+    each output paired with its own source, not merely contain some source somewhere.
+    Non-adjacent pairs count: a result is only safe when its own call survives.
+    """
+    kept_from = 0
+    for index in range(start):
+        kept_from += sum(
+            1
+            for content in window[index].contents
+            if _is_source_content(content.type) or _is_deferred_output_content(content.type)
+        )
+    pairs = _pair_outputs_to_sources(window)
+    kept_positions = {
+        position
+        for position in range(kept_from, sum(1 for _ in pairs) + kept_from + 1)
+    }
+    for output_position, source_position in pairs:
+        if output_position < kept_from:
+            continue
+        if source_position not in kept_positions:
+            return False
     return True
 
 
@@ -87,7 +146,7 @@ def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
     if count <= max_messages:
         return 0
     start = count - max_messages
-    while start < count and not _window_is_self_contained(messages[start:]):
+    while start < count and not _window_is_self_contained(messages, start):
         start += 1
     return start
 
@@ -372,10 +431,16 @@ class RedisHistoryProvider(HistoryProvider):
         # Read, append, and trim are guarded by WATCH so a concurrent save to the same key cannot
         # make this one trim from a stale absolute index and delete the whole session history: if
         # the key changed under us, the transaction aborts and we recompute against the new state.
+        last_conflict: WatchError | None = None
         for _ in range(_SAVE_WATCH_RETRIES):
             async with self._redis_client.pipeline(transaction=True) as pipe:
                 await _redis_result(pipe.watch(key))
-                existing_messages = await self.get_messages(session_id, state=state, **kwargs)
+                # Read through the pipeline's own reserved connection. `WATCH` has
+                # already pinned it, and going back out through the parent client would
+                # need a second one: a borrowed client with `max_connections=1` would
+                # then fail every non-empty save.
+                watched = cast("list[str]", await _redis_result(cast("Any", pipe).lrange(key, 0, -1)))
+                existing_messages = [Message.from_dict(self._deserialize_json(row)) for row in watched]
                 new_messages = filter_new_messages(existing_messages, messages)
                 if not new_messages:
                     await _redis_result(pipe.unwatch())
@@ -397,10 +462,16 @@ class RedisHistoryProvider(HistoryProvider):
                     await _redis_result(pipe.ltrim(key, trim_start, -1))
                 try:
                     await pipe.execute()
-                except WatchError:
+                except WatchError as exc:
                     # The key changed between WATCH and EXEC. Recompute against the new state.
+                    last_conflict = exc
                     continue
                 return
+        # Every attempt aborted. Falling off the end would report success while
+        # nothing was persisted, so surface the conflict that defeated the last one.
+        raise last_conflict if last_conflict is not None else RuntimeError(
+            f"Redis history save for {key!r} did not persist after {_SAVE_WATCH_RETRIES} attempts"
+        )
 
     @staticmethod
     def _serialize_json(message: Message) -> str:
