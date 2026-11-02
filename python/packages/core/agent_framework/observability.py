@@ -3663,8 +3663,10 @@ def _workflow_span_attributes(
 ) -> dict[str, str | int] | None:
     span_attributes: dict[str, str | int] = dict(attributes) if attributes is not None else {}
     conversation_id = _TELEMETRY_CONVERSATION_ID.get()
-    if name == OtelAttr.WORKFLOW_RUN_SPAN and conversation_id is not None:
-        span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
+    if name == OtelAttr.WORKFLOW_RUN_SPAN:
+        span_attributes[OtelAttr.OPERATION] = "invoke_workflow"
+        if conversation_id is not None:
+            span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
     return span_attributes or None
 
 

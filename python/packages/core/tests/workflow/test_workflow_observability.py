@@ -158,6 +158,7 @@ async def test_workflow_run_span_uses_semantic_convention_name(
     assert attributes is not None
     assert "workflow.name" not in attributes
     assert attributes["gen_ai.workflow.name"] == (workflow_name or "simple_workflow")
+    assert attributes["gen_ai.operation.name"] == "invoke_workflow"
 
 
 async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter) -> None:
@@ -183,6 +184,7 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
             OtelAttr.WORKFLOW_ID: mock_workflow.id,
         },
     ) as workflow_span:
+        assert _span_attributes(workflow_span)["gen_ai.operation.name"] == "invoke_workflow"
         workflow_span.add_event(OtelAttr.WORKFLOW_STARTED)
         sending_attributes: dict[str, str | int] = {
             OtelAttr.MESSAGE_TYPE: "ResponseMessage",
@@ -200,6 +202,8 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
             assert workflow_span is not None and workflow_span.is_recording()
             assert processing_span is not None and processing_span.is_recording()
             assert sending_span is not None and sending_span.is_recording()
+            assert "gen_ai.operation.name" not in _span_attributes(processing_span)
+            assert "gen_ai.operation.name" not in _span_attributes(sending_span)
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 3
