@@ -9284,6 +9284,76 @@ async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable
     second_session.list_tools.assert_awaited_once()
 
 
+async def test_load_tools_retries_continuation_page_after_closed_resource() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_page = types.ListToolsResult(
+        tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+        next_cursor="second",
+    )
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        if params is None:
+            return first_page
+        assert params.cursor == "second"
+        raise ClosedResourceError
+
+    first_session = Mock()
+    first_session.list_tools = AsyncMock(side_effect=list_tools)
+    _set_framework_owned_session(tool, first_session)
+
+    second_page = types.ListToolsResult(
+        tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]
+    )
+    second_session = Mock()
+    second_session.list_tools = AsyncMock(return_value=second_page)
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_tools = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_tools()
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+    assert first_session.list_tools.await_count == 2
+    mock_reconnect.assert_awaited_once_with()
+    continuation_params = second_session.list_tools.await_args.kwargs["params"]
+    assert continuation_params.cursor == "second"
+
+
+async def test_load_tools_fails_after_closed_resource_retry_is_exhausted() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_tools = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
+        pytest.raises(ToolExecutionException, match="Failed to load tools - connection lost"),
+    ):
+        await tool.load_tools()
+
+    first_session.list_tools.assert_awaited_once()
+    mock_reconnect.assert_awaited_once_with()
+    second_session.list_tools.assert_awaited_once()
+    assert tool.functions == []
+
+
 async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailable() -> None:
     from anyio import ClosedResourceError
 
