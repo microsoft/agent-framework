@@ -24,6 +24,8 @@ from agent_framework import (
 from agent_framework._harness import _background_agents
 from agent_framework._sessions import SessionContext
 
+from .background_agents_helpers import ScriptedAgent, task_record
+
 # Suppress "coroutine was never awaited" warnings from task cancellation in tests.
 # This occurs when cancelling tasks that wrap coroutines through _run_agent().
 pytestmark = pytest.mark.filterwarnings("ignore::RuntimeWarning:asyncio")
@@ -71,7 +73,7 @@ class _FakeAgent:
         return AgentResponse(messages=[Message(role="assistant", contents=[self._response_text])])
 
 
-def _make_provider(*agents: _FakeAgent) -> BackgroundAgentsProvider:
+def _make_provider(*agents: _FakeAgent | ScriptedAgent) -> BackgroundAgentsProvider:
     """Create a provider with given agents."""
     return BackgroundAgentsProvider(agents)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
@@ -1545,33 +1547,6 @@ async def test_clear_completed_task_does_not_clear_in_flight_continuation() -> N
 # ---------------------------------------------------------------------------
 
 
-class _ScriptedAgent(_FakeAgent):
-    """Agent whose N-th run returns ``responses[N]`` and optionally waits on a gate or fails."""
-
-    def __init__(self, name: str, responses: list[str], *, fail_runs: set[int] | None = None) -> None:
-        super().__init__(name)
-        self.responses = responses
-        self.fail_runs = fail_runs or set()
-        self.gates: dict[int, asyncio.Event] = {}
-        self.runs = 0
-
-    async def run(
-        self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
-    ) -> AgentResponse[Any]:
-        index = self.runs
-        self.runs += 1
-        gate = self.gates.get(index)
-        if gate is not None:
-            await gate.wait()
-        if index in self.fail_runs:
-            raise RuntimeError(f"run {index} failed")
-        return AgentResponse(messages=[Message(role="assistant", contents=[self.responses[index]])])
-
-
-def _task_record(session: AgentSession, task_id: int) -> dict[str, Any]:
-    return next(t for t in session.state["background_agents"]["tasks"] if t["id"] == task_id)
-
-
 def test_task_info_execution_id_round_trip_and_legacy_state() -> None:
     """execution_id is persisted, and state written before it existed loads without one."""
     info = BackgroundTaskInfo(id=1, agent_name="A", description="d", execution_id="abc")
@@ -1583,20 +1558,20 @@ def test_task_info_execution_id_round_trip_and_legacy_state() -> None:
 
 async def test_every_execution_gets_a_distinct_execution_id() -> None:
     """Starts and continuations each record a new execution ID on the task."""
-    agent = _ScriptedAgent("Worker", ["first result", "second result"])
+    agent = ScriptedAgent("Worker", ["first result", "second result"])
     provider = _make_provider(agent)
     session = _make_session()
     tools = await _get_tools(provider, session)
 
     await _invoke_tool(tools["background_agents_start_task"], agent_name="Worker", input="go", description="t")
     runtime = provider._get_runtime(session)
-    first_execution_id = _task_record(session, 1)["execution_id"]
+    first_execution_id = task_record(session, 1)["execution_id"]
     assert runtime.execution_ids[1] == first_execution_id
     await runtime.in_flight_tasks[1]
     await _invoke_tool(tools["background_agents_get_task_results"], task_id=1)
 
     await _invoke_tool(tools["background_agents_continue_task"], task_id=1, text="again")
-    second_execution_id = _task_record(session, 1)["execution_id"]
+    second_execution_id = task_record(session, 1)["execution_id"]
     assert second_execution_id != first_execution_id
     assert runtime.execution_ids[1] == second_execution_id
 
@@ -1606,7 +1581,7 @@ async def test_every_execution_gets_a_distinct_execution_id() -> None:
 @pytest.mark.parametrize("continuation_fails", [False, True])
 async def test_restored_running_snapshot_does_not_receive_continuation_outcome(continuation_fails: bool) -> None:
     """A stale RUNNING snapshot must not be finalized with a later continuation's result or error."""
-    agent = _ScriptedAgent("Worker", ["first result", "second result"], fail_runs={1} if continuation_fails else None)
+    agent = ScriptedAgent("Worker", ["first result", "second result"], fail_runs={1} if continuation_fails else None)
     provider = _make_provider(agent)
     session = _make_session()
     tools = await _get_tools(provider, session)
@@ -1639,7 +1614,7 @@ async def test_restored_running_snapshot_does_not_receive_continuation_outcome(c
 
 async def test_restored_running_snapshot_does_not_wait_on_continuation() -> None:
     """Waiting from a stale snapshot must not block on (or finalize) a newer running continuation."""
-    agent = _ScriptedAgent("Worker", ["first result", "second result"])
+    agent = ScriptedAgent("Worker", ["first result", "second result"])
     agent.gates[1] = asyncio.Event()
     provider = _make_provider(agent)
     session = _make_session()
@@ -1671,7 +1646,7 @@ async def test_restored_running_snapshot_does_not_wait_on_continuation() -> None
 @pytest.mark.parametrize("other_execution_state", ["running", "completed"])
 async def test_continue_from_stale_snapshot_is_rejected(other_execution_state: str) -> None:
     """A task continued from one copy of the session cannot be continued again from an older copy."""
-    agent = _ScriptedAgent("Worker", ["first result", "second result", "third result"])
+    agent = ScriptedAgent("Worker", ["first result", "second result", "third result"])
     agent.gates[1] = asyncio.Event()
     provider = _make_provider(agent)
     session = _make_session()
@@ -1706,7 +1681,7 @@ async def test_continue_from_stale_snapshot_is_rejected(other_execution_state: s
 
 async def test_clear_from_stale_snapshot_keeps_other_execution() -> None:
     """Clearing an older copy's record keeps a finished execution that another copy still owns."""
-    agent = _ScriptedAgent("Worker", ["first result", "second result"])
+    agent = ScriptedAgent("Worker", ["first result", "second result"])
     provider = _make_provider(agent)
     session = _make_session()
     tools = await _get_tools(provider, session)
@@ -1738,7 +1713,7 @@ async def test_clear_from_stale_snapshot_keeps_other_execution() -> None:
 
 async def test_start_after_rollback_does_not_reuse_tracked_task_id() -> None:
     """Restoring a snapshot from before a task started must not let a new task take over its ID."""
-    agent = _ScriptedAgent("Worker", ["original result", "replacement result"])
+    agent = ScriptedAgent("Worker", ["original result", "replacement result"])
     agent.gates[0] = asyncio.Event()
     provider = _make_provider(agent)
     session = _make_session()
@@ -1776,7 +1751,7 @@ async def test_start_after_rollback_does_not_reuse_tracked_task_id() -> None:
 
 async def test_start_after_rollback_and_clear_does_not_reuse_task_id() -> None:
     """A task ID stays reserved for the runtime's lifetime, even after its task was cleared."""
-    provider = _make_provider(_ScriptedAgent("Worker", ["first result", "second result"]))
+    provider = _make_provider(ScriptedAgent("Worker", ["first result", "second result"]))
     session = _make_session()
     tools = await _get_tools(provider, session)
     before_start = session.to_dict()
@@ -1799,7 +1774,7 @@ async def test_start_after_rollback_and_clear_does_not_reuse_task_id() -> None:
 
 async def test_snapshot_from_released_runtime_never_matches_a_new_execution() -> None:
     """Execution IDs are globally unique, so a new runtime's execution never matches an old record."""
-    agent = _ScriptedAgent("Worker", ["original result", "replacement result"])
+    agent = ScriptedAgent("Worker", ["original result", "replacement result"])
     agent.gates[0] = asyncio.Event()
     provider = _make_provider(agent)
     session = _make_session()
@@ -1848,7 +1823,7 @@ async def test_background_tools_run_on_the_event_loop_thread(
     Continuation registration runs on the event loop; running the other tools there too makes each
     tool's check-and-update atomic with respect to it.
     """
-    provider = _make_provider(_ScriptedAgent("Worker", ["first result", "second result", "third result"]))
+    provider = _make_provider(ScriptedAgent("Worker", ["first result", "second result", "third result"]))
     session = _make_session()
     tools = await _get_tools(provider, session)
     await _invoke_tool(tools["background_agents_start_task"], agent_name="Worker", input="go", description="t1")
@@ -1875,7 +1850,7 @@ async def test_background_tools_run_on_the_event_loop_thread(
 @pytest.mark.parametrize("continue_first", [True, False])
 async def test_concurrent_stale_clear_and_continuation_keep_continuation_tracked(continue_first: bool) -> None:
     """A stale clear racing a continuation must never strand the continuation untracked."""
-    agent = _ScriptedAgent("Worker", ["first result", "second result"])
+    agent = ScriptedAgent("Worker", ["first result", "second result"])
     agent.gates[1] = asyncio.Event()
     provider = _make_provider(agent)
     session = _make_session()
@@ -1911,7 +1886,7 @@ async def test_concurrent_stale_clear_and_continuation_keep_continuation_tracked
 @pytest.mark.parametrize("read_first", [True, False])
 async def test_concurrent_stale_result_read_and_continuation_never_crosses_executions(read_first: bool) -> None:
     """A stale reader racing a continuation must never accept the continuation's result as its own."""
-    agent = _ScriptedAgent("Worker", ["first result", "second result"])
+    agent = ScriptedAgent("Worker", ["first result", "second result"])
     provider = _make_provider(agent)
     session = _make_session()
     tools = await _get_tools(provider, session)
