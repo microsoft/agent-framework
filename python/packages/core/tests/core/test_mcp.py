@@ -548,9 +548,12 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
+    initial_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    refreshed_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=True)
     keep = types.Tool(
         name="keep",
         input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        annotations=initial_annotations,
         _meta={"version": 1},
     )
     removed = types.Tool(
@@ -573,6 +576,7 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     original_functions = list(original_list)
     original_meta = dict(tool._tool_call_meta_by_name)
     keep.meta = {"version": 2}
+    keep.annotations = refreshed_annotations
 
     async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
         assert tool._functions == original_functions
@@ -596,6 +600,39 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
         assert kept_function.result_parser is parser
     assert tool._tool_call_meta_by_name == ({} if empty_snapshot else {"keep": {"version": 2}})
     assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
+    assert tool._tool_annotations_by_name == ({} if empty_snapshot else {"keep": refreshed_annotations})
+
+
+async def test_failed_tool_refresh_preserves_previous_annotation_snapshot() -> None:
+    tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    original_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    replacement_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=True)
+    original = types.Tool(
+        name="search",
+        input_schema={"type": "object", "properties": {}},
+        annotations=original_annotations,
+    )
+    mock_session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[original]))
+    await tool.load_tools()
+
+    replacement = types.Tool(
+        name="search",
+        input_schema={"type": "object", "properties": {}},
+        annotations=replacement_annotations,
+    )
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[replacement], next_cursor="second"),
+            RuntimeError("refresh failed"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="refresh failed"):
+        await tool.load_tools()
+
+    assert tool._tool_annotations_by_name == {"search": original_annotations}
 
 
 async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptureFixture) -> None:

@@ -1289,6 +1289,7 @@ class MCPTool:
         self._progressive_loaded_tool_names: set[str] = set()
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self._tool_param_names_by_name: dict[str, set[str]] = {}
+        self._tool_annotations_by_name: dict[str, Any] = {}
         self._global_extra_arg_names, self._tool_extra_arg_names = _normalize_additional_tool_argument_names(
             additional_tool_argument_names
         )
@@ -2336,6 +2337,7 @@ class MCPTool:
         ]
         self._tool_call_meta_by_name.clear()
         self._tool_param_names_by_name.clear()
+        self._tool_annotations_by_name.clear()
         self._progressive_loaded_tool_names.clear()
 
     def _reset_session_state(self) -> None:
@@ -2573,6 +2575,7 @@ class MCPTool:
         functions_before_discovery = self._functions.copy()
         call_meta_before_discovery = self._tool_call_meta_by_name
         param_names_before_discovery = self._tool_param_names_by_name
+        annotations_before_discovery = self._tool_annotations_by_name
         try:
             connection = self._require_connection()
             logger.debug("Connected to MCP server: %s", connection.client or connection.session)
@@ -2608,6 +2611,7 @@ class MCPTool:
                 self._functions[:] = functions_before_discovery
                 self._tool_call_meta_by_name = call_meta_before_discovery
                 self._tool_param_names_by_name = param_names_before_discovery
+                self._tool_annotations_by_name = annotations_before_discovery
             raise
 
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
@@ -3319,6 +3323,7 @@ class MCPTool:
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
+        self._tool_annotations_by_name = tool_annotations_by_name
         self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
 
     async def _try_list_tools_page_with_recovery(

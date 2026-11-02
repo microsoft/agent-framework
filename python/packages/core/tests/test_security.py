@@ -10,7 +10,7 @@ import warnings
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType, SimpleNamespace
 from typing import Annotated, Any, cast
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import AfterValidator, BaseModel, field_validator
@@ -6348,12 +6348,7 @@ def _make_connected_mcp_tool_for_ifc(
     mcp_tool.is_connected = True
     mock_session = AsyncMock()
     mcp_tool.session = mock_session
-    mock_session.list_tools = AsyncMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(
-            tools=[SimpleNamespace(name="remote_tool", annotations=annotations)],
-            next_cursor=None,
-        )
-    )
+    mcp_tool._tool_annotations_by_name = {"remote_tool": annotations}
     mcp_tool.functions.append(function)
     return mcp_tool, function
 
@@ -6786,22 +6781,17 @@ class TestMCPIFCMetaLabels:
             server_meta=server_meta,
             confidentiality=ConfidentialityLabel.PUBLIC,
         )
-        mcp_tool.session.list_tools.side_effect = [
-            SimpleNamespace(
-                tools=[SimpleNamespace(name="remote_tool", annotations=trusted_annotations)], next_cursor=None
-            ),
-            SimpleNamespace(
-                tools=[SimpleNamespace(name="remote_tool", annotations=untrusted_annotations)], next_cursor=None
-            ),
-        ]
+        mcp_tool.load_tools = AsyncMock()  # type: ignore[method-assign]
         proxy = SecureMCPToolProxy(mcp_tool, default_integrity=IntegrityLabel.TRUSTED)
 
         await proxy.refresh_labels()
         props = function.additional_properties
         assert props is not None
         assert props["source_integrity"] == "trusted"
+        mcp_tool._tool_annotations_by_name["remote_tool"] = untrusted_annotations
         await proxy.refresh_labels()
         assert props["source_integrity"] == "untrusted"
+        assert mcp_tool.load_tools.await_count == 2  # type: ignore[union-attr]
         assert function.func is not None
         result = await function.func()
 
@@ -6918,7 +6908,7 @@ class TestMCPIFCMetaLabels:
         )
         assert result[0].additional_properties["security_label"] == expected_label
 
-    async def test_apply_mcp_security_labels_uses_high_level_client_connection(self) -> None:
+    async def test_apply_mcp_security_labels_uses_loaded_annotation_snapshot(self) -> None:
         from agent_framework._mcp import _ClientMCPConnection
         from agent_framework.security import apply_mcp_security_labels
 
@@ -6927,21 +6917,11 @@ class TestMCPIFCMetaLabels:
         sdk_client = AsyncMock()
         mock_session = AsyncMock()
         sdk_client.session = mock_session
-        sdk_client.list_tools.side_effect = [
-            SimpleNamespace(
-                tools=[SimpleNamespace(name="remote_tool", annotations=annotations)],
-                next_cursor="next-page",
-            ),
-            SimpleNamespace(tools=[], next_cursor=None),
-        ]
         mcp_tool._connection = _ClientMCPConnection(sdk_client, is_framework_owned=True)
 
         await apply_mcp_security_labels(mcp_tool)
 
-        assert sdk_client.list_tools.await_args_list == [
-            call(cursor=None),
-            call(cursor="next-page"),
-        ]
+        sdk_client.list_tools.assert_not_awaited()
         mock_session.list_tools.assert_not_awaited()
 
     async def test_framework_stamped_mcp_label_remains_authoritative_through_tracking(self) -> None:
@@ -6999,6 +6979,7 @@ class TestMCPIFCMetaLabels:
         annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
         server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
         mcp_tool, function = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta=server_meta)
+        mcp_tool.load_tools = AsyncMock()  # type: ignore[method-assign]
         proxy = (
             SecureMCPToolProxy(mcp_tool, trust_server_ifc=True) if trust_server_ifc else SecureMCPToolProxy(mcp_tool)
         )
@@ -7227,6 +7208,7 @@ class TestMCPIFCMetaLabels:
 
         mcp_tool = _make_connected_mcp_discovery_tool()
         proxy = SecureMCPToolProxy(mcp_tool)
+        mcp_tool.load_tools = AsyncMock()  # type: ignore[method-assign]
         if already_bound:
             mcp_tool._function_load_callback = proxy._function_load_callback
         proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]

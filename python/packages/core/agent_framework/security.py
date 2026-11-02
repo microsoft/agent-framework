@@ -4412,7 +4412,8 @@ def _apply_mcp_security_label_to_function(
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
-async def apply_mcp_security_labels(
+# Keep this async for public API compatibility now that annotations come from the retained catalog snapshot.
+async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
     mcp_tool: Any,
     *,
     default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
@@ -4478,19 +4479,7 @@ async def apply_mcp_security_labels(
             "MCPTool is not connected. Call connect() or use 'async with' before applying security labels."
         )
 
-    connection = mcp_tool._require_connection()
-
-    from mcp import types as mcp_types
-
-    annotation_map: dict[str, Any] = {}
-    params: mcp_types.PaginatedRequestParams | None = None
-    while True:
-        tool_list = await connection.list_tools_page(params)
-        for remote_tool in tool_list.tools:
-            annotation_map[remote_tool.name] = remote_tool.annotations
-        if not tool_list.next_cursor:
-            break
-        params = mcp_types.PaginatedRequestParams(cursor=tool_list.next_cursor)
+    annotation_map = dict(mcp_tool._tool_annotations_by_name)
 
     loaded_functions = getattr(mcp_tool, "_functions", None)
     if not isinstance(loaded_functions, list):
@@ -4828,6 +4817,7 @@ class SecureMCPToolProxy:
             raise RuntimeError("MCPTool is not connected. Connect before refreshing labels.")
         callback_bound = self._bind_function_load_callback()
         try:
+            await self._mcp_tool.load_tools()
             await self._apply_labels()
         except BaseException:
             if callback_bound:
