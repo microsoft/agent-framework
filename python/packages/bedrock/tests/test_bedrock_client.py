@@ -78,6 +78,20 @@ def test_agent_accepts_bedrock_chat_client() -> None:
     assert agent.client is client
 
 
+@pytest.mark.parametrize("injected", [False, True])
+async def test_bedrock_client_context_ownership(injected: bool) -> None:
+    runtime = MagicMock(spec=BaseClient)
+    session = MagicMock(spec=Boto3Session)
+    session.region_name = "us-west-2"
+    session.client.return_value = runtime
+    client = BedrockChatClient(model="test-model", boto3_session=session, client=runtime if injected else None)
+    async with client as entered:
+        assert entered is client
+        runtime.close.assert_not_called()
+    await client.close()
+    assert runtime.close.call_count == (0 if injected else 1)
+
+
 async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(

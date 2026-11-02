@@ -10,7 +10,10 @@ collection clients, and `QdrantSettings` handles connection configuration.
 pip install agent-framework-qdrant --pre
 ```
 
-Requires Python 3.10+ and Qdrant server 1.16.2+. The official async
+Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
+compatibility is not guaranteed.
+
+Requires Qdrant server 1.16.2+. The official async
 `qdrant-client` SDK is installed automatically.
 
 ## Connection settings

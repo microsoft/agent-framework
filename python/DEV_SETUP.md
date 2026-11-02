@@ -64,8 +64,8 @@ version does not match.
 You can then run the following commands manually:
 
 ```bash
-# Install every Python version covered by package or CI compatibility checks
-uv python install 3.10 3.11 3.12 3.13 3.14 3.15
+# Install every Python version covered by CI
+uv python install 3.11 3.12 3.13 3.14 3.15
 # Use Python 3.11 through 3.14 for a normal full-workspace development environment
 PYTHON_VERSION="3.13"
 uv venv --python $PYTHON_VERSION
@@ -75,17 +75,21 @@ uv run poe install
 uv run poe prek-install
 ```
 
-Python 3.10 remains supported and tested for this release, but it is deprecated
-because upstream Python 3.10 has reached end of life. Prefer Python 3.11 or
-later for new development environments.
+Python 3.10 is no longer supported because it has reached upstream end of life.
+Package metadata still permits Python 3.10 installation, but CI no longer runs
+unit or integration tests on it and compatibility is not guaranteed. Use
+Python 3.11–3.15 for supported development environments, subject to the
+workspace and integration-specific limits below.
 
 The checked-in root workspace lock supports the common Python 3.11–3.14
-development range. CI validates the Python 3.10 and 3.15 boundaries by
-temporarily excluding workspace packages whose own Python constraints do not
-cover those versions; see `.github/actions/python-setup/action.yml`. For local
-work specifically targeting a boundary version, use an isolated
-package-scoped environment or the corresponding CI lane rather than expecting
-the frozen full-workspace install above to resolve unchanged.
+development range. CI validates the Python 3.15 boundary by temporarily
+excluding workspace packages whose own Python constraints do not cover that
+version; see `.github/actions/python-setup/action.yml`. For local work
+specifically targeting Python 3.15, use an isolated package-scoped environment
+or the corresponding CI lane rather than expecting the frozen full-workspace
+install above to resolve unchanged. Python 3.10 unit and integration tests no
+longer run in CI; use an isolated package-scoped environment for unsupported
+compatibility work.
 
 Alternatively, you can reinstall the venv, packages, dependencies and prek
 hooks with a single command. Poe is part of the cross-version development
@@ -429,6 +433,12 @@ uv run poe validate-dependency-bounds-test
 # Defaults to --package "*"; pass a package to scope test mode
 uv run poe validate-dependency-bounds-test -P core
 ```
+The `Dependency Bounds Validation` CI check runs this full matrix only when a PR or merge group adds a workspace package
+or changes an existing package's `project.version` (including the root package), or on manual workflow dispatch.
+Adding an existing package to workspace `members` or removing it from `exclude` also triggers the matrix.
+Other metadata and ordinary code edits do not run the matrix. The standalone Lab project is excluded. The check fails on detection or
+validation errors, has a 60-minute job timeout, and uploads the validator's JSON report. Requiring this check in repository
+rules enforces it at merge time. See [Dependency Scripts](scripts/dependencies/README.md) for the comparison and skip policy.
 
 #### `validate-dependency-bounds-project`
 Validate and extend dependency bounds for a single dependency in a single package. Use `--mode lower`, `--mode upper`, or the default `--mode both`:
@@ -454,14 +464,6 @@ uv run poe upgrade-dev-dependencies
 Use this for repo-wide tooling and dependency-group refreshes. For targeted
 runtime dependency upgrades, prefer `uv lock --upgrade-package
 <dependency-name>` plus the package-scoped bound validation tasks above.
-
-### Building and Publishing
-
-#### `publish`
-Publish packages to PyPI:
-```bash
-uv run poe publish
-```
 
 ## Prek Hooks
 

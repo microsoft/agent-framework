@@ -17,7 +17,7 @@ from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from inspect import isawaitable
+from inspect import currentframe, isawaitable
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict, cast
 
 if sys.version_info >= (3, 13):
@@ -153,18 +153,30 @@ else:
 class MCPSpecificApproval(TypedDict, total=False):
     """Represents the specific approval mode for an MCP tool.
 
-    When using this mode, the user must specify which tools always or never require approval.
+    When using this mode, the user specifies which tools always or never require approval and may set
+    ``default`` for every other tool and prompt.
     Names match raw remote names or unambiguous prefixed names when the raw name already
     matches its normalized form. Normalized-only aliases do not match. Discovery raises
     ``ToolExecutionException`` if a configured name matches multiple raw remote names.
+    A name list given as a single string is treated as one name.
+
+    A tool or prompt resolves in this order: a name in ``always_require_approval`` requires approval, otherwise
+    a name in ``never_require_approval`` does not, otherwise ``default`` applies. Without ``default``, a tool or
+    prompt named in neither list does not require approval, which is the framework default. Setting
+    ``never_require_approval`` without ``default`` emits a ``FutureWarning`` because this fallback may change
+    in a future release; set ``default`` explicitly. Hosted MCP tools do not read ``default``.
 
     Attributes:
         always_require_approval: A sequence of tool names that always require approval.
         never_require_approval: A sequence of tool names that never require approval.
+        default: The approval mode for tools and prompts named in neither list. Use ``"always_require"`` to
+            require approval for every tool except those in ``never_require_approval``, or ``"never_require"``
+            to require approval only for the tools in ``always_require_approval``. ``None`` means not set.
     """
 
     always_require_approval: Collection[str] | None
     never_require_approval: Collection[str] | None
+    default: Literal["always_require", "never_require"] | None
 
 
 MCPToolResultContentMode = Literal[
@@ -863,6 +875,63 @@ def _mcp_config_candidate_names(*, local_name: str, normalized_name: str, remote
     return tuple(names)
 
 
+_MCP_APPROVAL_MODES = ("always_require", "never_require")
+_MCP_APPROVAL_DEFAULT_WARNING = (
+    "approval_mode sets `never_require_approval` without `default`. Tools and prompts named in neither list use "
+    '"never_require" today, and this fallback may change in a future release. Set `default` to "never_require" '
+    'to keep the current behavior or to "always_require" to require approval for them.'
+)
+
+
+def _mcp_approval_names(names: Collection[str] | None) -> Collection[str]:
+    """Return approval-policy names, treating a bare string as one name rather than a substring pattern."""
+    if names is None:
+        return ()
+    if isinstance(names, str):
+        return (names,)
+    return names
+
+
+def _mcp_approval_default(
+    approval_mode: MCPSpecificApproval,
+    *,
+    warn_stacklevel: int | None = None,
+) -> Literal["always_require", "never_require"] | None:
+    """Return the validated ``default`` of an approval policy, or ``None`` when it is not set.
+
+    The per-tool resolver calls this for every discovered tool and prompt, so it stays silent unless asked.
+    Constructors pass ``warn_stacklevel``, counted as for ``warnings.warn`` from the caller of this function, to warn
+    once, at the code that built the tool, when ``never_require_approval`` is used without ``default``.
+    """
+    default = approval_mode.get("default")
+    if default is None:
+        if warn_stacklevel is not None and approval_mode.get("never_require_approval") is not None:
+            warnings.warn(_MCP_APPROVAL_DEFAULT_WARNING, FutureWarning, stacklevel=warn_stacklevel + 1)
+        return None
+    if default not in _MCP_APPROVAL_MODES:
+        raise ValueError(f"approval_mode `default` must be 'always_require' or 'never_require', got {default!r}.")
+    return default
+
+
+def _mcp_constructor_stacklevel(instance: object) -> int:
+    """Return the ``warnings.warn`` stacklevel, counted from ``MCPTool.__init__``, of the constructing code.
+
+    Subclass constructors that forward to ``MCPTool.__init__`` are skipped so the warning points at the caller.
+    """
+    stacklevel = 2
+    frame = currentframe()
+    caller: Any = None
+    try:
+        # frame is this helper, frame.f_back is MCPTool.__init__, and its f_back is the first constructor caller.
+        caller = frame.f_back.f_back if frame is not None and frame.f_back is not None else None
+        while caller is not None and caller.f_code.co_name == "__init__" and caller.f_locals.get("self") is instance:
+            stacklevel += 1
+            caller = caller.f_back
+        return stacklevel
+    finally:
+        del frame, caller
+
+
 def _make_mcp_tool_caller(
     mcp_tool: MCPTool, remote_tool_name: str
 ) -> Callable[..., Coroutine[Any, Any, str | list[Content]]]:
@@ -1151,6 +1220,8 @@ class MCPTool:
             raise ValueError(
                 f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
             )
+        if isinstance(approval_mode, dict):
+            _mcp_approval_default(approval_mode, warn_stacklevel=_mcp_constructor_stacklevel(self))
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -1596,8 +1667,8 @@ class MCPTool:
         """Reject configured names that identify more than one raw remote name."""
         configured_names = set(self.allowed_tools or ())
         if isinstance(self.approval_mode, dict):
-            configured_names.update(self.approval_mode.get("always_require_approval") or ())
-            configured_names.update(self.approval_mode.get("never_require_approval") or ())
+            configured_names.update(_mcp_approval_names(self.approval_mode.get("always_require_approval")))
+            configured_names.update(_mcp_approval_names(self.approval_mode.get("never_require_approval")))
         if not configured_names:
             return
 
@@ -2864,17 +2935,16 @@ class MCPTool:
         self,
         *candidate_names: str,
     ) -> Literal["always_require", "never_require"] | None:
-        if isinstance(self.approval_mode, dict):
-            if (always_require := self.approval_mode.get("always_require_approval")) and any(
-                name in always_require for name in candidate_names
-            ):
-                return "always_require"
-            if (never_require := self.approval_mode.get("never_require_approval")) and any(
-                name in never_require for name in candidate_names
-            ):
-                return "never_require"
-            return None
-        return self.approval_mode  # type: ignore[return-value]
+        approval_mode = self.approval_mode
+        if not isinstance(approval_mode, dict):
+            return approval_mode  # type: ignore[return-value]
+        always_require = _mcp_approval_names(approval_mode.get("always_require_approval"))
+        never_require = _mcp_approval_names(approval_mode.get("never_require_approval"))
+        if any(name in always_require for name in candidate_names):
+            return "always_require"
+        if any(name in never_require for name in candidate_names):
+            return "never_require"
+        return _mcp_approval_default(approval_mode)
 
     async def _load_configured_discovery_locked(self) -> None:
         """Load configured session discovery while the caller holds the discovery lock."""
@@ -3735,9 +3805,12 @@ class MCPStdioTool(MCPTool):
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
                 - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` or `never_require_approval`,
-                  followed by a sequence of strings with the names of the relevant tools.
-                A tool should not be listed in both, if so, it will require approval.
+                - A dict with keys `always_require_approval` and `never_require_approval`, each a sequence of
+                  strings with the names of the relevant tools, and an optional `default` ("always_require" or
+                  "never_require") for tools and prompts named in neither list. Without `default`, those tools
+                  and prompts do not require approval, and setting `never_require_approval` without `default`
+                  emits a ``FutureWarning``.
+                A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
@@ -3992,9 +4065,12 @@ class MCPStreamableHTTPTool(MCPTool):
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
                 - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` or `never_require_approval`,
-                  followed by a sequence of strings with the names of the relevant tools.
-                A tool should not be listed in both, if so, it will require approval.
+                - A dict with keys `always_require_approval` and `never_require_approval`, each a sequence of
+                  strings with the names of the relevant tools, and an optional `default` ("always_require" or
+                  "never_require") for tools and prompts named in neither list. Without `default`, those tools
+                  and prompts do not require approval, and setting `never_require_approval` without `default`
+                  emits a ``FutureWarning``.
+                A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
@@ -4208,7 +4284,7 @@ class MCPStreamableHTTPTool(MCPTool):
         attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
         attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
         try:
-            from httpx import URL
+            from httpx2 import URL
 
             parsed = URL(self.url)
             if parsed.host:
@@ -4640,9 +4716,12 @@ class MCPWebsocketTool(MCPTool):
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
                 - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` or `never_require_approval`,
-                  followed by a sequence of strings with the names of the relevant tools.
-                A tool should not be listed in both, if so, it will require approval.
+                - A dict with keys `always_require_approval` and `never_require_approval`, each a sequence of
+                  strings with the names of the relevant tools, and an optional `default` ("always_require" or
+                  "never_require") for tools and prompts named in neither list. Without `default`, those tools
+                  and prompts do not require approval, and setting `never_require_approval` without `default`
+                  emits a ``FutureWarning``.
+                A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.

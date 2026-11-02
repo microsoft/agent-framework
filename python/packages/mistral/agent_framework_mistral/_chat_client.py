@@ -401,6 +401,7 @@ class RawMistralChatClient(
         self.model = mistral_settings.get("chat_model")
         self.server_url = mistral_settings.get("server_url")
         self._owns_client = not isinstance(client, Mistral)
+        self._client_closed = False
 
         if isinstance(client, Mistral):
             self.client = client
@@ -421,11 +422,15 @@ class RawMistralChatClient(
 
         super().__init__(additional_properties=additional_properties)
 
+    @override
     async def close(self) -> None:
         """Close the internally created Mistral SDK client."""
-        if self._owns_client:
-            await self.client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
-            self.client.__exit__(None, None, None)  # type: ignore[no-untyped-call]
+        if self._owns_client and not self._client_closed:
+            try:
+                await self.client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
+            finally:
+                self.client.__exit__(None, None, None)  # type: ignore[no-untyped-call]
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:

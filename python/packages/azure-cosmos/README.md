@@ -15,7 +15,10 @@ provider, or workflow checkpoint store.
 pip install agent-framework-azure-cosmos --pre
 ```
 
-The package requires Python 3.10 or later, an Azure Cosmos DB for NoSQL account,
+The package supports Python 3.11–3.15. Python 3.10 installation remains
+permitted, but compatibility is not guaranteed.
+
+The package requires an Azure Cosmos DB for NoSQL account
 and `azure-cosmos` 4.7 or later. Vector collections also require the account's
 [NoSQL vector search capability](https://learn.microsoft.com/azure/cosmos-db/vector-search)
 to be enabled before use.

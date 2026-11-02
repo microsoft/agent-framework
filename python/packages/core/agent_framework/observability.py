@@ -851,6 +851,8 @@ def create_resource(
 
     This function reads standard OpenTelemetry environment variables to configure
     the resource, which identifies your service in telemetry backends.
+    Resources include the string attribute `microsoft.agent-framework="True"` by default,
+    shared by logs, traces, and metrics configured with this resource.
 
     The following environment variables are read:
     - OTEL_SERVICE_NAME: The name of the service (defaults to "agent_framework")
@@ -925,7 +927,7 @@ def create_resource(
     # Apply OTEL_RESOURCE_ATTRIBUTES first, as a base — everything applied after this
     # (attributes/kwargs, then service_name/service_version) takes precedence over it, so an
     # explicit value is never silently replaced by the environment.
-    resource_attributes: dict[str, Any] = {}
+    resource_attributes: dict[str, Any] = {"microsoft.agent-framework": "True"}
     if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
         resource_attributes.update(_parse_headers(resource_attrs_env))
 
@@ -1624,6 +1626,8 @@ def configure_otel_providers(
 
     This method creates the exporters and providers for the application based on
     the provided values and environment variables and enables instrumentation.
+    All three signal providers share a resource that includes the string attribute
+    `microsoft.agent-framework="True"` by default.
 
     Call this method once during application startup, before any telemetry is captured.
     DO NOT call this method multiple times, as it may lead to unexpected behavior.

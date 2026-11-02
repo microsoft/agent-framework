@@ -57,9 +57,10 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
 from .._feature_usage import FeatureIndex
+from ._capture import _ProcessOutput  # pyright: ignore[reportPrivateUsage] - shared shell capture
 from ._policy import ShellPolicy, ShellRequest
 from ._session import ShellSession
-from ._truncate import truncate_head_tail as _truncate_bytes
+from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
 from ._types import (
     ShellCommandError,
     ShellMode,
@@ -264,7 +265,13 @@ class DockerShellTool:
             logging). Defaults to an empty policy; supply patterns
             explicitly to enable filtering.
         timeout: Per-command timeout in seconds.
-        max_output_bytes: Combined stdout/stderr byte cap before truncation.
+        max_stdout_bytes: Positive retained byte allowance for normal output.
+            Default 64 KiB, plus bounded capture overhead.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
+        max_stderr_bytes: Positive retained byte allowance for error output.
+            Default 64 KiB, independent of ``max_stdout_bytes``.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
+            Container memory limits do not cover host-side capture buffers.
         approval_mode: Controls the FunctionTool approval gate. Unlike
             ``LocalShellTool``, ``"never_require"`` is permitted without
             ``acknowledge_unsafe`` because the container — when launched
@@ -296,12 +303,15 @@ class DockerShellTool:
         env: Mapping[str, str] | None = None,
         policy: ShellPolicy | None = None,
         timeout: float | None = 30.0,
-        max_output_bytes: int = 64 * 1024,
+        max_stdout_bytes: int = 64 * 1024,
+        max_stderr_bytes: int = 64 * 1024,
         approval_mode: Literal["always_require", "never_require"] = "always_require",
         on_command: Callable[[str], None] | None = None,
         docker_binary: str = "docker",
         shell: str = "bash",
     ) -> None:
+        _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
+        _validate_output_limit(max_stderr_bytes, name="max_stderr_bytes")
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
         unsafe_extra_run_args_snapshot = tuple(unsafe_extra_run_args or ())
@@ -321,7 +331,8 @@ class DockerShellTool:
         self._env = dict(env or {})
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
-        self._max_output_bytes = max_output_bytes
+        self._max_stdout_bytes = max_stdout_bytes
+        self._max_stderr_bytes = max_stderr_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
         self._binary = docker_binary
@@ -361,7 +372,8 @@ class DockerShellTool:
                 argv,
                 workdir=None,  # workdir is set on the container itself
                 env=None,
-                max_output_bytes=self._max_output_bytes,
+                max_stdout_bytes=self._max_stdout_bytes,
+                max_stderr_bytes=self._max_stderr_bytes,
             )
             await self._session.start()
 
@@ -468,80 +480,23 @@ class DockerShellTool:
             stderr=asyncio.subprocess.PIPE,
         )
         timed_out = False
+        output = _ProcessOutput(proc, max_stdout_bytes=self._max_stdout_bytes, max_stderr_bytes=self._max_stderr_bytes)
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            timed_out = True
-            # Kill the container by name. ``--rm`` reaps it on a clean
-            # exit; if ``docker kill`` itself hangs or returns non-zero
-            # (daemon stuck, container with unkillable kernel task) the
-            # ``--rm`` reaper never fires and the container is leaked,
-            # so we explicitly fall back to ``docker rm -f``.
-            killer = await asyncio.create_subprocess_exec(
-                self._binary,
-                "kill",
-                "--signal",
-                "KILL",
-                per_call_name,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            kill_ok = False
             try:
-                rc = await asyncio.wait_for(killer.wait(), timeout=5.0)
-                kill_ok = rc == 0
+                await output.wait(timeout)
             except asyncio.TimeoutError:
-                killer.kill()
-                with contextlib.suppress(Exception):
-                    await killer.wait()
-            if not kill_ok:
-                logger.warning(
-                    "docker kill of stateless container %s did not succeed; "
-                    "attempting docker rm -f to avoid a container leak",
-                    per_call_name,
-                )
-                reaper = await asyncio.create_subprocess_exec(
-                    self._binary,
-                    "rm",
-                    "-f",
-                    per_call_name,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                try:
-                    _, rerr = await asyncio.wait_for(reaper.communicate(), timeout=5.0)
-                    if reaper.returncode != 0:
-                        logger.error(
-                            "docker rm -f %s failed (rc=%s, err=%s); container may be leaked",
-                            per_call_name,
-                            reaper.returncode,
-                            rerr.decode("utf-8", errors="replace").strip(),
-                        )
-                except asyncio.TimeoutError:
-                    reaper.kill()
-                    with contextlib.suppress(Exception):
-                        await reaper.wait()
-                    logger.error(
-                        "docker rm -f %s timed out; container may be leaked",
-                        per_call_name,
-                    )
-            try:
-                stdout_bytes, stderr_bytes = await proc.communicate()
-            except Exception:
-                # Pipe/socket failures after kill leave us with no captured
-                # output. Log so operators can correlate empty results with
-                # the timeout teardown (otherwise the model just sees
-                # exit_code=-1 with no stdout/stderr).
-                logger.warning(
-                    "failed to drain stdout/stderr after killing stateless container %s",
-                    per_call_name,
-                    exc_info=True,
-                )
-                stdout_bytes, stderr_bytes = b"", b""
+                timed_out = True
+                await self._terminate_stateless(proc, per_call_name)
+                await output.finish()
+            except BaseException:
+                await self._terminate_stateless(proc, per_call_name)
+                raise
+        finally:
+            await output.close()
 
         duration_ms = int((time.monotonic() - started) * 1000)
-        stdout_str, stdout_truncated = _truncate_bytes(stdout_bytes or b"", self._max_output_bytes)
-        stderr_str, stderr_truncated = _truncate_bytes(stderr_bytes or b"", self._max_output_bytes)
+        stdout_str, stdout_truncated = output.stdout.format()
+        stderr_str, stderr_truncated = output.stderr.format()
         return ShellResult(
             stdout=stdout_str,
             stderr=stderr_str,
@@ -550,6 +505,66 @@ class DockerShellTool:
             truncated=stdout_truncated or stderr_truncated,
             timed_out=timed_out,
         )
+
+    async def _terminate_stateless(self, proc: asyncio.subprocess.Process, name: str) -> None:
+        # Stopping the local client alone does not stop its container.
+        try:
+            killer = await asyncio.create_subprocess_exec(
+                self._binary,
+                "kill",
+                "--signal",
+                "KILL",
+                name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            kill_ok = False
+            try:
+                try:
+                    kill_ok = await asyncio.wait_for(killer.wait(), timeout=5.0) == 0
+                except asyncio.TimeoutError:
+                    killer.kill()
+                    try:
+                        await asyncio.wait_for(killer.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("docker kill client for %s did not exit after termination", name)
+            finally:
+                if killer.returncode is None:
+                    killer.kill()
+            if not kill_ok:
+                logger.warning("docker kill of %s did not succeed; attempting docker rm -f", name)
+                reaper = await asyncio.create_subprocess_exec(
+                    self._binary,
+                    "rm",
+                    "-f",
+                    name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                diagnostic = _ProcessOutput(reaper, max_stdout_bytes=4096, max_stderr_bytes=4096)
+                try:
+                    try:
+                        await diagnostic.wait(5.0)
+                    except asyncio.TimeoutError:
+                        reaper.kill()
+                        await diagnostic.finish()
+                        logger.error("docker rm -f %s timed out; container may be leaked", name)
+                    else:
+                        if reaper.returncode != 0:
+                            error, _ = diagnostic.stderr.format()
+                            logger.error(
+                                "docker rm -f %s failed (rc=%s, err=%s); container may be leaked",
+                                name,
+                                reaper.returncode,
+                                error.strip(),
+                            )
+                finally:
+                    if reaper.returncode is None:
+                        reaper.kill()
+                    await diagnostic.close()
+        finally:
+            if proc.returncode is None:
+                proc.kill()
 
     # ------------------------------------------------------------------ container ops
 

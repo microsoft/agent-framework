@@ -562,6 +562,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
                         remaining_update = copy.copy(update)
                         remaining_update.contents = remaining_contents
                         yield remaining_update
+                    elif update.additional_properties:
+                        metadata_update = copy.copy(update)
+                        metadata_update.contents = []
+                        metadata_update.role = None
+                        metadata_update.author_name = None
+                        metadata_update.message_id = None
+                        metadata_update.merge_mode = None
+                        yield metadata_update
                 if not all_auto_approved or has_other_user_input:
                     return
                 context.messages = []

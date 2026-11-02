@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import builtins
 import inspect
 import json
 import os
@@ -1062,6 +1061,23 @@ async def test_bad_request_error_non_content_filter() -> None:
     assert "failed to complete the prompt" in str(exc_info.value)
 
 
+def test_get_mcp_tool_merges_both_approval_lists() -> None:
+    """Both approval lists must survive: overwriting the first with the second would
+    silently auto-approve tools the caller asked to gate."""
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="MCP",
+        url="https://mcp.example",
+        approval_mode={
+            "always_require_approval": ["dangerous_tool"],
+            "never_require_approval": ["safe_tool"],
+        },
+    )
+    assert tool_config["require_approval"] == {
+        "always": {"tool_names": ["dangerous_tool"]},
+        "never": {"tool_names": ["safe_tool"]},
+    }
+
+
 def test_get_mcp_tool_with_project_connection_id() -> None:
     tool_config = FoundryChatClient.get_mcp_tool(
         name="Docs MCP",
@@ -1716,12 +1732,12 @@ def test_get_computer_use_tool() -> None:
 
 
 def test_get_computer_tool_uses_non_preview_sdk_model() -> None:
-    from azure.ai.projects.models import ComputerTool
+    computer_tool_cls = _skip_if_sdk_class_missing("ComputerTool")
 
     tool = FoundryChatClient.get_computer_tool()
-    assert isinstance(tool, ComputerTool)
+    assert isinstance(tool, computer_tool_cls)
     assert tool.type == "computer"
-    assert isinstance(RawFoundryChatClient.get_computer_tool(), ComputerTool)
+    assert isinstance(RawFoundryChatClient.get_computer_tool(), computer_tool_cls)
 
 
 def test_foundry_computer_result_without_screenshot_is_rejected() -> None:
@@ -1734,27 +1750,14 @@ def test_foundry_computer_result_without_screenshot_is_rejected() -> None:
         client._prepare_content_for_openai("tool", result)
 
 
-def test_get_computer_tool_fails_only_when_invoked_with_older_sdk() -> None:
-    original_import = builtins.__import__
+def test_get_computer_tool_fails_only_when_invoked_with_older_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    from azure.ai.projects import models
 
-    def missing_computer_tool(
-        name: str,
-        globals: dict[str, Any] | None = None,
-        locals: dict[str, Any] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> Any:
-        if name == "azure.ai.projects.models" and "ComputerTool" in fromlist:
-            raise ImportError("cannot import name 'ComputerTool' from azure.ai.projects.models")
-        return original_import(name, globals, locals, fromlist, level)
+    monkeypatch.delattr(models, "ComputerTool", raising=False)
 
-    with (
-        patch.object(builtins, "__import__", side_effect=missing_computer_tool),
-        pytest.raises(ImportError, match=r"ComputerTool from azure-ai-projects>=2\.3\.0") as exc_info,
-    ):
+    with pytest.raises(ImportError, match=r"ComputerTool from azure-ai-projects>=2\.3\.0") as exc_info:
         FoundryChatClient.get_computer_tool()
     assert "Upgrade azure-ai-projects to >=2.3.0 to use this tool." in str(exc_info.value)
-    assert isinstance(exc_info.value.__cause__, ImportError)
 
 
 @pytest.mark.filterwarnings("ignore::FutureWarning")

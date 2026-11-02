@@ -3150,9 +3150,7 @@ class TestWorkflowAsAgentFilteringRound8:
             ctx: WorkflowContext[Never, AgentResponseUpdate],  # type: ignore[valid-type]
         ) -> None:
             await ctx.yield_output(
-                AgentResponseUpdate(
-                    contents=[Content.from_text("user said hi")], role="user", message_id="m-user"
-                )
+                AgentResponseUpdate(contents=[Content.from_text("user said hi")], role="user", message_id="m-user")
             )
             await ctx.yield_output(
                 AgentResponseUpdate(contents=[Content.from_text("assistant answer")], message_id="m-answer")

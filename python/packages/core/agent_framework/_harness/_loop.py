@@ -50,6 +50,7 @@ from .._types import (
     ResponseStream,
     UsageDetails,
     add_usage_details,
+    merge_additional_properties,
     normalize_messages,
 )
 
@@ -544,6 +545,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         # injected "nudge" messages, used to build the combined response when return_final_only=False.
         aggregated: list[Message] = []
         aggregated_usage: UsageDetails | None = None
+        additional_properties: dict[str, Any] = {}
         final_result: AgentResponse | None = None
         stamped_options = dict(context.options) if context.options is not None else {}
         stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
@@ -562,6 +564,7 @@ class AgentLoopMiddleware(AgentMiddleware):
 
                 final_result = result
                 aggregated.extend(result.messages)
+                additional_properties = merge_additional_properties(additional_properties, result.additional_properties)
                 if result.usage_details is not None:
                     aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
 
@@ -619,6 +622,7 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
+            context.result.additional_properties = additional_properties
         await self._fire_turn_scoped_after_providers(
             context,
             context.result if isinstance(context.result, AgentResponse) else final_result,

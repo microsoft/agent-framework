@@ -37,6 +37,7 @@ from agent_framework import (
     Annotation,
     BaseChatClient,
     ChatMiddlewareLayer,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
@@ -83,6 +84,7 @@ from azure.ai.agentserver.responses.models import (
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import MCPError
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai.types.responses import ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
@@ -1483,9 +1485,9 @@ class TestResponsesHostServerInit:
             ResponsesHostServer(agent)
 
     def test_init_allows_default_conversation_id_for_agent_history(self) -> None:
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=_ServiceStorageRecordingClient(),
-            default_options={"conversation_id": "service-thread"},  # pyrefly: ignore[bad-argument-type]
+            default_options={"conversation_id": "service-thread"},
         )
 
         ResponsesHostServer(agent, history_source="agent")
@@ -1502,9 +1504,9 @@ class TestResponsesHostServerInit:
             ResponsesHostServer(agent)
 
     def test_failed_init_does_not_mutate_agent(self) -> None:
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=_RecordingHistoryClient(),
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
 
         with pytest.raises(RuntimeError, match="resilient_background"):
@@ -1771,10 +1773,10 @@ class TestAgentSessionPersistence:
 
     async def test_agent_server_history_disables_service_storage(self) -> None:
         client = _ServiceStorageRecordingClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Service Storage Agent",
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store)
@@ -1796,10 +1798,10 @@ class TestAgentSessionPersistence:
 
     async def test_host_history_rejects_storing_default_without_mutating_it(self) -> None:
         client = _RecordingHistoryClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Non-Storing Agent",
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
         with pytest.raises(RuntimeError, match="Remove that developer-owned default"):
             _make_server(agent, session_store=SessionStore())
@@ -1808,9 +1810,9 @@ class TestAgentSessionPersistence:
 
     async def test_host_history_preserves_non_storing_client_default(self) -> None:
         client = _RecordingHistoryClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
-            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": False},
         )
         server = _make_server(agent)
         response = await _post(server)
@@ -3555,11 +3557,11 @@ class TestAgentSessionPersistence:
     async def test_agent_history_uses_in_memory_history_from_session_store(self) -> None:
         client = _RecordingHistoryClient()
         history = InMemoryHistoryProvider()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Agent Managed In-Memory History",
             context_providers=[history],
-            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": False},
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source="agent")
@@ -7835,9 +7837,34 @@ class TestFunctionApprovalRoundTrip:
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
 
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+    @pytest.mark.parametrize("with_preamble", [False, True])
+    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self, with_preamble: bool) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
-        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[request_content], role="assistant")])
+        updates: list[AgentResponseUpdate] = []
+        preambles = ("Checking the refund policy.", "The refund requires approval.")
+        if with_preamble:
+            client = OpenAIChatClient(model="test-model", api_key="test-key")
+            for output_index, text in enumerate(preambles):
+                event_args: dict[str, Any] = {
+                    "content_index": 0,
+                    "item_id": f"message_{output_index}",
+                    "output_index": output_index,
+                    "sequence_number": output_index * 2,
+                }
+                for event in (
+                    ResponseTextDeltaEvent(type="response.output_text.delta", delta=text, logprobs=[], **event_args),
+                    ResponseTextDoneEvent(type="response.output_text.done", text=text, logprobs=[], **event_args),
+                ):
+                    update = client._parse_chunk_from_openai(event, {}, {})
+                    updates.append(
+                        AgentResponseUpdate(
+                            contents=update.contents,
+                            message_id=update.message_id,
+                            role="assistant",
+                        )
+                    )
+        updates.append(AgentResponseUpdate(contents=[request_content], role="assistant"))
+        agent = _make_agent(stream_updates=updates)
         server = _make_server(agent)
 
         resp = await _post(server, stream=True)
@@ -7847,6 +7874,11 @@ class TestFunctionApprovalRoundTrip:
         types = _sse_event_types(events)
         assert types[0] == "response.created"
         assert types[-1] == "response.completed"
+
+        if with_preamble:
+            assert [event["data"]["text"] for event in events if event["event"] == "response.output_text.done"] == list(
+                preambles
+            )
 
         approval_request_id: str | None = None
         for e in events:

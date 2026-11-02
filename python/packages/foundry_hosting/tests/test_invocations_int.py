@@ -25,7 +25,7 @@ from typing import Annotated, Any
 import httpx
 import pytest
 from agent_framework import Agent, InMemoryHistoryProvider, tool
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.identity import AzureCliCredential
 
 from agent_framework_foundry_hosting import InvocationsHostServer
@@ -51,11 +51,11 @@ def server() -> InvocationsHostServer:
     """Create an InvocationsHostServer backed by a real Foundry agent."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
 
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Keep answers very short (one or two sentences).",
         context_providers=[InMemoryHistoryProvider()],
-        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": False},
     )
 
     return InvocationsHostServer(agent)
@@ -72,11 +72,11 @@ def server_with_tools() -> InvocationsHostServer:
     """Create an InvocationsHostServer whose agent has a tool."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
 
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Use the provided tools when appropriate. Keep answers very short.",
         tools=[get_weather],
-        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": False},
     )
 
     return InvocationsHostServer(agent)

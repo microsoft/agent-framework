@@ -64,6 +64,8 @@ from agent_framework._tools import (
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
+from .mcp_approval_helpers import ForwardingMCPTool, approval_request_names, run_function_call
+
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("LOCAL_MCP_URL", "") == "",
@@ -354,9 +356,10 @@ async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration
     [
         (["docs_search"], None),
         (None, {"always_require_approval": ["docs_search"]}),
-        (None, {"never_require_approval": ["docs_search"]}),
+        (None, {"always_require_approval": "docs_search"}),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}),
     ],
-    ids=["allowed", "always_require", "never_require"],
+    ids=["allowed", "always_require", "always_require_single_string", "never_require"],
 )
 @pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
 @pytest.mark.parametrize("paginated", [False, True])
@@ -409,7 +412,7 @@ async def test_load_tools_rejects_ambiguous_policy_names(
     [
         (["docs_search"], None),
         (None, {"always_require_approval": ["docs_search"]}),
-        (None, {"never_require_approval": ["docs_search"]}),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}),
     ],
     ids=["allowed", "always_require", "never_require"],
 )
@@ -468,7 +471,7 @@ async def test_ambiguous_policy_reload_preserves_previous_discovery(
     [
         (["docs_search"], None, "never_require"),
         (None, {"always_require_approval": ["docs_search"]}, "always_require"),
-        (None, {"never_require_approval": ["docs_search"]}, "never_require"),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}, "never_require"),
     ],
     ids=["allowed", "always_require", "never_require"],
 )
@@ -682,6 +685,7 @@ async def test_overlapping_names_accept_unambiguous_policy(
         approval_mode={
             "always_require_approval": ["search"],
             "never_require_approval": ["search", "docs_docs_search"],
+            "default": "never_require",
         },
     )
     mock_session = AsyncMock()
@@ -3125,8 +3129,25 @@ async def test_local_mcp_server_prompt_execution():
             {
                 "always_require_approval": ["tool_one"],
                 "never_require_approval": ["tool_two"],
+                "default": "never_require",
             },
             {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"always_require_approval": ["tool_one"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"default": "always_require", "never_require_approval": ["tool_one"]},
+            {"tool_one": "never_require", "tool_two": "always_require"},
+        ),
+        (
+            {"default": "never_require", "always_require_approval": ["tool_one"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"default": "always_require"},
+            {"tool_one": "always_require", "tool_two": "always_require"},
         ),
     ],
 )
@@ -3178,15 +3199,259 @@ async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
 
 
 def test_mcp_tool_approval_mode_returns_none_for_unmatched_names() -> None:
-    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-        name="test_tool",
-        approval_mode={
-            "always_require_approval": ["tool_one"],
-            "never_require_approval": ["tool_two"],
-        },
-    )
+    with pytest.warns(FutureWarning, match="never_require_approval"):
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            approval_mode={
+                "always_require_approval": ["tool_one"],
+                "never_require_approval": ["tool_two"],
+            },
+        )
 
     assert tool._determine_approval_mode("tool_three") is None
+
+
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"always_require_approval": ["tool_one"]}, None),
+        ({}, None),
+        ({"default": None}, None),
+        ({"default": "always_require"}, "always_require"),
+        ({"default": "never_require"}, "never_require"),
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "always_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "never_require"),
+    ],
+    ids=["always_list_only", "empty", "default_none", "default_always", "default_never", "allow_list", "deny_list"],
+)
+def test_mcp_tool_approval_default_applies_to_names_in_neither_list(
+    approval_mode: MCPSpecificApproval, expected: str | None
+) -> None:
+    tool = MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    assert tool._determine_approval_mode("tool_three") == expected
+
+
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "never_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "always_require"),
+        (
+            {
+                "default": "never_require",
+                "always_require_approval": ["tool_one"],
+                "never_require_approval": ["tool_one"],
+            },
+            "always_require",
+        ),
+    ],
+    ids=["never_list_beats_default", "always_list_beats_default", "always_list_beats_never_list"],
+)
+def test_mcp_tool_approval_lists_take_precedence_over_default(
+    approval_mode: MCPSpecificApproval, expected: str
+) -> None:
+    tool = MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    assert tool._determine_approval_mode("tool_one") == expected
+
+
+@pytest.mark.parametrize("default", ["sometimes", "always", "", True, 1])
+def test_mcp_tool_rejects_invalid_approval_default(default: Any) -> None:
+    with pytest.raises(ValueError, match="`default` must be"):
+        MCPTool(name="test_tool", approval_mode={"default": default})  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+@pytest.mark.parametrize(
+    "approval_mode",
+    [
+        {"never_require_approval": ["tool_one"]},
+        {"never_require_approval": []},
+        {"always_require_approval": ["tool_one"], "never_require_approval": ["tool_two"]},
+    ],
+    ids=["never_list", "empty_never_list", "both_lists"],
+)
+def test_mcp_tool_warns_when_never_list_has_no_default(approval_mode: MCPSpecificApproval) -> None:
+    with pytest.warns(FutureWarning, match="without `default`") as recorded:
+        MCPStreamableHTTPTool(name="docs", url="https://example.com/mcp", approval_mode=approval_mode)
+
+    assert [warning.category for warning in recorded] == [FutureWarning]
+    assert recorded[0].filename == __file__
+
+
+def test_mcp_tool_approval_warning_points_at_the_constructing_caller() -> None:
+    approval_mode: MCPSpecificApproval = {"never_require_approval": ["tool_one"]}
+    with pytest.warns(FutureWarning, match="without `default`") as recorded:
+        frame = inspect.currentframe()
+        assert frame is not None
+        expected_line = frame.f_lineno + 1
+        ForwardingMCPTool(approval_mode=approval_mode)
+
+    assert recorded[0].filename == __file__
+    assert recorded[0].lineno == expected_line
+
+
+async def test_mcp_tool_approval_warning_is_not_repeated_during_discovery() -> None:
+    with pytest.warns(FutureWarning, match="without `default`"):
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="docs",
+            approval_mode={"never_require_approval": ["search_docs"]},
+        )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name="search_docs", input_schema={"type": "object"}),
+                types.Tool(name="delete_records", input_schema={"type": "object"}),
+            ]
+        )
+    )
+    mock_session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summarize")])
+    )
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        await tool.load_tools()
+        await tool.load_prompts()
+        await tool.message_handler(types.ToolListChangedNotification())
+        await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert [warning for warning in recorded if issubclass(warning.category, FutureWarning)] == []
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "search_docs": "never_require",
+        "delete_records": "never_require",
+        "summarize": "never_require",
+    }
+
+
+@pytest.mark.parametrize(
+    "approval_mode",
+    [
+        None,
+        "always_require",
+        "never_require",
+        {},
+        {"always_require_approval": ["tool_one"]},
+        {"never_require_approval": None},
+        {"never_require_approval": ["tool_one"], "default": "never_require"},
+        {"never_require_approval": ["tool_one"], "default": "always_require"},
+    ],
+    ids=[
+        "none",
+        "always_string",
+        "never_string",
+        "empty_dict",
+        "always_list",
+        "never_list_none",
+        "never_list_with_never_default",
+        "never_list_with_always_default",
+    ],
+)
+def test_mcp_tool_does_not_warn_when_approval_fallback_is_explicit_or_unused(approval_mode: Any) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+def test_mcp_tool_approval_names_given_as_one_string_match_exact_names_only() -> None:
+    deny_list = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        approval_mode={"always_require_approval": "delete_records", "default": "never_require"},
+    )
+    allow_list = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        approval_mode={"never_require_approval": "search_docs", "default": "always_require"},
+    )
+
+    assert deny_list._determine_approval_mode("delete_records") == "always_require"
+    assert deny_list._determine_approval_mode("delete") == "never_require"
+    assert allow_list._determine_approval_mode("search_docs") == "never_require"
+    assert allow_list._determine_approval_mode("search") == "always_require"
+
+
+async def test_tools_added_after_list_changed_use_approval_default() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["search_docs"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    search_docs = types.Tool(name="search_docs", input_schema={"type": "object"})
+    delete_records = types.Tool(name="delete_records", input_schema={"type": "object"})
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[search_docs]),
+            types.ListToolsResult(tools=[search_docs, delete_records]),
+        ]
+    )
+
+    await tool.load_tools()
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {"search_docs": "never_require"}
+
+    await tool.message_handler(types.ToolListChangedNotification())
+    await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "search_docs": "never_require",
+        "delete_records": "always_require",
+    }
+
+
+async def test_prompts_use_approval_default() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["summarize"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summarize"), types.Prompt(name="draft")])
+    )
+
+    await tool.load_prompts()
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "summarize": "never_require",
+        "draft": "always_require",
+    }
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_mcp_tool_named_in_neither_list_waits_for_approval_with_default(
+    chat_client_base: Any,
+    streaming: bool,
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["search_docs"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name="search_docs", input_schema={"type": "object", "properties": {}}),
+                types.Tool(name="delete_records", input_schema={"type": "object", "properties": {}}),
+            ]
+        )
+    )
+    mock_session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+    await tool.load_tools()
+
+    exempt_response = await run_function_call(chat_client_base, tool.functions, "search_docs", streaming=streaming)
+
+    assert approval_request_names(exempt_response) == []
+    assert mock_session.call_tool.await_count == 1
+
+    gated_response = await run_function_call(chat_client_base, tool.functions, "delete_records", streaming=streaming)
+
+    assert approval_request_names(gated_response) == ["delete_records"]
+    assert mock_session.call_tool.await_count == 1
 
 
 @pytest.mark.parametrize(
@@ -3817,8 +4082,19 @@ async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
     assert result[0].text == "MCP tool name 'shared' is ambiguous."
 
 
-async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> None:
-    server = await _load_progressive_test_server(approval_mode={"always_require_approval": ["tool_two"]})
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"always_require_approval": ["tool_two"]}, "always_require"),
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "always_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "never_require"),
+    ],
+    ids=["listed", "default_always", "default_never"],
+)
+async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode(
+    approval_mode: MCPSpecificApproval, expected: str
+) -> None:
+    server = await _load_progressive_test_server(approval_mode=approval_mode)
     load_tool = server.functions[1]
     context = FunctionInvocationContext(
         function=load_tool,
@@ -3837,7 +4113,7 @@ async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> N
             if tool.name == "tool_two"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         ),
     )
-    assert loaded_tool.approval_mode == "always_require"
+    assert loaded_tool.approval_mode == expected
 
 
 async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_headers() -> None:
