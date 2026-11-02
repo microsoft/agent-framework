@@ -603,17 +603,67 @@ async def test_tool_json_schema_integer_accepts_whole_number_float():
         },
         "required": ["count"],
     }
+    received: list[Any] = []
 
     @tool(name="counter", description="Count tool", schema=json_schema)
     def counter(count: int) -> str:
+        received.append(count)
         return str(count)
 
-    # 3.0 is a valid JSON Schema integer; should not raise.
+    # 3.0 is a valid JSON Schema integer; it reaches the callable as the integer
+    # the schema asked for, so range(count) and friends work on it.
     await counter.invoke(arguments={"count": 3.0})
+    assert received == [3]
+    assert isinstance(received[0], int)
 
     # 3.5 is not a valid integer.
     with pytest.raises(TypeError, match="Invalid type for 'count'"):
         await counter.invoke(arguments={"count": 3.5})
+
+
+async def test_tool_json_schema_nullable_integer_normalizes_whole_number_float():
+    """A nullable integer schema accepts 3.0 and still hands the callable an int."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "count": {"type": ["integer", "null"]},
+        },
+    }
+    received: list[Any] = []
+
+    @tool(name="counter", description="Count tool", schema=json_schema)
+    def counter(count: int | None) -> str:
+        received.append(count)
+        return str(count)
+
+    await counter.invoke(arguments={"count": 3.0})
+    assert received == [3]
+    assert isinstance(received[0], int)
+
+    await counter.invoke(arguments={"count": None})
+    assert received == [3, None]
+
+
+async def test_tool_json_schema_number_alongside_integer_keeps_the_float():
+    """When the schema also allows "number", the value's own type is the answer."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "value": {"type": ["integer", "number"]},
+        },
+    }
+    received: list[Any] = []
+
+    @tool(name="measure", description="Measure tool", schema=json_schema)
+    def measure(value: float) -> str:
+        received.append(value)
+        return str(value)
+
+    await measure.invoke(arguments={"value": 3.0})
+    assert received == [3.0]
+    assert isinstance(received[0], float)
 
 
 def test_tool_decorator_with_json_schema_preserves_custom_properties():
