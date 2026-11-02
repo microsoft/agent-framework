@@ -47,6 +47,9 @@ errors in sensitive expressions, including record fields and table rows, produce
 a blank result with the same metadata so data assignments can continue.
 Diagnostic warnings identify the referenced variable names, not their values.
 Non-sensitive expression errors retain their existing exception behavior.
+`ParseValue` also assigns a blank result with the input sensitivity metadata when
+conversion of a sensitive value fails. Non-sensitive conversion failures retain
+their existing exception behavior.
 
 ### Function tool approval
 

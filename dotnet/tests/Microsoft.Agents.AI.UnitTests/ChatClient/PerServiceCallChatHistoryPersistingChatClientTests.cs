@@ -20,6 +20,24 @@ namespace Microsoft.Agents.AI.UnitTests;
 /// </summary>
 public class PerServiceCallChatHistoryPersistingChatClientTests
 {
+    [Fact]
+    public void PublicContract_ExposesLocalHistoryMarkerWithoutPublicConstructors()
+    {
+        // Arrange
+        Type clientType = typeof(PerServiceCallChatHistoryPersistingChatClient);
+
+        // Act
+        var constructors = clientType.GetConstructors();
+        var marker = clientType.GetField(nameof(PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId));
+
+        // Assert
+        Assert.True(clientType.IsPublic);
+        Assert.Empty(constructors);
+        Assert.NotNull(marker);
+        Assert.True(marker.IsLiteral);
+        Assert.Equal("_agent_local_chat_history", marker.GetRawConstantValue());
+    }
+
     /// <summary>
     /// Verifies that by default (RequirePerServiceCallChatHistoryPersistence is false),
     /// the ChatHistoryProvider receives messages after a successful non-streaming call.

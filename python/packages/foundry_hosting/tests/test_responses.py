@@ -23,7 +23,7 @@ from contextlib import aclosing, asynccontextmanager, suppress
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Literal, cast, overload
+from typing import Any, Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -37,6 +37,7 @@ from agent_framework import (
     Annotation,
     BaseChatClient,
     ChatMiddlewareLayer,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
@@ -87,7 +88,6 @@ from openai.types.responses import ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
-from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
@@ -1484,9 +1484,9 @@ class TestResponsesHostServerInit:
             ResponsesHostServer(agent)
 
     def test_init_allows_default_conversation_id_for_agent_history(self) -> None:
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=_ServiceStorageRecordingClient(),
-            default_options={"conversation_id": "service-thread"},  # pyrefly: ignore[bad-argument-type]
+            default_options={"conversation_id": "service-thread"},
         )
 
         ResponsesHostServer(agent, history_source="agent")
@@ -1503,9 +1503,9 @@ class TestResponsesHostServerInit:
             ResponsesHostServer(agent)
 
     def test_failed_init_does_not_mutate_agent(self) -> None:
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=_RecordingHistoryClient(),
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
 
         with pytest.raises(RuntimeError, match="resilient_background"):
@@ -1772,10 +1772,10 @@ class TestAgentSessionPersistence:
 
     async def test_agent_server_history_disables_service_storage(self) -> None:
         client = _ServiceStorageRecordingClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Service Storage Agent",
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store)
@@ -1797,10 +1797,10 @@ class TestAgentSessionPersistence:
 
     async def test_host_history_rejects_storing_default_without_mutating_it(self) -> None:
         client = _RecordingHistoryClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Non-Storing Agent",
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
         with pytest.raises(RuntimeError, match="Remove that developer-owned default"):
             _make_server(agent, session_store=SessionStore())
@@ -1809,9 +1809,9 @@ class TestAgentSessionPersistence:
 
     async def test_host_history_preserves_non_storing_client_default(self) -> None:
         client = _RecordingHistoryClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
-            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": False},
         )
         server = _make_server(agent)
         response = await _post(server)
@@ -3556,11 +3556,11 @@ class TestAgentSessionPersistence:
     async def test_agent_history_uses_in_memory_history_from_session_store(self) -> None:
         client = _RecordingHistoryClient()
         history = InMemoryHistoryProvider()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Agent Managed In-Memory History",
             context_providers=[history],
-            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": False},
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source="agent")

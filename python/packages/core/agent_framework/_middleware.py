@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-import contextlib
 import inspect
 import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, cast, overload, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    cast,
+    overload,
+    runtime_checkable,
+)
 
 from ._clients import SupportsChatGetResponse
 from ._feature_stage import ExperimentalFeature, experimental
@@ -32,10 +42,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -1452,8 +1458,13 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as termination:
+            if context.result is None:
+                context.result = cast(
+                    AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None, termination.result
+                )
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:
@@ -1663,8 +1674,13 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as termination:
+            if context.result is None:
+                context.result = cast(
+                    ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None, termination.result
+                )
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:

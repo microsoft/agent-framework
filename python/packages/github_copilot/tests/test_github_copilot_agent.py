@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# ruff: noqa: E402
-
 import base64
 import inspect
 import json
@@ -17,10 +15,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
-copilot = pytest.importorskip("copilot")
-
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
@@ -49,6 +43,7 @@ from copilot.session_events import (
     ToolExecutionCompleteResult,
 )
 from copilot.tools import ToolInvocation, ToolResult
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions, RawGitHubCopilotAgent
 from agent_framework_github_copilot._feature_usage import FeatureIndex

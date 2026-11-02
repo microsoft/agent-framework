@@ -64,6 +64,8 @@ from agent_framework._tools import (
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
+from .mcp_approval_helpers import ForwardingMCPTool, approval_request_names, run_function_call
+
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("LOCAL_MCP_URL", "") == "",
@@ -354,9 +356,10 @@ async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration
     [
         (["docs_search"], None),
         (None, {"always_require_approval": ["docs_search"]}),
-        (None, {"never_require_approval": ["docs_search"]}),
+        (None, {"always_require_approval": "docs_search"}),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}),
     ],
-    ids=["allowed", "always_require", "never_require"],
+    ids=["allowed", "always_require", "always_require_single_string", "never_require"],
 )
 @pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
 @pytest.mark.parametrize("paginated", [False, True])
@@ -409,7 +412,7 @@ async def test_load_tools_rejects_ambiguous_policy_names(
     [
         (["docs_search"], None),
         (None, {"always_require_approval": ["docs_search"]}),
-        (None, {"never_require_approval": ["docs_search"]}),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}),
     ],
     ids=["allowed", "always_require", "never_require"],
 )
@@ -468,7 +471,7 @@ async def test_ambiguous_policy_reload_preserves_previous_discovery(
     [
         (["docs_search"], None, "never_require"),
         (None, {"always_require_approval": ["docs_search"]}, "always_require"),
-        (None, {"never_require_approval": ["docs_search"]}, "never_require"),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}, "never_require"),
     ],
     ids=["allowed", "always_require", "never_require"],
 )
@@ -573,7 +576,7 @@ async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptu
                 ),
                 types.Tool(
                     name="optional",
-                    input_schema={"type": "object", "properties": {}},
+                    input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
                     execution=types.ToolExecution(task_support="optional"),
                     _meta={"mode": "optional"},
                 ),
@@ -595,14 +598,30 @@ async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptu
 
     assert [function.name for function in tool.functions] == ["optional", "forbidden", "ordinary"]
     assert tool._tool_call_meta_by_name == {"optional": {"mode": "optional"}}
-    assert set(tool._tool_param_names_by_name) == {"optional", "forbidden", "ordinary"}
-    skip_messages = [message for message in caplog.messages if message.startswith("Skipping MCP tool")]
-    assert skip_messages == [
+    assert tool._tool_param_names_by_name == {
+        "optional": {"query"},
+        "forbidden": set(),
+        "ordinary": set(),
+    }
+    assert "required" not in tool._tool_call_meta_by_name
+    assert "required" not in tool._tool_param_names_by_name
+    assert caplog.messages == [
         "Skipping MCP tool 'required' because it requires the Tasks extension, which this client does not support."
     ]
 
-    for function in tool.functions:
-        await function.invoke(arguments={})
+    optional_function = tool.functions[0]
+    optional_result = await optional_function.invoke(arguments={"query": "search term"})
+    assert _mcp_result_to_text(optional_result) == "ok"
+    optional_call = mock_session.call_tool.await_args
+    assert optional_call is not None
+    assert optional_call.args == ("optional",)
+    assert set(optional_call.kwargs) == {"arguments", "meta"}
+    assert optional_call.kwargs["arguments"] == {"query": "search term"}
+    assert optional_call.kwargs["meta"]["mode"] == "optional"
+
+    for function in tool.functions[1:]:
+        result = await function.invoke(arguments={})
+        assert _mcp_result_to_text(result) == "ok"
 
     assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["optional", "forbidden", "ordinary"]
 
@@ -682,6 +701,7 @@ async def test_overlapping_names_accept_unambiguous_policy(
         approval_mode={
             "always_require_approval": ["search"],
             "never_require_approval": ["search", "docs_docs_search"],
+            "default": "never_require",
         },
     )
     mock_session = AsyncMock()
@@ -3125,8 +3145,25 @@ async def test_local_mcp_server_prompt_execution():
             {
                 "always_require_approval": ["tool_one"],
                 "never_require_approval": ["tool_two"],
+                "default": "never_require",
             },
             {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"always_require_approval": ["tool_one"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"default": "always_require", "never_require_approval": ["tool_one"]},
+            {"tool_one": "never_require", "tool_two": "always_require"},
+        ),
+        (
+            {"default": "never_require", "always_require_approval": ["tool_one"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"default": "always_require"},
+            {"tool_one": "always_require", "tool_two": "always_require"},
         ),
     ],
 )
@@ -3178,15 +3215,259 @@ async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
 
 
 def test_mcp_tool_approval_mode_returns_none_for_unmatched_names() -> None:
-    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-        name="test_tool",
-        approval_mode={
-            "always_require_approval": ["tool_one"],
-            "never_require_approval": ["tool_two"],
-        },
-    )
+    with pytest.warns(FutureWarning, match="never_require_approval"):
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            approval_mode={
+                "always_require_approval": ["tool_one"],
+                "never_require_approval": ["tool_two"],
+            },
+        )
 
     assert tool._determine_approval_mode("tool_three") is None
+
+
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"always_require_approval": ["tool_one"]}, None),
+        ({}, None),
+        ({"default": None}, None),
+        ({"default": "always_require"}, "always_require"),
+        ({"default": "never_require"}, "never_require"),
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "always_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "never_require"),
+    ],
+    ids=["always_list_only", "empty", "default_none", "default_always", "default_never", "allow_list", "deny_list"],
+)
+def test_mcp_tool_approval_default_applies_to_names_in_neither_list(
+    approval_mode: MCPSpecificApproval, expected: str | None
+) -> None:
+    tool = MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    assert tool._determine_approval_mode("tool_three") == expected
+
+
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "never_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "always_require"),
+        (
+            {
+                "default": "never_require",
+                "always_require_approval": ["tool_one"],
+                "never_require_approval": ["tool_one"],
+            },
+            "always_require",
+        ),
+    ],
+    ids=["never_list_beats_default", "always_list_beats_default", "always_list_beats_never_list"],
+)
+def test_mcp_tool_approval_lists_take_precedence_over_default(
+    approval_mode: MCPSpecificApproval, expected: str
+) -> None:
+    tool = MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    assert tool._determine_approval_mode("tool_one") == expected
+
+
+@pytest.mark.parametrize("default", ["sometimes", "always", "", True, 1])
+def test_mcp_tool_rejects_invalid_approval_default(default: Any) -> None:
+    with pytest.raises(ValueError, match="`default` must be"):
+        MCPTool(name="test_tool", approval_mode={"default": default})  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+@pytest.mark.parametrize(
+    "approval_mode",
+    [
+        {"never_require_approval": ["tool_one"]},
+        {"never_require_approval": []},
+        {"always_require_approval": ["tool_one"], "never_require_approval": ["tool_two"]},
+    ],
+    ids=["never_list", "empty_never_list", "both_lists"],
+)
+def test_mcp_tool_warns_when_never_list_has_no_default(approval_mode: MCPSpecificApproval) -> None:
+    with pytest.warns(FutureWarning, match="without `default`") as recorded:
+        MCPStreamableHTTPTool(name="docs", url="https://example.com/mcp", approval_mode=approval_mode)
+
+    assert [warning.category for warning in recorded] == [FutureWarning]
+    assert recorded[0].filename == __file__
+
+
+def test_mcp_tool_approval_warning_points_at_the_constructing_caller() -> None:
+    approval_mode: MCPSpecificApproval = {"never_require_approval": ["tool_one"]}
+    with pytest.warns(FutureWarning, match="without `default`") as recorded:
+        frame = inspect.currentframe()
+        assert frame is not None
+        expected_line = frame.f_lineno + 1
+        ForwardingMCPTool(approval_mode=approval_mode)
+
+    assert recorded[0].filename == __file__
+    assert recorded[0].lineno == expected_line
+
+
+async def test_mcp_tool_approval_warning_is_not_repeated_during_discovery() -> None:
+    with pytest.warns(FutureWarning, match="without `default`"):
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="docs",
+            approval_mode={"never_require_approval": ["search_docs"]},
+        )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name="search_docs", input_schema={"type": "object"}),
+                types.Tool(name="delete_records", input_schema={"type": "object"}),
+            ]
+        )
+    )
+    mock_session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summarize")])
+    )
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        await tool.load_tools()
+        await tool.load_prompts()
+        await tool.message_handler(types.ToolListChangedNotification())
+        await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert [warning for warning in recorded if issubclass(warning.category, FutureWarning)] == []
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "search_docs": "never_require",
+        "delete_records": "never_require",
+        "summarize": "never_require",
+    }
+
+
+@pytest.mark.parametrize(
+    "approval_mode",
+    [
+        None,
+        "always_require",
+        "never_require",
+        {},
+        {"always_require_approval": ["tool_one"]},
+        {"never_require_approval": None},
+        {"never_require_approval": ["tool_one"], "default": "never_require"},
+        {"never_require_approval": ["tool_one"], "default": "always_require"},
+    ],
+    ids=[
+        "none",
+        "always_string",
+        "never_string",
+        "empty_dict",
+        "always_list",
+        "never_list_none",
+        "never_list_with_never_default",
+        "never_list_with_always_default",
+    ],
+)
+def test_mcp_tool_does_not_warn_when_approval_fallback_is_explicit_or_unused(approval_mode: Any) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+def test_mcp_tool_approval_names_given_as_one_string_match_exact_names_only() -> None:
+    deny_list = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        approval_mode={"always_require_approval": "delete_records", "default": "never_require"},
+    )
+    allow_list = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        approval_mode={"never_require_approval": "search_docs", "default": "always_require"},
+    )
+
+    assert deny_list._determine_approval_mode("delete_records") == "always_require"
+    assert deny_list._determine_approval_mode("delete") == "never_require"
+    assert allow_list._determine_approval_mode("search_docs") == "never_require"
+    assert allow_list._determine_approval_mode("search") == "always_require"
+
+
+async def test_tools_added_after_list_changed_use_approval_default() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["search_docs"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    search_docs = types.Tool(name="search_docs", input_schema={"type": "object"})
+    delete_records = types.Tool(name="delete_records", input_schema={"type": "object"})
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[search_docs]),
+            types.ListToolsResult(tools=[search_docs, delete_records]),
+        ]
+    )
+
+    await tool.load_tools()
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {"search_docs": "never_require"}
+
+    await tool.message_handler(types.ToolListChangedNotification())
+    await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "search_docs": "never_require",
+        "delete_records": "always_require",
+    }
+
+
+async def test_prompts_use_approval_default() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["summarize"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summarize"), types.Prompt(name="draft")])
+    )
+
+    await tool.load_prompts()
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "summarize": "never_require",
+        "draft": "always_require",
+    }
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_mcp_tool_named_in_neither_list_waits_for_approval_with_default(
+    chat_client_base: Any,
+    streaming: bool,
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["search_docs"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name="search_docs", input_schema={"type": "object", "properties": {}}),
+                types.Tool(name="delete_records", input_schema={"type": "object", "properties": {}}),
+            ]
+        )
+    )
+    mock_session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+    await tool.load_tools()
+
+    exempt_response = await run_function_call(chat_client_base, tool.functions, "search_docs", streaming=streaming)
+
+    assert approval_request_names(exempt_response) == []
+    assert mock_session.call_tool.await_count == 1
+
+    gated_response = await run_function_call(chat_client_base, tool.functions, "delete_records", streaming=streaming)
+
+    assert approval_request_names(gated_response) == ["delete_records"]
+    assert mock_session.call_tool.await_count == 1
 
 
 @pytest.mark.parametrize(
@@ -3817,8 +4098,19 @@ async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
     assert result[0].text == "MCP tool name 'shared' is ambiguous."
 
 
-async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> None:
-    server = await _load_progressive_test_server(approval_mode={"always_require_approval": ["tool_two"]})
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"always_require_approval": ["tool_two"]}, "always_require"),
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "always_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "never_require"),
+    ],
+    ids=["listed", "default_always", "default_never"],
+)
+async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode(
+    approval_mode: MCPSpecificApproval, expected: str
+) -> None:
+    server = await _load_progressive_test_server(approval_mode=approval_mode)
     load_tool = server.functions[1]
     context = FunctionInvocationContext(
         function=load_tool,
@@ -3837,7 +4129,7 @@ async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> N
             if tool.name == "tool_two"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         ),
     )
-    assert loaded_tool.approval_mode == "always_require"
+    assert loaded_tool.approval_mode == expected
 
 
 async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_headers() -> None:
@@ -6043,7 +6335,6 @@ async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_excep
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_transport_creation_propagates():
     """Test that genuine task cancellation (task.cancelling() > 0) propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6061,7 +6352,6 @@ async def test_connect_genuine_cancellation_during_transport_creation_propagates
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_initialize_propagates():
     """Test that genuine task cancellation during SDK negotiation propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6085,7 +6375,6 @@ async def test_connect_genuine_cancellation_during_initialize_propagates():
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_session_creation_propagates():
     """Test that genuine task cancellation during SDK client entry propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6146,7 +6435,6 @@ def test_should_propagate_cancelled_error_returns_false_when_no_current_task():
         assert _should_propagate_cancelled_error(asyncio.CancelledError()) is False
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 def test_should_propagate_cancelled_error_returns_true_when_task_is_cancelling():
     mock_task = Mock()
     mock_task.cancelling.return_value = 1
@@ -6154,7 +6442,6 @@ def test_should_propagate_cancelled_error_returns_true_when_task_is_cancelling()
         assert _should_propagate_cancelled_error(asyncio.CancelledError()) is True
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 def test_should_propagate_cancelled_error_returns_false_when_task_not_cancelling():
     mock_task = Mock()
     mock_task.cancelling.return_value = 0
@@ -6185,16 +6472,9 @@ def test_describe_error_keeps_plain_exception_message():
     assert _describe_error(RuntimeError("boom")) == "boom"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 def test_describe_error_unwraps_single_member_exception_group():
-    import builtins
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
-
     real = RuntimeError("401 Client Error: Unauthorized")
-    group = exception_group_type("unhandled errors in a TaskGroup", [real])
+    group = ExceptionGroup("unhandled errors in a TaskGroup", [real])
     assert _describe_error(group) == "401 Client Error: Unauthorized"
 
 
@@ -6232,22 +6512,13 @@ async def test_connect_cancelled_error_unmasks_inner_auth_failure():
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
     """SDK entry raises a bare cancellation and cleanup reveals the actual HTTP failure."""
-    import builtins
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
-
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
     tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
 
-    cleanup_group = exception_group_type(
-        "unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")]
-    )
+    cleanup_group = ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")])
 
     sdk_client = _mock_sdk_client()
     sdk_client.__aenter__.side_effect = asyncio.CancelledError("Cancelled via cancel scope")
@@ -7615,12 +7886,7 @@ async def test_mcp_tool_safe_close_handles_cancelled_error():
 
 async def test_mcp_tool_safe_close_handles_cleanup_exception_group():
     """Cleanup task groups should not hide the original connect failure."""
-    import builtins
     from contextlib import AsyncExitStack
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -7630,7 +7896,7 @@ async def test_mcp_tool_safe_close_handles_cleanup_exception_group():
     )
 
     mock_exit_stack = AsyncMock(spec=AsyncExitStack)
-    mock_exit_stack.aclose = AsyncMock(side_effect=exception_group_type("cleanup failed", [RuntimeError("reader")]))
+    mock_exit_stack.aclose = AsyncMock(side_effect=ExceptionGroup("cleanup failed", [RuntimeError("reader")]))
     tool._exit_stack = mock_exit_stack
 
     await tool._safe_close_exit_stack()

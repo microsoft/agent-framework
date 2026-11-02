@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from typing import Any
+from typing import Any, Never
 
 from agent_framework import (  # Core chat primitives used to build requests
     Agent,
@@ -19,7 +19,6 @@ from agent_framework.openai import OpenAIChatOptions  # Thin client wrapper for 
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs for safer parsing
-from typing_extensions import Never
 
 # Load environment variables from .env file
 load_dotenv()

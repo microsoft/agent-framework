@@ -76,7 +76,8 @@ def _format_filesystem_capabilities(mounts: Sequence[FileMount]) -> str:
         writable_paths = ", ".join(f"`{m.mount_path}`" for m in writable)
         lines.append(
             f"Files written to {writable_paths} are returned to the caller as attached files; "
-            "use these paths for any output artifacts."
+            "use these paths for any output artifacts. Capture file-count and byte limits apply across "
+            "all mounts per execution; omitted files are reported in one summary."
         )
 
     return "\n".join(lines)

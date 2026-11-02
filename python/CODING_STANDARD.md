@@ -37,7 +37,7 @@ When principles compete, use this order:
 
 ## Tool-Enforced Style
 
-Ruff is the formatter and linter. The current configuration uses a 120-character line length and targets Python 3.10
+Ruff is the formatter and linter. The current configuration uses a 120-character line length and targets Python 3.11
 or later. `pyproject.toml` and the other tool configuration files are the source of truth for exact values and enabled
 rules.
 

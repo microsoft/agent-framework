@@ -24,7 +24,7 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from copy import copy
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import TYPE_CHECKING, Generic, Literal, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
@@ -111,7 +111,6 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import MCPError
-from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex

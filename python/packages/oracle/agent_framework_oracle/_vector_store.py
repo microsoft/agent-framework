@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Callable, Collection, Mapping, Seque
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from inspect import signature
-from typing import Any, ClassVar, Generic, Protocol, TypeAlias, cast
+from typing import Any, ClassVar, Generic, Protocol, Self, TypeAlias, cast
 from uuid import UUID
 
 import oracledb
@@ -29,7 +29,7 @@ from agent_framework import (
 from agent_framework._vector_filters import FilterExpression
 from agent_framework._vectors import EmbeddingClient, SearchType, Vector
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)
@@ -321,7 +321,7 @@ class _Client:
                     for name, value in (("user", self._user), ("password", self._password), ("dsn", self._dsn))
                     if value is not None
                 }
-                pool_parameters = {
+                pool_parameters: dict[str, Any] = {
                     "min": 0,
                     "max": 4,
                     **{

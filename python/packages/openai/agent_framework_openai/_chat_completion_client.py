@@ -16,7 +16,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, TypedDict, cast, overload
 from uuid import uuid4
 
 from agent_framework._clients import BaseChatClient
@@ -83,10 +83,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 _prompt_cache_options_supported = hasattr(completion_create_params, "PromptCacheOptions")
 

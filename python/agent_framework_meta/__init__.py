@@ -1,18 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import tomllib as _toml
 from importlib import metadata as _metadata
 from pathlib import Path as _Path
 from typing import Any, cast
 
-try:
-    import tomllib as _toml  # type: ignore # Python 3.11+
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as _toml  # type: ignore
-
 
 def _load_pyproject() -> dict[str, Any]:
     pyproject = (_Path(__file__).resolve().parents[1] / "pyproject.toml").read_text("utf-8")
-    return cast(dict[str, Any], _toml.loads(pyproject))  # type: ignore
+    return _toml.loads(pyproject)
 
 
 def _version() -> str:

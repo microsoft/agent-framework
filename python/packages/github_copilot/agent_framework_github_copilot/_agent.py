@@ -21,7 +21,7 @@ from collections.abc import (
     Sequence,
 )
 from pathlib import Path
-from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
+from typing import Any, ClassVar, Generic, Literal, Self, TypedDict, cast, overload
 from urllib.parse import urlparse
 
 from agent_framework import (
@@ -57,10 +57,6 @@ from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
