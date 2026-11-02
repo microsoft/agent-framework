@@ -16,6 +16,7 @@ from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
 from agent_framework.observability import (
     OtelAttr,
+    _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
     create_processing_span,
     create_workflow_span,
 )
@@ -123,7 +124,14 @@ class FanInAggregator(Executor):
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize(
     ("functional", "workflow_name"),
-    [(False, "customer_support_pipeline"), (True, "customer_support_pipeline"), (True, None)],
+    [
+        (False, "customer_support_pipeline"),
+        (False, None),
+        (False, ""),
+        (False, "WorkflowBuilder-00000000-0000-0000-0000-000000000000"),
+        (True, "customer_support_pipeline"),
+        (True, None),
+    ],
 )
 async def test_workflow_run_span_uses_semantic_convention_name(
     span_exporter: InMemorySpanExporter, streaming: bool, functional: bool, workflow_name: str | None
@@ -141,11 +149,12 @@ async def test_workflow_run_span_uses_semantic_convention_name(
         workflow_instance = WorkflowBuilder(start_executor=MockExecutor(), name=workflow_name).build()
 
     span_exporter.clear()
-    if streaming:
-        async for _ in workflow_instance.run("test input", stream=True):
-            pass
-    else:
-        await workflow_instance.run("test input")
+    with _use_telemetry_conversation_id("workflow-thread"):
+        if streaming:
+            async for _ in workflow_instance.run("test input", stream=True):
+                pass
+        else:
+            await workflow_instance.run("test input")
 
     run_spans = [
         span
@@ -153,13 +162,51 @@ async def test_workflow_run_span_uses_semantic_convention_name(
         if any(event.name == "workflow.started" for event in span.events)
     ]
     assert len(run_spans) == 1
-    expected_name = workflow_name or "simple_workflow"
-    assert run_spans[0].name == f"invoke_workflow {expected_name}"
+    expected_name = workflow_name or ("simple_workflow" if functional else None)
+    assert run_spans[0].name == (f"invoke_workflow {expected_name}" if expected_name else "invoke_workflow")
     attributes = run_spans[0].attributes
     assert attributes is not None
     assert "workflow.name" not in attributes
-    assert attributes["gen_ai.workflow.name"] == expected_name
+    if expected_name:
+        assert attributes["gen_ai.workflow.name"] == expected_name
+    else:
+        assert "gen_ai.workflow.name" not in attributes
     assert attributes["gen_ai.operation.name"] == "invoke_workflow"
+    assert attributes["gen_ai.conversation.id"] == "workflow-thread"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_unnamed_workflow_preserves_runtime_name_and_checkpoint_identity(
+    span_exporter: InMemorySpanExporter, streaming: bool
+) -> None:
+    """Omitting generated telemetry names does not change runtime or checkpoint identity."""
+    storage = InMemoryCheckpointStorage()
+    workflow_instance = WorkflowBuilder(start_executor=MockExecutor(), checkpoint_storage=storage).build()
+    runtime_name = workflow_instance.name
+    assert runtime_name.startswith("WorkflowBuilder-")
+    other_workflow = WorkflowBuilder(start_executor=MockExecutor()).build()
+    assert other_workflow.name != runtime_name
+
+    span_exporter.clear()
+    if streaming:
+        async for _ in workflow_instance.run("test input", stream=True):
+            pass
+    else:
+        await workflow_instance.run("test input")
+
+    assert workflow_instance.name == runtime_name
+    assert workflow_instance.to_dict()["name"] == runtime_name
+    checkpoint = await storage.get_latest(workflow_name=runtime_name)
+    assert checkpoint is not None
+    assert checkpoint.workflow_name == runtime_name
+    run_span = next(
+        span
+        for span in span_exporter.get_finished_spans()
+        if span.attributes is not None and span.attributes.get("gen_ai.operation.name") == "invoke_workflow"
+    )
+    assert run_span.name == "invoke_workflow"
+    assert run_span.attributes is not None
+    assert "gen_ai.workflow.name" not in run_span.attributes
 
 
 async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter) -> None:
@@ -404,7 +451,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Should have workflow span, processing spans, and sending spans
     # Processing spans now use executor_id as the span name, filter by executor.id attribute
-    workflow_spans = [s for s in spans if s.name == f"invoke_workflow {workflow.name}"]
+    workflow_spans = [s for s in spans if s.name == "invoke_workflow"]
     processing_spans = [s for s in spans if _span_attributes(s).get("executor.id") is not None]
     sending_spans = [s for s in spans if s.name == "message.send"]
     build_spans_after_run = [s for s in spans if s.name == "workflow.build"]
@@ -509,7 +556,7 @@ async def test_workflow_error_handling_in_tracing(
     spans = span_exporter.get_finished_spans()
 
     # Find workflow span
-    workflow_spans = [s for s in spans if s.name == f"invoke_workflow {workflow.name}"]
+    workflow_spans = [s for s in spans if s.name == "invoke_workflow"]
     assert len(workflow_spans) == 1
 
     workflow_span = workflow_spans[0]

@@ -517,7 +517,10 @@ async def test_workflow_run_roleless_intermediate_update_becomes_reasoning():
     assert not [event for event in events if event.type == "CUSTOM" and event.name == "workflow_output"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
-async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("workflow_name", [None, "customer_support_pipeline"])
+async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(
+    monkeypatch: pytest.MonkeyPatch, workflow_name: str | None
+) -> None:
     """Workflow spans use supplied AG-UI threads without replacing provider fallback behavior."""
     import agent_framework.observability as observability
     from opentelemetry.sdk.trace import TracerProvider
@@ -561,7 +564,7 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
         name="workflow-agent",
         middleware=[passthrough_middleware],
     )
-    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all", name=workflow_name).build()
 
     for run_number in (1, 2):
         events = [
@@ -601,11 +604,16 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
             "ag-ui-workflow-thread",
         ]
 
-    workflow_spans = [span for span in exporter.get_finished_spans() if span.name == f"invoke_workflow {workflow.name}"]
+    expected_span_name = f"invoke_workflow {workflow_name}" if workflow_name else "invoke_workflow"
+    workflow_spans = [span for span in exporter.get_finished_spans() if span.name == expected_span_name]
     assert len(workflow_spans) == 2
     workflow_conversation_ids = []
     for span in workflow_spans:
         assert span.attributes is not None
+        if workflow_name:
+            assert span.attributes["gen_ai.workflow.name"] == workflow_name
+        else:
+            assert "gen_ai.workflow.name" not in span.attributes
         workflow_conversation_ids.append(span.attributes.get("gen_ai.conversation.id"))
 
     assert workflow_conversation_ids == [
@@ -631,9 +639,7 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
     assert fallback_agent_span.attributes is not None
     assert fallback_agent_span.attributes.get("gen_ai.conversation.id") == "provider-conversation"
 
-    fallback_workflow_span = next(
-        span for span in exporter.get_finished_spans() if span.name == f"invoke_workflow {workflow.name}"
-    )
+    fallback_workflow_span = next(span for span in exporter.get_finished_spans() if span.name == expected_span_name)
     assert fallback_workflow_span.attributes is not None
     assert "gen_ai.conversation.id" not in fallback_workflow_span.attributes
 
