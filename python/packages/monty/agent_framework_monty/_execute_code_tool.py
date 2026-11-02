@@ -260,6 +260,11 @@ class MontyExecuteCodeTool(FunctionTool):
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
     the same task/thread that owns the tool. Monty itself runs on the event
     loop, so no internal locking is needed.
+
+    Keyword Args:
+        include_detailed_errors: Include host exception types/messages and execution error details.
+            Defaults to ``False``. Enable only for a trusted channel; diagnostics can contain secrets.
+            This setting is independent of the outer client's error and sensitive-logging settings.
     """
 
     def __init__(
@@ -271,8 +276,11 @@ class MontyExecuteCodeTool(FunctionTool):
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
         _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
     ) -> None:
+        if not isinstance(include_detailed_errors, bool):
+            raise TypeError("include_detailed_errors must be a bool.")
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
             description=EXECUTE_CODE_TOOL_DESCRIPTION,
@@ -281,6 +289,7 @@ class MontyExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._include_detailed_errors = include_detailed_errors
         self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
             tool_description_format
         )
@@ -413,6 +422,7 @@ class MontyExecuteCodeTool(FunctionTool):
             file_mounts=list(self._file_mounts.values()) or None,
             resource_limits=self._resource_limits,
             tool_description_format=self._tool_description_format,
+            include_detailed_errors=self._include_detailed_errors,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -425,6 +435,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return {
             "runtime": "monty",
             "approval_mode": approval_mode,
+            "include_detailed_errors": self._include_detailed_errors,
             "tool_names": [tool_obj.name for tool_obj in self._managed_tools],
             "tool_description_format": (
                 dict(self._tool_description_format)
@@ -489,6 +500,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return mounts
 
     async def _run_code(self, *, code: str) -> list[Content]:
+        include_detailed_errors = self._include_detailed_errors
         tools = list(self._managed_tools)
         mounts = self._effective_mounts()
 
@@ -505,6 +517,7 @@ class MontyExecuteCodeTool(FunctionTool):
             type_stubs=type_stubs,
             mounts=[_to_monty_mount(mount) for mount in mounts] or None,
             resource_limits=self._resource_limits,
+            include_detailed_errors=include_detailed_errors,
         )
 
         try:
@@ -513,7 +526,7 @@ class MontyExecuteCodeTool(FunctionTool):
             return [
                 Content.from_error(
                     message="Execution error",
-                    error_details=f"{type(exc).__name__}: {exc}",
+                    error_details=f"{type(exc).__name__}: {exc}" if include_detailed_errors else None,
                 ),
             ]
 

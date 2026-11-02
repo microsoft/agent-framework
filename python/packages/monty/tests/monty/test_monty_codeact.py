@@ -28,7 +28,6 @@ import pytest
 from agent_framework import Content, FunctionTool, Message, tool
 from agent_framework._sessions import SessionContext
 from agent_framework.exceptions import ToolException
-
 from agent_framework_monty import MontyCodeActProvider, MontyExecuteCodeTool
 from agent_framework_monty import _execute_code_tool as execute_code_module
 from agent_framework_monty import _instructions as instructions_module
@@ -946,7 +945,10 @@ async def test_run_code_call_tool_with_unregistered_name_returns_error() -> None
     )
 
 
-async def test_run_code_returns_error_content_on_runtime_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_run_code_returns_error_content_on_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch, include_detailed_errors: bool
+) -> None:
     class _BoomBridge:
         def __init__(self, tool_map: Any, **_: Any) -> None:
             pass
@@ -956,11 +958,32 @@ async def test_run_code_returns_error_content_on_runtime_failure(monkeypatch: py
 
     monkeypatch.setattr(execute_code_module, "InlineCodeBridge", _BoomBridge)
 
-    monty_tool = MontyExecuteCodeTool()
+    monty_tool = MontyExecuteCodeTool(include_detailed_errors=include_detailed_errors)
     result = await monty_tool._run_code(code="x = 1")
     assert len(result) == 1
     assert result[0].type == "error"
-    assert "boom" in (result[0].error_details or "")
+    assert ("boom" in (result[0].error_details or "")) is include_detailed_errors
+    assert ("boom" in json.dumps([item.to_dict() for item in result])) is include_detailed_errors
+
+
+@pytest.mark.parametrize("constructor", [MontyExecuteCodeTool, MontyCodeActProvider])
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_detailed_error_option_rejects_non_boolean_values(constructor: Any, value: Any) -> None:
+    with pytest.raises(TypeError, match="include_detailed_errors must be a bool"):
+        constructor(include_detailed_errors=value)
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+def test_detailed_error_policy_is_snapshotted_and_not_a_code_parameter(include_detailed_errors: bool) -> None:
+    codeact = MontyExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    provider = MontyCodeActProvider(include_detailed_errors=include_detailed_errors)
+
+    assert codeact.create_run_tool().build_serializable_state()["include_detailed_errors"] is include_detailed_errors
+    assert (
+        provider._execute_code_tool.create_run_tool().build_serializable_state()["include_detailed_errors"]
+        is include_detailed_errors
+    )
+    assert set(codeact.parameters()["properties"]) == {"code"}
 
 
 def test_build_execution_contents_handles_truncation_and_non_json_output() -> None:
@@ -1836,7 +1859,10 @@ async def test_concurrent_tool_callbacks_share_registered_invocation_limit() -> 
     results = await asyncio.gather(*(bridge._invoke_tool(index, "limited", {}) for index, bridge in enumerate(bridges)))
 
     assert sum(payload == {"return_value": 42} for _, payload in results) == 1
-    assert sum(payload.get("exc_type") == "ToolException" for _, payload in results) == 7
+    assert (
+        sum(payload == {"exc_type": "RuntimeError", "message": "Host tool execution failed."} for _, payload in results)
+        == 7
+    )
     assert limited.invocation_count == 1
 
 
@@ -1893,8 +1919,7 @@ async def test_provider_runs_share_registered_tool_invocation_limit() -> None:
         if run_index == 0:
             assert payload == {"return_value": 42}
         else:
-            assert payload["exc_type"] == "ToolException"
-            assert "maximum invocation limit" in payload["message"]
+            assert payload == {"exc_type": "RuntimeError", "message": "Host tool execution failed."}
         assert limited.invocation_count == 1
 
 
