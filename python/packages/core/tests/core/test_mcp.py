@@ -9577,7 +9577,9 @@ async def test_load_tools_retries_continuation_page_after_closed_resource() -> N
     assert [function.name for function in tool.functions] == ["first", "second"]
     assert first_session.list_tools.await_count == 2
     mock_reconnect.assert_awaited_once_with()
-    continuation_params = second_session.list_tools.await_args.kwargs["params"]
+    continuation_call = second_session.list_tools.await_args
+    assert continuation_call is not None
+    continuation_params = continuation_call.kwargs["params"]
     assert continuation_params.cursor == "second"
 
 
@@ -9670,7 +9672,9 @@ async def test_load_prompts_retries_continuation_page_after_closed_resource() ->
     assert [function.name for function in tool.functions] == ["first", "second"]
     assert first_session.list_prompts.await_count == 2
     mock_reconnect.assert_awaited_once_with()
-    continuation_params = second_session.list_prompts.await_args.kwargs["params"]
+    continuation_call = second_session.list_prompts.await_args
+    assert continuation_call is not None
+    continuation_params = continuation_call.kwargs["params"]
     assert continuation_params.cursor == "second"
 
 
