@@ -63,8 +63,6 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     /// <summary>
     /// Verifies that the invoke_workflow Activity is stopped (and thus exportable) when
     /// using the Lockstep execution environment.
-    /// Bug: The Activity created by LockstepRunEventStream.TakeEventStreamAsync is never
-    /// disposed because yield break in async iterators does not trigger using disposal.
     /// </summary>
     [Fact]
     public async Task WorkflowRunActivity_IsStopped_LockstepAsync()
@@ -102,6 +100,106 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         Assert.Single(stoppedWorkflowRuns ?? []);
+    }
+
+    [Theory]
+    [InlineData("EarlyDisposal")]
+    [InlineData("Cancellation")]
+    [InlineData("ConsumerFailure")]
+    public async Task WorkflowRunActivity_IsStopped_Lockstep_InterruptedEnumerationAsync(string exitReason)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowRunStopTest_Lockstep_Interrupted").Start();
+        var workflow = CreateWorkflow();
+        var expectedException = new InvalidOperationException("Consumer failed.");
+        await using StreamingRun run = await InProcessExecution.Lockstep.RunStreamingAsync(workflow, "Hello, World!");
+        int eventCount = 0;
+
+        async Task ConsumeAsync()
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                eventCount++;
+                Assert.DoesNotContain(this._stoppedActivities, a =>
+                    a.RootId == testActivity.RootId &&
+                    a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
+
+                switch (exitReason)
+                {
+                    case "EarlyDisposal":
+                        return;
+                    case "Cancellation":
+                        await run.CancelRunAsync();
+                        break;
+                    case "ConsumerFailure":
+                        throw expectedException;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(exitReason));
+                }
+            }
+        }
+
+        // Act
+        if (string.Equals(exitReason, "ConsumerFailure", StringComparison.Ordinal))
+        {
+            var actualException = await Assert.ThrowsAsync<InvalidOperationException>(ConsumeAsync);
+            Assert.Same(expectedException, actualException);
+        }
+        else
+        {
+            await ConsumeAsync();
+        }
+
+        // Assert
+        Assert.Equal(1, eventCount);
+        var startedRun = Assert.Single(this._startedActivities, a =>
+            a.RootId == testActivity.RootId &&
+            a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
+        var stoppedRun = Assert.Single(this._stoppedActivities, a =>
+            a.RootId == testActivity.RootId &&
+            a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
+        Assert.Same(startedRun, stoppedRun);
+        Assert.Equal(RunStatus.Idle, await run.GetStatusAsync());
+        Assert.Same(testActivity, Activity.Current);
+    }
+
+    [Fact]
+    public async Task WorkflowRunActivity_IsStopped_Lockstep_ExecutorFailureAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowRunStopTest_Lockstep_ExecutorFailure").Start();
+        var expectedException = new InvalidOperationException("Executor failed.");
+        Func<string, string> failingFunc = _ => throw expectedException;
+        var executor = failingFunc.BindAsExecutor("FailingExecutor");
+        var workflow = new WorkflowBuilder(executor)
+            .WithOutputFrom(executor)
+            .WithName("failing_workflow")
+            .WithOpenTelemetry()
+            .Build();
+        await using StreamingRun run = await InProcessExecution.Lockstep.RunStreamingAsync(workflow, "Hello, World!");
+        ExecutorFailedEvent? failureEvent = null;
+
+        // Act
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            if (evt is ExecutorFailedEvent failure)
+            {
+                failureEvent = failure;
+            }
+        }
+
+        // Assert
+        Assert.NotNull(failureEvent);
+        Assert.Same(expectedException, failureEvent.Data);
+        var startedRun = Assert.Single(this._startedActivities, a =>
+            a.RootId == testActivity.RootId &&
+            a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
+        var stoppedRun = Assert.Single(this._stoppedActivities, a =>
+            a.RootId == testActivity.RootId &&
+            a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
+        Assert.Same(startedRun, stoppedRun);
+        Assert.Equal(RunStatus.Idle, await run.GetStatusAsync());
+        Assert.Same(testActivity, Activity.Current);
     }
 
     /// <summary>

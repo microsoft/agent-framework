@@ -62,8 +62,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         // Re-establish session as parent so the run activity nests correctly.
         Activity.Current = this._sessionActivity;
 
-        // Not 'using' — must dispose explicitly in finally for deterministic export.
-        Activity? runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity(this._stepRunner.WorkflowName);
+        using Activity? runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity(this._stepRunner.WorkflowName);
         runActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
         try
@@ -167,10 +166,6 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         finally
         {
             this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
-
-            // Explicitly dispose the Activity so Activity.Stop fires deterministically,
-            // regardless of how the async iterator enumerator is disposed.
-            runActivity?.Dispose();
         }
 
         // If we are Idle or Ended, we should break out of the loop
