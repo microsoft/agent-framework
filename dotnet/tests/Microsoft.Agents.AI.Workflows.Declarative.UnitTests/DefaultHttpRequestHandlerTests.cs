@@ -40,11 +40,19 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncUsesNamedFactoryAndDisposesClientsAsync()
     {
         // Arrange
-        using TestHttpMessageHandler messageHandler = new((req, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
-            }));
+        using HttpResponseMessage firstResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+        };
+        using HttpResponseMessage secondResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+        };
+        int requestCount = 0;
+#pragma warning disable CA2025
+        using TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromResult(requestCount++ == 0 ? firstResponse : secondResponse));
+#pragma warning restore CA2025
         using HttpClient firstClient = new(messageHandler, disposeHandler: false);
         using HttpClient secondClient = new(messageHandler, disposeHandler: false);
         Mock<IHttpClientFactory> factory = new();
