@@ -10381,6 +10381,73 @@ async def test_failed_response_raises_and_clears_resume_token(
         assert "continuation_token" not in options
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_failed_response_with_function_call_does_not_invoke_tool(stream: bool) -> None:
+    from openai.types.responses import ResponseOutputItemAddedEvent
+
+    invocations: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def lookup(query: str) -> str:
+        """Look up a value."""
+        invocations.append(query)
+        return "value"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call = {
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_1",
+        "name": "lookup",
+        "arguments": '{"query": "x"}',
+        "status": "completed",
+    }
+    response = Response.model_validate({
+        "id": "resp_failed",
+        "object": "response",
+        "created_at": 1.0,
+        "model": "test-model",
+        "status": "failed",
+        "error": {"code": "server_error", "message": "Generation failed."},
+        "output": [function_call],
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+    })
+    if stream:
+        create_result: object = _FakeAsyncEventStream([
+            ResponseOutputItemAddedEvent.model_validate({
+                "type": "response.output_item.added",
+                "sequence_number": 1,
+                "output_index": 0,
+                "item": function_call,
+            }),
+            ResponseOutputItemDoneEvent.model_validate({
+                "type": "response.output_item.done",
+                "sequence_number": 2,
+                "output_index": 0,
+                "item": function_call,
+            }),
+            ResponseFailedEvent.model_validate({"type": "response.failed", "sequence_number": 3, "response": response}),
+        ])
+    else:
+        create_result = MagicMock()
+        create_result.parse.return_value = response
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", return_value=create_result) as create,
+        pytest.raises(ChatClientException, match="server_error: Generation failed."),
+    ):
+        messages = [Message(role="user", contents=["test"])]
+        if stream:
+            await client.get_response(messages=messages, options={"tools": [lookup]}, stream=True).get_final_response()
+        else:
+            await client.get_response(messages=messages, options={"tools": [lookup]})
+
+    assert invocations == []
+    assert create.call_count == 1
+
+
 def test_streaming_response_created_with_in_progress_status_sets_continuation_token() -> None:
     """Test that response.created with in_progress status sets continuation_token."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
