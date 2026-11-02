@@ -398,6 +398,12 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             env_file_path: Optional .env file to load before process environment variables.
             env_file_encoding: Encoding for the .env file; defaults to UTF-8.
         """
+        super().__init__(
+            record_type,
+            definition=definition,
+            collection_name=collection_name,
+            embedding_generator=embedding_generator,
+        )
         resolved_client, owns_client = _resolve_client(
             async_client,
             url=url,
@@ -406,14 +412,8 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        super().__init__(
-            record_type,
-            definition=definition,
-            collection_name=collection_name,
-            embedding_generator=embedding_generator,
-            managed_client=owns_client,
-        )
         self.async_client = resolved_client
+        self.managed_client = owns_client
         self._closed = False
 
     @property

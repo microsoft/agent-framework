@@ -519,6 +519,15 @@ async def test_unsupported_options_and_schema(definition):
     assert injected.collection_name == "test"
 
 
+def test_invalid_collection_arguments_do_not_create_client():
+    with (
+        patch("agent_framework_qdrant._vector_store.AsyncQdrantClient") as factory,
+        pytest.raises(ValueError, match="VectorStoreCollectionDefinition"),
+    ):
+        QdrantCollection(dict, collection_name="test", url="https://qdrant.example")
+    factory.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
