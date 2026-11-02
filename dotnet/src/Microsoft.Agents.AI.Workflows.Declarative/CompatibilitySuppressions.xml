@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<!-- Constructors without allowed hosts were intentionally removed. -->
+<!-- Factory-only construction intentionally removes the legacy constructors and handler disposal. -->
 <Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
@@ -10,13 +10,6 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Net.Http.HttpClient)</Target>
-    <Left>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
-    <IsBaselineSuppression>true</IsBaselineSuppression>
-  </Suppression>
-  <Suppression>
-    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Func{Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo,System.Threading.CancellationToken,System.Threading.Tasks.Task{System.Net.Http.HttpClient}})</Target>
     <Left>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
     <Right>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
@@ -24,56 +17,21 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor</Target>
-    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
-    <IsBaselineSuppression>true</IsBaselineSuppression>
-  </Suppression>
-  <Suppression>
-    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Net.Http.HttpClient)</Target>
-    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <Left>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Func{Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo,System.Threading.CancellationToken,System.Threading.Tasks.Task{System.Net.Http.HttpClient}})</Target>
-    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor</Target>
-    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
-    <IsBaselineSuppression>true</IsBaselineSuppression>
-  </Suppression>
-  <Suppression>
-    <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Net.Http.HttpClient)</Target>
-    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
-    <IsBaselineSuppression>true</IsBaselineSuppression>
-  </Suppression>
-  <Suppression>
-    <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Func{Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo,System.Threading.CancellationToken,System.Threading.Tasks.Task{System.Net.Http.HttpClient}})</Target>
-    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
-    <IsBaselineSuppression>true</IsBaselineSuppression>
-  </Suppression>
-  <Suppression>
-    <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor</Target>
-    <Left>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
-    <Right>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
-    <IsBaselineSuppression>true</IsBaselineSuppression>
-  </Suppression>
-  <Suppression>
-    <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Net.Http.HttpClient)</Target>
     <Left>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
     <Right>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
@@ -87,7 +45,84 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Net.Http.HttpClient)</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Func{Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo,System.Threading.CancellationToken,System.Threading.Tasks.Task{System.Net.Http.HttpClient}})</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Net.Http.HttpClient)</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Func{Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo,System.Threading.CancellationToken,System.Threading.Tasks.Task{System.Net.Http.HttpClient}})</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Net.Http.HttpClient)</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Func{Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo,System.Threading.CancellationToken,System.Threading.Tasks.Task{System.Net.Http.HttpClient}})</Target>
     <Left>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
     <Right>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
@@ -101,7 +136,42 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
-    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.#ctor(System.Func{Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo,System.Threading.CancellationToken,System.Threading.Tasks.Task{System.Net.Http.HttpClient}})</Target>
+    <Target>M:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler</Target>
     <Left>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Left>
     <Right>lib/netstandard2.0/Microsoft.Agents.AI.Workflows.Declarative.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>

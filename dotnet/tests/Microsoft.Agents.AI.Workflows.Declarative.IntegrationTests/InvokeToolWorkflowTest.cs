@@ -16,6 +16,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
@@ -273,9 +274,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     private const string ArmScope = "https://management.azure.com/.default";
 
     /// <summary>
-    /// The expected ARM endpoint. Only requests whose absolute URL exactly matches
-    /// this scheme and host receive the authenticated <see cref="HttpClient"/>; all
-    /// other hosts are rejected by the handler's allowlist before this callback is invoked.
+    /// The ARM origin to which authentication is restricted.
     /// </summary>
     private static readonly Uri s_armEndpoint = new("https://management.azure.com/");
 
@@ -283,13 +282,8 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     /// Runs an HttpRequestAction workflow test with the specified configuration.
     /// </summary>
     /// <remarks>
-    /// The workflow under test calls an authenticated Azure ARM endpoint. We acquire a
-    /// single bearer token via the same Azure CLI credential used elsewhere in the
-    /// integration test suite, attach it to a cached <see cref="HttpClient"/>, and route
-    /// matching requests through that client via <see cref="DefaultHttpRequestHandler"/>'s
-    /// <c>httpClientProvider</c> callback. The test owns the <see cref="HttpClient"/>'s
-    /// lifetime and disposes it explicitly — <see cref="DefaultHttpRequestHandler"/> does
-    /// not dispose provider-returned clients.
+    /// The application-owned factory pools HTTP handlers. Its authentication handler acquires a
+    /// token for each request to the ARM origin, including redirects.
     /// </remarks>
     private async Task RunHttpRequestTestAsync(
         string workflowFileName)
@@ -297,35 +291,19 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         // Arrange
         string workflowPath = GetWorkflowPath(workflowFileName);
 
-        AccessToken accessToken =
-            await TestAzureCliCredentials
-                .CreateAzureCliCredential()
-                .GetTokenAsync(new TokenRequestContext([ArmScope]), CancellationToken.None)
-                .ConfigureAwait(false);
-
-        using HttpClient authenticatedClient = new(new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            CheckCertificateRevocationList = true,
-        });
-        authenticatedClient.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", accessToken.Token);
-
-        await using DefaultHttpRequestHandler httpRequestHandler =
-            new(allowedHosts: [s_armEndpoint.IdnHost], httpClientProvider: (request, _) =>
+        ServiceCollection services = new();
+        services.AddHttpClient("WorkflowArm")
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
-                if (Uri.TryCreate(request.Url, UriKind.Absolute, out Uri? requestUri) &&
-                    string.Equals(requestUri.Scheme, s_armEndpoint.Scheme, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(requestUri.Host, s_armEndpoint.Host, StringComparison.OrdinalIgnoreCase))
-                {
-#pragma warning disable CA2025 // authenticatedClient outlives the handler (LIFO using disposal) and the workflow awaits all dispatches.
-                    return Task.FromResult<HttpClient?>(authenticatedClient);
-#pragma warning restore CA2025
-                }
-
-                // Requests to the allowed host with a different scheme do not receive the token.
-                return Task.FromResult<HttpClient?>(null);
-            });
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                CheckCertificateRevocationList = true,
+            })
+            .AddHttpMessageHandler(() => new ArmAuthenticationHandler())
+            .SetHandlerLifetime(TimeSpan.FromMinutes(5));
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultHttpRequestHandler httpRequestHandler = new(
+            [s_armEndpoint.IdnHost], serviceProvider.GetRequiredService<IHttpClientFactory>(), "WorkflowArm");
 
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(
             externalConversation: false,
@@ -355,6 +333,27 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     #endregion
 
     #region Shared Helpers
+
+    private sealed class ArmAuthenticationHandler : DelegatingHandler
+    {
+        private readonly TokenCredential _credential = TestAzureCliCredentials.CreateAzureCliCredential();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri is { IsAbsoluteUri: true } requestUri &&
+                Uri.Compare(requestUri, s_armEndpoint, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                AccessToken token = await this._credential.GetTokenAsync(new TokenRequestContext([ArmScope]), cancellationToken).ConfigureAwait(false);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            }
+            else
+            {
+                request.Headers.Authorization = null;
+            }
+
+            return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     private static void AssertWorkflowEventsEmitted(WorkflowEvents workflowEvents)
     {

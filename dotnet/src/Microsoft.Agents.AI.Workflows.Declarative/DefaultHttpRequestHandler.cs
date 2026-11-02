@@ -19,10 +19,11 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This handler supports per-request authentication via an optional <c>httpClientProvider</c> callback that
-/// returns a pre-configured <see cref="HttpClient"/> for a given request (e.g. authenticated, custom handler).
-/// When the provider returns <see langword="null"/>, or no provider is supplied, a shared internal <see cref="HttpClient"/>
-/// is used.
+/// This handler obtains and disposes an HTTP client from the application-owned <see cref="IHttpClientFactory"/>
+/// for each request, including redirects. The factory manages the lifetime of the underlying HTTP handlers.
+/// Configure the named client with automatic redirects and cookies disabled. Authentication handlers must
+/// bind credentials to the intended origin on each request, including redirects; do not put credentials in
+/// default request headers when multiple origins are allowed.
 /// </para>
 /// <para>
 /// Requests must use HTTP or HTTPS and target a host explicitly allowed by the application, including after
@@ -30,7 +31,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// Host matching is exact and case-insensitive, with internationalized names and trailing DNS dots normalized;
 /// wildcards and implicit subdomains are not supported. Entries may include a port; omitted ports default to 443.
 /// Authorization matches the host and port, independently of whether HTTP or HTTPS is used.
-/// The allowlist is copied at construction and applies before invoking the client provider.
+/// The allowlist is copied at construction and applies before creating a client.
 /// Workflow-supplied Host headers are rejected; the transport derives the authority from the request URL.
 /// DNS resolution and network routing are delegated to the HTTP transport, not classified by this handler.
 /// </para>
@@ -39,41 +40,22 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// so it does not mutate <see cref="HttpClient.Timeout"/> on shared instances.
 /// </para>
 /// <para>
-/// Redirects are handled by this handler only when using its internally owned client, which disables automatic
-/// redirects so per-request headers are not forwarded to redirect destinations. If a supplied client returns a
-/// redirect response, this handler does not follow it because the client's redirect behavior is opaque. Supplied
-/// clients should disable automatic redirects and handle redirect responses before returning them to this handler.
-/// The provider is invoked for redirect destinations, but redirects that would switch from the internally owned
-/// client to a provider-supplied client are rejected before sending the redirected request.
+/// Redirects are handled explicitly so each destination is checked against the allowlist and workflow-supplied
+/// headers are not forwarded. Redirects followed inside a factory-configured transport are not visible to this
+/// handler, so automatic redirects must be disabled by the application.
 /// </para>
 /// </remarks>
-public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable
+public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 {
     private const int MaxAutomaticRedirections = 50;
 
     private readonly HashSet<string> _allowedHosts;
-    private readonly Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
-    private readonly Lazy<HttpClient> _ownedHttpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string _httpClientName;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
-    /// and an internally owned HTTP client, disposed when <see cref="DisposeAsync"/> is called.
-    /// </summary>
-    /// <param name="allowedHosts">
-    /// The exact DNS names or IP literals, optionally including a port, the application permits.
-    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
-    /// An empty collection rejects all requests.
-    /// </param>
-    /// <exception cref="ArgumentNullException"><paramref name="allowedHosts"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
-    public DefaultHttpRequestHandler(IEnumerable<string> allowedHosts)
-        : this(allowedHosts, httpClientProvider: null)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
-    /// and an optional per-request client provider.
+    /// and an application-owned HTTP client factory.
     /// </summary>
     /// <param name="allowedHosts">
     /// The exact DNS names or IP literals, optionally including a port, the application permits.
@@ -81,23 +63,20 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// Schemes, paths, and wildcards are not supported. An empty collection rejects all requests.
     /// The collection is copied.
     /// </param>
-    /// <param name="httpClientProvider">
-    /// An optional callback returning a caller-owned client, or <see langword="null"/> to use the internal client.
-    /// Supplied clients must disable automatic redirects or independently enforce the same allowlist on redirects.
+    /// <param name="httpClientFactory">
+    /// The factory supplying request-owned clients. Configure automatic redirects and cookies off and bind
+    /// authentication to the intended origin in a delegating handler. The application owns the factory.
     /// </param>
-    /// <exception cref="ArgumentNullException"><paramref name="allowedHosts"/> is <see langword="null"/>.</exception>
+    /// <param name="httpClientName">The configured client name, or <see langword="null"/> for the default client.</param>
+    /// <exception cref="ArgumentNullException">An argument other than <paramref name="httpClientName"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
-    /// <remarks>
-    /// Clients returned by the provider remain caller-owned and are not disposed by this handler.
-    /// Cache and reuse them rather than allocating a client per request. The provider also runs for allowed
-    /// redirect destinations; return <see langword="null"/> to continue using the internal client or throw
-    /// to reject the destination. Returning a supplied client on a redirect is rejected.
-    /// </remarks>
     public DefaultHttpRequestHandler(
         IEnumerable<string> allowedHosts,
-        Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
+        IHttpClientFactory httpClientFactory,
+        string? httpClientName = null)
     {
         Throw.IfNull(allowedHosts);
+        Throw.IfNull(httpClientFactory);
         this._allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string host in allowedHosts)
         {
@@ -125,37 +104,8 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             this._allowedHosts.Add(NormalizeDestination(new UriBuilder(Uri.UriSchemeHttps, hostName, port).Uri));
         }
 
-        this._httpClientProvider = httpClientProvider;
-        this._ownedHttpClient = new Lazy<HttpClient>(CreateOwnedHttpClient, LazyThreadSafetyMode.ExecutionAndPublication);
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
-    /// and a caller-owned HTTP client.
-    /// </summary>
-    /// <param name="allowedHosts">
-    /// The exact DNS names or IP literals, optionally including a port, the application permits.
-    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
-    /// An empty collection rejects all requests.
-    /// </param>
-    /// <param name="httpClient">
-    /// The caller-owned client. Disable automatic redirects or independently enforce the same allowlist on redirects.
-    /// </param>
-    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
-    public DefaultHttpRequestHandler(IEnumerable<string> allowedHosts, HttpClient httpClient)
-        : this(allowedHosts, CreateSingleClientProvider(httpClient))
-    {
-    }
-
-    private static Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>> CreateSingleClientProvider(HttpClient httpClient)
-    {
-        if (httpClient is null)
-        {
-            throw new ArgumentNullException(nameof(httpClient));
-        }
-
-        return (_, _) => Task.FromResult<HttpClient?>(httpClient);
+        this._httpClientFactory = httpClientFactory;
+        this._httpClientName = httpClientName ?? string.Empty;
     }
 
     /// <inheritdoc/>
@@ -204,21 +154,11 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
             }
 
-            HttpClient? providedClient = null;
-            if (this._httpClientProvider is not null)
+            using HttpClient client = this._httpClientFactory.CreateClient(this._httpClientName);
+            if (!string.IsNullOrEmpty(client.DefaultRequestHeaders.Host))
             {
-                providedClient = await this._httpClientProvider(currentRequest, effectiveToken).ConfigureAwait(false);
-                if (redirectCount > 0 && providedClient is not null)
-                {
-                    throw new HttpRequestException("Redirects that change the HTTP client are not allowed.");
-                }
-                if (!string.IsNullOrEmpty(providedClient?.DefaultRequestHeaders.Host))
-                {
-                    throw new HttpRequestException("Request headers must not override the Host header.");
-                }
+                throw new HttpRequestException("Request headers must not override the Host header.");
             }
-
-            HttpClient client = providedClient ?? this._ownedHttpClient.Value;
 
             using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
 
@@ -226,8 +166,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveToken)
                 .ConfigureAwait(false);
 
-            if (providedClient is null &&
-                TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
+            if (TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
             {
                 currentRequest = redirectRequest;
                 currentUri = redirectUri;
@@ -280,17 +219,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         cancellationToken.ThrowIfCancellationRequested();
         throw new OperationCanceledException(cancellationToken);
 #endif
-    }
-
-    /// <inheritdoc/>
-    public ValueTask DisposeAsync()
-    {
-        if (this._ownedHttpClient.IsValueCreated)
-        {
-            this._ownedHttpClient.Value.Dispose();
-        }
-
-        return default;
     }
 
     private static HttpRequestMessage BuildHttpRequestMessage(HttpRequestInfo request)
@@ -357,16 +285,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             value,
             nameof(value),
             $"HTTP header '{name}' contains invalid characters.");
-    }
-
-    private static HttpClient CreateOwnedHttpClient()
-    {
-        return new HttpClient(new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            CheckCertificateRevocationList = true,
-        });
     }
 
     private static string NormalizeDestination(Uri uri) =>
