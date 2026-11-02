@@ -2635,7 +2635,7 @@ def test_file_checkpoint_storage_abandoned_loop_does_not_own_destination_forever
             try:
                 await asyncio.wait_for(later_storage.save(make("later")), timeout=10)
                 outcome["saved"] = True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 outcome["saved"] = False
 
         asyncio.run(main())
@@ -3189,7 +3189,7 @@ def test_file_checkpoint_storage_abandoned_loop_while_queued_releases_the_destin
             try:
                 await asyncio.wait_for(storage.save(make("later")), timeout=10)
                 outcome["saved"] = True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 outcome["saved"] = False
 
         asyncio.run(main())
@@ -3369,7 +3369,7 @@ def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(t
                 try:
                     await asyncio.wait_for(storage.save(make("successor")), timeout=25)
                     successor["saved"] = True
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     successor["saved"] = False
 
             asyncio.run(main())

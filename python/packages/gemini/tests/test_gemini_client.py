@@ -2636,8 +2636,8 @@ def test_get_web_search_tool_returns_google_search_tool() -> None:
 def test_get_web_search_tool_with_params() -> None:
     """Parameters are forwarded to types.GoogleSearch."""
     time_range = types.Interval(
-        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
-        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.timezone.utc),
+        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.UTC),
     )
     tool = GeminiChatClient.get_web_search_tool(
         search_types=types.SearchTypes(web_search=types.WebSearch()),
