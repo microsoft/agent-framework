@@ -611,6 +611,66 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
     }
 
     [Fact]
+    public async Task Test_AgentHostExecutor_StripsRawRepresentationFromForwardedContentAsync()
+    {
+        // Arrange: agent returns content with RawRepresentation set, like a non-streaming Responses reply
+        TextContent text = new("Response")
+        {
+            RawRepresentation = "provider_specific_output_text_part",
+            AdditionalProperties = new() { ["key"] = "value" },
+            Annotations = [new CitationAnnotation { Title = "Source" }],
+        };
+        FunctionCallContent call = new("call_1", "my_function", new Dictionary<string, object?> { ["arg"] = "val" })
+        {
+            RawRepresentation = "provider_specific_function_call_item",
+            InformationalOnly = true,
+        };
+        var responseMessages = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, [text, call])
+            {
+                AuthorName = TestAgentName,
+                MessageId = Guid.NewGuid().ToString("N"),
+            },
+        };
+
+        TestRunContext testContext = new();
+        MixedContentAgent agent = new(responseMessages, TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new());
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert: forwarded content should keep its data but NOT its RawRepresentation
+        List<ChatMessage> forwardedMessages = testContext.QueuedMessages[executor.Id]
+            .Select(e => e.Message)
+            .OfType<List<ChatMessage>>()
+            .SelectMany(list => list)
+            .ToList();
+
+        ChatMessage forwarded = Assert.Single(forwardedMessages);
+        Assert.Equal(2, forwarded.Contents.Count);
+
+        TextContent forwardedText = Assert.IsType<TextContent>(forwarded.Contents[0]);
+        Assert.Null(forwardedText.RawRepresentation);
+        Assert.Equal("Response", forwardedText.Text);
+        Assert.Equal("value", forwardedText.AdditionalProperties!["key"]);
+        Assert.Equal("Source", Assert.IsType<CitationAnnotation>(Assert.Single(forwardedText.Annotations!)).Title);
+
+        FunctionCallContent forwardedCall = Assert.IsType<FunctionCallContent>(forwarded.Contents[1]);
+        Assert.Null(forwardedCall.RawRepresentation);
+        Assert.Equal("call_1", forwardedCall.CallId);
+        Assert.Equal("my_function", forwardedCall.Name);
+        Assert.Equal("val", forwardedCall.Arguments!["arg"]);
+        Assert.True(forwardedCall.InformationalOnly);
+
+        // The agent's own content keeps its RawRepresentation
+        Assert.Equal("provider_specific_output_text_part", text.RawRepresentation);
+        Assert.Equal("provider_specific_function_call_item", call.RawRepresentation);
+    }
+
+    [Fact]
     public async Task Test_AgentHostExecutor_PreservesForwardableContentInMixedMessagesAsync()
     {
         // Arrange: a single message with both text and reasoning content
