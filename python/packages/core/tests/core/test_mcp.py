@@ -7146,6 +7146,88 @@ async def test_load_prompts_with_pagination():
     assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2", "prompt_3"]
 
 
+async def test_load_prompts_rejects_catalog_exceeding_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+        cursor = params.cursor if params is not None else None
+        if cursor is None:
+            return types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second")
+        if cursor == "second":
+            return types.ListPromptsResult(prompts=[types.Prompt(name="second")], next_cursor="third")
+        pytest.fail(f"Unexpected prompts/list cursor: {cursor!r}")
+
+    mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
+
+    with pytest.raises(ToolExecutionException, match="configured maximum of 2 pages"):
+        await tool.load_prompts()
+
+    assert mock_session.list_prompts.await_count == 2
+    assert tool.functions == []
+
+
+async def test_load_prompts_accepts_catalog_completing_at_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second"),
+            types.ListPromptsResult(prompts=[types.Prompt(name="second")]),
+        ]
+    )
+
+    await tool.load_prompts()
+
+    assert mock_session.list_prompts.await_count == 2
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_follows_empty_string_cursor(catalog_kind: str) -> None:
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+
+        async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+            if params is None:
+                return types.ListToolsResult(
+                    tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                    next_cursor="",
+                )
+            assert params.cursor == ""
+            return types.ListToolsResult(
+                tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]
+            )
+
+        mock_session.list_tools = AsyncMock(side_effect=list_tools)
+        await tool.load_tools()
+        assert mock_session.list_tools.await_count == 2
+    else:
+
+        async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+            if params is None:
+                return types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="")
+            assert params.cursor == ""
+            return types.ListPromptsResult(prompts=[types.Prompt(name="second")])
+
+        mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
+        await tool.load_prompts()
+        assert mock_session.list_prompts.await_count == 2
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
 async def test_load_tools_pagination_with_duplicates():
     """Test that load_tools prevents duplicates across paginated results."""
     from unittest.mock import AsyncMock, MagicMock
@@ -9501,6 +9583,70 @@ async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailab
     first_session.list_prompts.assert_awaited_once()
     mock_reconnect.assert_awaited_once_with()
     second_session.list_prompts.assert_awaited_once()
+
+
+async def test_load_prompts_retries_continuation_page_after_closed_resource() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_page = types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second")
+
+    async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+        if params is None:
+            return first_page
+        assert params.cursor == "second"
+        raise ClosedResourceError
+
+    first_session = Mock()
+    first_session.list_prompts = AsyncMock(side_effect=list_prompts)
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="second")]))
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_prompts = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_prompts()
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+    assert first_session.list_prompts.await_count == 2
+    mock_reconnect.assert_awaited_once_with()
+    continuation_params = second_session.list_prompts.await_args.kwargs["params"]
+    assert continuation_params.cursor == "second"
+
+
+async def test_load_prompts_fails_after_closed_resource_retry_is_exhausted() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_prompts = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
+        pytest.raises(ToolExecutionException, match="Failed to load prompts - connection lost"),
+    ):
+        await tool.load_prompts()
+
+    first_session.list_prompts.assert_awaited_once()
+    mock_reconnect.assert_awaited_once_with()
+    second_session.list_prompts.assert_awaited_once()
+    assert tool.functions == []
 
 
 async def test_mcp_tool_filters_framework_kwargs():
