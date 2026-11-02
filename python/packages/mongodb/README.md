@@ -11,10 +11,7 @@ An alpha MongoDB integration for [Microsoft Agent Framework](https://learn.micro
 pip install agent-framework-mongodb --pre
 ```
 
-Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
-compatibility is not guaranteed.
-
-Requires PyMongo 4.15+ and a MongoDB deployment with
+Supports Python 3.11–3.15. Requires PyMongo 4.15+ and a MongoDB deployment with
 [MongoDB Vector Search](https://www.mongodb.com/docs/vector-search/). Search-index
 creation requires the corresponding database permissions.
 

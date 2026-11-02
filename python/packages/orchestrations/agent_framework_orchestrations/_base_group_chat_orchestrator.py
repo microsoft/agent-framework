@@ -10,14 +10,13 @@ from abc import ABC
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, TypeAlias
+from typing import Any, ClassVar, Never, TypeAlias
 
 from agent_framework._types import AgentResponse, AgentResponseUpdate, Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._events import WorkflowEvent
 from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._workflow_context import WorkflowContext
-from typing_extensions import Never
 
 from ._orchestration_request_info import AgentApprovalExecutor
 

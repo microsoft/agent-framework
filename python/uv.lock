@@ -172,7 +172,6 @@ tool-markdown = [{ name = "pygments", specifier = "==2.21.0" }]
 tool-runtime = [
     { name = "packaging", specifier = "==26.3" },
     { name = "rich", specifier = ">=13.7.1,<16.0.0" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = "==2.5.0" },
 ]
 
 [[package]]
@@ -531,9 +530,9 @@ requires-dist = [
     { name = "agent-framework-durabletask", marker = "extra == 'all'", specifier = ">=1.0.0b260922,<2" },
     { name = "agent-framework-foundry", marker = "extra == 'all'", editable = "packages/foundry" },
     { name = "agent-framework-foundry-hosting", marker = "extra == 'all'", editable = "packages/foundry_hosting" },
-    { name = "agent-framework-foundry-local", marker = "python_full_version >= '3.11' and extra == 'all'", editable = "packages/foundry_local" },
+    { name = "agent-framework-foundry-local", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'all'", editable = "packages/foundry_local" },
     { name = "agent-framework-gemini", marker = "extra == 'all'", editable = "packages/gemini" },
-    { name = "agent-framework-github-copilot", marker = "python_full_version >= '3.11' and extra == 'all'", editable = "packages/github_copilot" },
+    { name = "agent-framework-github-copilot", marker = "extra == 'all'", editable = "packages/github_copilot" },
     { name = "agent-framework-hyperlight", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'all') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'all')", editable = "packages/hyperlight" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-mistral", marker = "extra == 'all'", editable = "packages/mistral" },
@@ -759,7 +758,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-openai", editable = "packages/openai" },
-    { name = "foundry-local-sdk", specifier = ">=2.2.1,<3" },
+    { name = "foundry-local-sdk", specifier = ">=2.3.1,<3" },
 ]
 
 [[package]]
@@ -789,7 +788,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = ">=1.0.16,<2.0" },
+    { name = "github-copilot-sdk", specifier = ">=1.0.16,<2.0" },
 ]
 
 [[package]]
@@ -2299,7 +2298,7 @@ wheels = [
 
 [[package]]
 name = "foundry-local-sdk"
-version = "2.2.1"
+version = "2.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cffi" },
@@ -2311,11 +2310,11 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/ee/9718d428de802ee5264e314c2eda1392cb99ccbe9bca7386eec278103b7f/foundry_local_sdk-2.2.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:7180ea612ab5e2af0f6c8475d413ea592b7c067871b19c9e24a44c0a21f1c6e7", size = 6394441 },
-    { url = "https://files.pythonhosted.org/packages/d4/d1/e1678487f99cfc52b573feba04c12133df7446a4d128abf1a489c0092f7f/foundry_local_sdk-2.2.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:b534b9d3700ab90c69986a817ee542da215fab62e0f13e2e27f05c53b3239154", size = 8993548 },
-    { url = "https://files.pythonhosted.org/packages/7c/73/670318151e07fdf131df926a270d2443b7255e3b5851e8bdb5dca98f88c9/foundry_local_sdk-2.2.1-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:6ee4bd5407f5134bb243456603f4398a8732d765c7b3cc4b4d6fa2910ad2bda5", size = 8693997 },
-    { url = "https://files.pythonhosted.org/packages/86/7a/ce8b0b2f870590e57d841a95adab0e965d6b3643fce5b20ca82222443a9f/foundry_local_sdk-2.2.1-cp311-abi3-win_amd64.whl", hash = "sha256:2a88dd8ba0ca89ba04b2f03a182238e0632d894b313117975ba0f8a4d68767d3", size = 40815873 },
-    { url = "https://files.pythonhosted.org/packages/bc/12/a7d2aabf69089b3711b9de18b7d2ff228af26d401dcf3b7af343c03a3aec/foundry_local_sdk-2.2.1-cp311-abi3-win_arm64.whl", hash = "sha256:f28790aaac7abc4d14b9e6cfae422d3ed2679a8c62f2c7084c0e59297b9a6689", size = 40611400 },
+    { url = "https://files.pythonhosted.org/packages/03/9e/82a4c7443ec265bf14eaa006327b80cee32f9fd3c2e2cead5df1d0a30a27/foundry_local_sdk-2.3.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:804e1d61fc62fe14505076a985b6e07c1e2fab4d385b90b32c471362a59e29fd", size = 9067991 },
+    { url = "https://files.pythonhosted.org/packages/91/1c/f8d79d1f91164e8a60f010e94eabf2b23b68ddd138c37d1fe03114c33bae/foundry_local_sdk-2.3.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:33e43037c01ba70ca9ba382d16049b8e2aabaa426c88d58d7023c5773e734c3f", size = 14797597 },
+    { url = "https://files.pythonhosted.org/packages/ba/2c/c180cd68cf7ed16f046287783434d100c9fd97297b96a754446085305870/foundry_local_sdk-2.3.1-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:dacebd1715c2c24b6658039e44b5ef96a81308ce8da6473c0664a0627abeb393", size = 14611892 },
+    { url = "https://files.pythonhosted.org/packages/5f/27/6aa008fbdcc1064b70ee1484e9cba0e610251cfcb39c25bd880599d2909f/foundry_local_sdk-2.3.1-cp311-abi3-win_amd64.whl", hash = "sha256:bf05171a97de5804447d414e9bdab9735272f4f009f65cd319f2785ff9772fbe", size = 43655730 },
+    { url = "https://files.pythonhosted.org/packages/c9/d3/16dd0a7d7e4a0255cc13c14b8a5fa4c2136cf0a830207467be7505210bf1/foundry_local_sdk-2.3.1-cp311-abi3-win_arm64.whl", hash = "sha256:40d849162b92d9a68277e8cc1207a0c3b978e9482ad14411a6b8ed1e9c9e2f7e", size = 43462374 },
 ]
 
 [[package]]

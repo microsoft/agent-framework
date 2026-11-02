@@ -3,7 +3,7 @@ name = "agent-framework-hosting-a2a"
 description = "A2A conversion helpers for app-owned Agent Framework hosting."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 version = "1.0.0a261030"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"

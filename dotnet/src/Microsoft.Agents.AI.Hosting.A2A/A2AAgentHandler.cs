@@ -129,12 +129,12 @@ internal sealed class A2AAgentHandler : IAgentHandler
         // AIAgent does not support resuming from arbitrary prior tasks.
         // Throw explicitly so the client gets a clear error rather than a response
         // that silently ignores the referenced task context.
-        if (context.Message?.ReferenceTaskIds is { Count: > 0 })
+        if (context.IncomingMessage?.ReferenceTaskIds is { Count: > 0 })
         {
             throw new NotSupportedException("ReferenceTaskIds is not supported. AIAgent cannot resume from arbitrary prior task context.");
         }
 
-        List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
+        List<ChatMessage> chatMessages = context.IncomingMessage is { } message ? [message.ToChatMessage()] : [];
 
         // Decide which A2A artifact to return based on the configured run mode.
         var decisionContext = new A2ARunDecisionContext(context);
