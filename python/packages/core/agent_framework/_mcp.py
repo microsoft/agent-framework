@@ -3113,7 +3113,6 @@ class MCPTool:
             await self._load_tools_locked()
 
     async def _load_tools_locked(self) -> None:
-        from anyio import ClosedResourceError
         from mcp import types
 
         if not self._supports_tools:
@@ -3138,47 +3137,10 @@ class MCPTool:
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            tool_list: types.ListToolsResult | None = None
-            for attempt in range(2):
-                try:
-                    # Ensure connection is still valid before each page request
-                    await self._ensure_connected()
-                    if not self._supports_tools:
-                        logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
-                        return
-                    with create_mcp_client_span(
-                        "tools/list",
-                        attributes=self._mcp_base_span_attributes(),
-                        capture_unhandled_exceptions=False,
-                    ) as list_span:
-                        try:
-                            tool_list = await self._require_connection().list_tools_page(params)
-                        except Exception as list_ex:
-                            set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
-                            raise
-                    break
-                except ClosedResourceError as cl_ex:
-                    if attempt == 0:
-                        await self._recover_connection_after_loss(
-                            operation="tool discovery",
-                            inner_exception=cl_ex,
-                            load_configured=False,
-                        )
-                        continue
-                    _log_mcp_exception(
-                        logging.ERROR,
-                        cl_ex,
-                        "MCP connection closed unexpectedly after reconnection: %s",
-                        cl_ex,
-                        redacted_message="MCP tool discovery connection closed after reconnection",
-                    )
-                    raise _mcp_tool_execution_exception(
-                        "Failed to load tools - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
+            tool_list = await self._try_list_tools_page_with_recovery(params)
 
             if tool_list is None:
-                raise _mcp_tool_execution_exception("Failed to load tools.")
+                return
 
             for tool in tool_list.tools:
                 task_support = getattr(getattr(tool, "execution", None), "task_support", None)
@@ -3284,6 +3246,61 @@ class MCPTool:
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
         self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
+
+    async def _try_list_tools_page_with_recovery(
+        self, params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult | None:
+        """Fetches a page of tools retrying on connection failure."""
+        from anyio import ClosedResourceError
+        from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
+
+        async def recover_connection(retry_state: RetryCallState) -> None:
+            outcome = retry_state.outcome
+            exception = outcome.exception() if outcome else None
+
+            if not isinstance(exception, ClosedResourceError):
+                return
+
+            await self._recover_connection_after_loss(
+                operation="tool discovery", inner_exception=exception, load_configured=False
+            )
+
+        @retry(
+            retry=retry_if_exception_type(ClosedResourceError),
+            stop=stop_after_attempt(2),
+            before_sleep=recover_connection,
+            reraise=True,
+        )
+        async def request_page() -> types.ListToolsResult | None:
+            await self._ensure_connected()
+
+            if not self._supports_tools:
+                logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
+                return None
+
+            with create_mcp_client_span(
+                "tools/list", attributes=self._mcp_base_span_attributes(), capture_unhandled_exceptions=False
+            ) as list_span:
+                try:
+                    return await self._require_connection().list_tools_page(params)
+                except Exception as exc:
+                    set_mcp_span_error(list_span, type(exc).__name__, str(exc))
+                    raise
+
+        try:
+            return await request_page()
+        except ClosedResourceError as exc:
+            _log_mcp_exception(
+                logging.ERROR,
+                exc,
+                "MCP connection closed unexpectedly after reconnection: %s",
+                exc,
+                redacted_message="MCP tool discovery connection closed after reconnection",
+            )
+            raise _mcp_tool_execution_exception(
+                "Failed to load tools - connection lost.",
+                inner_exception=exc,
+            ) from exc
 
     async def _cancel_pending_reload_tasks(self) -> None:
         """Cancel session-bound discovery reloads and wait for them to finish."""
