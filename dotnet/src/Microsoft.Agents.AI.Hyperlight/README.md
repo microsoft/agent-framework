@@ -48,6 +48,9 @@ and sensitive-data logging. Outer error handling cannot redact diagnostics that
 generated code has already caught and included in normal output. Run snapshots
 capture the policy, and sandbox configuration fingerprints include it so cached
 callbacks cannot retain a different disclosure policy.
+The same boundary covers initialization, warm-up, snapshot restore, and execution
+failures. Ordinary failures dispose and clear failed sandbox state before returning
+an error; cancellation still propagates.
 
 ## Network access and guest packages
 

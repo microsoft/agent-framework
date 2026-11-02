@@ -2,6 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using HyperlightSandbox.Api;
 using Microsoft.Agents.AI.Hyperlight.Internal;
 using Microsoft.Extensions.AI;
@@ -10,6 +13,55 @@ namespace Microsoft.Agents.AI.Hyperlight.UnitTests;
 
 public sealed class SandboxExecutorTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_InitializationFailureObeysPolicyAndReleasesLockAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        const string Detail = "synthetic-backend-diagnostic";
+        var options = new HyperlightCodeActProviderOptions
+        {
+            HeapSize = Detail,
+            IncludeDetailedErrors = includeDetailedErrors,
+        };
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        using var executor = new SandboxExecutor();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var first = await executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token);
+        var second = await executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token);
+
+        // Assert
+        foreach (var result in new[] { first, second })
+        {
+            using var json = JsonDocument.Parse(result);
+            Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(-1, json.RootElement.GetProperty("exit_code").GetInt32());
+            var error = json.RootElement.GetProperty("stderr").GetString()!;
+            Assert.Equal(includeDetailedErrors, error.Contains(Detail, StringComparison.Ordinal));
+            if (!includeDetailedErrors)
+            {
+                Assert.Equal("Code execution failed.", error);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PreservesCancellationAsync()
+    {
+        // Arrange
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], new HyperlightCodeActProviderOptions());
+        using var executor = new SandboxExecutor();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token));
+    }
+
     [Fact]
     public void Fingerprint_DifferentToolSets_DifferentFingerprints()
     {
