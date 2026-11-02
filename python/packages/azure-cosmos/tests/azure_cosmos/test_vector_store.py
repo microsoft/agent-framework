@@ -7,6 +7,7 @@ import gc
 import importlib
 import math
 from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from weakref import ref
@@ -19,6 +20,7 @@ from agent_framework import (
     VectorStoreCollectionDefinition,
     VectorStoreField,
     load_settings,
+    register_vectorstoremodel,
 )
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException, SettingNotFoundError
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
@@ -380,6 +382,35 @@ def test_injected_collection_resolves_container_independently(
         dict, definition=definition, collection_name="explicit-container" if explicit else None, **kwargs
     )
     assert collection.collection_name == ("explicit-container" if explicit else "env-container")
+
+
+@pytest.mark.parametrize("kind", ["account", "database"])
+@pytest.mark.parametrize("env_name", [None, "env-container"])
+def test_injected_clients_use_registered_collection_name(
+    kind: str, env_name: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @dataclass
+    class RegisteredRecord:
+        key: str
+        vector: list[float] | None = None
+
+    definition = VectorStoreCollectionDefinition(
+        [_definition().key_field, _definition().vector_fields[0]], collection_name="registered-items"
+    )
+    register_vectorstoremodel(RegisteredRecord, definition=definition)
+    assert not hasattr(RegisteredRecord, "__vectorstoremodel_definition__")
+    if env_name is None:
+        monkeypatch.delenv("AZURE_COSMOS_CONTAINER_NAME", raising=False)
+    else:
+        monkeypatch.setenv("AZURE_COSMOS_CONTAINER_NAME", env_name)
+    client = MagicMock()
+    client.id = "db"
+    kwargs: dict[str, Any] = (
+        {"cosmos_client": client, "database_name": "db"} if kind == "account" else {"database_client": client}
+    )
+    collection = CosmosCollection(RegisteredRecord, **kwargs)
+    assert collection.collection_name == "registered-items"
+    assert collection.definition is definition
 
 
 @pytest.mark.parametrize(

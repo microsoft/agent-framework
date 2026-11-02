@@ -25,7 +25,12 @@ from agent_framework import (
 )
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._vector_filters import FilterExpression
-from agent_framework._vectors import EmbeddingClient, SearchType, Vector
+from agent_framework._vectors import (
+    _VECTOR_MODEL_REGISTRY,  # pyright: ignore[reportPrivateUsage]
+    EmbeddingClient,
+    SearchType,
+    Vector,
+)
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -801,7 +806,8 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
             owns_connection = True
 
         if container_client is not None or cosmos_client is not None or database_client is not None:
-            registered_definition = definition or getattr(record_type, "__vectorstoremodel_definition__", None)
+            registration = _VECTOR_MODEL_REGISTRY.get(record_type)
+            registered_definition = definition or (registration.definition if registration is not None else None)
             configured_name = (
                 resolved_name if resolved_name is not None else getattr(registered_definition, "collection_name", None)
             )
