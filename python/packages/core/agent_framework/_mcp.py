@@ -10,7 +10,7 @@ import re
 import sys
 import warnings
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from contextvars import ContextVar
 from copy import copy
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import currentframe, isawaitable
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict, TypeVar, cast
 
 if sys.version_info >= (3, 13):
     from warnings import deprecated  # pragma: no cover
@@ -74,6 +74,8 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+_MCPListResultT = TypeVar("_MCPListResultT")
 
 
 def _mcp_exception_log_level() -> Literal[10] | None:
@@ -3074,12 +3076,20 @@ class MCPTool:
         # different remote prompt that normalizes to the same local name must start unloaded.
         self._progressive_loaded_tool_names.difference_update(existing_prompts.keys() - retained_prompt_names)
 
-    async def _try_list_prompts_page_with_recovery(
-        self, params: types.PaginatedRequestParams | None
-    ) -> types.ListPromptsResult | None:
-        """Fetch a page of prompts, retrying after connection loss."""
+    async def _try_list_page_with_recovery(
+        self,
+        params: types.PaginatedRequestParams | None,
+        *,
+        kind: Literal["tool", "prompt"],
+        is_supported: Callable[[], bool],
+        request_page: Callable[[types.PaginatedRequestParams | None], Awaitable[_MCPListResultT]],
+    ) -> _MCPListResultT | None:
+        """Fetch one catalog page, retrying after connection loss."""
         from anyio import ClosedResourceError
         from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
+
+        catalog_name = f"{kind}s"
+        operation = f"{kind} discovery"
 
         async def recover_connection(retry_state: RetryCallState) -> None:
             outcome = retry_state.outcome
@@ -3089,7 +3099,9 @@ class MCPTool:
                 return
 
             await self._recover_connection_after_loss(
-                operation="prompt discovery", inner_exception=exception, load_configured=False
+                operation=operation,
+                inner_exception=exception,
+                load_configured=False,
             )
 
         @retry(
@@ -3098,36 +3110,53 @@ class MCPTool:
             before_sleep=recover_connection,
             reraise=True,
         )
-        async def request_page() -> types.ListPromptsResult | None:
+        async def request_page_with_retry() -> _MCPListResultT | None:
             await self._ensure_connected()
 
-            if not self._supports_prompts:
-                logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
+            if not is_supported():
+                logger.debug(
+                    "Skipping MCP %s loading because the server did not advertise %s support.",
+                    kind,
+                    catalog_name,
+                )
                 return None
 
             with create_mcp_client_span(
-                "prompts/list", attributes=self._mcp_base_span_attributes(), capture_unhandled_exceptions=False
+                f"{catalog_name}/list",
+                attributes=self._mcp_base_span_attributes(),
+                capture_unhandled_exceptions=False,
             ) as list_span:
                 try:
-                    return await self._require_connection().list_prompts_page(params)
+                    return await request_page(params)
                 except Exception as exc:
                     set_mcp_span_error(list_span, type(exc).__name__, str(exc))
                     raise
 
         try:
-            return await request_page()
+            return await request_page_with_retry()
         except ClosedResourceError as exc:
             _log_mcp_exception(
                 logging.ERROR,
                 exc,
                 "MCP connection closed unexpectedly after reconnection: %s",
                 exc,
-                redacted_message="MCP prompt discovery connection closed after reconnection",
+                redacted_message=f"MCP {operation} connection closed after reconnection",
             )
             raise _mcp_tool_execution_exception(
-                "Failed to load prompts - connection lost.",
+                f"Failed to load {catalog_name} - connection lost.",
                 inner_exception=exc,
             ) from exc
+
+    async def _try_list_prompts_page_with_recovery(
+        self, params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult | None:
+        """Fetch a page of prompts, retrying after connection loss."""
+        return await self._try_list_page_with_recovery(
+            params,
+            kind="prompt",
+            is_supported=lambda: self._supports_prompts,
+            request_page=lambda page_params: self._require_connection().list_prompts_page(page_params),
+        )
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -3291,57 +3320,13 @@ class MCPTool:
     async def _try_list_tools_page_with_recovery(
         self, params: types.PaginatedRequestParams | None
     ) -> types.ListToolsResult | None:
-        """Fetches a page of tools retrying on connection failure."""
-        from anyio import ClosedResourceError
-        from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
-
-        async def recover_connection(retry_state: RetryCallState) -> None:
-            outcome = retry_state.outcome
-            exception = outcome.exception() if outcome else None
-
-            if not isinstance(exception, ClosedResourceError):
-                return
-
-            await self._recover_connection_after_loss(
-                operation="tool discovery", inner_exception=exception, load_configured=False
-            )
-
-        @retry(
-            retry=retry_if_exception_type(ClosedResourceError),
-            stop=stop_after_attempt(2),
-            before_sleep=recover_connection,
-            reraise=True,
+        """Fetch a page of tools, retrying after connection loss."""
+        return await self._try_list_page_with_recovery(
+            params,
+            kind="tool",
+            is_supported=lambda: self._supports_tools,
+            request_page=lambda page_params: self._require_connection().list_tools_page(page_params),
         )
-        async def request_page() -> types.ListToolsResult | None:
-            await self._ensure_connected()
-
-            if not self._supports_tools:
-                logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
-                return None
-
-            with create_mcp_client_span(
-                "tools/list", attributes=self._mcp_base_span_attributes(), capture_unhandled_exceptions=False
-            ) as list_span:
-                try:
-                    return await self._require_connection().list_tools_page(params)
-                except Exception as exc:
-                    set_mcp_span_error(list_span, type(exc).__name__, str(exc))
-                    raise
-
-        try:
-            return await request_page()
-        except ClosedResourceError as exc:
-            _log_mcp_exception(
-                logging.ERROR,
-                exc,
-                "MCP connection closed unexpectedly after reconnection: %s",
-                exc,
-                redacted_message="MCP tool discovery connection closed after reconnection",
-            )
-            raise _mcp_tool_execution_exception(
-                "Failed to load tools - connection lost.",
-                inner_exception=exc,
-            ) from exc
 
     async def _cancel_pending_reload_tasks(self) -> None:
         """Cancel session-bound discovery reloads and wait for them to finish."""
