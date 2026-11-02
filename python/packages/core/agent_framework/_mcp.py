@@ -3141,12 +3141,7 @@ class MCPTool:
         tool_param_names_by_name: dict[str, set[str]] = {}
         tool_annotations_by_name: dict[str, Any] = {}
 
-        tool_list = await self._try_list_tools_page_with_recovery(None)
-        if tool_list is None:
-            return
-        pages_loaded = 1
-
-        while True:
+        def stage_tool_page(tool_list: types.ListToolsResult) -> None:
             for tool in tool_list.tools:
                 task_support = getattr(getattr(tool, "execution", None), "task_support", None)
                 if task_support == "required":
@@ -3224,21 +3219,26 @@ class MCPTool:
                 )
                 new_functions.append(func)
 
-            if tool_list.next_cursor is None:
-                break
+        tool_list = await self._try_list_tools_page_with_recovery(None)
+        if tool_list is None:
+            return
+        pages_loaded = 1
+        stage_tool_page(tool_list)
+        cursor = tool_list.next_cursor
 
+        while cursor is not None:
             if self._max_discovery_pages is not None and pages_loaded >= self._max_discovery_pages:
                 raise _mcp_tool_execution_exception(
                     f"MCP tool discovery reached the configured maximum of "
                     f"{self._max_discovery_pages} pages before the server completed pagination."
                 )
 
-            tool_list = await self._try_list_tools_page_with_recovery(
-                types.PaginatedRequestParams(cursor=tool_list.next_cursor)
-            )
+            tool_list = await self._try_list_tools_page_with_recovery(types.PaginatedRequestParams(cursor=cursor))
             if tool_list is None:
                 return
             pages_loaded += 1
+            stage_tool_page(tool_list)
+            cursor = tool_list.next_cursor
 
         current_functions = [
             func
