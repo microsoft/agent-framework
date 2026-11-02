@@ -129,21 +129,16 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
-def _top_level_argument_value(context: FunctionInvocationContext, arg_name: str) -> tuple[Any, str | None]:
-    """Locate a top-level argument value in either context.arguments or context.kwargs.
-
-    Returns the value and a string indicating its source ('arguments' or 'kwargs'),
-    or (None, None) if not found.
-    """
-    return _top_level_argument_value_from(context.arguments, context.kwargs, arg_name)
-
-
-def _top_level_argument_value_from(
+def _top_level_argument_value(
     arguments: Any,
     kwargs: Mapping[str, Any],
     arg_name: str,
 ) -> tuple[Any, str | None]:
-    """Locate a top-level argument in detached invocation values."""
+    """Locate a top-level argument value in either arguments or runtime kwargs.
+
+    Returns the value and a string indicating its source ('arguments' or 'kwargs'),
+    or (None, None) if not found.
+    """
     args = cast(object, arguments)
     if isinstance(args, Mapping):
         args_mapping = cast(Mapping[str, Any], args)
@@ -156,13 +151,8 @@ def _top_level_argument_value_from(
     return None, None
 
 
-def _top_level_argument_keys(context: FunctionInvocationContext) -> set[str]:
-    """Union of top level keys in context.arguments and context.kwargs."""
-    return _top_level_argument_keys_from(context.arguments, context.kwargs)
-
-
-def _top_level_argument_keys_from(arguments: Any, kwargs: Mapping[str, Any]) -> set[str]:
-    """Return the top-level keys from detached invocation values."""
+def _top_level_argument_keys(arguments: Any, kwargs: Mapping[str, Any]) -> set[str]:
+    """Return the union of top-level argument and runtime-kwarg keys."""
     keys: set[str] = set()
     args = cast(object, arguments)
     if isinstance(args, Mapping):
@@ -1629,12 +1619,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
         if not rewritten:
             return
-        final_keys = _top_level_argument_keys(context)
+        final_keys = _top_level_argument_keys(context.arguments, context.kwargs)
         pre_validation_keys = set(cast(dict[str, set[int]], rewritten).keys())
         iterable_keys = final_keys if pre_validation_keys != final_keys else pre_validation_keys
         degraded: dict[str, set[int]] = {}
         for arg_name in iterable_keys:
-            value, _ = _top_level_argument_value(context, arg_name)
+            value, _ = _top_level_argument_value(context.arguments, context.kwargs, arg_name)
             if isinstance(value, (list, tuple)):
                 degraded[arg_name] = set(range(len(cast(Sequence[Any], value))))
             else:
@@ -1887,7 +1877,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             if arg_name not in rewritten_args:
                 rewritten_args[arg_name] = set()
 
-            arg_value, arg_source = _top_level_argument_value_from(arguments, kwargs, arg_name)
+            arg_value, arg_source = _top_level_argument_value(arguments, kwargs, arg_name)
 
             if arg_source is None:
                 rewritten_args[arg_name].add(-1)
@@ -2782,11 +2772,11 @@ def rewritten_arguments(context: FunctionInvocationContext | None = None) -> dic
         current_snapshot = _argument_authority_token(context.arguments, boundary="security policy")
         if current_snapshot != indices_snapshot:
             rewritten_keys = set(cast(dict[str, set[int]], rewritten).keys())
-            final_keys = _top_level_argument_keys(context)
+            final_keys = _top_level_argument_keys(context.arguments, context.kwargs)
             iterable_keys = final_keys if rewritten_keys != final_keys else rewritten_keys
             result: dict[str, set[int]] = {}
             for arg_name in iterable_keys:
-                value, _ = _top_level_argument_value(context, arg_name)
+                value, _ = _top_level_argument_value(context.arguments, context.kwargs, arg_name)
                 if isinstance(value, (list, tuple)):
                     result[arg_name] = set(range(len(cast(Sequence[Any], value))))
                 else:
