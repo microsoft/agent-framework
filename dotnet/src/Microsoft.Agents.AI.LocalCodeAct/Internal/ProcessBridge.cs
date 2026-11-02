@@ -31,6 +31,7 @@ internal sealed class ProcessBridge
     private readonly ProcessExecutionLimits _limits;
     private readonly IReadOnlyDictionary<string, string>? _environment;
     private readonly string? _workingDirectory;
+    private readonly bool _includeDetailedErrors;
 
     public ProcessBridge(
         string pythonExecutable,
@@ -38,7 +39,8 @@ internal sealed class ProcessBridge
         IReadOnlyList<AIFunction> tools,
         ProcessExecutionLimits limits,
         IReadOnlyDictionary<string, string>? environment,
-        string? workingDirectory)
+        string? workingDirectory,
+        bool includeDetailedErrors = false)
     {
         this._pythonExecutable = pythonExecutable;
         this._runnerScript = runnerScript;
@@ -46,6 +48,7 @@ internal sealed class ProcessBridge
         this._limits = limits;
         this._environment = environment;
         this._workingDirectory = workingDirectory;
+        this._includeDetailedErrors = includeDetailedErrors;
     }
 
     /// <summary>Represents the parsed final result returned by the Python runner.</summary>
@@ -264,7 +267,9 @@ internal sealed class ProcessBridge
 #pragma warning restore CA1031
         {
             await SendToolResponseAsync(process, callId, ok: false, result: null,
-                excType: ex.GetType().Name, excMessage: ex.Message, cancellationToken).ConfigureAwait(false);
+                excType: this._includeDetailedErrors ? ex.GetType().Name : "RuntimeError",
+                excMessage: this._includeDetailedErrors ? ex.Message : "Host tool execution failed.",
+                cancellationToken).ConfigureAwait(false);
         }
     }
 

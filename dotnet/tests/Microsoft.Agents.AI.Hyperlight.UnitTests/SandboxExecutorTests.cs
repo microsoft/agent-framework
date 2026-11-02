@@ -254,12 +254,15 @@ public sealed class SandboxExecutorTests
             [], [], [], hostInputDirectory: null, heapSize: "20Mi");
         var differentStack = SandboxExecutor.RunSnapshot.ComputeFingerprint(
             [], [], [], hostInputDirectory: null, stackSize: "10Mi");
+        var detailedErrors = SandboxExecutor.RunSnapshot.ComputeFingerprint(
+            [], [], [], hostInputDirectory: null, includeDetailedErrors: true);
 
         // Assert
         Assert.NotEqual(baseline, differentBackend);
         Assert.NotEqual(baseline, differentModule);
         Assert.NotEqual(baseline, differentHeap);
         Assert.NotEqual(baseline, differentStack);
+        Assert.NotEqual(baseline, detailedErrors);
     }
 
     [Fact]
@@ -285,6 +288,7 @@ public sealed class SandboxExecutorTests
             HeapSize = "10Mi",
             StackSize = "5Mi",
             HostInputDirectory = "/host/input",
+            IncludeDetailedErrors = true,
         };
 
         // Act
@@ -296,6 +300,7 @@ public sealed class SandboxExecutorTests
         options.HeapSize = "20Mi";
         options.StackSize = "10Mi";
         options.HostInputDirectory = "/host/other";
+        options.IncludeDetailedErrors = false;
 
         // Assert
         Assert.Single(snapshot.Tools);
@@ -305,6 +310,7 @@ public sealed class SandboxExecutorTests
         Assert.Equal("10Mi", snapshot.HeapSize);
         Assert.Equal("5Mi", snapshot.StackSize);
         Assert.Equal("/host/input", snapshot.HostInputDirectory);
+        Assert.True(snapshot.IncludeDetailedErrors);
     }
 
     [Fact]

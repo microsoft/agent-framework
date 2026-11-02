@@ -52,6 +52,7 @@ internal sealed class SandboxExecutor : IDisposable
             this.HeapSize = options.HeapSize;
             this.StackSize = options.StackSize;
             this.HostInputDirectory = options.HostInputDirectory;
+            this.IncludeDetailedErrors = options.IncludeDetailedErrors;
             this.ToolRegistryVersion = toolRegistryVersion;
             this.ConfigFingerprint = ComputeFingerprint(
                 this.Tools,
@@ -62,7 +63,8 @@ internal sealed class SandboxExecutor : IDisposable
                 this.Backend,
                 this.ModulePath,
                 this.HeapSize,
-                this.StackSize);
+                this.StackSize,
+                this.IncludeDetailedErrors);
         }
 
         public IReadOnlyList<AIFunction> Tools { get; }
@@ -80,6 +82,8 @@ internal sealed class SandboxExecutor : IDisposable
         public string? StackSize { get; }
 
         public string? HostInputDirectory { get; }
+
+        public bool IncludeDetailedErrors { get; }
 
         public Guid ToolRegistryVersion { get; }
 
@@ -100,7 +104,8 @@ internal sealed class SandboxExecutor : IDisposable
             SandboxBackend backend = SandboxBackend.JavaScript,
             string? modulePath = null,
             string? heapSize = null,
-            string? stackSize = null)
+            string? stackSize = null,
+            bool includeDetailedErrors = false)
         {
             var buffer = new ArrayBufferWriter<byte>();
             using (var writer = new Utf8JsonWriter(buffer))
@@ -111,6 +116,7 @@ internal sealed class SandboxExecutor : IDisposable
                 writer.WriteString("heapSize", heapSize);
                 writer.WriteString("stackSize", stackSize);
                 writer.WriteString("hostInputDirectory", hostInputDirectory);
+                writer.WriteBoolean("includeDetailedErrors", includeDetailedErrors);
                 writer.WriteString("toolRegistryVersion", toolRegistryVersion);
 
                 writer.WritePropertyName("tools");
@@ -234,7 +240,7 @@ internal sealed class SandboxExecutor : IDisposable
             catch (Exception ex)
 #pragma warning restore CA1031
             {
-                return BuildErrorResult(ex.Message);
+                return BuildErrorResult(snapshot.IncludeDetailedErrors ? ex.Message : "Code execution failed.");
             }
 
             return BuildResult(result);
@@ -300,7 +306,7 @@ internal sealed class SandboxExecutor : IDisposable
         var sandbox = builder.Build();
 
         // Tools must be registered before the first Run() call.
-        ToolBridge.RegisterAll(sandbox, snapshot.Tools);
+        ToolBridge.RegisterAll(sandbox, snapshot.Tools, snapshot.IncludeDetailedErrors);
 
         foreach (var allowedDomain in snapshot.AllowedDomains)
         {
