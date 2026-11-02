@@ -200,7 +200,9 @@ public sealed class ObservabilityTests : IDisposable
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         var workflowRunActivity = Assert.Single(capturedActivities, a =>
             a.Events.Any(e => e.Name == EventNames.WorkflowStarted));
-        Assert.Equal("invoke_workflow", workflowRunActivity.OperationName);
+        string expectedSpanName = workflowName is null ? "invoke_workflow" : $"invoke_workflow {workflowName}";
+        Assert.Equal(expectedSpanName, workflowRunActivity.OperationName);
+        Assert.Equal(expectedSpanName, workflowRunActivity.DisplayName);
         Assert.Equal(workflowName, workflowRunActivity.GetTagItem("gen_ai.workflow.name"));
         Assert.Equal("invoke_workflow", workflowRunActivity.GetTagItem("gen_ai.operation.name"));
         Assert.All(capturedActivities.Where(a => a != workflowRunActivity), a =>
@@ -212,18 +214,22 @@ public sealed class ObservabilityTests : IDisposable
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("customer_support_pipeline")]
-    public void WorkflowRunActivity_ProvidesOperationNameAtCreation(string? workflowName)
+    [InlineData(null, "invoke_workflow")]
+    [InlineData("", "invoke_workflow")]
+    [InlineData(" ", "invoke_workflow")]
+    [InlineData("customer_support_pipeline", "invoke_workflow customer_support_pipeline")]
+    public void WorkflowRunActivity_ProvidesSemanticConventionsAtCreation(string? workflowName, string expectedSpanName)
     {
         // Arrange
         using var activitySource = new ActivitySource("WorkflowOperationNameSamplingTest");
+        string? spanNameAtCreation = null;
         object? operationNameAtCreation = null;
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => source == activitySource,
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
             {
+                spanNameAtCreation = options.Name;
                 operationNameAtCreation = options.Tags?.FirstOrDefault(tag => tag.Key == "gen_ai.operation.name").Value;
                 return ActivitySamplingResult.AllData;
             },
@@ -236,6 +242,7 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         Assert.NotNull(activity);
+        Assert.Equal(expectedSpanName, spanNameAtCreation);
         Assert.Equal("invoke_workflow", operationNameAtCreation);
     }
 

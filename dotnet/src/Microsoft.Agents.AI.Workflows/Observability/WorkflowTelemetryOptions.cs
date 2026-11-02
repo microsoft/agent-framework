@@ -34,7 +34,8 @@ public sealed class WorkflowTelemetryOptions
     /// Gets or sets a value indicating whether workflow run activities should be disabled.
     /// </summary>
     /// <value>
-    /// <see langword="true"/> to disable <c>invoke_workflow</c> activities;
+    /// <see langword="true"/> to disable <c>invoke_workflow {gen_ai.workflow.name}</c> activities
+    /// (or <c>invoke_workflow</c> when unnamed);
     /// <see langword="false"/> to enable them. The default value is <see langword="false"/>.
     /// </value>
     public bool DisableWorkflowRun { get; set; }

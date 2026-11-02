@@ -57,7 +57,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
 
-        return builder.WithOpenTelemetry().Build();
+        return builder.WithName("activity_stop_workflow").WithOpenTelemetry().Build();
     }
 
     /// <summary>

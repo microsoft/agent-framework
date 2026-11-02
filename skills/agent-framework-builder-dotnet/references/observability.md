@@ -17,7 +17,9 @@ runtime evidence; it does not determine whether output is correct.
   exposure of prompts, responses, and tool arguments.
 - Name workflows with `WorkflowBuilder.WithName(...)`. Workflow build and invocation activities record this name as
   `gen_ai.workflow.name` (replacing `workflow.name`); the attribute is omitted when no meaningful name is configured.
-- Workflow invocation activities include `gen_ai.operation.name=invoke_workflow` at creation so sampling can use it.
+- Workflow invocation activities are named `invoke_workflow {gen_ai.workflow.name}`, or `invoke_workflow` when no
+  meaningful workflow name exists. `gen_ai.operation.name` remains `invoke_workflow` and is available at creation for
+  sampling.
 - Redaction does not replace sanitization in custom telemetry, exporters, middleware, logs (`UseLogging`), or
   exception messages.
 
