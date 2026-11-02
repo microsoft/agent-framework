@@ -380,14 +380,52 @@ class RawFoundryChatClient(
     ) -> ChatResponse:
         chat_response = super()._parse_response_from_openai(response, options)
         if chat_response.messages:
+            messages = chat_response.messages
             for item in getattr(response, "output", ()):
                 if getattr(item, "type", None) != "reasoning":
                     continue
-                self._attach_foundry_reasoning_replay_item(chat_response.messages[0].contents, item)
-            chat_response.messages[0].contents.extend(
-                parse_oauth_consent_output_items(getattr(response, "output", None))
-            )
+                self._attach_foundry_reasoning_replay_item_to_messages(messages, item)
+            messages[0].contents.extend(parse_oauth_consent_output_items(getattr(response, "output", None)))
         return chat_response
+
+    @classmethod
+    def _attach_foundry_reasoning_replay_item_to_messages(cls, messages: list[Message], item: Any) -> None:
+        """Attach replay data to the message that owns the reasoning content.
+
+        Multi-message responses keep one message per provider output message, and a
+        trailing reasoning item is parsed into the last message, so the owning
+        content can live in any message. Search every message (most recent first)
+        and only append to the last message when no parsed content matches, instead
+        of always targeting the first message, which duplicated the reasoning
+        content there while the real one kept no replay data.
+        """
+        payload = cls._prepare_foundry_reasoning_replay_item(item)
+        if payload is None:
+            return
+        reasoning_id = cast(str, payload["id"])
+        for message in reversed(messages):
+            for content in reversed(message.contents):
+                if content.type == "text_reasoning" and content.id == reasoning_id:
+                    updated = with_namespaced_value(
+                        content.additional_properties,
+                        "foundry",
+                        "reasoning_item",
+                        payload,
+                    )
+                    updated[_FOUNDRY_REASONING_REPLAY_ITEM_KEY] = payload
+                    content.additional_properties = updated
+                    return
+        messages[-1].contents.append(
+            Content.from_text_reasoning(
+                id=reasoning_id,
+                text="",
+                raw_representation=item,
+                additional_properties={
+                    "foundry": {"reasoning_item": payload},
+                    _FOUNDRY_REASONING_REPLAY_ITEM_KEY: payload,
+                },
+            )
+        )
 
     @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:
