@@ -5,6 +5,7 @@ import json
 import math
 import threading
 import time
+import tracemalloc
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -1980,6 +1981,95 @@ class TestFileHistoryProvider:
 
         with pytest.raises(ValueError, match="record 1.*truncated"):
             await provider.get_messages("broken")
+
+    async def test_msgpack_rejects_oversized_batch_without_mutating_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("oversized")
+        await provider.save_messages("oversized", [Message(role="user", contents=["hello"])])
+        saved_bytes = await asyncio.to_thread(session_file.read_bytes)
+
+        with pytest.raises(ValueError, match="exceeds the 256-byte MessagePack history record limit"):
+            await provider.save_messages(
+                "oversized",
+                [
+                    Message(role="assistant", contents=["fits"]),
+                    Message(role="assistant", contents=["x" * 256]),
+                ],
+            )
+
+        assert await asyncio.to_thread(session_file.read_bytes) == saved_bytes
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello"]
+
+        await provider.save_messages("oversized", [Message(role="assistant", contents=["fits"])])
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello", "fits"]
+
+    async def test_msgpack_rejects_record_that_grows_after_preflight_without_mutating_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class GrowingMessage(Message):
+            """Fits the record limit on the first to_dict() call and exceeds it afterwards."""
+
+            to_dict_calls = 0
+
+            def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+                GrowingMessage.to_dict_calls += 1
+                if GrowingMessage.to_dict_calls > 1:
+                    return Message(role="assistant", contents=["x" * 256]).to_dict()
+                return super().to_dict(exclude=exclude, exclude_none=exclude_none)
+
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("growing")
+        await provider.save_messages("growing", [Message(role="user", contents=["hello"])])
+        saved_bytes = await asyncio.to_thread(session_file.read_bytes)
+
+        # The first message is written before the grown record is found, so the rollback must remove it too.
+        with pytest.raises(ValueError, match="exceeds the 256-byte MessagePack history record limit"):
+            await provider.save_messages(
+                "growing",
+                [
+                    Message(role="assistant", contents=["fits"]),
+                    GrowingMessage(role="assistant", contents=["grows"]),
+                ],
+            )
+
+        assert GrowingMessage.to_dict_calls == 2
+        assert await asyncio.to_thread(session_file.read_bytes) == saved_bytes
+        assert [message.text for message in await provider.get_messages("growing")] == ["hello"]
+
+        await provider.save_messages("growing", [Message(role="assistant", contents=["fits"])])
+        assert [message.text for message in await provider.get_messages("growing")] == ["hello", "fits"]
+
+    async def test_msgpack_record_at_size_limit_round_trips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        message = Message(role="assistant", contents=["at the limit"])
+        record_length = len(msgspec.msgpack.encode(message.to_dict()))
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", record_length)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        await provider.save_messages("limit", [message])
+
+        assert [loaded.text for loaded in await provider.get_messages("limit")] == ["at the limit"]
+
+    async def test_msgpack_batch_save_memory_does_not_grow_with_batch_length(self, tmp_path: Path) -> None:
+        record_text_bytes = 1024 * 1024
+        batch = [Message(role="assistant", contents=[str(index) * record_text_bytes]) for index in range(16)]
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        tracemalloc.start()
+        try:
+            await provider.save_messages("large-batch", batch)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        # Holding every encoded record at once would need about 16 MiB; one record at a time stays near 1 MiB.
+        assert peak_bytes < 6 * record_text_bytes
+        assert len(await provider.get_messages("large-batch")) == len(batch)
 
     async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
         provider = FileHistoryProvider(tmp_path)

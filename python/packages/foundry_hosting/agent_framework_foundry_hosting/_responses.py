@@ -50,8 +50,13 @@ from agent_framework import (
     add_usage_details,
     get_namespaced_value,
 )
+from agent_framework import (
+    Annotation as FrameworkAnnotation,
+)
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._types import _get_annotation_text_span_regions  # pyright: ignore[reportPrivateUsage]
+from agent_framework._workflows._agent import _StreamingRoleGate  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentFrameworkException
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.core import get_request_context
@@ -64,11 +69,16 @@ from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
+    Annotation as ResponsesAnnotation,
+)
+from azure.ai.agentserver.responses.models import (
     ComputerAction,
     ComputerCallSafetyCheckParam,
     ComputerScreenshotImage,
     ContainerFileCitationBody,
     CreateResponse,
+    FileCitationBody,
+    FilePath,
     FunctionShellAction,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
@@ -88,6 +98,7 @@ from azure.ai.agentserver.responses.models import (
     ResponseUsage,
     ResponseUsageInputTokensDetails,
     ResponseUsageOutputTokensDetails,
+    UrlCitationBody,
 )
 from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemBuilder,
@@ -270,6 +281,82 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
             )
 
     return citations
+
+
+def _annotations_to_output_text(
+    annotations: Sequence[FrameworkAnnotation] | None,
+) -> list[ResponsesAnnotation]:
+    """Convert framework citations into Responses output-text annotations.
+
+    Source-coordinate regions describe the cited source, not generated content, and
+    are not emitted as output-text spans.
+    """
+    if not annotations or not isinstance(annotations, Sequence) or isinstance(annotations, (str, bytes)):
+        return []
+
+    output_annotations: list[ResponsesAnnotation] = []
+    for annotation in annotations:
+        if not isinstance(annotation, Mapping):
+            continue
+        annotation_mapping = cast("Mapping[str, Any]", annotation)
+        if annotation_mapping.get("type") != "citation":
+            continue
+
+        raw_properties = annotation_mapping.get("additional_properties")
+        properties: Mapping[str, Any] = (
+            cast("Mapping[str, Any]", raw_properties) if isinstance(raw_properties, Mapping) else {}
+        )
+        regions = _get_annotation_text_span_regions(annotation_mapping)
+        file_id = annotation_mapping.get("file_id")
+        url = annotation_mapping.get("url")
+        title = annotation_mapping.get("title")
+        container_id = properties.get("container_id")
+        index = properties.get("index")
+
+        if isinstance(container_id, str) and container_id and isinstance(file_id, str) and file_id:
+            for region in regions:
+                output_annotations.append(
+                    ContainerFileCitationBody(
+                        type="container_file_citation",
+                        container_id=container_id,
+                        file_id=file_id,
+                        filename=url if isinstance(url, str) else "",
+                        start_index=region["start_index"],
+                        end_index=region["end_index"],
+                    )
+                )
+        elif isinstance(url, str) and url and not file_id:
+            for region in regions:
+                output_annotations.append(
+                    UrlCitationBody(
+                        type="url_citation",
+                        url=url,
+                        title=title if isinstance(title, str) else "",
+                        start_index=region["start_index"],
+                        end_index=region["end_index"],
+                    )
+                )
+        elif (
+            isinstance(file_id, str) and file_id and isinstance(url, str) and url and type(index) is int and index >= 0
+        ):
+            output_annotations.append(
+                FileCitationBody(
+                    type="file_citation",
+                    file_id=file_id,
+                    filename=url,
+                    index=index,
+                )
+            )
+        elif isinstance(file_id, str) and file_id and type(index) is int and index >= 0:
+            output_annotations.append(
+                FilePath(
+                    type="file_path",
+                    file_id=file_id,
+                    index=index,
+                )
+            )
+
+    return output_annotations
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -1763,7 +1850,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         for update in _agent_response_updates(response, context.response_id):
                             if context.shutdown.is_set() or cancellation_signal.is_set():
                                 break
-                            async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                            async for event in tracker.handle_update(
+                                update, approval_storage=approval_storage, complete_message=True
+                            ):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
@@ -2326,13 +2415,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         TODO(@taochen): #7677
         """
+        role_gate = _StreamingRoleGate()
         async for event in agent.workflow.run(
             stream=True,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
         ):
             for update in agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
-                response_id, event
+                response_id, event, role_gate
             ):
                 yield update
 
@@ -2423,7 +2513,8 @@ class _OutputItemTracker:
         self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
         self._pending_container_file_citations: dict[str, _ContainerFileCitation] = {}
-        self._message_text_annotations: dict[int, list[ContainerFileCitationBody]] = {}
+        self._text_annotations: list[ResponsesAnnotation] = []
+        self._message_text_annotations: dict[int, list[ResponsesAnnotation]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
         # can tell a cut-short turn from a successful one. Mirrored into the stream's
@@ -2554,15 +2645,23 @@ class _OutputItemTracker:
         update: AgentResponseUpdate,
         *,
         approval_storage: FunctionApprovalStore | None = None,
+        complete_message: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process one agent update: note its finish reason, then handle each of its contents.
 
         This is the single entry point for both the plain-agent and the workflow loops, so the
-        finish reason cannot be forgotten on one of them.
+        finish reason cannot be forgotten on one of them. Set ``complete_message`` when the
+        update contains a completed message's independent content parts rather than streaming
+        deltas; text and refusal parts then retain their original boundaries and citation offsets.
         """
         self.record_finish_reason(update.finish_reason)
         for content in update.contents:
-            async for event in self.handle(content, message_id=update.message_id, approval_storage=approval_storage):
+            async for event in self.handle(
+                content,
+                message_id=update.message_id,
+                approval_storage=approval_storage,
+                start_new_content_part=complete_message,
+            ):
                 yield event
 
     async def handle(
@@ -2571,6 +2670,7 @@ class _OutputItemTracker:
         message_id: str | None = None,
         *,
         approval_storage: FunctionApprovalStore | None = None,
+        start_new_content_part: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process a content item, yielding its events.
 
@@ -2582,9 +2682,11 @@ class _OutputItemTracker:
                 merged into it.
             approval_storage: Used for content types that fall back to one-shot emission
                 (anything not recognized as a streaming delta type) to save/load approval requests.
+            start_new_content_part: Whether text and refusal content start a new independent
+                content part instead of continuing the current streaming occurrence.
         """
         if _is_refusal_text_content(content) and content.text is not None:
-            for event in self._ensure_message_content("refusal", message_id):
+            for event in self._ensure_message_content("refusal", message_id, start_new_part=start_new_content_part):
                 yield event
             self._active_message_id = message_id
             delta = self._consume_text_update(content.text, content.merge_mode)
@@ -2592,10 +2694,13 @@ class _OutputItemTracker:
                 yield self._refusal_content.emit_delta(delta)
 
         elif content.type == "text" and content.text is not None:
-            for event in self._ensure_message_content("text", message_id):
+            for event in self._ensure_message_content("text", message_id, start_new_part=start_new_content_part):
                 yield event
             self._active_message_id = message_id
             delta = self._consume_text_update(content.text, content.merge_mode)
+            for annotation in _annotations_to_output_text(content.annotations):
+                if annotation not in self._text_annotations:
+                    self._text_annotations.append(annotation)
             if delta and self._text_content is not None:
                 yield self._text_content.emit_delta(delta)
 
@@ -2680,7 +2785,10 @@ class _OutputItemTracker:
         elif content.type == "image_generation_tool_result" and content.outputs is not None:
             for event in self._close():
                 yield event
-            async for event in self._stream.output_item_image_gen_call(str(content.outputs)):
+            result = _image_generation_result(content.outputs)
+            if result is None:
+                logger.warning("Image generation result has no base64 image; emitting it with an empty result.")
+            async for event in self._stream.output_item_image_gen_call(result or ""):
                 yield event
 
         elif content.type == "mcp_server_tool_call":
@@ -2905,11 +3013,13 @@ class _OutputItemTracker:
         self,
         content_type: Literal["text", "refusal"],
         message_id: str | None,
+        *,
+        start_new_part: bool = False,
     ) -> Generator[ResponseStreamEvent]:
         message_changed = (
             message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
         )
-        if self._active_type == content_type and not message_changed:
+        if self._active_type == content_type and not message_changed and not start_new_part:
             return
         if self._message_item is not None and self._active_type in {"text", "refusal"} and not message_changed:
             yield from self._close_message_content()
@@ -2937,6 +3047,7 @@ class _OutputItemTracker:
             yield self._refusal_content.emit_added()
         else:
             self._text_content = self._message_item.add_text_content()
+            self._text_annotations.clear()
             yield self._text_content.emit_added()
 
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -3046,7 +3157,10 @@ class _OutputItemTracker:
     def _close_message_content(self) -> Generator[ResponseStreamEvent]:
         accumulated = "".join(self._accumulated)
         if self._active_type == "text" and self._text_content is not None:
-            annotations = self._container_file_annotations_for_text(accumulated)
+            annotations = list(self._text_annotations)
+            for annotation in self._container_file_annotations_for_text(accumulated):
+                if annotation not in annotations:
+                    annotations.append(annotation)
             yield self._text_content.emit_text_done(accumulated)
             for annotation in annotations:
                 yield self._text_content.emit_annotation_added(annotation)
@@ -3058,6 +3172,7 @@ class _OutputItemTracker:
                 self._message_text_annotations[self._text_content.content_index] = annotations
             yield content_done
             self._text_content = None
+            self._text_annotations.clear()
         elif self._active_type == "refusal" and self._refusal_content is not None:
             yield self._refusal_content.emit_refusal_done(accumulated)
             yield self._refusal_content.emit_done()
@@ -3808,6 +3923,38 @@ def _json_safe_to_str(value: Any | None) -> str:
         return json.dumps(value, default=_json_default)
     except (TypeError, ValueError):
         return json.dumps(str(value))
+
+
+def _image_generation_result(outputs: Any) -> str | None:
+    """Return the base64 image of an image generation tool result, as the Responses API expects.
+
+    Only a non-empty, valid base64 string or the valid base64 payload of a base64 data URI qualifies. Other URIs
+    (https, file, blob), data URIs without the base64 marker and malformed payloads are not base64, so they give
+    None.
+    """
+    if isinstance(outputs, str):
+        return outputs if _is_base64(outputs) else None
+    items: Sequence[Any] = [outputs]
+    if isinstance(outputs, Sequence) and not isinstance(outputs, (bytes, bytearray)):
+        items = cast(Sequence[Any], outputs)
+    for item in items:
+        if isinstance(item, Content) and item.uri and item.uri.startswith("data:"):
+            # RFC 2397: only the metadata before the first comma can carry the marker, as its last parameter.
+            metadata, _, payload = item.uri.partition(",")
+            if metadata.endswith(";base64") and _is_base64(payload):
+                return payload
+    return None
+
+
+def _is_base64(value: str) -> bool:
+    """Check whether a string is non-empty, valid base64."""
+    if not value:
+        return False
+    try:
+        base64.b64decode(value, validate=True)
+    except ValueError:
+        return False
+    return True
 
 
 def _reasoning_encrypted_content(content: Content) -> str | None:

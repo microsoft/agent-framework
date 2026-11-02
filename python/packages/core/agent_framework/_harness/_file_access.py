@@ -31,7 +31,7 @@ import time
 import unicodedata
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Mapping, MutableMapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Final, Protocol, cast
 
@@ -89,6 +89,15 @@ _SESSION_SCOPED_INSTRUCTIONS_SUFFIX = (
 # Maximum number of characters of context to include on either side of the first
 # regex match when building a result snippet.
 _SEARCH_SNIPPET_RADIUS = 50
+
+# Path complexity bounds shared by every store backend. Real filesystems cap
+# these too (PATH_MAX and practical directory depth); the in-memory store's
+# directory index materializes the full key of every ancestor directory, so an
+# unbounded path would let a single write retain quadratic space in the path
+# depth. Bounding here keeps that retention constant regardless of input, and
+# rejects the same extremes the filesystem backend's OS layer would refuse.
+_MAX_PATH_SEGMENTS: Final[int] = 255
+_MAX_PATH_LENGTH: Final[int] = 4096
 
 # Hard cap on the length of a user-supplied search regex. The cap is a coarse bound on
 # how much work a single pattern can describe; it does not stop a short pathological
@@ -296,6 +305,10 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
         ValueError: When the path is rooted, starts with a drive letter, contains
             ``.``/``..`` segments, is empty for a file path, or ends with a
             separator for a file path.
+        OSError: With :data:`errno.ENAMETOOLONG` when the normalized path
+            exceeds ``_MAX_PATH_SEGMENTS`` segments or ``_MAX_PATH_LENGTH``
+            characters, matching what a real filesystem raises for the same
+            input.
     """
     if not path or not path.strip():
         if not is_directory:
@@ -333,6 +346,9 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     result = "/".join(clean_segments)
     if not is_directory and not result:
         raise ValueError(f"Invalid path: {path!r}. A file path must not be empty.")
+    if len(clean_segments) > _MAX_PATH_SEGMENTS or len(result) > _MAX_PATH_LENGTH:
+        # Check before any caller materializes ancestor prefixes of this path.
+        raise OSError(errno.ENAMETOOLONG, "File name too long", path)
     return result
 
 
@@ -1048,6 +1064,23 @@ class AgentFileStore(ABC):
     async def create_directory(self, path: str) -> None:
         """Ensure ``path`` exists as a directory, creating it if necessary."""
 
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty directory at ``path``.
+
+        Args:
+            path: The relative path of the directory to delete.
+
+        Returns:
+            ``True`` if an empty directory was removed; ``False`` if it did not
+            exist, was not a directory, or still held entries. Backends that
+            cannot remove directories return ``False`` rather than raising.
+
+        ``delete`` stays file-only so backends remain interchangeable; this is
+        the supported way to release an explicitly created directory (for
+        example a session-scoped working folder) once it is empty.
+        """
+        return False
+
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class InMemoryAgentFileStore(AgentFileStore):
@@ -1067,11 +1100,23 @@ class InMemoryAgentFileStore(AgentFileStore):
         # wrote, mirroring how :class:`FileSystemAgentFileStore` preserves the
         # on-disk casing.
         self._files: dict[str, tuple[str, str]] = {}
+        self._dir_counts: dict[str, int] = {}
+        self._explicit_dirs: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
     def _key(path: str) -> str:
         return _normalize_relative_path(path).lower()
+
+    @staticmethod
+    def _ancestor_keys(key: str) -> list[str]:
+        """Return all strict ancestor directory keys in top-down order in linear time."""
+        ancestors: list[str] = []
+        idx = key.find("/")
+        while idx != -1:
+            ancestors.append(key[:idx])
+            idx = key.find("/", idx + 1)
+        return ancestors
 
     async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
@@ -1083,9 +1128,19 @@ class InMemoryAgentFileStore(AgentFileStore):
         display = _normalize_relative_path(path)
         key = display.lower()
         async with self._lock:
+            ancestors = self._ancestor_keys(key)
+            for ancestor in ancestors:
+                if ancestor in self._files:
+                    raise NotADirectoryError(f"Not a directory: {path!r}")
+            if self._dir_counts.get(key, 0) > 0 or key in self._explicit_dirs:
+                raise IsADirectoryError(f"Is a directory: {path!r}")
             if not overwrite and key in self._files:
                 raise FileExistsError(f"File already exists: {path!r}")
+            is_new_file = key not in self._files
             self._files[key] = (display, content)
+            if is_new_file:
+                for ancestor in ancestors:
+                    self._dir_counts[ancestor] = self._dir_counts.get(ancestor, 0) + 1
 
     async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
@@ -1095,10 +1150,53 @@ class InMemoryAgentFileStore(AgentFileStore):
         return entry[1] if entry is not None else None
 
     async def delete(self, path: str) -> bool:
-        """Delete the file and return whether anything was removed."""
+        """Delete the file and return whether anything was removed.
+
+        Deleting is file-only, matching :class:`FileSystemAgentFileStore`: a
+        path that names a directory (explicitly created or holding stored
+        descendants) is never removed and returns ``False``. Use
+        :meth:`delete_directory` to release an empty explicitly created
+        directory.
+        """
         key = self._key(path)
         async with self._lock:
-            return self._files.pop(key, None) is not None
+            if key in self._explicit_dirs or self._dir_counts.get(key, 0) > 0:
+                return False
+            removed = self._files.pop(key, None)
+            if removed is None:
+                return False
+            for ancestor in self._ancestor_keys(key):
+                new_count = self._dir_counts[ancestor] - 1
+                if new_count <= 0:
+                    del self._dir_counts[ancestor]
+                else:
+                    self._dir_counts[ancestor] = new_count
+            return True
+
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty explicitly created directory at ``path``.
+
+        The directory is removed only when it is empty: nothing is stored under
+        it and no other explicit directory is nested below it. This keeps the
+        file-only ``delete`` contract while giving session-scoped directories a
+        lifecycle instead of staying in the shared map forever.
+        """
+        normalized = _normalize_relative_path(path, is_directory=True)
+        if not normalized:
+            # The empty path is the store root, which is not an explicitly
+            # created directory this method releases.
+            return False
+        key = normalized.lower()
+        async with self._lock:
+            if key not in self._explicit_dirs:
+                return False
+            if self._dir_counts.get(key, 0) > 0:
+                return False
+            prefix = key + "/"
+            if any(other != key and other.startswith(prefix) for other in self._explicit_dirs):
+                return False
+            del self._explicit_dirs[key]
+            return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
         """Return the direct child files and subdirectories of ``directory``.
@@ -1118,11 +1216,12 @@ class InMemoryAgentFileStore(AgentFileStore):
             prefix += "/"
         prefix_depth = prefix.count("/")
         async with self._lock:
-            entries = [(key, display) for key, (display, _) in self._files.items()]
+            file_entries = [(key, display) for key, (display, _) in self._files.items()]
+            dir_entries = list(self._explicit_dirs.items())
         files: list[str] = []
         directories: list[str] = []
         seen_dirs: set[str] = set()
-        for key, display in entries:
+        for key, display in file_entries:
             if not key.startswith(prefix):
                 continue
             # Unicode lowercasing can change character counts, so key offsets
@@ -1132,6 +1231,17 @@ class InMemoryAgentFileStore(AgentFileStore):
             if not separator:
                 files.append(remainder)
             elif segment:
+                segment_key = segment.lower()
+                if segment_key in seen_dirs:
+                    continue
+                seen_dirs.add(segment_key)
+                directories.append(segment)
+        for key, display in dir_entries:
+            if not key.startswith(prefix) or key == prefix.rstrip("/"):
+                continue
+            remainder = display.split("/", prefix_depth)[-1]
+            segment, _, _ = remainder.partition("/")
+            if segment:
                 segment_key = segment.lower()
                 if segment_key in seen_dirs:
                     continue
@@ -1194,8 +1304,30 @@ class InMemoryAgentFileStore(AgentFileStore):
         return await _run_search_with_timeout(asyncio.to_thread(scan))
 
     async def create_directory(self, path: str) -> None:
-        """No-op: directories are implicit from file paths in the in-memory store."""
-        del path
+        """Ensure the directory at ``path`` exists."""
+        display = _normalize_relative_path(path, is_directory=True)
+        key = display.lower()
+        if not key:
+            return
+        async with self._lock:
+            ancestors = self._ancestor_keys(key)
+            for ancestor in ancestors:
+                if ancestor in self._files:
+                    raise FileExistsError(f"File already exists: {ancestor!r}")
+            if key in self._files:
+                raise FileExistsError(f"File already exists: {key!r}")
+            if key not in self._explicit_dirs:
+                idx_display = 0
+                for ancestor in ancestors:
+                    next_slash = display.find("/", idx_display)
+                    if next_slash != -1:
+                        ancestor_display = display[:next_slash]
+                        idx_display = next_slash + 1
+                    else:
+                        ancestor_display = display
+                    if ancestor not in self._explicit_dirs:
+                        self._explicit_dirs[ancestor] = ancestor_display
+                self._explicit_dirs[key] = display
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -1444,6 +1576,30 @@ class FileSystemAgentFileStore(AgentFileStore):
                 return False
         return True
 
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty directory at ``path``.
+
+        Returns ``True`` only when an empty directory was removed; a directory
+        that is missing, is a file, or still holds entries returns ``False``
+        instead of raising, matching :class:`InMemoryAgentFileStore`.
+        """
+        normalized = _normalize_relative_path(path, is_directory=True)
+        if not normalized:
+            # The empty path resolves to the configured store root, which is
+            # not an explicitly created directory this method releases.
+            return False
+        full_path = self._resolve_safe_directory_path(normalized)
+        return await asyncio.to_thread(self._delete_directory_sync, full_path)
+
+    @staticmethod
+    def _delete_directory_sync(full_path: Path) -> bool:
+        try:
+            full_path.rmdir()
+        except OSError:
+            # Missing path, a file, or a directory that still holds entries.
+            return False
+        return True
+
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
         """Return the direct child files and subdirectories of ``directory``.
 
@@ -1680,8 +1836,9 @@ class _LineEdit(BaseModel):
             default=None,
             description=(
                 "Optional: the text you believe is currently on that line, as reported by "
-                "file_access_grep. Give the line's own text only: file_access_read_lines prefixes "
-                "each line with its number and a tab, and that prefix is not part of the line. "
+                "`file_access_grep`, which may have the same configured prefix as the enclosing tool. "
+                "Give the line's own text only: `file_access_read_lines`, with the same optional prefix, "
+                "prefixes each line with its number and a tab, and that prefix is not part of the line. "
                 "When supplied, the edit is rejected unless it matches, which catches an "
                 "out-of-date line number or a file that changed since you looked. The trailing "
                 "newline is ignored in the comparison."
@@ -1877,6 +2034,7 @@ class FileAccessProvider(ContextProvider):
         disable_write_tool_approval: bool = False,
         session_scoped: bool = False,
         scope: str | None = None,
+        tool_name_prefix: str | None = None,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1917,15 +2075,21 @@ class FileAccessProvider(ContextProvider):
                 ``session_id`` is used. The value is treated as an opaque
                 key rather than a path: it is mapped onto exactly one folder
                 by :func:`~agent_framework._filesystem._storage_key_segment`.
+            tool_name_prefix: Optional prefix for tool names to avoid collisions.
         """
         super().__init__(source_id)
         self.store = store
-        self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        self.instructions = instructions or (
+            DEFAULT_FILE_ACCESS_INSTRUCTIONS.replace("file_access_", f"{tool_name_prefix}_file_access_")
+            if tool_name_prefix
+            else DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        )
         self.disable_write_tools = disable_write_tools
         self.disable_readonly_tool_approval = disable_readonly_tool_approval
         self.disable_write_tool_approval = disable_write_tool_approval
         self.session_scoped = session_scoped
         self.scope = scope
+        self.tool_name_prefix = tool_name_prefix
 
     def _resolve_session_key(self, context: SessionContext) -> str:
         """Resolve the working folder key for session-scoped mode.
@@ -2046,6 +2210,27 @@ class FileAccessProvider(ContextProvider):
             and function_call.name in FileAccessProvider._ALL_TOOL_NAMES
         )
 
+    def _prefixed_tool_name(self, name: str) -> str:
+        return f"{self.tool_name_prefix}_{name}" if self.tool_name_prefix else name
+
+    def get_read_only_tools_auto_approval_rule(self) -> Callable[[Content], bool]:
+        """Create an auto-approval rule for this provider's read-only tool names."""
+        tool_names = frozenset(self._prefixed_tool_name(name) for name in self._READ_ONLY_TOOL_NAMES)
+
+        def rule(function_call: Content) -> bool:
+            return self._is_local_tool_call(function_call) and function_call.name in tool_names
+
+        return rule
+
+    def get_all_tools_auto_approval_rule(self) -> Callable[[Content], bool]:
+        """Create an auto-approval rule for all of this provider's tool names."""
+        tool_names = frozenset(self._prefixed_tool_name(name) for name in self._ALL_TOOL_NAMES)
+
+        def rule(function_call: Content) -> bool:
+            return self._is_local_tool_call(function_call) and function_call.name in tool_names
+
+        return rule
+
     async def before_run(
         self,
         *,
@@ -2071,7 +2256,11 @@ class FileAccessProvider(ContextProvider):
         if session_key:
             instructions += _SESSION_SCOPED_INSTRUCTIONS_SUFFIX
 
-        @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.WRITE_TOOL_NAME),
+            schema=_WriteFileInput,
+            approval_mode=write_approval,
+        )
         async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
             """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
@@ -2096,7 +2285,11 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not write file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' written."
 
-        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.READ_TOOL_NAME),
+            schema=_ReadFileInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_read(file_name: str) -> str:
             r"""Read the content of a file by name. Returns the file content or a message indicating the file could not be read. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
@@ -2109,12 +2302,12 @@ class FileAccessProvider(ContextProvider):
             return content if content is not None else f"File '{file_name}' not found."
 
         @tool(
-            name=FileAccessProvider.READ_LINES_TOOL_NAME,
+            name=self._prefixed_tool_name(FileAccessProvider.READ_LINES_TOOL_NAME),
             schema=_ReadLinesInput,
             approval_mode=readonly_approval,
         )
         async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
-            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
+            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a `new_line` value by `file_access_replace_lines`, which may have the same configured prefix as this tool. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(_session_path(normalized))
@@ -2128,7 +2321,11 @@ class FileAccessProvider(ContextProvider):
             # Each line keeps its terminator, so it doubles as the row separator.
             return "".join(f"{number}\t{line}" for number, line in enumerate(sliced, start_line))
 
-        @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.DELETE_TOOL_NAME),
+            schema=_DeleteFileInput,
+            approval_mode=write_approval,
+        )
         async def file_access_delete(file_name: str) -> str:
             """Delete a file by name."""
             try:
@@ -2142,7 +2339,11 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name=FileAccessProvider.LS_TOOL_NAME, schema=_ListInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.LS_TOOL_NAME),
+            schema=_ListInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_ls(
             directory: str | None = None,
             glob_pattern: str | None = None,
@@ -2164,7 +2365,11 @@ class FileAccessProvider(ContextProvider):
                 {"name": entry.name, "type": entry.type} for entry in listed if _matches_glob(entry.name, glob_pattern)
             ]
 
-        @tool(name=FileAccessProvider.REPLACE_TOOL_NAME, schema=_ReplaceInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.REPLACE_TOOL_NAME),
+            schema=_ReplaceInput,
+            approval_mode=write_approval,
+        )
         async def file_access_replace(
             file_name: str,
             old_string: str,
@@ -2188,7 +2393,7 @@ class FileAccessProvider(ContextProvider):
             return f"Replaced {count} occurrence(s) in '{file_name}'."
 
         @tool(
-            name=FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            name=self._prefixed_tool_name(FileAccessProvider.REPLACE_LINES_TOOL_NAME),
             schema=_ReplaceLinesInput,
             approval_mode=write_approval,
         )
@@ -2209,7 +2414,11 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not edit file '{file_name}': {exc.strerror or exc}"
             return f"Replaced {len(edits)} line(s) in '{file_name}'."
 
-        @tool(name=FileAccessProvider.GREP_TOOL_NAME, schema=_SearchFilesInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.GREP_TOOL_NAME),
+            schema=_SearchFilesInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_grep(
             regex_pattern: str,
             glob_pattern: str | None = None,
@@ -2225,10 +2434,12 @@ class FileAccessProvider(ContextProvider):
             or ``"reports/*"`` to restrict the search to the ``reports`` subtree.
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
-            (directly usable with file_access_read), along with snippets and matching lines with line numbers.
+            (directly usable with `file_access_read`, which may have the same configured prefix as this tool),
+            along with snippets and matching lines with line numbers.
             Stores are expected to report each matching line verbatim, including its own line
-            terminator, so it can normally be reused as a file_access_replace_lines new_line; a
-            custom store may not, so prefer file_access_read_lines when the exact text matters.
+            terminator, so it can normally be reused as a `new_line` value by `file_access_replace_lines`
+            with the same optional prefix; a custom store may not, so prefer `file_access_read_lines`
+            with the same optional prefix when the exact text matters.
             Line numbers count lines split on \n only, with a final empty line when content ends in a
             newline.
             The regex_pattern must be 256 characters or fewer.

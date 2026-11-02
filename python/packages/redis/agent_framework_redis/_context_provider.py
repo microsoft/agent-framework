@@ -8,6 +8,7 @@ This module provides ``RedisContextProvider``, built on the new
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -20,10 +21,9 @@ from agent_framework.exceptions import (
     IntegrationInvalidRequestException,
 )
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import AggregateHybridQuery, TextQuery
-from redisvl.query.filter import FilterExpression, Tag
+from redisvl.query import AggregateHybridQuery, FilterQuery, TextQuery
+from redisvl.query.filter import FilterExpression
 from redisvl.redis.utils import array_to_buffer
-from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
 
 from ._feature_usage import FeatureIndex
@@ -40,6 +40,57 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
+
+_SCOPE_SCHEMA_VERSION = 1
+_SCOPE_FIELDS = ("application_id", "agent_id", "user_id", "thread_id", "conversation_id")
+_SCOPE_TAG_SEPARATOR = "\x1f"
+
+_TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
+_TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
+
+
+def _scope_token_field(name: str) -> str:
+    if name not in _SCOPE_FIELDS:
+        raise ValueError(f"Unsupported Redis context scope field: {name}")
+    return f"af_scope_v{_SCOPE_SCHEMA_VERSION}_{name}"
+
+
+def _scope_token(name: str, value: str) -> str:
+    payload = f"agent-framework:redis-context:v{_SCOPE_SCHEMA_VERSION}:{name}\0{value}".encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _schema_signature(schema: dict[str, Any]) -> dict[str, Any]:
+    def significant_index(index: dict[str, Any]) -> dict[str, Any]:
+        return {key: index.get(key) for key in ("name", "prefix", "key_separator", "storage_type")}
+
+    def tag_attrs(attrs: dict[str, Any] | None) -> dict[str, Any]:
+        merged = {**_TAG_DEFAULTS, **(attrs or {})}
+        return {key: merged[key] for key in ("separator", "case_sensitive", "withsuffixtrie")}
+
+    def text_attrs(attrs: dict[str, Any] | None) -> dict[str, Any]:
+        merged = {**_TEXT_DEFAULTS, **(attrs or {})}
+        return {key: merged[key] for key in ("weight", "no_stem")}
+
+    signature: dict[str, Any] = {"index": significant_index(schema.get("index", {})), "fields": {}}
+    for raw_field in schema.get("fields", []):
+        field: dict[str, Any] = raw_field
+        name, field_type = field.get("name"), field.get("type")
+        if not name:
+            continue
+        if field_type == "tag":
+            signature["fields"][name] = {"type": "tag", "attrs": tag_attrs(field.get("attrs"))}
+        elif field_type == "text":
+            signature["fields"][name] = {"type": "text", "attrs": text_attrs(field.get("attrs"))}
+        elif field_type == "vector":
+            attrs: dict[str, Any] = field.get("attrs") or {}
+            signature["fields"][name] = {
+                "type": "vector",
+                "attrs": {key: attrs.get(key) for key in ("algorithm", "dims", "distance_metric", "datatype")},
+            }
+        else:
+            signature["fields"][name] = {"type": field_type}
+    return signature
 
 
 class RedisContextProvider(ContextProvider):
@@ -93,7 +144,9 @@ class RedisContextProvider(ContextProvider):
                 retrieval is not filtered by user.
             context_prompt: The context prompt to use for the provider.
             redis_index: The Redis index to use for the provider.
-            overwrite_index: Whether to overwrite the existing Redis index.
+            overwrite_index: Whether to recreate an existing compatible index
+                definition while preserving its stored hashes. This does not
+                migrate indexes created with an older scope schema.
         """
         super().__init__(source_id)
         self.redis_url = redis_url
@@ -112,7 +165,6 @@ class RedisContextProvider(ContextProvider):
         self.user_id = user_id
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
         self.overwrite_index = overwrite_index
-        self._token_escaper: TokenEscaper = TokenEscaper()
         self._index_initialized: bool = False
         self._schema_dict: dict[str, Any] | None = None
         # An index built here owns its connection pool and must release it on close;
@@ -203,7 +255,11 @@ class RedisContextProvider(ContextProvider):
 
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         """Builds a combined filter expression from simple equality tags."""
-        parts: list[FilterExpression] = [Tag(k) == v for k, v in filters.items() if v]
+        parts = [
+            FilterExpression(f"@{_scope_token_field(name)}:{{{_scope_token(name, value)}}}")
+            for name, value in filters.items()
+            if value
+        ]
         if not parts:
             return None
         combined = parts[0]
@@ -227,13 +283,16 @@ class RedisContextProvider(ContextProvider):
             {"name": "role", "type": "tag"},
             {"name": "mime_type", "type": "tag"},
             {"name": "content", "type": "text"},
-            {"name": "conversation_id", "type": "tag"},
             {"name": "message_id", "type": "tag"},
             {"name": "author_name", "type": "tag"},
-            {"name": "application_id", "type": "tag"},
-            {"name": "agent_id", "type": "tag"},
-            {"name": "user_id", "type": "tag"},
-            {"name": "thread_id", "type": "tag"},
+            *[
+                {
+                    "name": _scope_token_field(name),
+                    "type": "tag",
+                    "attrs": {"case_sensitive": True, "separator": _SCOPE_TAG_SEPARATOR},
+                }
+                for name in _SCOPE_FIELDS
+            ],
         ]
         if vector_field_name is not None and vector_dims is not None:
             fields.append({
@@ -256,50 +315,15 @@ class RedisContextProvider(ContextProvider):
         if self._index_initialized:
             return
         index_exists = await self.redis_index.exists()
-        if not self.overwrite_index and index_exists:
+        if index_exists:
             await self._validate_schema_compatibility()
-        await self.redis_index.create(overwrite=self.overwrite_index, drop=False)
+        await self.redis_index.create(overwrite=self.overwrite_index if index_exists else False, drop=False)
+        await self._validate_schema_compatibility()
         self._index_initialized = True
 
     async def _validate_schema_compatibility(self) -> None:
         """Validate that existing index schema matches current configuration."""
-        TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
-        TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
-
-        def _significant_index(i: dict[str, Any]) -> dict[str, Any]:
-            return {k: i.get(k) for k in ("name", "prefix", "key_separator", "storage_type")}
-
-        def _sig_tag(attrs: dict[str, Any] | None) -> dict[str, Any]:
-            a = {**TAG_DEFAULTS, **(attrs or {})}
-            return {k: a[k] for k in ("separator", "case_sensitive", "withsuffixtrie")}
-
-        def _sig_text(attrs: dict[str, Any] | None) -> dict[str, Any]:
-            a = {**TEXT_DEFAULTS, **(attrs or {})}
-            return {k: a[k] for k in ("weight", "no_stem")}
-
-        def _sig_vector(attrs: dict[str, Any] | None) -> dict[str, Any]:
-            a = {**(attrs or {})}
-            return {k: a.get(k) for k in ("algorithm", "dims", "distance_metric", "datatype")}
-
-        def _schema_signature(schema: dict[str, Any]) -> dict[str, Any]:
-            sig: dict[str, Any] = {"index": _significant_index(schema.get("index", {})), "fields": {}}
-            for f in schema.get("fields", []):
-                name, ftype = f.get("name"), f.get("type")
-                if not name:
-                    continue
-                if ftype == "tag":
-                    sig["fields"][name] = {"type": "tag", "attrs": _sig_tag(f.get("attrs"))}
-                elif ftype == "text":
-                    sig["fields"][name] = {"type": "text", "attrs": _sig_text(f.get("attrs"))}
-                elif ftype == "vector":
-                    sig["fields"][name] = {"type": "vector", "attrs": _sig_vector(f.get("attrs"))}
-                else:
-                    sig["fields"][name] = {"type": ftype}
-            return sig
-
-        existing_index: Any = await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
-            self.index_name, redis_url=self.redis_url
-        )
+        existing_index = await self._existing_index()
         existing_schema = existing_index.schema.to_dict()
         current_schema = self.schema_dict
         existing_sig = _schema_signature(existing_schema)
@@ -309,8 +333,18 @@ class RedisContextProvider(ContextProvider):
                 "Existing Redis index schema is incompatible with the current configuration.\n"
                 f"Existing (significant): {json.dumps(existing_sig, indent=2, sort_keys=True)}\n"
                 f"Current  (significant): {json.dumps(current_sig, indent=2, sort_keys=True)}\n"
-                "Set overwrite_index=True to rebuild if this change is intentional."
+                "This beta schema change cannot migrate existing context data safely. "
+                "Delete the existing index and its context hashes, recreate the provider index, "
+                "and re-ingest the context data."
             )
+
+    async def _existing_index(self) -> Any:
+        existing_client = self.redis_index.client
+        return await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
+            self.index_name,
+            redis_client=existing_client,
+            redis_url=None if existing_client is not None else self.redis_url,
+        )
 
     async def _add(
         self,
@@ -327,11 +361,16 @@ class RedisContextProvider(ContextProvider):
         prepared: list[dict[str, Any]] = []
         for doc in docs:
             d = dict(doc)
-            d.setdefault("application_id", self.application_id)
-            d.setdefault("agent_id", self.agent_id)
-            d.setdefault("user_id", self.user_id)
-            d.setdefault("thread_id", session_id)
-            d.setdefault("conversation_id", session_id)
+            scope_values = {
+                "application_id": self.application_id,
+                "agent_id": self.agent_id,
+                "user_id": self.user_id,
+                "thread_id": session_id,
+                "conversation_id": session_id,
+            }
+            for name, value in scope_values.items():
+                d[name] = value or None
+                d[_scope_token_field(name)] = _scope_token(name, value) if value else None
             if "content" not in d:
                 raise IntegrationInvalidRequestException("add() requires a 'content' field in data")
             if self.vector_field_name:
@@ -428,12 +467,18 @@ class RedisContextProvider(ContextProvider):
             raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
     async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
-        """Returns all documents in the index."""
-        from redisvl.query import FilterQuery
+        """Returns all documents matching the provider's configured scopes."""
+        await self._ensure_index()
+        self._validate_filters()
+        combined_filter = self._build_filter_from_dict({
+            "application_id": self.application_id,
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+        })
 
         out: list[dict[str, Any]] = []
         async for batch in self.redis_index.paginate(
-            FilterQuery(FilterExpression("*"), return_fields=[], num_results=page_size),
+            FilterQuery(combined_filter or FilterExpression("*"), return_fields=[], num_results=page_size),
             page_size=page_size,
         ):
             out.extend(batch)

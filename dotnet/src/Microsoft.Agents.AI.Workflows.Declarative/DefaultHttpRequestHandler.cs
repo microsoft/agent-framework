@@ -32,6 +32,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// redirects so per-request headers are not forwarded to redirect destinations. If a supplied client returns a
 /// redirect response, this handler does not follow it because the client's redirect behavior is opaque. Supplied
 /// clients should disable automatic redirects and handle redirect responses before returning them to this handler.
+/// The provider is invoked for redirect destinations, but redirects that would switch from the internally owned
+/// client to a provider-supplied client are rejected before sending the redirected request.
 /// </para>
 /// </remarks>
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable
@@ -77,6 +79,12 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     /// <see cref="HttpClient"/>.
     /// </param>
     /// <remarks>
+    /// <para>
+    /// <b>Redirects</b>: the callback is also invoked for redirect destinations when the internally owned client
+    /// follows a redirect. It may reject a destination by throwing, or return <see langword="null"/> to continue
+    /// using the internally owned client. Returning a client for a redirect destination causes an
+    /// <see cref="HttpRequestException"/>; redirects cannot change the selected client.
+    /// </para>
     /// <para>
     /// <b>Ownership</b>: the caller is solely responsible for the lifetime of clients returned by this
     /// callback. <see cref="DefaultHttpRequestHandler"/> will <b>not</b> dispose provider-returned
@@ -138,6 +146,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             if (this._httpClientProvider is not null)
             {
                 providedClient = await this._httpClientProvider(currentRequest, effectiveToken).ConfigureAwait(false);
+                if (redirectCount > 0 && providedClient is not null)
+                {
+                    throw new HttpRequestException("Redirects that change the HTTP client are not allowed.");
+                }
             }
 
             HttpClient client = providedClient ?? this._ownedHttpClient.Value;

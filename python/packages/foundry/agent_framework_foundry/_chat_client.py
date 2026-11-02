@@ -187,6 +187,7 @@ class RawFoundryChatClient(
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw Microsoft Foundry chat client.
 
@@ -207,6 +208,8 @@ class RawFoundryChatClient(
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         foundry_settings = load_settings(
             FoundrySettings,
@@ -255,9 +258,13 @@ class RawFoundryChatClient(
         if owns_project_client:
             openai_kwargs["http_client"] = create_foundry_feature_usage_http_client()
 
+        openai_client = project_client.get_openai_client(**openai_kwargs)
+        if timeout is not None:
+            openai_client = openai_client.with_options(timeout=timeout)
+
         super().__init__(
             model=resolved_model,
-            async_client=project_client.get_openai_client(**openai_kwargs),
+            async_client=openai_client,
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,
@@ -265,6 +272,20 @@ class RawFoundryChatClient(
             additional_properties=additional_properties,
         )
         self.project_client = project_client
+        self._owns_project_client = owns_project_client
+        self._project_client_closed = False
+        # get_openai_client creates an independent connection, even for an injected project.
+        self._owns_client = True
+
+    @override
+    async def close(self) -> None:
+        """Close owned OpenAI and project connections, not the supplied credential."""
+        try:
+            await super().close()
+        finally:
+            if self._owns_project_client and not self._project_client_closed:
+                await self.project_client.close()
+                self._project_client_closed = True
 
     @override
     async def _prepare_options(
@@ -807,10 +828,16 @@ class RawFoundryChatClient(
             if isinstance(approval_mode, str):
                 mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
             else:
+                # Both keys can be supplied together ("and/or" per the docstring), so build
+                # one combined mapping instead of letting the second assignment overwrite
+                # the first, which silently dropped the always-approval tool list.
+                require_approval: dict[str, Any] = {}
                 if always_require := approval_mode.get("always_require_approval"):
-                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                    require_approval["always"] = {"tool_names": always_require}
                 if never_require := approval_mode.get("never_require_approval"):
-                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
+                    require_approval["never"] = {"tool_names": never_require}
+                if require_approval:
+                    mcp["require_approval"] = require_approval
 
         return mcp
 
@@ -951,15 +978,16 @@ class RawFoundryChatClient(
         Older supported SDK releases can still import this client; calling this
         factory on those releases raises ``ImportError`` with upgrade guidance.
         """
-        try:
-            from azure.ai.projects.models import ComputerTool
-        except ImportError as exc:
+        from azure.ai.projects import models
+
+        computer_tool_cls = getattr(models, "ComputerTool", None)
+        if computer_tool_cls is None:
             raise ImportError(
                 "FoundryChatClient.get_computer_tool() requires ComputerTool from azure-ai-projects>=2.3.0. "
                 "Upgrade azure-ai-projects to >=2.3.0 to use this tool."
-            ) from exc
+            )
 
-        return ComputerTool()
+        return computer_tool_cls()
 
     @staticmethod
     @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
@@ -1129,6 +1157,7 @@ class FoundryChatClient(
         additional_properties: dict[str, Any] | None = None,
         middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry chat client.
 
@@ -1149,6 +1178,8 @@ class FoundryChatClient(
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middleware.
             function_invocation_configuration: Optional function invocation configuration.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -1165,4 +1196,5 @@ class FoundryChatClient(
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
+            timeout=timeout,
         )

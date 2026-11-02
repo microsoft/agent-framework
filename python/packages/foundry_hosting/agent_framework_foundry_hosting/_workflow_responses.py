@@ -246,6 +246,7 @@ async def _project(
     approvals: _CheckpointApprovals,
 ) -> list[ResponseStreamEvent]:
     updates: list[AgentResponseUpdate] = []
+    complete_message = False
     if event.type == "request_info":
         wire_id = IdGenerator.new_id("call", str(stream.response["id"]))
         if isinstance(event.data, Content) and event.data.type == "function_approval_request":
@@ -267,6 +268,7 @@ async def _project(
     elif event.type in ("output", "intermediate", "data"):
         data = event.data
         if isinstance(data, (AgentResponse, ChatResponse)):
+            complete_message = True
             updates = _agent_response_updates(
                 AgentResponse(
                     messages=data.messages,
@@ -285,8 +287,10 @@ async def _project(
                 )
             ]
         elif isinstance(data, Message):
+            complete_message = True
             updates = _agent_response_updates(AgentResponse(messages=[data]), str(stream.response["id"]))
         elif isinstance(data, list) and data and all(isinstance(item, Message) for item in cast(list[Any], data)):
+            complete_message = True
             updates = _agent_response_updates(
                 AgentResponse(messages=cast(list[Message], data)), str(stream.response["id"])
             )
@@ -302,7 +306,14 @@ async def _project(
             return events
     events: list[ResponseStreamEvent] = []
     for update in updates:
-        events.extend([item async for item in tracker.handle_update(update, approval_storage=approvals)])
+        events.extend([
+            item
+            async for item in tracker.handle_update(
+                update,
+                approval_storage=approvals,
+                complete_message=complete_message,
+            )
+        ])
     return events
 
 

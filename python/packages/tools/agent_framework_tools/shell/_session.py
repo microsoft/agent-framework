@@ -30,8 +30,8 @@ Notes:
 * ``$LASTEXITCODE`` only tracks external-process exits, so the rc is
   also derived from ``$?`` and caught exceptions.
 * stdout and stderr are consumed by **persistent reader tasks** that
-  run for the lifetime of the session. Each ``run()`` snapshots buffer
-  offsets before writing the command and scans forward from there.
+  run for the lifetime of the session. Each ``run()`` installs bounded
+  output capture and a separate incremental completion-marker parser.
   This avoids ``read() called while another coroutine is already
   waiting`` errors from per-call ``wait_for(stream.read())`` loops and
   prevents late stderr from being attributed to the next command.
@@ -48,16 +48,68 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 
+from ._capture import READ_CHUNK
 from ._killtree import kill_process_tree
 from ._resolve import is_powershell
-from ._truncate import truncate_head_tail as _truncate_bytes
-from ._truncate import truncate_text_head_tail as _truncate_text
+from ._truncate import (
+    _TextOutputBuffer,  # pyright: ignore[reportPrivateUsage] - shared shell capture
+    _validate_output_limit,  # pyright: ignore[reportPrivateUsage] - shared limit validation
+)
 from ._types import ShellResult
 
-_READ_CHUNK = 64 * 1024
 _SHUTDOWN_GRACE = 2.0
 # Extra grace window after the sentinel arrives to let late stderr drain.
 _STDERR_QUIESCENCE = 0.05
+
+
+class _CommandOutput:
+    """Separate bounded command output from completion-marker recognition."""
+
+    def __init__(self, sentinel: bytes, *, max_stdout_bytes: int, max_stderr_bytes: int) -> None:
+        self.stdout = _TextOutputBuffer(max_stdout_bytes, strip_newlines=True)
+        self.stderr = _TextOutputBuffer(max_stderr_bytes)
+        self.stdout_bytes = 0
+        self.exit_code: int | None = None
+        self.marker_seen_at: float | None = None
+        self._sentinel = sentinel
+        self._pending = bytearray()
+
+    def read_stdout(self, chunk: bytes) -> None:
+        if self.exit_code is not None:
+            return
+        self._pending.extend(chunk)
+        if self.marker_seen_at is None:
+            idx = self._pending.find(self._sentinel)
+            if idx == -1:
+                keep = min(len(self._pending), len(self._sentinel) - 1)
+                while keep and not self._pending.endswith(self._sentinel[:keep]):
+                    keep -= 1
+                emit = len(self._pending) - keep
+                self.stdout_bytes += emit
+                self.stdout.append(bytes(self._pending[:emit]))
+                del self._pending[:emit]
+                return
+            self.stdout_bytes += idx
+            self.stdout.append(bytes(self._pending[:idx]), final=True)
+            del self._pending[: idx + len(self._sentinel)]
+            self.marker_seen_at = time.monotonic()
+        newline = self._pending.find(b"\n")
+        # A shell exit status fits comfortably in 32 bytes. Never retain an
+        # arbitrary suffix while waiting for the marker's newline.
+        if (newline if newline != -1 else len(self._pending)) > 32:
+            raise RuntimeError("shell completion marker has an oversized exit status")
+        if newline != -1:
+            self.exit_code = _parse_rc(bytes(self._pending[:newline]))
+            self._pending.clear()
+
+    def finish_stdout(self) -> None:
+        if self.exit_code is not None:
+            return
+        if self.marker_seen_at is not None:
+            self.exit_code = _parse_rc(bytes(self._pending))
+        else:
+            self.stdout.append(bytes(self._pending), final=True)
+        self._pending.clear()
 
 
 class ShellSession:
@@ -73,12 +125,16 @@ class ShellSession:
         *,
         workdir: str | None = None,
         env: Mapping[str, str] | None = None,
-        max_output_bytes: int = 64 * 1024,
+        max_stdout_bytes: int = 64 * 1024,
+        max_stderr_bytes: int = 64 * 1024,
     ) -> None:
+        _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
+        _validate_output_limit(max_stderr_bytes, name="max_stderr_bytes")
         self._argv = list(argv)
         self._workdir = workdir
         self._env = dict(env) if env is not None else None
-        self._max_output_bytes = max_output_bytes
+        self._max_stdout_bytes = max_stdout_bytes
+        self._max_stderr_bytes = max_stderr_bytes
         self._proc: asyncio.subprocess.Process | None = None
         # Serialises per-command execution onto the single stdin/stdout
         # pipe. This is an ordering primitive within one owning session;
@@ -94,10 +150,8 @@ class ShellSession:
         self._sentinel_tag = secrets.token_hex(8)
         self._is_pwsh = is_powershell(argv)
 
-        # Persistent reader state. The reader tasks append into these
-        # buffers; _run_locked scans forward from a per-call offset.
-        self._stdout_buf = bytearray()
-        self._stderr_buf = bytearray()
+        self._output: _CommandOutput | None = None
+        self._reader_error: Exception | None = None
         self._stdout_event = asyncio.Event()
         self._stdout_reader: asyncio.Task[None] | None = None
         self._stderr_reader: asyncio.Task[None] | None = None
@@ -131,18 +185,15 @@ class ShellSession:
                 **popen_kwargs,  # type: ignore[arg-type]
             )
 
-            # Reset buffer state in case this is a restart after close().
-            self._stdout_buf.clear()
-            self._stderr_buf.clear()
+            self._output = None
+            self._reader_error = None
             self._stdout_event = asyncio.Event()
             self._stdout_closed = False
 
             if self._proc.stdout is None or self._proc.stderr is None:
                 raise RuntimeError("subprocess pipes were not created; stdout/stderr unavailable")
-            self._stdout_reader = asyncio.create_task(self._reader(self._proc.stdout, self._stdout_buf, is_stdout=True))
-            self._stderr_reader = asyncio.create_task(
-                self._reader(self._proc.stderr, self._stderr_buf, is_stdout=False)
-            )
+            self._stdout_reader = asyncio.create_task(self._reader(self._proc.stdout, is_stdout=True))
+            self._stderr_reader = asyncio.create_task(self._reader(self._proc.stderr, is_stdout=False))
 
             # Best-effort: make PowerShell emit UTF-8 and fail loudly on errors.
             if self._is_pwsh:
@@ -229,137 +280,85 @@ class ShellSession:
 
         sentinel = f"__AF_END_{self._sentinel_tag}_{secrets.token_hex(4)}__"
         script = self._build_script(command, sentinel)
-        # Snapshot current buffer positions so we only attribute output
-        # produced *after* the command is submitted.
-        stdout_offset = len(self._stdout_buf)
-        stderr_offset = len(self._stderr_buf)
+        output = _CommandOutput(
+            sentinel.encode("utf-8"),
+            max_stdout_bytes=self._max_stdout_bytes,
+            max_stderr_bytes=self._max_stderr_bytes,
+        )
+        self._output = output
         self._stdout_event.clear()
 
         started = time.monotonic()
-        try:
-            self._proc.stdin.write(script.encode("utf-8"))
-            await self._proc.stdin.drain()
-        except (ConnectionResetError, BrokenPipeError) as exc:
-            raise RuntimeError("persistent shell session is no longer alive") from exc
-
-        needle = sentinel.encode("utf-8")
         timed_out = False
-        hard_cap = self._max_output_bytes * 4
+        overflow = False
+        hard_cap = self._max_stdout_bytes * 4
 
-        async def _wait_for_sentinel() -> tuple[int, int]:
-            """Return (sentinel_start_index, exit_code) once seen."""
+        async def _wait_for_sentinel() -> int:
             while True:
-                idx = self._stdout_buf.find(needle, stdout_offset)
-                if idx != -1:
-                    # Parse trailing ``_<digits>``.
-                    tail_start = idx + len(needle)
-                    # Wait briefly for the rc digits + newline to arrive.
-                    deadline = time.monotonic() + 1.0
-                    while time.monotonic() < deadline:
-                        after = bytes(self._stdout_buf[tail_start:])
-                        nl = after.find(b"\n")
-                        if nl != -1:
-                            break
-                        if self._stdout_closed:
-                            break
-                        self._stdout_event.clear()
-                        try:
-                            await asyncio.wait_for(self._stdout_event.wait(), timeout=0.1)
-                        except asyncio.TimeoutError:
-                            pass
-                    after = bytes(self._stdout_buf[tail_start:])
-                    rc = _parse_rc(after)
-                    return idx, rc
-                if self._stdout_closed:
-                    raise RuntimeError("shell closed stdout before emitting sentinel")
-                if len(self._stdout_buf) - stdout_offset > hard_cap:
-                    raise _SentinelOverflow
+                if self._reader_error is not None:
+                    raise RuntimeError("failed to read persistent shell output") from self._reader_error
+                if output.exit_code is not None:
+                    return output.exit_code
+                if output.marker_seen_at is not None:
+                    if self._stdout_closed or time.monotonic() - output.marker_seen_at >= 1.0:
+                        output.finish_stdout()
+                        return output.exit_code if output.exit_code is not None else -1
+                else:
+                    if self._stdout_closed:
+                        raise RuntimeError("shell closed stdout before emitting sentinel")
+                    if output.stdout_bytes > hard_cap:
+                        raise _SentinelOverflow
                 self._stdout_event.clear()
                 try:
-                    await asyncio.wait_for(self._stdout_event.wait(), timeout=0.5)
+                    await asyncio.wait_for(self._stdout_event.wait(), timeout=0.1)
                 except asyncio.TimeoutError:
-                    # Keep spinning; timeout is enforced at the wait_for below.
                     pass
 
-        sentinel_idx: int
         exit_code: int
         try:
-            sentinel_idx, exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=timeout)
-        except asyncio.TimeoutError:
-            timed_out = True
-            await self._interrupt_current_command()
             try:
-                sentinel_idx, exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=_SHUTDOWN_GRACE)
-            except (asyncio.TimeoutError, RuntimeError, _SentinelOverflow):
-                # Session is unrecoverable; tear it down so the next call
-                # gets a fresh subprocess.
+                self._proc.stdin.write(script.encode("utf-8"))
+                await self._proc.stdin.drain()
+            except (ConnectionResetError, BrokenPipeError) as exc:
+                raise RuntimeError("persistent shell session is no longer alive") from exc
+            try:
+                exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=timeout)
+            except asyncio.TimeoutError:
+                timed_out = True
+                await self._interrupt_current_command()
+                try:
+                    exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=_SHUTDOWN_GRACE)
+                except (asyncio.TimeoutError, RuntimeError, _SentinelOverflow):
+                    await self._close_process()
+                    exit_code = 124
+                if sys.platform == "win32":
+                    await self._close_process()
+            except _SentinelOverflow:
+                overflow = True
+                await self._interrupt_current_command()
                 await self._close_process()
-                duration_ms = int((time.monotonic() - started) * 1000)
-                stdout_bytes = bytes(self._stdout_buf[stdout_offset:])
-                stderr_bytes = bytes(self._stderr_buf[stderr_offset:])
-                stdout_str, so_trunc = _truncate_bytes(stdout_bytes, self._max_output_bytes)
-                stderr_str, se_trunc = _truncate_bytes(stderr_bytes, self._max_output_bytes)
-                return ShellResult(
-                    stdout=stdout_str,
-                    stderr=stderr_str,
-                    exit_code=124,
-                    duration_ms=duration_ms,
-                    truncated=so_trunc or se_trunc,
-                    timed_out=True,
-                )
-            if sys.platform == "win32":
-                # CTRL_BREAK can flush PowerShell's finally sentinel before
-                # the process finishes exiting. Do not dispatch the next
-                # command into that interrupted session, even with a sentinel.
-                await self._close_process()
-        except _SentinelOverflow:
-            # Runaway output; recover by interrupting and restarting.
-            await self._interrupt_current_command()
-            await self._close_process()
-            duration_ms = int((time.monotonic() - started) * 1000)
-            stdout_bytes = bytes(self._stdout_buf[stdout_offset : stdout_offset + hard_cap])
-            stderr_bytes = bytes(self._stderr_buf[stderr_offset:])
-            stdout_str, _ = _truncate_bytes(stdout_bytes, self._max_output_bytes)
-            stderr_str, _ = _truncate_bytes(stderr_bytes, self._max_output_bytes)
+                exit_code = -1
+
+            await asyncio.sleep(_STDERR_QUIESCENCE)
+            if self._reader_error is not None:
+                raise RuntimeError("failed to read persistent shell output") from self._reader_error
+            output.finish_stdout()
+            output.stderr.append(b"", final=True)
+            stdout_str, stdout_truncated = output.stdout.format()
+            stderr_str, stderr_truncated = output.stderr.format()
             return ShellResult(
                 stdout=stdout_str,
                 stderr=stderr_str,
-                exit_code=-1,
-                duration_ms=duration_ms,
-                truncated=True,
-                timed_out=False,
+                exit_code=exit_code,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                truncated=overflow or stdout_truncated or stderr_truncated,
+                timed_out=timed_out,
             )
-
-        # Let stderr quiesce briefly — late writes from the completing
-        # command otherwise leak into the *next* run().
-        await asyncio.sleep(_STDERR_QUIESCENCE)
-
-        duration_ms = int((time.monotonic() - started) * 1000)
-        stdout_raw = bytes(self._stdout_buf[stdout_offset:sentinel_idx])
-        stderr_raw = bytes(self._stderr_buf[stderr_offset:])
-
-        stdout_text = stdout_raw.decode("utf-8", errors="replace").rstrip("\r\n")
-        stderr_text = stderr_raw.decode("utf-8", errors="replace")
-
-        stdout_str, stdout_truncated = _truncate_text(stdout_text, self._max_output_bytes)
-        stderr_str, stderr_truncated = _truncate_text(stderr_text, self._max_output_bytes)
-
-        # Trim the persistent buffers: everything we needed has been copied
-        # into stdout_raw/stderr_raw above, so discarding now keeps the
-        # session's memory bounded across many commands. The reader tasks
-        # only ever ``extend()`` these buffers (no offset bookkeeping
-        # outside this method), so resetting them here is safe.
-        del self._stdout_buf[:]
-        del self._stderr_buf[:]
-
-        return ShellResult(
-            stdout=stdout_str,
-            stderr=stderr_str,
-            exit_code=exit_code,
-            duration_ms=duration_ms,
-            truncated=stdout_truncated or stderr_truncated,
-            timed_out=timed_out,
-        )
+        except BaseException:
+            await self._close_process()
+            raise
+        finally:
+            self._output = None
 
     # ------------------------------------------------------------------ helpers
 
@@ -424,28 +423,30 @@ class ShellSession:
     async def _reader(
         self,
         stream: asyncio.StreamReader,
-        buf: bytearray,
         *,
         is_stdout: bool,
     ) -> None:
-        """Persistent reader task: drains ``stream`` into ``buf`` until EOF."""
+        """Drain continuously, discarding output when no command owns it."""
         try:
             while True:
-                chunk = await stream.read(_READ_CHUNK)
+                chunk = await stream.read(READ_CHUNK)
                 if not chunk:
                     if is_stdout:
                         self._stdout_closed = True
                         self._stdout_event.set()
                     return
-                buf.extend(chunk)
+                if self._output is not None:
+                    if is_stdout:
+                        self._output.read_stdout(chunk)
+                    else:
+                        self._output.stderr.append(chunk)
                 if is_stdout:
                     self._stdout_event.set()
         except asyncio.CancelledError:
             raise
-        except Exception:
-            if is_stdout:
-                self._stdout_closed = True
-                self._stdout_event.set()
+        except Exception as exc:
+            self._reader_error = exc
+            self._stdout_event.set()
 
     async def _interrupt_current_command(self) -> None:
         if self._proc is None or self._proc.returncode is not None:

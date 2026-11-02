@@ -313,6 +313,115 @@ async def test_in_memory_store_normalizes_paths() -> None:
             await store.write(bad, "boom")
 
 
+async def test_in_memory_store_rejects_file_ancestor_collision() -> None:
+    """Writing a file whose ancestor is already a file must raise NotADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("reports/deep/q2.txt", "deep nested content")
+
+    assert await store.read("Reports") == "file content"
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.FILE
+
+
+async def test_in_memory_store_rejects_descendant_directory_collision() -> None:
+    """Writing a file whose path is already a directory must raise IsADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("Reports", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports", "case insensitive collision")
+
+    assert await store.read("Reports/q1.txt") == "nested content"
+    assert await store.read("Reports") is None
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.DIRECTORY
+
+
+async def test_in_memory_store_create_directory_rejects_existing_file() -> None:
+    """Creating a directory that collides with an existing file must raise FileExistsError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("Reports")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("reports/nested")
+
+
+async def test_in_memory_store_explicit_directory_reserves_path_against_write() -> None:
+    """Explicitly created directory must reserve the path and reject file writes."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("Reports")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("Reports", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports", "case insensitive collision")
+
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.DIRECTORY
+
+    nested_children = await store.list_children("Reports")
+    assert len(nested_children) == 0
+
+
+async def test_in_memory_store_explicit_nested_directory_creation() -> None:
+    """Explicit nested directory creation registers intermediate directories and preserves casing."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("Reports/2026/Q1")
+
+    root_children = await store.list_children("")
+    assert len(root_children) == 1
+    assert root_children[0].name == "Reports"
+    assert root_children[0].type == FileStoreEntry.DIRECTORY
+
+    reports_children = await store.list_children("Reports")
+    assert len(reports_children) == 1
+    assert reports_children[0].name == "2026"
+    assert reports_children[0].type == FileStoreEntry.DIRECTORY
+
+    q1_children = await store.list_children("Reports/2026")
+    assert len(q1_children) == 1
+    assert q1_children[0].name == "Q1"
+    assert q1_children[0].type == FileStoreEntry.DIRECTORY
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports/2026", "collision")
+
+
+async def test_in_memory_store_delete_file_cleans_up_implicit_directory_counts() -> None:
+    """Deleting a file unreserves implicit parent directories when no other files remain."""
+    store = InMemoryAgentFileStore()
+    await store.write("data/temp/file.txt", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("data/temp", "should fail while file exists")
+
+    deleted = await store.delete("data/temp/file.txt")
+    assert deleted is True
+
+    # Now that the implicit descendant is gone and temp was never explicitly created, writing succeeds
+    await store.write("data/temp", "now a file")
+    assert await store.read("data/temp") == "now a file"
+
+
 async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
     """The filesystem store should round-trip files on disk and create parents on write."""
     store = FileSystemAgentFileStore(tmp_path)
@@ -844,13 +953,15 @@ async def test_filesystem_store_does_not_create_root_until_write(tmp_path: Path)
     assert await store.read("a.txt") == "alpha"
 
 
+@pytest.mark.parametrize("tool_name_prefix", [None, "", "spec_files"])
 async def test_file_access_provider_registers_tools_and_instructions(
     chat_client_base: SupportsChatGetResponse,
+    tool_name_prefix: str | None,
 ) -> None:
-    """``FileAccessProvider.before_run`` should add the canonical instructions and all tools."""
+    """Register all tools with the configured prefix while preserving default names."""
     session = AgentSession(session_id="session-1")
     store = InMemoryAgentFileStore()
-    provider = FileAccessProvider(store=store)
+    provider = FileAccessProvider(store=store, tool_name_prefix=tool_name_prefix)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
@@ -870,13 +981,94 @@ async def test_file_access_provider_registers_tools_and_instructions(
         "file_access_replace",
         "file_access_replace_lines",
     }
-    assert {getattr(tool, "name", None) for tool in tools} >= expected_names
+    if tool_name_prefix:
+        expected_names = {f"{tool_name_prefix}_{name}" for name in expected_names}
+    assert {getattr(tool, "name", None) for tool in tools} == expected_names
 
+    expected_instructions = (
+        DEFAULT_FILE_ACCESS_INSTRUCTIONS.replace("file_access_", f"{tool_name_prefix}_file_access_")
+        if tool_name_prefix
+        else DEFAULT_FILE_ACCESS_INSTRUCTIONS
+    )
     instructions = options.get("instructions")
     if isinstance(instructions, str):
-        assert DEFAULT_FILE_ACCESS_INSTRUCTIONS in instructions
+        assert expected_instructions in instructions
     else:
-        assert any(DEFAULT_FILE_ACCESS_INSTRUCTIONS in chunk for chunk in (instructions or []))
+        assert any(expected_instructions in chunk for chunk in (instructions or []))
+
+
+@pytest.mark.parametrize(
+    ("spec_prefix", "sdk_prefix"),
+    [(None, None), ("spec_files", "sdk_files"), ("spec_files", None)],
+    ids=["duplicate-names", "distinct-prefixes", "prefixed-and-default"],
+)
+async def test_file_access_providers_with_multiple_stores(
+    chat_client_base: SupportsChatGetResponse,
+    spec_prefix: str | None,
+    sdk_prefix: str | None,
+) -> None:
+    """Reproduce #9646 and allow an agent run when the stores have distinct tool names."""
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[
+            FileAccessProvider(
+                InMemoryAgentFileStore(),
+                source_id="spec_files",
+                tool_name_prefix=spec_prefix,
+                disable_readonly_tool_approval=True,
+                disable_write_tool_approval=True,
+            ),
+            FileAccessProvider(
+                InMemoryAgentFileStore(),
+                source_id="sdk_files",
+                tool_name_prefix=sdk_prefix,
+                disable_readonly_tool_approval=True,
+                disable_write_tool_approval=True,
+            ),
+        ],
+    )
+
+    if spec_prefix is None and sdk_prefix is None:
+        with pytest.raises(ValueError, match="Duplicate tool name 'file_access_read'"):
+            await agent.run("test")
+    else:
+        response = await agent.run("test")
+        assert response.text == "test response - test"
+
+
+async def test_file_access_provider_prefixed_tools_route_to_their_own_store(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Prefixed tools must keep same-named files in different stores independent."""
+    spec_store = InMemoryAgentFileStore()
+    sdk_store = InMemoryAgentFileStore()
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[
+            FileAccessProvider(spec_store, source_id="spec_files", tool_name_prefix="spec"),
+            FileAccessProvider(sdk_store, source_id="sdk_files", tool_name_prefix="sdk"),
+        ],
+    )
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=AgentSession(session_id="session-1"),
+        input_messages=[Message(role="user", contents=["work with files"])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    assert len(tools) == 16
+
+    for prefix, content in (("spec", "specification"), ("sdk", "implementation")):
+        write = _tool_by_name(tools, f"{prefix}_file_access_write")
+        result = await write.invoke(arguments={"file_name": "shared.txt", "content": content})
+        assert "written" in _text(result[0])
+
+    for prefix, content in (("spec", "specification"), ("sdk", "implementation")):
+        read = _tool_by_name(tools, f"{prefix}_file_access_read")
+        result = await read.invoke(arguments={"file_name": "shared.txt"})
+        assert _text(result[0]) == content
+
+    assert await spec_store.read("shared.txt") == "specification"
+    assert await sdk_store.read("shared.txt") == "implementation"
 
 
 async def test_file_access_provider_all_tools_require_approval(
@@ -979,6 +1171,28 @@ def test_read_only_tools_auto_approval_rule() -> None:
         assert FileAccessProvider.read_only_tools_auto_approval_rule(hosted) is False
 
 
+def test_prefixed_provider_read_only_auto_approval_rule() -> None:
+    """A provider-bound rule should approve only that provider's prefixed read-only tools."""
+    provider = FileAccessProvider(InMemoryAgentFileStore(), tool_name_prefix="spec")
+    rule = provider.get_read_only_tools_auto_approval_rule()
+
+    prefixed_read = Content("function_call", call_id="c1", name="spec_file_access_read", arguments="{}")
+    unprefixed_read = Content("function_call", call_id="c2", name="file_access_read", arguments="{}")
+    prefixed_write = Content("function_call", call_id="c3", name="spec_file_access_write", arguments="{}")
+    hosted_read = Content(
+        "function_call",
+        call_id="c4",
+        name="spec_file_access_read",
+        arguments="{}",
+        hosted=True,
+    )
+
+    assert rule(prefixed_read) is True
+    assert rule(unprefixed_read) is False
+    assert rule(prefixed_write) is False
+    assert rule(hosted_read) is False
+
+
 def test_all_tools_auto_approval_rule() -> None:
     """The all-tools rule approves every file-access tool but nothing else."""
     for name in (
@@ -1005,6 +1219,31 @@ def test_all_tools_auto_approval_rule() -> None:
 
     unrelated = Content("function_call", call_id="c1", name="some_other_tool", arguments="{}")
     assert FileAccessProvider.all_tools_auto_approval_rule(unrelated) is False
+
+
+def test_prefixed_provider_all_tools_auto_approval_rule() -> None:
+    """A provider-bound rule should approve only that provider's prefixed file-access tools."""
+    provider = FileAccessProvider(InMemoryAgentFileStore(), tool_name_prefix="spec")
+    rule = provider.get_all_tools_auto_approval_rule()
+    tool_names = (
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.READ_LINES_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+    )
+
+    for name in tool_names:
+        prefixed = Content("function_call", call_id="c1", name=f"spec_{name}", arguments="{}")
+        unprefixed = Content("function_call", call_id="c2", name=name, arguments="{}")
+        hosted = Content("function_call", call_id="c3", name=f"spec_{name}", arguments="{}", hosted=True)
+
+        assert rule(prefixed) is True
+        assert rule(unprefixed) is False
+        assert rule(hosted) is False
 
 
 async def test_file_access_provider_tools_round_trip_files(
@@ -2610,3 +2849,159 @@ async def test_scope_alone_enables_scoped_mode(chat_client_base: SupportsChatGet
     provider = FileAccessProvider(store=store, scope="tenant-1")
     context = SessionContext(session_id=None, input_messages=[])
     await provider.before_run(agent=None, session=AgentSession(), context=context, state={})
+
+
+async def test_filesystem_delete_is_file_only_and_delete_directory_matches_in_memory(
+    tmp_path: Path,
+) -> None:
+    """FileSystemAgentFileStore.delete must reject directories exactly like the
+    in-memory backend, and delete_directory must release an empty directory."""
+
+    async def in_memory_mirror() -> tuple[InMemoryAgentFileStore, FileSystemAgentFileStore]:
+        memory_store = InMemoryAgentFileStore()
+        fs_root = tmp_path / "root"
+        fs_store = FileSystemAgentFileStore(fs_root)
+        for store in (memory_store, fs_store):
+            await store.create_directory("sessions/s1")
+            await store.write("sessions/s1/state.txt", "data")
+        return memory_store, fs_store
+
+    memory_store, fs_store = await in_memory_mirror()
+
+    # Backend parity: deleting a directory returns False on both backends.
+    assert await fs_store.delete("sessions/s1") is False
+    assert await memory_store.delete("sessions/s1") is False
+
+    # Deleting the file first leaves the (now empty) directory in place.
+    assert await fs_store.delete("sessions/s1/state.txt") is True
+    assert await memory_store.delete("sessions/s1/state.txt") is True
+    for store in (fs_store, memory_store):
+        assert [entry.name for entry in await store.list_children("sessions/s1")] == []
+
+    # delete_directory releases the empty directory on both backends.
+    assert await fs_store.delete_directory("sessions/s1") is True
+    assert await memory_store.delete_directory("sessions/s1") is True
+    for store in (fs_store, memory_store):
+        assert await store.list_children("sessions") == []
+
+    # A second release of the same path reports False on both backends.
+    assert await fs_store.delete_directory("sessions/s1") is False
+    assert await memory_store.delete_directory("sessions/s1") is False
+
+    # The empty path is the store root, not an explicitly created directory:
+    # both backends must refuse it identically (previously the filesystem
+    # backend rmdir'd its configured root and returned True while the
+    # in-memory store raised on the same call).
+    for empty in ("", "   "):
+        assert await fs_store.delete_directory(empty) is False
+        assert await memory_store.delete_directory(empty) is False
+    assert fs_store._root_path.is_dir()
+
+
+async def test_in_memory_store_delete_is_file_only() -> None:
+    """delete() must stay file-only: a directory path is never removed, matching
+    FileSystemAgentFileStore.delete on the same input (backend parity)."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("sessions/s1")
+
+    assert await store.delete("sessions/s1") is False
+    assert await store.delete("sessions/s1/state.txt") is False
+    children = await store.list_children("sessions")
+    assert [entry.name for entry in children] == ["s1"]
+
+    await store.create_directory("sessions/s2")
+    await store.write("sessions/s2/state.txt", "data")
+    assert await store.delete("sessions/s2") is False
+    assert await store.delete("sessions/s2/state.txt") is True
+    assert await store.delete("sessions/s2") is False
+    assert await store.delete("sessions") is False
+
+    # The emptied directory stays listed, exactly like an empty directory on a filesystem.
+    entries = await store.list_children("sessions")
+    assert [entry.name for entry in entries] == ["s1", "s2"]
+
+
+async def test_in_memory_store_delete_directory_releases_empty_explicit_directory() -> None:
+    """delete_directory() releases an empty explicitly created directory so a
+    session-scoped working folder does not stay in the shared map forever."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("sessions/s1")
+
+    assert await store.delete_directory("sessions/s1") is True
+    children = await store.list_children("sessions")
+    assert children == []
+
+    await store.create_directory("sessions/s2")
+    await store.write("sessions/s2/state.txt", "data")
+    assert await store.delete_directory("sessions/s2") is False
+    assert await store.delete("sessions/s2/state.txt") is True
+    assert await store.delete_directory("sessions/s2") is True
+    assert await store.delete_directory("sessions") is True
+
+
+async def test_in_memory_store_rejects_paths_beyond_the_complexity_bound() -> None:
+    """A path deeper than the shared bound is rejected before any ancestor
+    prefix is materialized, so one write cannot retain quadratic memory in the
+    path depth. The error matches what the OS raises for the same input on the
+    filesystem backend (ENAMETOOLONG)."""
+    import errno
+
+    store = InMemoryAgentFileStore()
+    path = "/".join(["a"] * 8000 + ["f"])
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(path, "x")
+
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    # Nothing was stored and no ancestor prefixes were retained.
+    assert store._files == {}
+    assert store._dir_counts == {}
+    # Reads of the same path hit the same validation, never the index.
+    with pytest.raises(OSError) as read_info:
+        await store.read(path)
+    assert read_info.value.errno == errno.ENAMETOOLONG
+
+    # A total length past the bound is refused the same way even when shallow.
+    with pytest.raises(OSError) as long_info:
+        await store.write("/".join(["b" * 3000, "c" * 3000]), "x")
+    assert long_info.value.errno == errno.ENAMETOOLONG
+    assert store._files == {}
+
+
+async def test_in_memory_store_accepts_deep_paths_within_the_bound() -> None:
+    """Legitimate deep paths (deeper than any realistic hierarchy) still work,
+    and the retention of the directory index stays linear in the stored path."""
+    store = InMemoryAgentFileStore()
+    path = "/".join(["d"] * 200 + ["f"])
+
+    await store.write(path, "x")
+
+    assert await store.read(path) == "x"
+    # Every retained ancestor key is a prefix of the one stored path, so the
+    # index is bounded by a small constant times the path length.
+    retained = sum(len(k) for k in store._dir_counts)
+    assert retained < 200 * len(path)
+
+
+async def test_filesystem_store_matches_in_memory_complexity_bound(tmp_path) -> None:
+    """Both backends refuse the same over-bound path with the same errno, so
+    backend substitution is not observable on the bound either."""
+    import errno
+
+    fs_store = FileSystemAgentFileStore(str(tmp_path))
+    mem_store = InMemoryAgentFileStore()
+    path = "/".join(["a"] * 8000 + ["f"])
+
+    with pytest.raises(OSError) as fs_info:
+        await fs_store.write(path, "x")
+    with pytest.raises(OSError) as mem_info:
+        await mem_store.write(path, "x")
+
+    assert fs_info.value.errno == errno.ENAMETOOLONG
+    assert mem_info.value.errno == errno.ENAMETOOLONG
+
+    within = "/".join(["d"] * 200 + ["f"])
+    await fs_store.write(within, "x")
+    await mem_store.write(within, "x")
+    assert await fs_store.read(within) == "x"
+    assert await mem_store.read(within) == "x"

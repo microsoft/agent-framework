@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import base64
 import os
 import uuid
@@ -34,6 +36,21 @@ from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework_ollama import OllamaChatClient
+
+
+@pytest.mark.parametrize("injected", [False, True])
+async def test_ollama_client_context_ownership(injected: bool) -> None:
+    sdk_client = AsyncClient(host="http://localhost:11434")
+    with patch("agent_framework_ollama._chat_client.AsyncClient", return_value=sdk_client):
+        client = OllamaChatClient(model="test-model", client=sdk_client if injected else None)
+    async with client as entered:
+        assert entered is client
+        assert not sdk_client._client.is_closed
+    await client.close()
+    assert sdk_client._client.is_closed is not injected
+    if injected:
+        await sdk_client._client.aclose()
+
 
 # region Service Setup
 

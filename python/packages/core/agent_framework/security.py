@@ -1379,6 +1379,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
         self._standing_guidance_cache: WeakKeyDictionary[Any, tuple[str, ...]] = WeakKeyDictionary()
+        self._quarantine_client_bound = False
+        self._quarantine_client_override: SupportsChatGetResponse | None = None
         self._initialize_security_scope(security_scope, session_state_key=session_state_key)
 
     def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
@@ -3364,15 +3366,11 @@ class SecureAgentConfig(ContextProvider):
         auto_hide_untrusted: Whether to automatically hide untrusted content.
 
     Note:
-        The quarantine chat client is stored per-instance (see ``get_quarantine_client``)
-        but is *also* registered in a single process-global slot via
-        ``set_quarantine_client``. The ``quarantined_llm`` tool always reads that global
-        slot, so the behavior is **last-writer-wins**: when multiple ``SecureAgentConfig``
-        instances are constructed in the same process with different ``quarantine_chat_client``
-        values, the most recently constructed instance's client is the one every agent's
-        ``quarantined_llm`` tool will use. Running multiple instances is supported, but they
-        share this one global quarantine client rather than each using their own. If you need
-        distinct quarantine clients per agent, run them in separate processes.
+        During calls mediated by this config's label-tracking middleware,
+        ``quarantined_llm`` uses this config's ``quarantine_chat_client``.
+        An explicitly missing client cannot inherit one from another config.
+        Direct standalone calls without an active config retain the legacy
+        process-global fallback configured by ``set_quarantine_client``.
 
     Examples:
         .. code-block:: python
@@ -3433,9 +3431,8 @@ class SecureAgentConfig(ContextProvider):
                 If provided, the quarantined_llm tool will make actual isolated LLM calls
                 instead of returning placeholder responses. This client should ideally be
                 a separate instance using a cheaper model (e.g., gpt-4o-mini) since it
-                processes untrusted content. Note: this client is registered in a
-                process-global slot shared by all instances (last-writer-wins); see the
-                class docstring for details on running multiple instances.
+                processes untrusted content. Scoped agent calls use this client;
+                standalone calls retain the legacy process-global fallback.
             source_id: Optional source identifier for context provider attribution.
                 Defaults to "secure_agent".
 
@@ -3492,14 +3489,23 @@ class SecureAgentConfig(ContextProvider):
             raise ValueError("Security provider state must be a dictionary.")
         return _SecurityScope(cast(dict[str, Any], provider_state), scope_id=session.session_id)
 
+    def _bind_quarantine_client_to_stack(self, middleware_stack: list[FunctionMiddleware]) -> list[FunctionMiddleware]:
+        """Bind this config's client to each active tracker, including replacements."""
+        for middleware in middleware_stack:
+            if isinstance(middleware, LabelTrackingFunctionMiddleware):
+                middleware._quarantine_client_bound = True  # pyright: ignore[reportPrivateUsage]
+                middleware._quarantine_client_override = self._quarantine_chat_client  # pyright: ignore[reportPrivateUsage]
+        return middleware_stack
+
     def _middleware_for_scope(self, scope: _SecurityScope) -> list[FunctionMiddleware]:
         """Clone the current overridable middleware stack into one scope."""
-        return [
+        scoped = [
             middleware._clone_for_scope(scope)  # pyright: ignore[reportPrivateUsage]
             if isinstance(middleware, (LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware))
             else middleware
             for middleware in self.get_middleware()
         ]
+        return self._bind_quarantine_client_to_stack(scoped)
 
     def _function_middleware_for_approval_resolution(self, session: AgentSession) -> list[FunctionMiddleware]:
         """Return provider-customized middleware bound to one restored session scope."""
@@ -3557,7 +3563,7 @@ class SecureAgentConfig(ContextProvider):
         middleware: list[FunctionMiddleware] = [self.label_tracker]
         if self.policy_enforcer:
             middleware.append(self.policy_enforcer)
-        return middleware
+        return self._bind_quarantine_client_to_stack(middleware)
 
     def get_audit_log(self, session: AgentSession | None = None) -> list[dict[str, Any]]:
         """Get the audit log for an optional session.
@@ -3974,7 +3980,12 @@ async def quarantined_llm(
     actual_metadata = metadata or {}
 
     # Build the response - use real LLM if quarantine client is configured
-    quarantine_client = get_quarantine_client()
+    # Scoped security middleware wins, including an explicitly missing client.
+    quarantine_client = (
+        middleware._quarantine_client_override  # pyright: ignore[reportPrivateUsage]
+        if middleware is not None and middleware._quarantine_client_bound  # pyright: ignore[reportPrivateUsage]
+        else get_quarantine_client()
+    )
 
     if quarantine_client is not None:
         # Build the quarantined prompt with retrieved content

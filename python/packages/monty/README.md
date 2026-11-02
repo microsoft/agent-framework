@@ -195,12 +195,22 @@ codeact = MontyCodeActProvider(
   after each `execute_code` call and returned as `Content.from_data(...)`
   attachments (with a `path` annotation in `additional_properties`),
   mirroring Hyperlight's `/output` flow.
+- Capture is limited to **20 files and 20 MiB of raw file data per call across
+  all read-write mounts**, with a **5 MiB per-file limit**. Empty files count
+  toward the file limit. Files that do not fit the remaining byte budget are
+  skipped; later smaller files can still be captured. Exact fits are accepted.
+  Returned base64 data and Python objects add memory overhead beyond the raw
+  byte budget.
+- Files omitted by capture limits produce one text summary, not one warning
+  per file. Omission does not undo filesystem writes. These limits bound
+  attachment capture, not filesystem traversal, disk use, or all host memory.
 - `overlay` mounts buffer writes in memory (nothing leaks to the host and
   nothing is captured). `read-only` mounts reject writes.
 - **`resource_limits`** is forwarded straight to Monty's
   [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
   (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
-  `max_suspensions`).
+  `max_suspensions`). These interpreter limits do not independently bound
+  host-side post-execution attachment capture.
 
 ## DSL inside `execute_code`
 

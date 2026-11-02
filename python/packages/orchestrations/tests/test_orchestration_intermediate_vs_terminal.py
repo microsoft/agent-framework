@@ -446,9 +446,10 @@ async def test_group_chat_intermediate_output_from_surface_as_intermediate() -> 
 
 
 def test_handoff_builder_designates_every_participant_as_output() -> None:
-    """Handoff has no intermediate channel — every participant's reply is a primary
-    output. The builder must designate all participants in the workflow's
-    output designation so each per-agent yield surfaces as type='output'.
+    """By default, every Handoff participant's reply is Workflow Output.
+
+    The builder must designate all participants so each per-agent yield
+    surfaces as type='output'.
 
     Structural assertion (vs end-to-end) because Handoff agents require a full
     chat-client/middleware stack that we don't want to reproduce in this contract test.

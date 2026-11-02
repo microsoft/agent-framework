@@ -488,6 +488,8 @@ class RawOpenAIChatCompletionClient(
         )
 
         self.client = client
+        self._owns_client = async_client is None
+        self._client_closed = False
         self.model: str = settings.get("model") or ""
 
         # Store configuration for serialization
@@ -1414,6 +1416,13 @@ class RawOpenAIChatCompletionClient(
             case _:
                 logger.debug("Unsupported content type passed (type: %s)", content.type)
                 return {}
+
+    @override
+    async def close(self) -> None:
+        """Close the connector-owned SDK connection, not caller-supplied credentials."""
+        if self._owns_client and not self._client_closed:
+            await self.client.close()
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:

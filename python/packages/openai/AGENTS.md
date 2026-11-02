@@ -61,6 +61,14 @@ Both default to `None` (no-op → byte-identical stock OpenAI behavior) and are 
 **both**: the parser surfaces the field for display, the preparer sends it back. Prefer a dedicated
 client (e.g. `agent-framework-mistral`) when an endpoint diverges substantially.
 
+## Adapting the embedding client to OpenAI-compatible endpoints
+
+`RawOpenAIEmbeddingClient.get_embeddings` forwards only the OpenAI embedding schema (`dimensions`,
+`encoding_format`, `user`) and drops other option keys. A dedicated client for an OpenAI-compatible
+service overrides `_prepare_extra_request_options(options)` to return extra `embeddings.create`
+keyword arguments, typically `extra_body`, and to raise `ValueError` for invalid values. It runs
+before the request is marked or sent. `agent-framework-nvidia` uses it for `input_type` and `truncate`.
+
 Native Responses and Chat Completions refusals remain ordinary text content with the experimental
 `additional_properties["model_output_kind"] == "refusal"` marker. Assistant history reconstructs
 the provider's native refusal field without splitting mixed text/refusal turns; non-assistant
@@ -69,7 +77,9 @@ marked text is sent as ordinary input text.
 Responses citations remain `Content.annotations`, including annotation-only updates parsed from completed
 text parts and output messages. Streaming deduplication is request-local and keyed by item ID, content index,
 and annotation index, so separate references to the same URL remain distinct. `_parse_chunk_from_openai` retains
-the signature overridden by released Foundry clients.
+the signature overridden by released Foundry clients. When assistant history is serialized back to Responses,
+only content-coordinate annotation regions become output-text spans; source-coordinate regions remain framework
+metadata and must not be interpreted as generated-text offsets.
 
 ## Dependencies
 

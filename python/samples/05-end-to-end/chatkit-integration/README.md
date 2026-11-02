@@ -133,7 +133,7 @@ async for event in stream_widget(thread_id=thread.id, widget=widget):
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.11–3.15
 - Node.js 18.18+ and npm 9+
 - Azure OpenAI service configured
 - Azure CLI for authentication (`az login`)

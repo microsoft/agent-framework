@@ -243,6 +243,27 @@ class BaseToolExecutor(DeclarativeActionExecutor):
 
         return None
 
+    def _registered_tool_requires_approval(
+        self,
+        function_name: str,
+        ctx: WorkflowContext[Any, Any],
+    ) -> bool:
+        """Check whether the registered tool requires approval on every invocation.
+
+        A tool registered with ``approval_mode="always_require"`` must not run
+        without approval, even when the action omits ``requireApproval`` or sets
+        it to false.
+
+        Args:
+            function_name: Name of the function
+            ctx: Workflow context
+
+        Returns:
+            True if the registered tool requires approval, False otherwise
+        """
+        tool = self._get_tool(function_name, ctx)
+        return getattr(tool, "approval_mode", None) == "always_require"
+
     def _get_output_config(self) -> tuple[str | None, str | None, Any]:
         """Parse output bindings and the unevaluated autoSend setting.
 
@@ -433,7 +454,8 @@ class BaseToolExecutor(DeclarativeActionExecutor):
     ) -> None:
         """Handle the tool invocation with optional approval flow.
 
-        When requireApproval=true:
+        When requireApproval=true, or the registered tool has
+        approval_mode="always_require":
         1. Saves invocation state to State (keyed by executor ID)
         2. Emits ToolApprovalRequest via ctx.request_info()
         3. Workflow yields (returns without ActionComplete)
@@ -477,10 +499,11 @@ class BaseToolExecutor(DeclarativeActionExecutor):
             for key, value in arguments_def.items():  # type: ignore[reportUnknownVariableType]
                 arguments[key] = state.eval_if_expression(value)
 
-        # Check if approval is required
+        # Check if approval is required. The action's requireApproval cannot
+        # override a registered tool's approval_mode="always_require".
         require_approval = self._action_def.get("requireApproval", False)
 
-        if require_approval:
+        if require_approval or self._registered_tool_requires_approval(function_name, ctx):
             # Emit approval request - the request payload is the source of
             # truth for resumed invocation; no side-channel state is written.
             request_id = str(uuid.uuid4())

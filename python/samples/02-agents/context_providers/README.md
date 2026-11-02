@@ -43,7 +43,7 @@ These samples demonstrate how to use context providers to enrich agent conversat
 **For `azure_ai_foundry_memory.py`:**
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: Chat/responses model deployment name
-- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`: Embedding model deployment name (e.g., `text-embedding-ada-002`)
+- `AZURE_OPENAI_EMBEDDING_MODEL`: Embedding model deployment name (e.g., `text-embedding-ada-002`)
 - Azure CLI authentication (`az login`)
 
 **For `file_memory_provider.py`:**

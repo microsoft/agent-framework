@@ -1326,6 +1326,34 @@ async def test_workflow_participant_tool_call_emits_standard_tool_events() -> No
     ]
 
 
+@pytest.mark.parametrize("intermediate", [False, True])
+async def test_workflow_metadata_only_updates_do_not_emit_custom_output(intermediate: bool) -> None:
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]) -> None:
+        del message
+        update = AgentResponseUpdate(additional_properties={"custom": {"metadata": "only"}})
+        await ctx.yield_output(update)
+
+    workflow = WorkflowBuilder(
+        start_executor=participant,
+        output_from=[] if intermediate else [participant],
+        intermediate_output_from=[participant] if intermediate else [],
+    ).build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "Test"}]},
+            workflow,
+        )
+    ]
+
+    assert not [
+        event for event in events if event.type == "CUSTOM" and getattr(event, "name", None) == "workflow_output"
+    ]
+    assert not [event for event in events if event.type == "RUN_ERROR"]
+    assert events[-1].type == "RUN_FINISHED"
+
+
 async def test_workflow_stream_reconciles_result_from_final_response() -> None:
     """A final response should complete, but not repeat, its exposed tool call."""
     function_call = Content.from_function_call(

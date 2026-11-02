@@ -42,7 +42,11 @@ from .exceptions import (
 )
 
 _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
-    "._agent_hooks": ("create_agent_hooks_middleware", "create_agent_hooks_middleware_from_emitter"),
+    "._agent_hooks": (
+        "create_agent_hooks_middleware",
+        "create_agent_hooks_middleware_from_declaration",
+        "create_agent_hooks_middleware_from_emitter",
+    ),
     "._agents": ("Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"),
     "._clients": (
         "BaseChatClient",
@@ -69,6 +73,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "SUMMARIZED_BY_SUMMARY_ID_KEY",
         "SUMMARY_OF_GROUP_IDS_KEY",
         "SUMMARY_OF_MESSAGE_IDS_KEY",
+        "AgentTriggeredCompactionStrategy",
         "CharacterEstimatorTokenizer",
         "CompactionProvider",
         "CompactionStrategy",
@@ -80,6 +85,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "TokenizerProtocol",
         "ToolResultCompactionStrategy",
         "TruncationStrategy",
+        "UnloadSkillsCompactionStrategy",
         "annotate_message_groups",
         "apply_compaction",
         "included_messages",
@@ -452,6 +458,7 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
+    "AgentTriggeredCompactionStrategy",
     "AggregatingSkillsSource",
     "Annotation",
     "BackgroundAgentsProvider",
@@ -645,6 +652,7 @@ __all__ = [
     "ToolTypes",
     "TruncationStrategy",
     "TypeCompatibilityError",
+    "UnloadSkillsCompactionStrategy",
     "UpdateT",
     "UsageDetails",
     "UserInputRequiredException",
@@ -682,6 +690,7 @@ __all__ = [
     "background_tasks_running_message",
     "chat_middleware",
     "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_declaration",
     "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",

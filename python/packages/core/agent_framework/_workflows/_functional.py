@@ -128,6 +128,18 @@ class _WorkflowTaskFactoryState:
             task = asyncio.Task(_tracked_coro(), loop=loop, **kwargs)
         else:
             task = self.original_factory(loop, _tracked_coro(), **kwargs)
+
+        def _close_unstarted_coro(completed: asyncio.Future[Any]) -> None:
+            # Cancellation can prevent the tracking wrapper from ever entering
+            # the coroutine it owns, so the wrapper cannot close it itself.
+            if (
+                completed.cancelled()
+                and inspect.iscoroutine(coro)
+                and inspect.getcoroutinestate(coro) == inspect.CORO_CREATED
+            ):
+                coro.close()
+
+        task.add_done_callback(_close_unstarted_coro)
         _register(task)
         return task
 
@@ -696,6 +708,12 @@ class RunContext:
         self._workflow_tasks: set[asyncio.Future[Any]] = set()
         # Tasks explicitly cancelled by framework cleanup.
         self._framework_cancelled_tasks: set[asyncio.Future[Any]] = set()
+        # In-flight per-step checkpoint saves. Cleanup waits for these instead of
+        # cancelling them, so a completed step's checkpoint lands even when the run
+        # is torn down (e.g. a sibling branch fails).
+        self._checkpoint_save_tasks: set[asyncio.Future[str]] = set()
+        # Caller cancellation also applies to steps finishing during teardown.
+        self._caller_cancelled = False
         # Parent task for each tracked workflow task.
         self._workflow_task_parents: dict[asyncio.Future[Any], asyncio.Task[Any] | None] = {}
         # Tasks that have entered at least one @step wrapper.
@@ -1065,13 +1083,44 @@ class RunContext:
                 current = self._workflow_task_parents.get(current)
         return None
 
+    def _cancel_checkpoint_saves(self) -> None:
+        """Stop existing and future per-step saves after caller cancellation."""
+        self._caller_cancelled = True
+        for save_task in list(self._checkpoint_save_tasks):
+            save_task.cancel()
+
     async def _cancel_workflow_tasks(self) -> None:
         """Cancel and drain all tracked workflow tasks."""
+        cancellation: asyncio.CancelledError | None = None
+        while True:
+            try:
+                await self._drain_workflow_tasks()
+            except asyncio.CancelledError as exc:
+                # Caller cancellation can arrive after sibling-failure cleanup
+                # has started. Keep it effective throughout the remaining drain.
+                cancellation = exc
+                self._cancel_checkpoint_saves()
+            else:
+                break
+        if cancellation is not None:
+            raise cancellation
+
+    async def _drain_workflow_tasks(self) -> None:
+        """Drain tracked tasks, protecting saves during framework-owned cleanup."""
         current_task = asyncio.current_task()
         while pending := [task for task in self._workflow_tasks if task is not current_task and not task.done()]:
+            # Storage adapters may create tasks of their own (including via
+            # gather). Protect the whole in-flight save subtree, not just its
+            # root, or cancelling a child still aborts the shielded save.
+            save_tasks: set[asyncio.Future[Any]] = set(self._checkpoint_save_tasks)
+            while True:
+                previous_count = len(save_tasks)
+                save_tasks.update(task for task, parent in self._workflow_task_parents.items() if parent in save_tasks)
+                if len(save_tasks) == previous_count:
+                    break
             waiting_for_existing_cancellation = False
             for task in pending:
-                if task in self._framework_cancelled_tasks:
+                if task in self._framework_cancelled_tasks or task in save_tasks:
                     continue
                 if self._has_pending_cancellation(task):
                     waiting_for_existing_cancellation = True
@@ -1080,10 +1129,15 @@ class RunContext:
             if waiting_for_existing_cancellation:
                 await asyncio.sleep(0)
                 continue
-            await asyncio.gather(*pending, return_exceptions=True)
+            # Checkpoint saves are awaited, not cancelled: a completed step's
+            # checkpoint must land before the run is torn down, whatever storage
+            # is configured.
+            # Observe caller cancellation before a step can suppress it while
+            # returning from its own cancellation cleanup.
+            await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
         tasks = [task for task in self._workflow_tasks if task is not current_task]
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.shield(asyncio.gather(*tasks, return_exceptions=True))
 
     @staticmethod
     def _has_pending_cancellation(task: asyncio.Future[Any]) -> bool:
@@ -1107,6 +1161,7 @@ class RunContext:
         current_task = asyncio.current_task()
         settled_tasks = self._pause_owned_tasks
         inspected_tasks: set[asyncio.Future[Any]] = set()
+        cancellation_from_settled_task = False
 
         def _pending_owned_tasks() -> list[asyncio.Future[Any]]:
             self._expand_pause_owned_tasks()
@@ -1120,6 +1175,7 @@ class RunContext:
             return pending
 
         def _raise_completed_failure() -> None:
+            nonlocal cancellation_from_settled_task
             for task in settled_tasks:
                 if task in inspected_tasks or not task.done():
                     continue
@@ -1150,6 +1206,7 @@ class RunContext:
                             and self._get_new_descendant_interruption(cast(asyncio.Task[Any], task), {}) is interruption
                         ):
                             continue
+                        cancellation_from_settled_task = True
                         raise
                 if task in self._pause_failure_boundaries:
                     if self._pause_boundary_was_handled(task):
@@ -1182,7 +1239,13 @@ class RunContext:
             await self._cancel_workflow_tasks()
             if propagate_failures:
                 _raise_completed_failure()
-        except BaseException:
+        except BaseException as exc:
+            if (
+                isinstance(exc, asyncio.CancelledError)
+                and not isinstance(exc, WorkflowInterrupted)
+                and not cancellation_from_settled_task
+            ):
+                self._cancel_checkpoint_saves()
             await self._cancel_workflow_tasks()
             raise
 
@@ -2150,7 +2213,36 @@ class FunctionalWorkflow:
         if storage is not None:
 
             async def _on_step_completed() -> None:
-                ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                if ctx._caller_cancelled:
+                    return
+                # Build the checkpoint before yielding to the event loop: a
+                # ready sibling could mutate ctx state before a task scheduled
+                # here gets to run, snapshotting state from work that did not
+                # complete. A save that has started must still finish if the
+                # step is cancelled because a sibling branch fails the run: a
+                # storage whose save awaits I/O before writing would otherwise
+                # lose the completed step's result, and a resumed run would
+                # re-run the step and its side effects. The save runs as its own
+                # task that cleanup waits for instead of cancelling; both awaits
+                # use asyncio.shield so a cancellation of this step task cannot
+                # reach the save through the await.
+                checkpoint = self._build_checkpoint(ctx, ckpt_chain[0])
+                save_task = asyncio.ensure_future(storage.save(checkpoint))
+                ctx._checkpoint_save_tasks.add(save_task)
+                save_task.add_done_callback(ctx._checkpoint_save_tasks.discard)
+                try:
+                    ckpt_chain[0] = await asyncio.shield(save_task)
+                except asyncio.CancelledError:
+                    try:
+                        ckpt_chain[0] = await asyncio.shield(save_task)
+                    except asyncio.CancelledError:
+                        raise
+                    except BaseException:
+                        logger.warning(
+                            "Checkpoint save failed while draining after cancellation",
+                            exc_info=True,
+                        )
+                    raise
 
             ctx._on_step_completed = _on_step_completed
 
@@ -2324,8 +2416,8 @@ class FunctionalWorkflow:
             try:
                 await asyncio.wait({workflow_task})
             except BaseException:
+                ctx._cancel_checkpoint_saves()
                 ctx._cancel_workflow_task(workflow_task)
-                await asyncio.gather(workflow_task, return_exceptions=True)
                 await ctx._cancel_workflow_tasks()
                 raise
 
@@ -2376,24 +2468,31 @@ class FunctionalWorkflow:
     # Checkpoint helpers
     # ------------------------------------------------------------------
 
-    async def _save_checkpoint(
+    def _build_checkpoint(
         self,
         ctx: RunContext,
-        storage: CheckpointStorage,
         previous_checkpoint_id: str | None = None,
-    ) -> str:
-        state = dict(ctx._state)
+    ) -> WorkflowCheckpoint:
+        state = _snapshot_workflow_state(ctx._state)
         state["_step_cache"] = ctx._export_step_cache()
         state["_step_cache_auto_request_info_counts"] = ctx._export_step_cache_auto_request_info_counts()
         state["_original_message"] = self._last_message
 
-        checkpoint = WorkflowCheckpoint(
+        return WorkflowCheckpoint(
             workflow_name=self.name,
             graph_signature_hash=self.graph_signature_hash,
             previous_checkpoint_id=previous_checkpoint_id,
             state=state,
             pending_request_info_events=dict(ctx._pending_requests),
         )
+
+    async def _save_checkpoint(
+        self,
+        ctx: RunContext,
+        storage: CheckpointStorage,
+        previous_checkpoint_id: str | None = None,
+    ) -> str:
+        checkpoint = self._build_checkpoint(ctx, previous_checkpoint_id)
         return await storage.save(checkpoint)
 
     def _compute_signature_hash(

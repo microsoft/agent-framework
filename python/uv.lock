@@ -55,6 +55,7 @@ members = [
     "agent-framework-mistral",
     "agent-framework-mongodb",
     "agent-framework-monty",
+    "agent-framework-nvidia",
     "agent-framework-ollama",
     "agent-framework-openai",
     "agent-framework-oracle",
@@ -116,7 +117,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.23.0"
+version = "1.24.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"] },
@@ -153,7 +154,7 @@ requires-dist = [{ name = "agent-framework-core", extras = ["all"], editable = "
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "agent-hooks-sdk", specifier = ">=0.1.0a4,<0.2" },
+    { name = "agent-hooks-sdk", specifier = ">=0.1.0b2,<0.2" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.8.10,<2" },
     { name = "mcp" },
     { name = "opentelemetry-sdk" },
@@ -176,7 +177,7 @@ tool-runtime = [
 
 [[package]]
 name = "agent-framework-a2a"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/a2a" }
 dependencies = [
     { name = "a2a-sdk" },
@@ -199,7 +200,7 @@ test = [{ name = "agent-framework-orchestrations", editable = "packages/orchestr
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.7.0"
+version = "1.7.1"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -241,7 +242,7 @@ test = [{ name = "agent-framework-orchestrations", editable = "packages/orchestr
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -268,7 +269,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-azure-ai-search"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/azure-ai-search" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -285,7 +286,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-contentunderstanding"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/azure-contentunderstanding" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -300,13 +301,13 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
     { name = "aiohttp", specifier = ">=3.9,<4" },
-    { name = "azure-ai-contentunderstanding", specifier = ">=1.2.0b2,<2" },
+    { name = "azure-ai-contentunderstanding", specifier = ">=1.2.0b3,<2" },
     { name = "filetype", specifier = ">=1.2,<2" },
 ]
 
 [[package]]
 name = "agent-framework-azure-cosmos"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/azure-cosmos" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -354,7 +355,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-azure-documentdb"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/azure-documentdb" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -364,7 +365,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "pymongo", specifier = ">=4.13,<5" },
+    { name = "pymongo", specifier = ">=4.15,<5" },
 ]
 
 [[package]]
@@ -384,7 +385,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-bedrock"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/bedrock" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -401,7 +402,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-chatkit"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/chatkit" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -416,7 +417,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-claude"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/claude" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -426,12 +427,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.46,<0.3" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.140,<0.3" },
 ]
 
 [[package]]
 name = "agent-framework-copilotstudio"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/copilotstudio" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -450,7 +451,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.23.0"
+version = "1.24.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "msgspec" },
@@ -504,6 +505,13 @@ dev = [
     { name = "opentelemetry-exporter-otlp" },
     { name = "types-pyyaml" },
 ]
+test = [
+    { name = "agent-framework-azurefunctions" },
+    { name = "agent-framework-durabletask" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "tenacity" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -555,10 +563,17 @@ dev = [
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.39.0,<2" },
     { name = "types-pyyaml", specifier = ">=6.0,<7.0" },
 ]
+test = [
+    { name = "agent-framework-azurefunctions", specifier = ">=1.0.0b260922,<2" },
+    { name = "agent-framework-durabletask", specifier = ">=1.0.0b260922,<2" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "openai", specifier = ">=2.25.0,<4" },
+    { name = "tenacity", specifier = ">=9.1.4,<9.2.0" },
+]
 
 [[package]]
 name = "agent-framework-declarative"
-version = "1.4.0"
+version = "1.4.1"
 source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -572,6 +587,9 @@ dependencies = [
 dev = [
     { name = "types-pyyaml" },
 ]
+test = [
+    { name = "tenacity" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -584,10 +602,11 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "types-pyyaml", specifier = "==6.0.12.20260906" }]
+test = [{ name = "tenacity", specifier = ">=9.1.4,<9.2.0" }]
 
 [[package]]
 name = "agent-framework-devui"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/devui" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -625,7 +644,7 @@ provides-extras = ["dev", "all"]
 
 [[package]]
 name = "agent-framework-duckdb"
-version = "1.0.0a261022"
+version = "1.0.0a261030"
 source = { editable = "packages/duckdb" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -658,7 +677,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.15.0"
+version = "1.16.0"
 source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -667,6 +686,11 @@ dependencies = [
     { name = "azure-ai-inference" },
     { name = "azure-ai-projects" },
     { name = "httpx" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-ag-ui" },
 ]
 
 [package.metadata]
@@ -679,9 +703,12 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
 ]
 
+[package.metadata.requires-dev]
+test = [{ name = "agent-framework-ag-ui", editable = "packages/ag-ui" }]
+
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -691,6 +718,13 @@ dependencies = [
     { name = "httpx" },
     { name = "httpx2" },
     { name = "mcp" },
+    { name = "tenacity" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-ag-ui" },
+    { name = "agent-framework-foundry" },
 ]
 
 [package.metadata]
@@ -702,11 +736,18 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "httpx2", specifier = ">=2.0.0,<3" },
     { name = "mcp", specifier = ">=2.2.0,<3" },
+    { name = "tenacity", specifier = ">=9.1.4,<9.2.0" },
+]
+
+[package.metadata.requires-dev]
+test = [
+    { name = "agent-framework-ag-ui", editable = "packages/ag-ui" },
+    { name = "agent-framework-foundry", editable = "packages/foundry" },
 ]
 
 [[package]]
 name = "agent-framework-foundry-local"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/foundry_local" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -723,7 +764,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -738,7 +779,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-github-copilot"
-version = "2.1.0"
+version = "2.1.1"
 source = { editable = "packages/github_copilot" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -753,7 +794,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/hosting" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -764,7 +805,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-hosting-a2a"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/hosting-a2a" }
 dependencies = [
     { name = "a2a-sdk" },
@@ -781,7 +822,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-mcp"
-version = "1.0.0a261022"
+version = "1.0.0a261030"
 source = { editable = "packages/hosting-mcp" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -800,7 +841,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-responses"
-version = "1.0.0a261022"
+version = "1.0.0a261030"
 source = { editable = "packages/hosting-responses" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -829,7 +870,7 @@ test = [
 
 [[package]]
 name = "agent-framework-hosting-telegram"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/hosting-telegram" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -844,7 +885,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hyperlight"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/hyperlight" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -863,7 +904,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-mem0"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/mem0" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -878,7 +919,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-mistral"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/mistral" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -893,7 +934,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-mongodb"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/mongodb" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -903,12 +944,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "pymongo", specifier = ">=4.13.2,<5" },
+    { name = "pymongo", specifier = ">=4.15,<5" },
 ]
 
 [[package]]
 name = "agent-framework-monty"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/monty" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -922,12 +963,44 @@ requires-dist = [
 ]
 
 [[package]]
+name = "agent-framework-nvidia"
+version = "1.0.0a261030"
+source = { editable = "packages/nvidia" }
+dependencies = [
+    { name = "agent-framework-core" },
+    { name = "agent-framework-openai" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "httpx" },
+    { name = "httpx2" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-openai", editable = "packages/openai" },
+]
+
+[package.metadata.requires-dev]
+test = [
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx2", specifier = ">=2.0.0,<3" },
+]
+
+[[package]]
 name = "agent-framework-ollama"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/ollama" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "ollama" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "openai" },
 ]
 
 [package.metadata]
@@ -936,13 +1009,21 @@ requires-dist = [
     { name = "ollama", specifier = ">=0.5.3,<0.5.4" },
 ]
 
+[package.metadata.requires-dev]
+test = [{ name = "openai", specifier = ">=2.25.0,<4" }]
+
 [[package]]
 name = "agent-framework-openai"
-version = "1.17.0"
+version = "1.18.0"
 source = { editable = "packages/openai" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "openai" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-ag-ui" },
 ]
 
 [package.metadata]
@@ -951,9 +1032,12 @@ requires-dist = [
     { name = "openai", specifier = ">=2.25.0,<4" },
 ]
 
+[package.metadata.requires-dev]
+test = [{ name = "agent-framework-ag-ui", editable = "packages/ag-ui" }]
+
 [[package]]
 name = "agent-framework-oracle"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/oracle" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -963,12 +1047,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "oracledb", specifier = ">=2.2.0,<4" },
+    { name = "oracledb", specifier = ">=3.0.0,<4" },
 ]
 
 [[package]]
 name = "agent-framework-orchestrations"
-version = "1.4.0"
+version = "1.4.1"
 source = { editable = "packages/orchestrations" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -979,7 +1063,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-postgres"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/postgres" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -997,7 +1081,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-purview"
-version = "1.0.0b261015"
+version = "1.0.0b261030"
 source = { editable = "packages/purview" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1014,7 +1098,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-qdrant"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/qdrant" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1029,7 +1113,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-redis"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/redis" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1049,7 +1133,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-sql-server"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/sql-server" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1064,7 +1148,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-tools"
-version = "1.0.0b261022"
+version = "1.0.0b261030"
 source = { editable = "packages/tools" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -1079,7 +1163,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-typesafe"
-version = "1.0.0a261015"
+version = "1.0.0a261030"
 source = { editable = "packages/typesafe" }
 dependencies = [
     { name = "agent-framework-core" },

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import inspect
 from unittest.mock import MagicMock, patch
 
@@ -81,6 +83,23 @@ def test_agent_accepts_foundry_local_client(mock_foundry_local_manager: MagicMoc
 
     agent = Agent(client=client, instructions="test agent")
     assert agent.client is client
+
+
+async def test_foundry_local_context_closes_connection_not_service(mock_foundry_local_manager: MagicMock) -> None:
+    with patch(
+        "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
+        return_value=mock_foundry_local_manager,
+    ):
+        client = FoundryLocalClient(model="test-model-id")
+    with patch.object(client.client, "close", wraps=client.client.close) as close:
+        async with client as entered:
+            assert entered is client
+            assert not client.client.is_closed()
+        await client.close()
+        close.assert_awaited_once()
+    assert client.client.is_closed()
+    mock_foundry_local_manager.unload_model.assert_not_called()
+    mock_foundry_local_manager.stop_service.assert_not_called()
 
 
 def test_foundry_local_client_get_response_uses_explicit_runtime_buckets() -> None:

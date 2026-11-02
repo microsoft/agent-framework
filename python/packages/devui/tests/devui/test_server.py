@@ -635,6 +635,64 @@ def test_streaming_response_does_not_hardcode_acao_header():
         )
 
 
+def test_unsupported_conversation_item_content_returns_client_error():
+    """Posting an item whose content parts are all unsupported is a client error on an
+    existing conversation; 404 stays reserved for a missing conversation."""
+    server = _server_with_mock_agent(auth_enabled=False)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        created = client.post("/v1/conversations", json={})
+        assert created.status_code == 200
+        conversation_id = created.json()["id"]
+
+        unsupported = client.post(
+            f"/v1/conversations/{conversation_id}/items",
+            json={
+                "items": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_video", "input_video": "data:video/mp4;base64,AAAA"}],
+                    }
+                ]
+            },
+        )
+        assert unsupported.status_code == 400
+        assert "supported content" in unsupported.json()["detail"]
+
+        # An unknown role is rejected as a client error before anything is
+        # stored, so later reads of the conversation keep working.
+        bogus_role = client.post(
+            f"/v1/conversations/{conversation_id}/items",
+            json={"items": [{"type": "message", "role": "bogus", "content": "hi"}]},
+        )
+        assert bogus_role.status_code == 400
+        assert "unsupported role" in bogus_role.json()["detail"]
+        items_after = client.get(f"/v1/conversations/{conversation_id}/items")
+        assert items_after.status_code == 200
+
+        # Every role in the module's MessageRole vocabulary is accepted,
+        # including developer instructions, and reads back intact.
+        for accepted_role in ("developer", "system", "user", "assistant"):
+            posted = client.post(
+                f"/v1/conversations/{conversation_id}/items",
+                json={"items": [{"type": "message", "role": accepted_role, "content": "msg"}]},
+            )
+            assert posted.status_code == 200, accepted_role
+        listed = client.get(f"/v1/conversations/{conversation_id}/items")
+        assert listed.status_code == 200
+        roles_read_back = [item.get("role") for item in listed.json()["data"]]
+        for accepted_role in ("developer", "system", "user", "assistant"):
+            assert accepted_role in roles_read_back, accepted_role
+
+        missing = client.post(
+            "/v1/conversations/does-not-exist/items",
+            json={"items": [{"type": "message", "role": "user", "content": "hello"}]},
+        )
+        assert missing.status_code == 404
+
+
 def test_cors_default_does_not_allow_arbitrary_origin_even_on_localhost():
     """Default CORS must not echo Access-Control-Allow-Origin to arbitrary origins.
 

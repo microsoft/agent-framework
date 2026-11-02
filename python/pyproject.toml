@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.23.0"
+version = "1.24.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -24,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.23.0",
+    "agent-framework-core[all]==1.24.0",
 ]
 
 [dependency-groups]
@@ -39,7 +38,7 @@ dev = [
     "azure-monitor-opentelemetry>=1.8.10,<2",
     "mcp",
     # Optional SDK used by the agent-hooks tests and isolated source checks.
-    "agent-hooks-sdk>=0.1.0a4,<0.2",
+    "agent-hooks-sdk>=0.1.0b2,<0.2",
     "opentelemetry-sdk",
     # Task runtime used by every supported Python version.
     "poethepoet==0.49.0",
@@ -108,6 +107,7 @@ agent-framework-mem0 = { workspace = true }
 agent-framework-mistral = { workspace = true }
 agent-framework-mongodb = { workspace = true }
 agent-framework-monty = { workspace = true }
+agent-framework-nvidia = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
 agent-framework-oracle = { workspace = true }
@@ -354,10 +354,6 @@ sequence = [
 ]
 args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
 
-[tool.poe.tasks.publish]
-help = "Publish built distributions with uv."
-cmd = "uv publish"
-
 # Dependency maintenance
 [tool.poe.tasks.upgrade-dev-dependency-pins]
 help = "Repin exact workspace development dependencies and on-demand tool requirements."
@@ -388,6 +384,14 @@ args = [
 help = "Run the exhaustive workspace dependency-bound test+typing matrix, optionally scoped with -P/--package short names such as `core`."
 shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test --package \"$project\""
 args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
+
+[tool.poe.tasks.prepare-python-release]
+help = "Generate .github/release-<fulltag>.json from version changes against the same base as release validation."
+cmd = "python -m scripts.prepare_release --base-ref ${base_ref} --tag ${tag}"
+args = [
+    { name = "base_ref", options = ["-B", "--base-ref"] },
+    { name = "tag", options = ["--tag"] },
+]
 
 [tool.poe.tasks.validate-python-release]
 help = "Refresh uv.lock, then run lower/upper import probes for changed package metadata on each package closure's minimum Python."

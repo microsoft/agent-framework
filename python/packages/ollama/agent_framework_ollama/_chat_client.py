@@ -340,6 +340,8 @@ class OllamaChatClient(
         self.model = ollama_settings["model"]  # type: ignore[assignment, reportTypedDictNotRequiredAccess]
         # we can just pass in None for the host, the default is set by the Ollama package.
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
+        self._owns_client = client is None
+        self._client_closed = False
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
@@ -349,6 +351,13 @@ class OllamaChatClient(
             function_invocation_configuration=function_invocation_configuration,
         )
         self.middleware = list(self.chat_middleware)
+
+    @override
+    async def close(self) -> None:
+        """Close the owned HTTP transport; Ollama exposes no public close method."""
+        if self._owns_client and not self._client_closed:
+            await self.client._client.aclose()  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:

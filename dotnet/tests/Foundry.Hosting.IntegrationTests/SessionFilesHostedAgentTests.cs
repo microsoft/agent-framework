@@ -108,7 +108,7 @@ public sealed class SessionFilesHostedAgentTests(SessionFilesHostedAgentFixture 
             try
             {
                 // Step 3 — upload the file via the alpha AgentSessionFiles SDK to that exact session's $HOME.
-                SessionFileWriteResponse writeResponse = await sessionFiles.UploadAsync(
+                SessionFileWriteResult writeResponse = await sessionFiles.UploadAsync(
                     sessionStoragePath: TestDataFileName,
                     localPath: localPath);
 

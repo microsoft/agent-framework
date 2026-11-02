@@ -1531,6 +1531,40 @@ class _SandboxRegistry(SandboxRuntime):
         )
 
 
+def _fides_metadata_snapshot(tool_obj: FunctionTool) -> dict[str, str]:
+    """Capture FIDES metadata for compatibility-warning deduplication."""
+    properties = tool_obj.additional_properties or {}
+    return {key: repr(value) for key, value in properties.items() if key in _FIDES_TOOL_PROPERTY_KEYS}
+
+
+def _warn_unsupported_fides_tools(
+    tools: Sequence[FunctionTool],
+    warned_metadata: list[tuple[FunctionTool, dict[str, str]]],
+) -> None:
+    """Warn when newly registered or changed FIDES metadata is observed."""
+    for tool_obj in tools:
+        snapshot = _fides_metadata_snapshot(tool_obj)
+        previous = next(
+            (metadata for registered, metadata in warned_metadata if registered is tool_obj),
+            None,
+        )
+
+        if snapshot and snapshot != previous:
+            logger.warning(
+                "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                "through function middleware for calls made inside generated code. "
+                "Keep FIDES-dependent tools as direct agent tools.",
+                tool_obj.name,
+            )
+
+        warned_metadata[:] = [
+            (registered, metadata) for registered, metadata in warned_metadata if registered is not tool_obj
+        ]
+
+        if snapshot:
+            warned_metadata.append((tool_obj, snapshot))
+
+
 class HyperlightExecuteCodeTool(FunctionTool):
     """Execute Python code inside a Hyperlight sandbox.
 
@@ -1557,6 +1591,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         module: str | None = DEFAULT_HYPERLIGHT_MODULE,
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
+        _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
     ) -> None:
         normalized_description_format = _normalize_tool_description_format(tool_description_format)
         max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
@@ -1581,6 +1616,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._max_output_file_bytes = max_output_file_bytes
         self._max_output_total_bytes = max_output_total_bytes
         self._managed_tools: list[FunctionTool] = []
+        self._fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] = list(_fides_warned_metadata or [])
         self._file_mounts: dict[str, FileMount] = {}
         self._allowed_domains: dict[str, AllowedDomain] = {}
 
@@ -1623,16 +1659,12 @@ class HyperlightExecuteCodeTool(FunctionTool):
             new_tools = _collect_tools(tools)
             combined_tools = _collect_tools(self._managed_tools, new_tools)
             self._managed_tools = combined_tools
-            for tool_obj in new_tools:
-                if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
-                    tool_obj.additional_properties
-                ):
-                    logger.warning(
-                        "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
-                        "through function middleware for calls made inside generated code. "
-                        "Keep FIDES-dependent tools as direct agent tools.",
-                        tool_obj.name,
-                    )
+            self._fides_warned_metadata[:] = [
+                (registered, metadata)
+                for registered, metadata in self._fides_warned_metadata
+                if any(registered is current for current in self._managed_tools)
+            ]
+            _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
             self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -1647,12 +1679,18 @@ class HyperlightExecuteCodeTool(FunctionTool):
             if len(remaining_tools) == len(self._managed_tools):
                 raise KeyError(f"No managed tool named {name!r} is registered.")
             self._managed_tools = remaining_tools
+            self._fides_warned_metadata[:] = [
+                (registered, metadata)
+                for registered, metadata in self._fides_warned_metadata
+                if any(registered is current for current in remaining_tools)
+            ]
             self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed sandbox tools."""
         with self._state_lock:
             self._managed_tools = []
+            self._fides_warned_metadata.clear()
             self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -1735,11 +1773,16 @@ class HyperlightExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> HyperlightExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
-        file_mounts = self.get_file_mounts()
-        allowed_domains = self.get_allowed_domains()
+        with self._state_lock:
+            tools = list(self._managed_tools)
+            _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
+            warned_metadata = list(self._fides_warned_metadata)
+            file_mounts = self.get_file_mounts()
+            allowed_domains = self.get_allowed_domains()
 
         return HyperlightExecuteCodeTool(
-            tools=self.get_tools(),
+            _fides_warned_metadata=warned_metadata,
+            tools=tools,
             tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,

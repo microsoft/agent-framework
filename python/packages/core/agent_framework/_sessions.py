@@ -2467,14 +2467,38 @@ class FileHistoryProvider(HistoryProvider):
                 new_messages = filter_new_messages(existing_messages, messages)
                 if not new_messages:
                     return
+                # Check the whole batch first so a record the reader would reject never reaches
+                # the file and the existing history stays loadable. Records are encoded into one
+                # reused buffer, once to check and once to write, so memory is bounded by the
+                # largest record rather than the batch.
+                record = bytearray()
+                for message in new_messages:
+                    self._encode_msgpack_record(message, record)
                 with file_path.open("ab") as file_handle:
-                    for message in new_messages:
-                        serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
-                        file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
-                        file_handle.write(serialized)
+                    append_offset = file_handle.seek(0, os.SEEK_END)
+                    try:
+                        for message in new_messages:
+                            # Encode and check again: the bytes written must be the checked bytes,
+                            # and to_dict() may not return the same result as during the preflight.
+                            self._encode_msgpack_record(message, record)
+                            file_handle.write(len(record).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
+                            file_handle.write(record)
+                    except BaseException:
+                        # Drop any records this call already appended so the history stays loadable.
+                        file_handle.truncate(append_offset)
+                        raise
 
         async with async_lock:
             await asyncio.to_thread(_append_messages)
+
+    def _encode_msgpack_record(self, message: Message, record: bytearray) -> None:
+        """Encode ``message`` into ``record`` and reject it if the reader would refuse the record."""
+        _DEFAULT_MSGPACK_ENCODER.encode_into(message.to_dict(), record)
+        if len(record) > self._MAX_MSGPACK_RECORD_BYTES:
+            raise ValueError(
+                f"Message encodes to {len(record)} bytes, which exceeds the "
+                f"{self._MAX_MSGPACK_RECORD_BYTES}-byte MessagePack history record limit."
+            )
 
     def _read_json_messages(self, file_path: Path) -> list[Message]:
         """Read JSON Lines messages from ``file_path``."""
