@@ -5742,6 +5742,23 @@ async def test_connect_preserves_request_timeout_over_24_hours() -> None:
             assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
 
 
+async def test_connect_uses_default_read_timeout_when_request_timeout_is_none() -> None:
+    from agent_framework._mcp import _MCP_DEFAULT_READ_TIMEOUT_SECONDS
+
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        async with tool:
+            assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
+
+
 async def test_connect_revalidates_request_timeout_cleared_after_construction() -> None:
     tool = MCPStdioTool(
         name="test",
@@ -6629,7 +6646,7 @@ def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
 
 async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
-    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
+    from agent_framework._mcp import _MCP_DEFAULT_READ_TIMEOUT_SECONDS, MCP_DEFAULT_SSE_READ_TIMEOUT
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -6643,7 +6660,7 @@ async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
             http_client = tool._httpx_client
             assert http_client is not None
             assert http_client.follow_redirects is True
-            assert http_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert http_client.timeout.connect == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
             assert http_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
             assert not http_client.event_hooks["request"]
             assert mock_http_client.call_args.kwargs["http_client"]._client is http_client
@@ -10264,7 +10281,11 @@ async def test_mcp_streamable_http_tool_without_header_provider():
 
 async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
     """Test that the httpx event hook injects headers from the contextvar."""
-    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, _mcp_call_headers
+    from agent_framework._mcp import (
+        _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
+        MCP_DEFAULT_SSE_READ_TIMEOUT,
+        _mcp_call_headers,
+    )
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -10280,7 +10301,7 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
             # The tool should have created an httpx client with the event hook
             assert tool._httpx_client is not None
             assert tool._httpx_client.follow_redirects is True
-            assert tool._httpx_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert tool._httpx_client.timeout.connect == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
             assert tool._httpx_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
             hooks = tool._httpx_client.event_hooks.get("request", [])
             assert len(hooks) == 1, "Expected one request event hook"

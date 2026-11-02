@@ -248,7 +248,7 @@ _mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] =
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
 _MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
-MCP_DEFAULT_TIMEOUT = 30
+_MCP_DEFAULT_READ_TIMEOUT_SECONDS = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY = 0.1
 _MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
@@ -2471,7 +2471,11 @@ class MCPTool:
                 mcp_client = await self._exit_stack.enter_async_context(
                     Client(
                         server=self.get_mcp_client(),
-                        read_timeout_seconds=self.request_timeout,
+                        read_timeout_seconds=(
+                            self.request_timeout
+                            if self.request_timeout is not None
+                            else _MCP_DEFAULT_READ_TIMEOUT_SECONDS
+                        ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
                         log_level=log_level,
@@ -3835,7 +3839,7 @@ class MCPStdioTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``command`` and ``session``. ``request_timeout``, ``args``, ``env``, ``encoding``, and
@@ -4099,7 +4103,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``url`` and ``session``. ``request_timeout``, ``terminate_on_close``, ``http_client``,
@@ -4376,7 +4380,7 @@ class MCPStreamableHTTPTool(MCPTool):
         if http_client is None:
             http_client = AsyncClient(
                 follow_redirects=True,
-                timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                timeout=Timeout(_MCP_DEFAULT_READ_TIMEOUT_SECONDS, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
                 cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
             )
             self._httpx_client = http_client
@@ -4761,7 +4765,7 @@ class MCPWebsocketTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds.
             session: An existing MCP client session to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
