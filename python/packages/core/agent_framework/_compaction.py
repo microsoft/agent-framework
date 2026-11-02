@@ -2211,12 +2211,13 @@ def _hosted_tool_result_summary(content: Content) -> str:
         return ", ".join(details) or "result received"
 
     outputs = content.outputs
+    output_items: list[Content] = []
     if isinstance(outputs, Content):
-        output_items = [outputs]
+        output_items.append(outputs)
     elif isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, bytearray)):
-        output_items = [item for item in outputs if isinstance(item, Content)]
-    else:
-        output_items = []
+        for output in cast("Sequence[Any]", outputs):
+            if isinstance(output, Content):
+                output_items.append(output)
 
     if output_items:
         parts = []
