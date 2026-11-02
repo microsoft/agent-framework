@@ -27,4 +27,11 @@ internal sealed class McpSkillsGetResult
     [JsonPropertyName("ttlMs")]
     [JsonConverter(typeof(TimeSpanMillisecondsConverter))]
     public TimeSpan? TimeToLive { get; init; }
+
+    /// <summary>
+    /// Gets the declared cache scope, or null when the response's cacheScope field is missing or null.
+    /// </summary>
+    [JsonPropertyName("cacheScope")]
+    [JsonConverter(typeof(McpSkillCacheScopeConverter))]
+    public CacheScope? CacheScope { get; set; }
 }

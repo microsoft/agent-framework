@@ -1863,17 +1863,21 @@ public sealed partial class AgentMcpSkillsTests
     };
 
     /// <summary>
-    /// Creates an in-memory server with test handlers for listing skills, reading resources, and optionally refreshing a skill.
+    /// Creates an in-memory server with test handlers, defaulting resource scopes to public.
     /// </summary>
 #pragma warning disable MCPEXP002 // Custom extension methods require raw server request handlers.
     private static InMemoryMcpServer CreateServer(
         Func<JsonRpcRequest, CancellationToken, ValueTask<JsonNode?>> listHandler,
         Func<string, CancellationToken, ValueTask<ReadResourceResult>>? readHandler = null,
         Func<JsonRpcRequest, CancellationToken, ValueTask<JsonNode?>>? getHandler = null) =>
-        new(builder => builder.WithReadResourceHandler((request, token) =>
-            readHandler is not null
-                ? readHandler(request.Params!.Uri, token)
-                : throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound)),
+        new(builder => builder.WithReadResourceHandler(async (request, token) =>
+        {
+            ReadResourceResult result = readHandler is not null
+                ? await readHandler(request.Params!.Uri, token)
+                : throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound);
+            result.CacheScope ??= CacheScope.Public;
+            return result;
+        }),
             options =>
             {
                 options.Capabilities = new ServerCapabilities

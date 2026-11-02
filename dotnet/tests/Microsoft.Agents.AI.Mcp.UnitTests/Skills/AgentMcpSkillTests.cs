@@ -1206,8 +1206,13 @@ public sealed partial class AgentMcpSkillTests
     };
 
     /// <summary>
-    /// Creates an in-memory server using the test's resource-read handler.
+    /// Creates an in-memory server using the test's resource-read handler, defaulting scopes to public.
     /// </summary>
     private static InMemoryMcpServer CreateServer(Func<string, CancellationToken, ValueTask<ReadResourceResult>> readHandler) =>
-        new(builder => builder.WithReadResourceHandler((request, token) => readHandler(request.Params!.Uri, token)));
+        new(builder => builder.WithReadResourceHandler(async (request, token) =>
+        {
+            ReadResourceResult result = await readHandler(request.Params!.Uri, token);
+            result.CacheScope ??= CacheScope.Public;
+            return result;
+        }));
 }

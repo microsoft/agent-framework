@@ -65,6 +65,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     private readonly int _maxSkillCount;
     private readonly TimeProvider _timeProvider;
     private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
+    private readonly bool _hasIsolationKey;
     private readonly McpCache<string, IList<AgentSkill>> _catalogCache;
     private readonly ConcurrentDictionary<AgentMcpSkill, byte> _skillsToRefresh = new();
     private bool _disposed;
@@ -76,9 +77,10 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
     /// <param name="logger">Optional logger for skill validation diagnostics.</param>
     /// <param name="timeProvider">Optional clock for checking expiration.</param>
+    /// <param name="hasIsolationKey">Whether this catalog belongs to a cache partition key.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
-    public McpSkillsCatalog(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILogger? logger = null, TimeProvider? timeProvider = null)
+    public McpSkillsCatalog(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILogger? logger = null, TimeProvider? timeProvider = null, bool hasIsolationKey = false)
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
@@ -87,6 +89,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = options?.TtlResolver;
+        this._hasIsolationKey = hasIsolationKey;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
@@ -143,6 +146,33 @@ internal sealed partial class McpSkillsCatalog : IDisposable
         {
             this._skillsToRefresh.TryAdd(skill, 0);
         }
+    }
+
+    /// <summary>
+    /// Treats missing or null scopes as public and rejects private responses without a cache partition key.
+    /// </summary>
+    /// <param name="scope">The response's declared cache scope.</param>
+    /// <param name="method">The MCP method producing the response.</param>
+    /// <returns>The validated scope, or public when the scope is missing or null.</returns>
+    /// <exception cref="InvalidOperationException">The response is private and this partition has no cache partition key.</exception>
+    public CacheScope ValidateAndNormalizeCacheScope(CacheScope? scope, string method)
+    {
+        // Treat missing or null scopes as public.
+        if (scope is null)
+        {
+            LogUnspecifiedCacheScope(this._logger, method);
+            scope = CacheScope.Public;
+        }
+
+        // Private responses require an isolation key to prevent reuse across authorization contexts.
+        if (scope == CacheScope.Private && !this._hasIsolationKey)
+        {
+            throw new InvalidOperationException(
+                $"The {method} response has a private cacheScope, but no cache partition key was provided. " +
+                $"Configure {nameof(AgentMcpSkillsSourceOptions)}.{nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector)} to return a nonempty authorization-context key.");
+        }
+
+        return scope.Value;
     }
 
     /// <summary>
@@ -292,6 +322,8 @@ internal sealed partial class McpSkillsCatalog : IDisposable
             throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
         }
 
+        result.CacheScope = this.ValidateAndNormalizeCacheScope(result.CacheScope, "skills/get");
+
         // Unlike listing responses, skills/get provides a TTL for this skill,
         // allowing it to expire and refresh independently of the catalog.
         return this.CreateSkill(result.Skill, McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
@@ -350,6 +382,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
         HashSet<string> cursors = new(StringComparer.Ordinal);
         string? cursor = null;
         int pageCount = 0;
+        CacheScope? declaredScope = null;
 
         do
         {
@@ -393,6 +426,15 @@ internal sealed partial class McpSkillsCatalog : IDisposable
             {
                 throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
             }
+
+            result.CacheScope = this.ValidateAndNormalizeCacheScope(result.CacheScope, "skills/list");
+
+            if (declaredScope is { } previousScope && previousScope != result.CacheScope)
+            {
+                throw new InvalidOperationException("All skills/list pages must declare the same cacheScope.");
+            }
+
+            declaredScope = result.CacheScope;
 
             pageLifetimes.Add(McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
 
@@ -535,4 +577,10 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// </summary>
     [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ResourceDigestRegex();
+
+    /// <summary>
+    /// Logs that a response has no <c>cacheScope</c> and is treated as public.
+    /// </summary>
+    [LoggerMessage(LogLevel.Debug, "The {Method} response has a missing or null cacheScope; treating it as public.")]
+    internal static partial void LogUnspecifiedCacheScope(ILogger logger, string method);
 }

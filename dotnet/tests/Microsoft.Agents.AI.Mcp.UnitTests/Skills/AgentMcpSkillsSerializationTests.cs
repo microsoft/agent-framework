@@ -3,6 +3,7 @@
 using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
@@ -11,6 +12,78 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// </summary>
 public sealed class AgentMcpSkillsSerializationTests
 {
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("null", null)]
+    [InlineData("\"public\"", CacheScope.Public)]
+    [InlineData("\"PUBLIC\"", CacheScope.Public)]
+    [InlineData("\"private\"", CacheScope.Private)]
+    [InlineData("\"PRIVATE\"", CacheScope.Private)]
+    public void Deserialize_CacheScope_MatchesResourceSdkAndRoundTripsKnownScopes(string? json, CacheScope? expected)
+    {
+        // Arrange
+        JsonObject listing = new()
+        {
+            ["resultType"] = "complete",
+            ["skills"] = new JsonArray(),
+        };
+        JsonObject get = new()
+        {
+            ["resultType"] = "complete",
+            ["skill"] = CreateEntry(),
+        };
+        if (json is not null)
+        {
+            listing["cacheScope"] = JsonNode.Parse(json);
+            get["cacheScope"] = JsonNode.Parse(json);
+        }
+
+        // Act
+        var listResult = listing.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult);
+        var getResult = get.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult);
+        var resourceResult = listing.Deserialize<ReadResourceResult>();
+
+        // Assert
+        Assert.NotNull(listResult);
+        Assert.NotNull(getResult);
+        Assert.NotNull(resourceResult);
+        Assert.Equal(expected, listResult.CacheScope);
+        Assert.Equal(expected, getResult.CacheScope);
+        Assert.Equal(expected, resourceResult.CacheScope);
+        Assert.Equal(expected, JsonSerializer.SerializeToNode(listResult, McpSkillsJsonContext.Default.McpSkillsListResult)!
+            .Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult)!.CacheScope);
+        Assert.Equal(expected, JsonSerializer.SerializeToNode(getResult, McpSkillsJsonContext.Default.McpSkillsGetResult)!
+            .Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult)!.CacheScope);
+    }
+
+    [Theory]
+    [InlineData("\"future\"")]
+    [InlineData("\"\"")]
+    [InlineData("42")]
+    [InlineData("true")]
+    [InlineData("{\"nested\":[1,2]}")]
+    [InlineData("[{\"nested\":true}]")]
+    public void Deserialize_InvalidCacheScope_Throws(string json)
+    {
+        // Arrange
+        JsonObject listing = new()
+        {
+            ["resultType"] = "complete",
+            ["skills"] = new JsonArray(),
+            ["cacheScope"] = JsonNode.Parse(json),
+        };
+        JsonObject get = new()
+        {
+            ["resultType"] = "complete",
+            ["skill"] = CreateEntry(),
+            ["cacheScope"] = JsonNode.Parse(json),
+        };
+
+        // Act & Assert
+        Assert.Throws<JsonException>(() => listing.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult));
+        Assert.Throws<JsonException>(() => get.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult));
+    }
+
     [Theory]
     [InlineData("null", null)]
     [InlineData("0", 0L)]

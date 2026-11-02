@@ -1235,7 +1235,7 @@ public sealed partial class AgentMcpSkillsTests
         ["resultType"] = "complete",
         ["skill"] = entry,
         ["ttlMs"] = ttl,
-        ["cacheScope"] = "private",
+        ["cacheScope"] = "public",
     };
 
     /// <summary>
@@ -1247,7 +1247,7 @@ public sealed partial class AgentMcpSkillsTests
         {
             ["resultType"] = "complete",
             ["contents"] = new JsonArray(new JsonObject { ["uri"] = uri, ["text"] = text }),
-            ["cacheScope"] = "private",
+            ["cacheScope"] = "public",
         };
         if (ttl is not null)
         {

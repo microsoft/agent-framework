@@ -107,7 +107,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The <c>SKILL.md</c> resource is missing or invalid,
-    /// exceeds the size limit, has a different name or description, or fails the size or content hash check without cached content to return.</exception>
+    /// exceeds the size limit, has a different name or description, fails the size or content hash check without cached content to return,
+    /// or is private and no cache partition key is set.</exception>
     public override async ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
         McpSkillResourceEntry? skillMdResource = this._resources.FirstOrDefault(resource => string.Equals(resource.Uri, this.Uri, StringComparison.Ordinal));
@@ -135,7 +136,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The resource response is invalid, exceeds the size limit,
-    /// or fails the size or content hash check without cached content to return.</exception>
+    /// fails the size or content hash check without cached content to return,
+    /// or is private and no cache partition key is set.</exception>
     public override async ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
         Throw.IfNullOrWhitespace(name);
@@ -194,6 +196,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
 
         // Validation time consumes the TTL; network request time does not.
         long receivedTimestamp = this._timeProvider.GetTimestamp();
+
+        response.CacheScope = this._skillsCatalog.ValidateAndNormalizeCacheScope(response.CacheScope, "resources/read");
 
         ResourceContents content = this.GetValidatedResourceContent(resource, response);
         if (!this.TryVerifyResourceIntegrity(resource, content, out string? mismatch))

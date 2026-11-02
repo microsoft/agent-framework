@@ -75,6 +75,67 @@ still applies.
 
 ## Security Considerations
 
+### Sharing a source across authorization contexts
+
+According to the MCP specification, each `skills/list`, `skills/get`, and `resources/read` response must include
+a `cacheScope` field that tells the client who may reuse the cached response:
+
+- `public` - the response is the same for every caller and may be shared between them.
+- `private` - the response is specific to the caller's credentials (for example, a user or tenant)
+  and must not be shared with other callers.
+
+Not all servers follow the specification yet, so a missing or `null` `cacheScope` is treated as `public`.
+
+To keep private responses from leaking between callers, the source needs to know who the current caller is.
+By default, it doesn't: all callers share one cache, so the source accepts only public responses and throws
+`InvalidOperationException` for a private one. Each response is checked on its own, so a skill from a public
+list can still fail if its `SKILL.md` or another file is returned as private.
+
+To accept private responses, set `CachePartitionKeySelector` to return a key for the current caller, such as
+a user or tenant ID. Each key gets its own cache partition, so cached skills are never shared between keys.
+Set it whenever the server can return private responses, even if your app has only one user:
+
+```csharp
+var options = new AgentMcpSkillsSourceOptions
+{
+    CachePartitionKeySelector = context => GetApplicationAuthorizationKey(context),
+    MaxCachedPartitions = 1000,
+    PartitionSlidingExpiration = TimeSpan.FromMinutes(30),
+    PartitionAbsoluteExpiration = TimeSpan.FromHours(8),
+};
+
+using var provider = new AgentSkillsProviderBuilder()
+    .UseMcpSkills(sharedMcpClient, options)
+    .DisableCaching()
+    .Build();
+```
+
+`GetApplicationAuthorizationKey` is your own helper, not a framework API. It should return a non-empty ID
+for the caller whose credentials the MCP client sends, for example a user or tenant ID.
+Use an opaque ID, not an access token.
+
+The source only separates caches; it does not handle authentication. Your app is responsible for:
+
+- configuring the MCP client to send the current caller's credentials;
+- keeping the same caller's credentials when a returned skill later reads `SKILL.md` or other files;
+- not sharing returned skills between callers.
+
+`DisableCaching()` turns off the provider's own cache, so the source, and therefore the key selector,
+runs on every call.
+
+By default, a partition is kept for every key until the source is disposed. In services with many users,
+use the other options to limit memory:
+
+- `MaxCachedPartitions` - the maximum number of partitions to keep.
+- `PartitionSlidingExpiration` - removes a partition that has not been used for this long.
+- `PartitionAbsoluteExpiration` - removes a partition this long after it was created, even if it is still in use.
+
+When a partition is removed, the next call for its key fetches skills from the server again.
+Skills that were already returned keep working. These options don't change how long MCP responses
+are cached; use `TtlResolver` for that.
+
+### Trust and size limits
+
 Discovering skills over MCP means an external MCP server controls what skill content (including
 instructions and supporting resources) reaches the agent. A compromised or
 untrustworthy server could return adversarial content designed to manipulate the agent (indirect
