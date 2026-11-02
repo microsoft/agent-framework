@@ -25,6 +25,7 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    Self,
     TypeAlias,
     TypeGuard,
     Union,
@@ -38,7 +39,7 @@ from typing import (
 
 import msgspec
 from pydantic import BaseModel
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 from ._clients import SupportsGetEmbeddings
 from ._compaction import CompactionStrategy, TokenizerProtocol, apply_compaction

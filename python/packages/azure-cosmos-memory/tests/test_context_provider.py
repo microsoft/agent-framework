@@ -1,20 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 # pyright: reportPrivateUsage=false
-# ruff: noqa: E402
 
 """Unit tests for CosmosMemoryContextProvider with mocked dependencies."""
 
 from __future__ import annotations
 
-import pytest
-
-# The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
-# leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
-pytest.importorskip("azure.cosmos.agent_memory")
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
+import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError

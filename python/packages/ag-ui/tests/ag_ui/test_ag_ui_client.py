@@ -877,7 +877,7 @@ class TestAGUIChatClient:
 
             try:
                 if close_mode == "explicit_close":
-                    # Keep pull and close in one task; wait_for creates a child task on Python 3.10/3.11.
+                    # Keep pull and close in one task; wait_for creates a child task on Python 3.11.
                     first = await anext(stream)
                     assert isinstance(first, (ChatResponseUpdate, AgentResponseUpdate))
                     assert first.text == "first"

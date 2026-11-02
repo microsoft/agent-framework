@@ -211,8 +211,7 @@ def _runtime_class(annotation: Any) -> type | None:
     """Return the class ``isinstance`` can test *annotation* against, or ``None``.
 
     Parameterized generics such as ``dict[str, Any]`` cannot be passed to ``isinstance``
-    and are instances of ``type`` on Python 3.10 but not on later versions, so the origin
-    is always preferred. Annotations without a runtime class, such as ``Literal[...]``,
+    so the origin is always preferred. Annotations without a runtime class, such as ``Literal[...]``,
     return ``None`` so callers can skip validation instead of guessing.
     """
     if annotation is Any:
@@ -249,8 +248,7 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
         for arm in args:
             if arm is type(None):
                 continue
-            # ``isinstance`` rejects parameterized generics, and on Python 3.10 they are
-            # themselves instances of ``type``, so resolve through the origin first.
+            # Resolve parameterized generics through their origin before using isinstance.
             runtime_type = _runtime_class(arm)
             if runtime_type is None:
                 # An arm such as ``Literal[...]`` has no runtime class to test against;

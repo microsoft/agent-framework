@@ -73,10 +73,6 @@ from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import stat
+import tomllib
 from pathlib import Path
 from xml.etree import ElementTree
 
-import tomllib
 import yaml
 
 SAMPLE_ROOT = Path(__file__).parents[1]

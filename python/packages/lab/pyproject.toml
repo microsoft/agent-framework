@@ -3,7 +3,7 @@ name = "agent-framework-lab"
 description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 version = "1.0.0b261022"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
@@ -68,7 +68,6 @@ dev = [
     #tasks
     "poethepoet==0.49.0",
     "rich>=13.7.1,<16.0.0",
-    "tomli==2.5.0",
     "tomli-w==1.2.0",
     "prek==0.5.7",
 ]

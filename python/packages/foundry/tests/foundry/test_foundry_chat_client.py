@@ -183,12 +183,7 @@ def _with_foundry_debug() -> Any:
                     f"project_endpoint={os.getenv('FOUNDRY_PROJECT_ENDPOINT', '<unset>')}, "
                     f"model={os.getenv('FOUNDRY_MODEL', '<unset>')}"
                 )
-                if hasattr(exc, "add_note"):
-                    cast(Any, exc).add_note(debug_message)
-                elif exc.args:
-                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
-                else:
-                    exc.args = (debug_message,)
+                exc.add_note(debug_message)
                 raise
 
         return wrapper
