@@ -114,6 +114,11 @@ def _window_is_self_contained(window: Sequence[Message], start: int) -> bool:
     rejects an output whose call/request was trimmed away, so the retained window must keep
     each output paired with its own source, not merely contain some source somewhere.
     Non-adjacent pairs count: a result is only safe when its own call survives.
+
+    A pair the transcript cannot resolve has no source to keep. Trimming cannot repair
+    that, and holding the boundary back for it would walk the cut to the end of the list
+    and delete the session, so an unresolvable pair does not stop a cut. Only a source
+    that exists and was trimmed away orphans its output here.
     """
     kept_from = 0
     for index in range(start):
@@ -122,15 +127,13 @@ def _window_is_self_contained(window: Sequence[Message], start: int) -> bool:
             for content in window[index].contents
             if _is_source_content(content.type) or _is_deferred_output_content(content.type)
         )
-    pairs = _pair_outputs_to_sources(window)
-    kept_positions = {
-        position
-        for position in range(kept_from, sum(1 for _ in pairs) + kept_from + 1)
-    }
-    for output_position, source_position in pairs:
+    for output_position, source_position in _pair_outputs_to_sources(window):
         if output_position < kept_from:
+            # The output is trimmed away along with everything older than the window.
             continue
-        if source_position not in kept_positions:
+        if 0 <= source_position < kept_from:
+            # Its own source exists but is outside the window, so keeping the output
+            # would hand the model a result with no call.
             return False
     return True
 
@@ -469,8 +472,10 @@ class RedisHistoryProvider(HistoryProvider):
                 return
         # Every attempt aborted. Falling off the end would report success while
         # nothing was persisted, so surface the conflict that defeated the last one.
-        raise last_conflict if last_conflict is not None else RuntimeError(
-            f"Redis history save for {key!r} did not persist after {_SAVE_WATCH_RETRIES} attempts"
+        raise (
+            last_conflict
+            if last_conflict is not None
+            else RuntimeError(f"Redis history save for {key!r} did not persist after {_SAVE_WATCH_RETRIES} attempts")
         )
 
     @staticmethod

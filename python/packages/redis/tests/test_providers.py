@@ -690,9 +690,13 @@ class TestRedisHistoryProviderRedisKey:
                 application_id="app",
                 max_messages=2,
             )
-        first_call = Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")])
+        first_call = Message(
+            role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")]
+        )
         first_result = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="one")])
-        second_call = Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")])
+        second_call = Message(
+            role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")]
+        )
         mock_redis_client.llen = AsyncMock(return_value=3)
         await provider.save_messages("s", [first_call, first_result, second_call])
         # Keeping the last two would leave [first_result, second_call]: the result is
@@ -701,6 +705,80 @@ class TestRedisHistoryProviderRedisKey:
         key = provider._redis_key("s")
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
         pipeline.ltrim.assert_awaited_once_with(key, 2, -1)
+
+    async def test_trim_does_not_split_a_group_separated_by_a_plain_message(self, mock_redis_client: MagicMock) -> None:
+        # Non-adjacent pairs count. A plain assistant message between a call and its
+        # result does not end the dependency, so a cut may not land between them just
+        # because the message in between carries no tool content at all.
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=3,
+            )
+        call = Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="f", arguments="{}")])
+        note = Message(role="assistant", contents=["approval completed"])
+        result = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="ok")])
+        done = Message(role="assistant", contents=["done"])
+        mock_redis_client.llen = AsyncMock(return_value=4)
+        await provider.save_messages("s", [call, note, result, done])
+        # Keeping the last three would leave [note, result, done] and split the pair.
+        # The boundary must keep advancing past the orphaned result, so the retained
+        # window is [done] alone: the limit is a bound on what to keep, and dropping a
+        # dangling result is cheaper than handing the model a history it will reject.
+        key = provider._redis_key("s")
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.ltrim.assert_awaited_once_with(key, 3, -1)
+
+    async def test_trim_keeps_sources_that_have_no_output_of_their_own(self, mock_redis_client: MagicMock) -> None:
+        # Only outputs depend on a source, so a run of calls that were never answered
+        # costs nothing to keep. Deciding the cut from the number of outputs alone
+        # under-counted the transcript and walked the boundary past them anyway.
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=5,
+            )
+        pending = [
+            Message(role="assistant", contents=[Content.from_function_call(call_id=f"c{i}", name="f", arguments="{}")])
+            for i in range(1, 5)
+        ]
+        call = Message(role="assistant", contents=[Content.from_function_call(call_id="c5", name="f", arguments="{}")])
+        result = Message(role="tool", contents=[Content.from_function_result(call_id="c5", result="ok")])
+        await provider.save_messages("s", [*pending, call, result])
+        # Every message after the first belongs to a self-contained window, so the
+        # boundary is the first index and the four unanswered calls are kept.
+        key = provider._redis_key("s")
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.ltrim.assert_awaited_once_with(key, 1, -1)
+
+    async def test_trim_does_not_empty_history_over_an_output_with_no_source(
+        self, mock_redis_client: MagicMock
+    ) -> None:
+        # A result whose call was never stored cannot be un-orphaned by trimming:
+        # there is no source to keep. Treating that as a broken dependency walked the
+        # boundary to the end of the list and LTRIM wiped the whole session.
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=3,
+            )
+        user = Message(role="user", contents=["hi"])
+        first = Message(role="assistant", contents=["one"])
+        second = Message(role="assistant", contents=["two"])
+        stray = Message(role="tool", contents=[Content.from_function_result(call_id="gone", result="ok")])
+        await provider.save_messages("s", [user, first, second, stray])
+        # The three newest messages are kept. The stray result stays because the trim
+        # is responsible for not creating orphans, not for repairing history damage it
+        # cannot see a cause for.
+        key = provider._redis_key("s")
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.ltrim.assert_awaited_once_with(key, 1, -1)
 
     async def test_save_reads_the_watched_history_through_the_pipeline_connection(
         self, mock_redis_client: MagicMock
