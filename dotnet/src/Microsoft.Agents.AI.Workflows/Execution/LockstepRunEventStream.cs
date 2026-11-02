@@ -60,7 +60,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         using CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellationToken);
 
         // Re-establish session as parent so the run activity nests correctly.
-        Activity.Current = this._sessionActivity;
+        Activity.Current = this._sessionActivity ?? Activity.Current;
 
         using Activity? runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity(this._stepRunner.WorkflowName);
         runActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
