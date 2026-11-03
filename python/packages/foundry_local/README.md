@@ -1,6 +1,9 @@
 # Get Started with Microsoft Agent Framework Foundry Local
 
 Requires Python 3.11-3.14 and Foundry Local SDK 2.3.1 or newer, below 3.0.
+Supported platforms are Windows (x64/ARM64), Linux (x86_64/aarch64), and macOS
+(Apple Silicon/arm64). Intel macOS is not supported; the standard Agent Framework
+install skips this integration on unsupported platforms.
 Install the integration:
 
 ```bash

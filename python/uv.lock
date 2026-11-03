@@ -480,7 +480,7 @@ all = [
     { name = "agent-framework-durabletask" },
     { name = "agent-framework-foundry" },
     { name = "agent-framework-foundry-hosting" },
-    { name = "agent-framework-foundry-local" },
+    { name = "agent-framework-foundry-local", marker = "(sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'x86_64' or platform_machine == 'aarch64'))" },
     { name = "agent-framework-gemini" },
     { name = "agent-framework-github-copilot" },
     { name = "agent-framework-hyperlight", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
@@ -530,7 +530,7 @@ requires-dist = [
     { name = "agent-framework-durabletask", marker = "extra == 'all'", specifier = ">=1.0.0b260922,<2" },
     { name = "agent-framework-foundry", marker = "extra == 'all'", editable = "packages/foundry" },
     { name = "agent-framework-foundry-hosting", marker = "extra == 'all'", editable = "packages/foundry_hosting" },
-    { name = "agent-framework-foundry-local", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'all'", editable = "packages/foundry_local" },
+    { name = "agent-framework-foundry-local", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'all' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'x86_64' or platform_machine == 'aarch64')))", editable = "packages/foundry_local" },
     { name = "agent-framework-gemini", marker = "extra == 'all'", editable = "packages/gemini" },
     { name = "agent-framework-github-copilot", marker = "extra == 'all'", editable = "packages/github_copilot" },
     { name = "agent-framework-hyperlight", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'all') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'all')", editable = "packages/hyperlight" },
@@ -751,14 +751,14 @@ source = { editable = "packages/foundry_local" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "agent-framework-openai" },
-    { name = "foundry-local-sdk" },
+    { name = "foundry-local-sdk", marker = "(sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'x86_64' or platform_machine == 'aarch64'))" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-openai", editable = "packages/openai" },
-    { name = "foundry-local-sdk", specifier = ">=2.3.1,<3" },
+    { name = "foundry-local-sdk", marker = "(sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'x86_64' or platform_machine == 'aarch64'))", specifier = ">=2.3.1,<3" },
 ]
 
 [[package]]
