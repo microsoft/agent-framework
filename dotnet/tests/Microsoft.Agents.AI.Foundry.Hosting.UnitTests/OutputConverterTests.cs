@@ -883,6 +883,51 @@ public class OutputConverterTests
     }
 
     [Fact]
+    public async Task LocalMcpInvocationMap_ConcurrentRecords_PreservesEveryEntryAsync()
+    {
+        const int ConcurrentCallCount = 32;
+        const int Attempts = 10;
+
+        for (int attempt = 0; attempt < Attempts; attempt++)
+        {
+            // Arrange
+            var stateBag = new AgentSessionStateBag();
+            using var ready = new CountdownEvent(ConcurrentCallCount);
+            using var start = new ManualResetEventSlim();
+            Task[] tasks = Enumerable.Range(0, ConcurrentCallCount)
+                .Select(index => Task.Factory.StartNew(
+                    () =>
+                    {
+                        ready.Signal();
+                        start.Wait();
+                        LocalMcpInvocationMap.Record(
+                            stateBag,
+                            $"call_{index}",
+                            $"function_{index}",
+                            $"tool_{index}",
+                            "server",
+                            "{}");
+                    },
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default))
+                .ToArray();
+
+            // Act
+            bool allWorkersReady = ready.Wait(TimeSpan.FromSeconds(10));
+            start.Set();
+            Assert.True(allWorkersReady);
+            await Task.WhenAll(tasks);
+
+            // Assert
+            for (int index = 0; index < ConcurrentCallCount; index++)
+            {
+                Assert.NotNull(LocalMcpInvocationMap.Consume(stateBag, $"call_{index}"));
+            }
+        }
+    }
+
+    [Fact]
     public async Task ConvertUpdatesToEventsAsync_ApprovedToolboxResult_EmitsMcpCallAsync()
     {
         // Arrange

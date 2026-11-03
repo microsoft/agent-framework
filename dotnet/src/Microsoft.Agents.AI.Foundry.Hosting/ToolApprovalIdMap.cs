@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
@@ -415,6 +416,8 @@ internal static class LocalMcpInvocationMap
 {
     public const string StateBagKey = "Microsoft.Agents.AI.Foundry.Hosting.LocalMcpInvocationMap";
 
+    private static readonly ConditionalWeakTable<AgentSessionStateBag, object> s_gates = new();
+
     internal sealed class CallEntry
     {
         public string FunctionName { get; set; } = string.Empty;
@@ -431,36 +434,55 @@ internal static class LocalMcpInvocationMap
         string serverLabel,
         string arguments)
     {
-        var map = stateBag.GetValue<Dictionary<string, CallEntry>>(StateBagKey)
-            ?? new Dictionary<string, CallEntry>(StringComparer.Ordinal);
-        map[callId] = new CallEntry
+        lock (GetGate(stateBag))
         {
-            FunctionName = functionName,
-            ToolName = toolName,
-            ServerLabel = serverLabel,
-            Arguments = arguments,
-        };
-        stateBag.SetValue(StateBagKey, map);
+            // Copy before mutation so session serialization never observes a dictionary
+            // being changed by another concurrently invoked tool.
+            var map = stateBag.GetValue<Dictionary<string, CallEntry>>(StateBagKey) is { } existing
+                ? new Dictionary<string, CallEntry>(existing, StringComparer.Ordinal)
+                : new Dictionary<string, CallEntry>(StringComparer.Ordinal);
+            map[callId] = new CallEntry
+            {
+                FunctionName = functionName,
+                ToolName = toolName,
+                ServerLabel = serverLabel,
+                Arguments = arguments,
+            };
+            stateBag.SetValue(StateBagKey, map);
+        }
     }
 
     public static CallEntry? Consume(AgentSessionStateBag? stateBag, string callId)
     {
-        Dictionary<string, CallEntry>? map =
-            stateBag?.GetValue<Dictionary<string, CallEntry>>(StateBagKey);
-        if (map?.Remove(callId, out CallEntry? entry) is not true)
+        if (stateBag is null)
         {
             return null;
         }
 
-        if (map.Count == 0)
+        lock (GetGate(stateBag))
         {
-            stateBag!.TryRemoveValue(StateBagKey);
-        }
-        else
-        {
-            stateBag!.SetValue(StateBagKey, map);
-        }
+            Dictionary<string, CallEntry>? existing =
+                stateBag.GetValue<Dictionary<string, CallEntry>>(StateBagKey);
+            if (existing is null || !existing.TryGetValue(callId, out CallEntry? entry))
+            {
+                return null;
+            }
 
-        return entry;
+            var map = new Dictionary<string, CallEntry>(existing, StringComparer.Ordinal);
+            _ = map.Remove(callId);
+            if (map.Count == 0)
+            {
+                stateBag.TryRemoveValue(StateBagKey);
+            }
+            else
+            {
+                stateBag.SetValue(StateBagKey, map);
+            }
+
+            return entry;
+        }
     }
+
+    private static object GetGate(AgentSessionStateBag stateBag) =>
+        s_gates.GetValue(stateBag, static _ => new object());
 }
