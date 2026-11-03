@@ -110,6 +110,13 @@ using var provider = new AgentSkillsProviderBuilder()
     .Build();
 ```
 
+The builder adds a separate cache for the resolved skill list. `CacheIsolationKeySelector` above
+configures only the MCP source's internal caches, not the builder's cache. By default, the builder's
+cache can return one caller's skills to another without invoking the MCP source or its key selector.
+`DisableCaching()` removes only that outer cache; the MCP source still caches skills and resources
+within each partition. Every call reaches the source so it can select the caller's partition and
+check MCP response expiration.
+
 `GetApplicationAuthorizationKey` is your own helper, not a framework API. It should return a non-empty ID
 for the caller whose credentials the MCP client sends, for example a user or tenant ID.
 Use an opaque ID, not an access token.
@@ -119,9 +126,6 @@ The source only separates caches; it does not handle authentication. Your app is
 - configuring the MCP client to send the current caller's credentials;
 - keeping the same caller's credentials when a returned skill later reads `SKILL.md` or other files;
 - not sharing returned skills between callers.
-
-`DisableCaching()` turns off the provider's own cache, so the source, and therefore the key selector,
-runs on every call.
 
 By default, the source keeps up to 100 cache partitions. Adjust the limit or configure expiration
 to control how many partitions are kept and for how long:
