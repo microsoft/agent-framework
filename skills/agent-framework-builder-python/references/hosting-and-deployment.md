@@ -23,7 +23,9 @@ into application code.
 - Reuse an agent instance only when all mutable state is session-scoped. Otherwise use a request-owned factory.
 - Prefer native workflow hosting. A shared `workflow.as_agent()` instance can leak workflow state across requests.
 - Build fresh workflows and request-owned resources while keeping workflow and executor identities stable for
-  checkpoint restoration.
+  checkpoint restoration. A builder reused across requests returns new workflows that share its registered
+  executors, including each `AgentExecutor` and its `AgentSession`; create those executors inside the per-request
+  factory.
 - Make session, checkpoint, response, identity, approval, storage, and cleanup ownership explicit.
 
 Read the selected host's public docstrings and maintained sample for constructor options, parsers, history modes,

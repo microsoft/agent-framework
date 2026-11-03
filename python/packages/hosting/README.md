@@ -125,9 +125,24 @@ result = await (await state.get_target()).run("Hello", checkpoint_storage=storag
 latest = await storage.get_latest(workflow_name=(await state.get_target()).name)
 ```
 
-A `Workflow` instance allows only one active run. Hosts that need simultaneous
-workflow runs should pass a factory or builder and set `cache_target=False` so
-each request receives a fresh workflow instance.
+A `Workflow` instance allows only one active run, and it keeps its state between
+runs. An `AgentExecutor` keeps one `AgentSession` (history, pending approvals,
+and standing approval rules) for its whole lifetime. Hosts that need
+simultaneous or independent runs should pass a factory that creates the
+workflow and its executors on every call, and set `cache_target=False`:
+
+```python
+from agent_framework import Agent, AgentExecutor, Workflow, WorkflowBuilder
+from agent_framework_hosting import WorkflowState
+
+
+def create_workflow() -> Workflow:
+    writer = AgentExecutor(Agent(client=client, name="writer"))
+    return WorkflowBuilder(start_executor=writer).build()
+
+
+state = WorkflowState(create_workflow, cache_target=False)
+```
 
 `WorkflowState` also accepts an unbuilt workflow builder directly:
 
@@ -143,6 +158,13 @@ This is structural: orchestration builders from `agent_framework_orchestrations`
 (`SequentialBuilder`, `ConcurrentBuilder`, `HandoffBuilder`, `GroupChatBuilder`,
 and `MagenticBuilder`) also work because they expose the same zero-argument
 `build() -> Workflow` method.
+
+With `cache_target=False`, a builder returns a new `Workflow` for each call, but
+the new workflow reuses the executors registered on the builder. An
+`AgentExecutor` created before the builder therefore carries its session from
+one request to the next. Use a builder for independent requests only when it
+creates its executors in `build()`. The orchestration builders do this for the
+agents you give them, but they share any executor instance you pass in.
 
 Cross-channel identity linking, multicast delivery, background runs,
 continuation tokens, and durable delivery runners are follow-up enhancements,

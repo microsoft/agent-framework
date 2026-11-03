@@ -197,6 +197,16 @@ class WorkflowState(Generic[WorkflowT]):
     Holds the Agent Framework workflow target. Does not own routes,
     middleware, protocol dispatch, native SDK calls, or checkpoint storage --
     web frameworks and workflow/app code keep those concerns.
+
+    A ``Workflow`` keeps its state between runs, and an ``AgentExecutor`` keeps
+    one ``AgentSession`` for its whole lifetime, so one target must not serve
+    callers that need independent state. For independent requests, pass a
+    factory that creates the workflow and its executors on every call and set
+    ``cache_target=False``. A builder target returns a new ``Workflow`` per
+    call but reuses the executors registered on it; only a builder that
+    creates its executors in ``build()`` gives each call new executors. The
+    orchestration builders do this for the agents they receive, not for
+    executor instances you pass in.
     """
 
     def __init__(
@@ -217,7 +227,9 @@ class WorkflowState(Generic[WorkflowT]):
         Keyword Args:
             cache_target: Whether to cache a resolved callable/awaitable/built
                 target. Defaults to ``True`` so expensive target setup
-                happens once.
+                happens once. ``False`` resolves a new target for every call;
+                the new target still shares whatever the factory or builder
+                reuses, such as executors created outside it.
 
         Raises:
             ValueError: If ``cache_target=False`` is used with a one-shot
