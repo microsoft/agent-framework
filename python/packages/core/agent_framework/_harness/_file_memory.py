@@ -118,10 +118,13 @@ def _description_file_name(file_name: str) -> str:
     practice). Names that already start with the reserved digest prefix take
     the digest branch too: otherwise a short memory named after another name's
     digest stem would share that name's sidecar without any hash collision.
+    The prefix is matched case-insensitively because the default APFS and NTFS
+    filesystems are case-insensitive, so an uppercase or mixed-case reserved
+    prefix would otherwise alias a long name's digest sidecar on disk.
     """
     sidecar = f"{file_name}{_DESCRIPTION_SUFFIX}"
     if (
-        not file_name.startswith(_DIGEST_DESCRIPTION_PREFIX)
+        not file_name.lower().startswith(_DIGEST_DESCRIPTION_PREFIX)
         and len(sidecar.encode("utf-8")) <= _MAX_DESCRIPTION_FILE_NAME_BYTES
     ):
         return sidecar

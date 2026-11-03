@@ -98,6 +98,10 @@ def test_description_file_name_stays_within_filesystem_name_limits() -> None:
     assert _description_file_name(digest_stem) != digest_stem + "_description.md"
     assert _description_file_name(digest_stem) != _description_file_name(over_limit)
     assert _description_file_name("~memory-desc-x") != "~memory-desc-x_description.md"
+    # The reserved prefix is matched case-insensitively so case variants also
+    # take the digest branch and cannot alias a long name's digest sidecar.
+    for variant in ("~MEMORY-DESC-x", "~Memory-Desc-x"):
+        assert _description_file_name(variant) != variant + "_description.md"
 
 
 def test_is_internal_file_detects_sidecars_and_index() -> None:
@@ -243,6 +247,49 @@ async def test_long_name_and_matching_digest_stem_short_name_have_independent_li
     await save.invoke(arguments={"file_name": long_name, "content": "long-body-2", "description": "long-description-2"})
     listed_rewritten = {entry["name"]: entry["description"] for entry in json.loads(_text(await list_files.invoke()))}
     assert listed_rewritten == {long_name: "long-description-2"}
+
+
+@pytest.mark.parametrize("prefix_variant", ["~MEMORY-DESC-", "~Memory-Desc-"])
+async def test_case_variant_reserved_prefix_short_name_does_not_alias_long_name(prefix_variant: str) -> None:
+    """Upper/mixed-case reserved prefixes must not alias a long name's digest sidecar.
+
+    On case-insensitive filesystems (default APFS/NTFS) a short memory whose
+    name uses an uppercase or mixed-case reserved prefix would otherwise
+    resolve to the same on-disk sidecar as a long name with the matching
+    digest, so writing or deleting it could clobber the long memory's
+    description without any SHA-256 collision.
+    """
+    import hashlib
+
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+    read = tools["file_memory_read"]
+    delete = tools["file_memory_delete"]
+    list_files = tools["file_memory_ls"]
+
+    long_name = "a" * 238 + ".md"
+    short_name = prefix_variant + hashlib.sha256(long_name.encode()).hexdigest()
+    assert short_name.startswith(prefix_variant)
+    # The case-variant reserved name must not share the long name's sidecar.
+    assert _description_file_name(short_name).lower() != _description_file_name(long_name).lower()
+
+    await save.invoke(arguments={"file_name": long_name, "content": "long-body", "description": "long-description"})
+    await save.invoke(arguments={"file_name": short_name, "content": "short-body", "description": "short-description"})
+
+    # Writing the case-variant memory must not overwrite the long memory's description.
+    listed = {entry["name"]: entry["description"] for entry in json.loads(_text(await list_files.invoke()))}
+    assert listed[long_name] == "long-description"
+    assert listed[short_name] == "short-description"
+    assert _text(await read.invoke(arguments={"file_name": long_name})) == "long-body"
+    assert _text(await read.invoke(arguments={"file_name": short_name})) == "short-body"
+
+    # Deleting the case-variant memory must not remove the long memory's description.
+    await delete.invoke(arguments={"file_name": short_name})
+    listed_after = {entry["name"]: entry["description"] for entry in json.loads(_text(await list_files.invoke()))}
+    assert listed_after == {long_name: "long-description"}
+    assert _text(await read.invoke(arguments={"file_name": long_name})) == "long-body"
 
 
 async def test_long_name_sidecar_is_writable_on_disk(tmp_path, monkeypatch) -> None:
