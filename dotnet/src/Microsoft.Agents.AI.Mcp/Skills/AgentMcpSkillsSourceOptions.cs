@@ -51,17 +51,17 @@ public sealed class AgentMcpSkillsSourceOptions
     /// <see cref="CacheIsolationKeySelector"/>.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/> (the default), there is no limit, and a partition is kept for every key until the source is disposed.
-    /// Set a limit for services with many users. When the limit is reached, skills for a new key are still returned,
+    /// Defaults to <c>100</c>. Set to <see langword="null"/> for no partition-count limit.
+    /// When the limit is reached, skills for a new key are still returned,
     /// but are fetched from the server again on the next call. Must not be negative.
     /// </remarks>
-    public int? MaxCachedPartitions { get; set; }
+    public int? MaxCachedPartitions { get; set; } = 100;
 
     /// <summary>
     /// Gets or sets how long a cache partition is kept after it was last used.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/> (the default), unused partitions are kept until the source is disposed.
+    /// When <see langword="null"/> (the default), unused partitions do not expire but can still be removed by the partition-count limit.
     /// Set it to free memory used by inactive users. After a partition is removed, the next call for its key
     /// fetches skills from the server again. Must be positive.
     /// To control how long MCP responses are cached, use <see cref="TtlResolver"/>.

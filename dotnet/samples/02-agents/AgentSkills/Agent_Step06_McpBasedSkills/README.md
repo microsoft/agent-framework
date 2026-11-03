@@ -123,10 +123,10 @@ The source only separates caches; it does not handle authentication. Your app is
 `DisableCaching()` turns off the provider's own cache, so the source, and therefore the key selector,
 runs on every call.
 
-By default, a partition is kept for every key until the source is disposed. In services with many users,
-use the other options to limit memory:
+By default, the source keeps up to 100 cache partitions. Adjust the limit or configure expiration
+to control how many partitions are kept and for how long:
 
-- `MaxCachedPartitions` - the maximum number of partitions to keep.
+- `MaxCachedPartitions` - the maximum number of partitions to keep. Defaults to 100; set to `null` for no partition-count limit.
 - `PartitionSlidingExpiration` - removes a partition that has not been used for this long.
 - `PartitionAbsoluteExpiration` - removes a partition this long after it was created, even if it is still in use.
 

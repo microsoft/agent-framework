@@ -16,6 +16,56 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 public sealed partial class AgentMcpSkillsTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_PartitionLimit_DefaultsTo100AndNullAllowsUnlimitedAsync(bool unlimited)
+    {
+        // Arrange
+        string key = "";
+        int lists = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            lists++;
+            return Task.FromResult(TtlListResult(60000, Entry()));
+        });
+        var options = new AgentMcpSkillsSourceOptions
+        {
+            CacheIsolationKeySelector = _ => key,
+        };
+        if (unlimited)
+        {
+            options.MaxCachedPartitions = null;
+        }
+
+        Assert.Equal(unlimited ? null : (int?)100, options.MaxCachedPartitions);
+        Assert.Equal(unlimited ? null : (long?)100, options.ToMemoryCacheOptions().SizeLimit);
+        using var source = new AgentMcpSkillsSource(client.Object, options, null, new ManualTimeProvider());
+
+        // Act & Assert
+        for (int i = 0; i < 100; i++)
+        {
+            key = $"user-{i}";
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+            Assert.Same(skills, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        }
+
+        Assert.Equal(100, lists);
+        key = "user-100";
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        if (unlimited)
+        {
+            Assert.Same(first, second);
+        }
+        else
+        {
+            Assert.NotSame(first, second);
+        }
+
+        Assert.Equal(unlimited ? 101 : 102, lists);
+    }
+
+    [Theory]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxCachedPartitions), -1)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.PartitionSlidingExpiration), 0)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.PartitionSlidingExpiration), -1)]
