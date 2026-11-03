@@ -669,6 +669,73 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         Assert.Empty(response.Message!.Parts!);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task AddA2AServer_WithExistingTask_RejectsTaskOperationsAsync(bool streaming, bool cancel)
+    {
+        // Arrange
+        const string AgentName = "existing-task-agent";
+        const string TaskId = "existing-task";
+        var services = new ServiceCollection();
+        Mock<AIAgent> agentMock = CreateAgentMockForRequests(AgentName);
+        var taskStore = new InMemoryTaskStore();
+        await taskStore.SaveTaskAsync(TaskId, new AgentTask
+        {
+            Id = TaskId,
+            ContextId = "existing-context",
+            Status = new() { State = TaskState.InputRequired }
+        });
+        services.AddKeyedSingleton<ITaskStore>(AgentName, taskStore);
+        services.AddA2AServer(agentMock.Object);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+        SendMessageRequest request = CreateTestSendMessageRequest();
+        request.Message.TaskId = TaskId;
+        request.Message.ContextId = "existing-context";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var exception = await Assert.ThrowsAsync<A2AException>(async () =>
+        {
+            if (cancel)
+            {
+                await server.CancelTaskAsync(new CancelTaskRequest { Id = TaskId }, requestContext: null, cts.Token);
+            }
+            else if (streaming)
+            {
+                await foreach (var response in server.SendStreamingMessageAsync(request, requestContext: null, cts.Token))
+                {
+                    AgentTask snapshot = Assert.IsType<AgentTask>(response.Task);
+                    Assert.Equal(TaskId, snapshot.Id);
+                    Assert.Equal(TaskState.InputRequired, snapshot.Status.State);
+                }
+            }
+            else
+            {
+                await server.SendMessageAsync(request, requestContext: null, cts.Token);
+            }
+        });
+
+        // Assert
+        Assert.Equal(A2AErrorCode.UnsupportedOperation, exception.ErrorCode);
+        AgentTask? task = await taskStore.GetTaskAsync(TaskId, cts.Token);
+        Assert.NotNull(task);
+        // The SDK marks the stored task as failed when streaming execution throws.
+        Assert.Equal(streaming ? TaskState.Failed : TaskState.InputRequired, task.Status.State);
+        agentMock.Protected().Verify("RunCoreAsync", Times.Never(),
+            ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+            ItExpr.IsAny<AgentSession?>(),
+            ItExpr.IsAny<AgentRunOptions?>(),
+            ItExpr.IsAny<CancellationToken>());
+        agentMock.Protected().Verify("RunCoreStreamingAsync", Times.Never(),
+            ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+            ItExpr.IsAny<AgentSession?>(),
+            ItExpr.IsAny<AgentRunOptions?>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
     private static SendMessageRequest CreateTestSendMessageRequest() =>
         new()
         {

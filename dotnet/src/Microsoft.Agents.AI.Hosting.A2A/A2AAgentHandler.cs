@@ -51,6 +51,11 @@ internal sealed class A2AAgentHandler : IAgentHandler
         // Handle task updates
         if (context.IsContinuation)
         {
+            if (this._runMode == AgentRunMode.ReturnMessage)
+            {
+                throw new A2AException("Task resumption is not supported by the message-only handler.", A2AErrorCode.UnsupportedOperation);
+            }
+
             return this.HandleTaskUpdateAsync(context, eventQueue, cancellationToken);
         }
 
@@ -69,6 +74,11 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <inheritdoc/>
     public async Task CancelAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
+        if (this._runMode == AgentRunMode.ReturnMessage)
+        {
+            throw new A2AException("Task cancellation is not supported by the message-only handler.", A2AErrorCode.UnsupportedOperation);
+        }
+
         var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, context.ContextId);
         await taskUpdater.CancelAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
