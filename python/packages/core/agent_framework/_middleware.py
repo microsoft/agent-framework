@@ -439,6 +439,11 @@ class FunctionInvocationContext:
 
     Attributes:
         function: The function being invoked.
+        call_id: The read-only provider call ID for this invocation. Automatic invocation
+                supplies it before function middleware and tool execution, including
+                approval resume. Direct ``FunctionTool.invoke`` calls use ``tool_call_id``;
+                it is ``None`` when no ID is supplied. This is distinct from the
+                framework occurrence identity in ``Content.id``.
         arguments: The function arguments. In the automatic function-calling loop,
                 schema-compatible provider arguments retain the existing normalized
                 mapping contract. If provisional normalization rejects provider
@@ -535,6 +540,7 @@ class FunctionInvocationContext:
                 or ``None`` when the invocation path cannot establish that ownership.
         """
         self.function = function
+        self._call_id: str | None = None
         self.arguments = arguments
         self.session = session
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
@@ -544,6 +550,11 @@ class FunctionInvocationContext:
             frozenset(parent_service_session_state_keys) if parent_service_session_state_keys is not None else None
         )
         self.tools = tools
+
+    @property
+    def call_id(self) -> str | None:
+        """Get the provider call ID supplied by the invocation layer, if any."""
+        return self._call_id
 
     @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
     def add_tools(

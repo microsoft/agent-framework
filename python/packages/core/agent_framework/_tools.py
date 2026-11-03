@@ -1198,6 +1198,8 @@ class FunctionTool(SerializationMixin):
             )
         if effective_context is not None:
             effective_context.function = self
+            # Invocation owns this read-only public value, including clearing a reused context.
+            effective_context._call_id = tool_call_id  # pyright: ignore[reportPrivateUsage]
             effective_context.arguments = validated_arguments
             effective_context.kwargs = dict(runtime_kwargs)
 
@@ -2395,6 +2397,7 @@ async def _auto_invoke_function(
         raise KeyError(f'Function "{function_call_content.name}" is missing call_id.')
 
     # Pass both provider correlation and framework occurrence identity to middleware.
+    middleware_context._call_id = call_id  # pyright: ignore[reportPrivateUsage]  # Bind before middleware runs.
     middleware_context.metadata["call_id"] = call_id
     if function_call_content.id is not None:
         middleware_context.metadata["function_call_occurrence_id"] = function_call_content.id

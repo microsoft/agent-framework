@@ -99,6 +99,16 @@ class TestFunctionInvocationContext:
         assert context.function is mock_function
         assert context.arguments == arguments
         assert context.metadata == {}
+        assert context.call_id is None
+
+    def test_call_id_is_read_only(self, mock_function: FunctionTool) -> None:
+        """Applications cannot overwrite the framework-owned call ID through the public property."""
+        context = FunctionInvocationContext(function=mock_function, arguments={})
+
+        with pytest.raises(AttributeError):
+            setattr(context, "call_id", "replacement")  # noqa: B010 - Exercise runtime rejection, not typed assignment.
+
+        assert context.call_id is None
 
     def test_init_with_custom_metadata(self, mock_function: FunctionTool) -> None:
         """Test FunctionInvocationContext initialization with custom metadata."""

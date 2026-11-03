@@ -425,6 +425,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Parallel calls retain model order in the returned transcript.
 - `call_id` remains the provider/service correlation id; a locally actionable `function_call` also carries a stable
   Agent Framework occurrence identity in `Content.id`.
+- `FunctionInvocationContext.call_id` exposes that provider ID as a read-only property before function middleware
+  and tool execution, with or without middleware and after approval resume. Standalone `FunctionTool.invoke` calls
+  use the supplied `tool_call_id`, or `None` when omitted; reusing a context does not retain an earlier call ID.
+  Existing middleware identity metadata remains available. This property does not expose the call's payload or
+  framework occurrence identity.
 - Reused `call_id` values are correlated by logical occurrence, not one global value per id.
 - Existing `Content.id` values survive aggregation and replay and are never regenerated; legacy deserialization does
   not invent one.
@@ -605,6 +610,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | String input | Flexible string input follows the same loop behavior. | `test_base_client_with_function_calling_string_input` |
 | Multiple sequential rounds | Each round retains one call/result pair. | `test_base_client_with_function_calling_resets` |
 | Streaming call | Call chunks, one result update, and final text are emitted in order. | `test_base_client_with_streaming_function_calling` |
+| Tool-visible provider call ID | Tools and function middleware can read the provider ID on both execution paths, in both response modes, and after approval resume. The public property is read-only. Standalone invocation uses its supplied ID or `None`, including when a context is reused. | `test_tool_context_exposes_provider_call_id`, `packages/core/tests/core/test_tools.py::test_invoke_exposes_tool_call_id_to_context`, `test_invoke_clears_call_id_when_reusing_context_without_an_id`, `packages/core/tests/core/test_middleware.py::TestFunctionInvocationContext` |
 | Function-call occurrence identity | Actionable calls gain one stable `Content.id`; a safe local empty-`call_id` fallback uses that id with a migration warning, and streaming aggregation preserves provider-assigned occurrence ids across interleaved fragments. OpenAI Chat Completions scopes fragment correlation to each request and `(choice.index, tool.index)`. | `test_actionable_function_call_gets_stable_occurrence_identity`, `test_actionable_function_call_uses_occurrence_identity_for_empty_call_id`, `test_streaming_empty_call_id_keeps_occurrence_identity_through_approval`, `test_streaming_empty_call_id_delta_reuses_opening_call_identity`, `test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurrence`, `packages/core/tests/core/test_types.py::test_function_call_occurrence_id_roundtrips_without_regeneration`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index` |
 | Reasoning-bound call | Finalized output retains reasoning, function call, function result, and final text. | `test_streaming_function_calling_response_includes_reasoning_and_tool_results` |
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |

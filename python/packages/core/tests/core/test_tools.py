@@ -1608,6 +1608,41 @@ async def test_ai_function_with_kwargs_rejects_runtime_invoke_kwargs():
     assert result_default[0].text == "x=10, user=unknown"
 
 
+@pytest.mark.parametrize("explicit_context", [False, True])
+@pytest.mark.parametrize("tool_call_id", [None, "manual-call"])
+async def test_invoke_exposes_tool_call_id_to_context(explicit_context: bool, tool_call_id: str | None) -> None:
+    """Standalone invocation exposes the supplied ID without fabricating one."""
+    observed_call_ids: list[str | None] = []
+
+    @tool(approval_mode="never_require")
+    def lookup(context: FunctionInvocationContext) -> str:
+        observed_call_ids.append(context.call_id)
+        return "found"
+
+    context = FunctionInvocationContext(function=lookup, arguments={}) if explicit_context else None
+    result = await lookup.invoke(context=context, tool_call_id=tool_call_id)
+
+    assert observed_call_ids == [tool_call_id]
+    assert result[0].text == "found"
+    assert lookup.parameters()["properties"] == {}
+
+
+async def test_invoke_clears_call_id_when_reusing_context_without_an_id() -> None:
+    """A reused manual context must not retain the previous invocation's call ID."""
+    observed_call_ids: list[str | None] = []
+
+    @tool(approval_mode="never_require")
+    def lookup(context: FunctionInvocationContext) -> str:
+        observed_call_ids.append(context.call_id)
+        return "found"
+
+    context = FunctionInvocationContext(function=lookup, arguments={})
+    await lookup.invoke(context=context, tool_call_id="first-call")
+    await lookup.invoke(context=context)
+
+    assert observed_call_ids == ["first-call", None]
+
+
 async def test_ai_function_with_explicit_invocation_context():
     """Test that invoke() can receive runtime kwargs via FunctionInvocationContext."""
 
