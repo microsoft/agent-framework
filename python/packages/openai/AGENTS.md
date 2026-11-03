@@ -36,6 +36,10 @@ The generic OpenAI clients support both OpenAI and Azure OpenAI routing. Precede
 explicit Azure inputs (`credential`, `azure_endpoint`, `api_version`) → OpenAI API key
 (`OPENAI_API_KEY`) → Azure environment fallback (`AZURE_OPENAI_*`).
 
+Request-model precedence is separate. An explicit `model=` argument wins. Otherwise an injected
+`AsyncAzureOpenAI` client's configured deployment wins over `AZURE_OPENAI_*` model variables.
+An injected `AsyncOpenAI` client has no deployment metadata, so OpenAI model variables still apply.
+
 ## Adapting the Chat Completions client to OpenAI-compatible endpoints
 
 `OpenAIChatCompletionClient` targets the OpenAI Chat Completions wire format and is intentionally

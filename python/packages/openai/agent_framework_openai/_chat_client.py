@@ -756,9 +756,12 @@ class RawOpenAIChatClient(
         """Initialize a raw OpenAI Chat client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
-                or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for
+                Azure. An injected ``AsyncOpenAI`` client has no deployment, so the OpenAI
+                variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -4825,10 +4828,12 @@ class OpenAIChatClient(
         """Initialize an OpenAI Responses client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
-                routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then
-                ``AZURE_OPENAI_MODEL`` for Azure routing.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL``
+                for Azure routing. An injected ``AsyncOpenAI`` client has no deployment, so the
+                OpenAI variables still apply.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
