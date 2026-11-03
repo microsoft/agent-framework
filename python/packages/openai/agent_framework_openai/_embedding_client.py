@@ -175,10 +175,12 @@ class RawOpenAIEmbeddingClient(
         """Initialize a raw OpenAI embedding client.
 
         Keyword Args:
-            model: Embedding model or Azure OpenAI deployment name. When not provided, the
-                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
-                and then ``AZURE_OPENAI_MODEL``.
+            model: Embedding model or Azure OpenAI deployment name. An explicit value wins
+                over an injected ``AsyncAzureOpenAI`` deployment, which wins over environment
+                variables. Otherwise the constructor reads ``OPENAI_EMBEDDING_MODEL`` and then
+                ``OPENAI_MODEL`` for OpenAI. For Azure it first checks
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then ``AZURE_OPENAI_MODEL``. An injected
+                ``AsyncOpenAI`` client has no deployment, so the OpenAI variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
                 A callable token provider is also accepted for backwards compatibility,
@@ -469,10 +471,12 @@ class OpenAIEmbeddingClient(
         """Initialize an OpenAI embedding client.
 
         Keyword Args:
-            model: Embedding model or Azure OpenAI deployment name. When not provided, the
-                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
-                and then ``AZURE_OPENAI_MODEL``.
+            model: Embedding model or Azure OpenAI deployment name. An explicit value wins
+                over an injected ``AsyncAzureOpenAI`` deployment, which wins over environment
+                variables. Otherwise the constructor reads ``OPENAI_EMBEDDING_MODEL`` and then
+                ``OPENAI_MODEL`` for OpenAI. For Azure it first checks
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then ``AZURE_OPENAI_MODEL``. An injected
+                ``AsyncOpenAI`` client has no deployment, so the OpenAI variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
                 A callable token provider is also accepted for backwards compatibility,

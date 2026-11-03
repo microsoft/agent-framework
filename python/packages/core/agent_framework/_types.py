@@ -33,13 +33,14 @@ from typing import (
     Literal,
     NamedTuple,
     NewType,
+    Required,
     TypeAlias,
     cast,
     get_args,
     overload,
 )
 
-from typing_extensions import Required, TypedDict
+from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state

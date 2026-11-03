@@ -3,7 +3,7 @@
 import asyncio
 import os
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Never
 from uuid import uuid4
 
 from agent_framework import (  # Core chat primitives used to form LLM requests
@@ -23,7 +23,6 @@ from agent_framework.openai import OpenAIChatOptions  # Thin client for Azure Op
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs with validation
-from typing_extensions import Never
 
 # Load environment variables from .env file
 load_dotenv()

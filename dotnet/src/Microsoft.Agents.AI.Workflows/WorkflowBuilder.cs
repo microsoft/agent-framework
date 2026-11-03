@@ -643,7 +643,7 @@ public class WorkflowBuilder
 
         // Using the start executor ID as a proxy for the workflow ID
         activity?.SetTag(Tags.WorkflowId, workflow.StartExecutorId);
-        if (workflow.Name is not null)
+        if (!string.IsNullOrWhiteSpace(workflow.Name))
         {
             activity?.SetTag(Tags.WorkflowName, workflow.Name);
         }

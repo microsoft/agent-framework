@@ -11,8 +11,7 @@ columns, with exact, database-side similarity search. This alpha package exports
 pip install agent-framework-sql-server --pre
 ```
 
-Supports Python 3.11–3.15. Python 3.10 installation remains permitted,
-but compatibility is not guaranteed.
+Supports Python 3.11–3.15.
 
 Requires a vector-enabled database: SQL Server 2025
 (17.x), Azure SQL Database, Azure SQL Managed Instance on the SQL Server 2025
