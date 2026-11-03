@@ -31,7 +31,7 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// Call <see cref="AgentSkillsProviderBuilder.DisableCaching"/> and disable other caches around
     /// this source so it can refresh the skill list when its cached data expires.
     /// If the source is shared by several users or tenants, or the server returns private responses,
-    /// set <see cref="AgentMcpSkillsSourceOptions.CachePartitionKeySelector"/>.
+    /// set <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/>.
     /// </para>
     /// <code>
     /// var provider = new AgentSkillsProviderBuilder()

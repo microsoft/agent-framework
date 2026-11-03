@@ -506,7 +506,7 @@ internal sealed partial class McpSkillsCatalog
         {
             throw new InvalidOperationException(
                 $"The {method} response has a private cacheScope, but no cache partition key was provided. " +
-                $"Configure {nameof(AgentMcpSkillsSourceOptions)}.{nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector)} to return a nonempty authorization-context key.");
+                $"Configure {nameof(AgentMcpSkillsSourceOptions)}.{nameof(AgentMcpSkillsSourceOptions.CacheIsolationKeySelector)} to return a nonempty authorization-context key.");
         }
 
         return scope.Value;

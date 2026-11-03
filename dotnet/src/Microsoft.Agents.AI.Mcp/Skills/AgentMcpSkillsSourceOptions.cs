@@ -44,11 +44,11 @@ public sealed class AgentMcpSkillsSourceOptions
     /// this callback, every time.
     /// </para>
     /// </remarks>
-    public Func<AgentSkillsSourceContext, string>? CachePartitionKeySelector { get; set; }
+    public Func<AgentSkillsSourceContext, string>? CacheIsolationKeySelector { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum number of cache partitions to keep, one per key returned by
-    /// <see cref="CachePartitionKeySelector"/>.
+    /// <see cref="CacheIsolationKeySelector"/>.
     /// </summary>
     /// <remarks>
     /// When <see langword="null"/> (the default), there is no limit, and a partition is kept for every key until the source is disposed.

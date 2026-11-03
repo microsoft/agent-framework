@@ -41,6 +41,6 @@ public sealed partial class McpSkillsCatalogTests
 
         // Assert
         Assert.Contains(method, error.Message);
-        Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector), error.Message);
+        Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CacheIsolationKeySelector), error.Message);
     }
 }

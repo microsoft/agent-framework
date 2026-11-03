@@ -54,7 +54,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = _ => "A",
+            CacheIsolationKeySelector = _ => "A",
             PartitionSlidingExpiration = TimeSpan.FromSeconds(10),
         }, null, clock);
         var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
@@ -88,7 +88,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = _ => "A",
+            CacheIsolationKeySelector = _ => "A",
             PartitionSlidingExpiration = TimeSpan.FromSeconds(10),
             PartitionAbsoluteExpiration = TimeSpan.FromSeconds(25),
         }, null, clock);
@@ -119,7 +119,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = partitioned ? _ => "A" : null,
+            CacheIsolationKeySelector = partitioned ? _ => "A" : null,
             PartitionSlidingExpiration = TimeSpan.FromSeconds(10),
             PartitionAbsoluteExpiration = TimeSpan.FromSeconds(20),
         }, null, clock);
@@ -185,7 +185,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = _ => key,
+            CacheIsolationKeySelector = _ => key,
             MaxCachedPartitions = capacity ? 1 : null,
             PartitionAbsoluteExpiration = capacity ? null : TimeSpan.FromSeconds(1),
         }, null, clock);
@@ -243,7 +243,7 @@ public sealed partial class AgentMcpSkillsTests
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
             Assert.Contains("skills/list", error.Message);
             Assert.Contains("private", error.Message);
-            Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector), error.Message);
+            Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CacheIsolationKeySelector), error.Message);
         }
 
         Assert.Equal(firstPagePrivate ? 2 : 4, calls);
@@ -296,7 +296,7 @@ public sealed partial class AgentMcpSkillsTests
         {
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ReadSkillContentAsync(skill, instructions));
             Assert.Contains("resources/read", error.Message);
-            Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector), error.Message);
+            Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CacheIsolationKeySelector), error.Message);
             Assert.Same(skill, Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
         }
 
@@ -338,7 +338,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, partitioned ? new()
         {
-            CachePartitionKeySelector = _ => "authorization-context",
+            CacheIsolationKeySelector = _ => "authorization-context",
         } : null);
         var original = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await original.GetContentAsync());
@@ -350,7 +350,7 @@ public sealed partial class AgentMcpSkillsTests
             {
                 var error = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
                 Assert.Contains("skills/get", error.Message);
-                Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector), error.Message);
+                Assert.Contains(nameof(AgentMcpSkillsSourceOptions.CacheIsolationKeySelector), error.Message);
             }
 
             returnPrivate = false;
@@ -377,13 +377,13 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, options);
         var unkeyed = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
-        options.CachePartitionKeySelector = _ => "authorization-context";
+        options.CacheIsolationKeySelector = _ => "authorization-context";
         var keyed = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await unkeyed.GetContentAsync());
         Assert.Equal(SkillContent, await keyed.GetContentAsync());
-        options.CachePartitionKeySelector = null;
+        options.CacheIsolationKeySelector = null;
         Assert.Same(unkeyed, Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await unkeyed.GetContentAsync());
         Assert.Equal(SkillContent, await keyed.GetContentAsync());
@@ -412,7 +412,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = _ => authorizationKey.Value!,
+            CacheIsolationKeySelector = _ => authorizationKey.Value!,
         });
 
         // Act
@@ -438,16 +438,16 @@ public sealed partial class AgentMcpSkillsTests
     {
         // Arrange
         var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(60000, Entry())));
-        var options = new AgentMcpSkillsSourceOptions { CachePartitionKeySelector = _ => "A" };
+        var options = new AgentMcpSkillsSourceOptions { CacheIsolationKeySelector = _ => "A" };
         using var source = new AgentMcpSkillsSource(client.Object, options);
         var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
-        options.CachePartitionKeySelector = _ => "B";
+        options.CacheIsolationKeySelector = _ => "B";
         options.TtlResolver = _ => TimeSpan.Zero;
 
         // Act
         var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         var reused = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
-        options.CachePartitionKeySelector = _ => "A";
+        options.CacheIsolationKeySelector = _ => "A";
         var original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
@@ -464,7 +464,7 @@ public sealed partial class AgentMcpSkillsTests
         var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(60000, Entry())));
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = _ =>
+            CacheIsolationKeySelector = _ =>
             {
                 duringSelection?.Invoke();
                 return "A";
@@ -514,7 +514,7 @@ public sealed partial class AgentMcpSkillsTests
 
             return Task.FromResult(result);
         });
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => key });
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => key });
 
         // Act
         IList<AgentSkill> first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
@@ -553,7 +553,7 @@ public sealed partial class AgentMcpSkillsTests
             lists++;
             return Task.FromResult(TtlListResult(60000, Entry()));
         });
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => key });
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => key });
 
         // Act
         var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
@@ -576,7 +576,7 @@ public sealed partial class AgentMcpSkillsTests
     {
         // Arrange
         var client = CreateSkillsClient();
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => key! });
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => key! });
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
@@ -589,7 +589,7 @@ public sealed partial class AgentMcpSkillsTests
         // Arrange
         var error = new InvalidOperationException("Authorization context unavailable.");
         var client = CreateSkillsClient();
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => throw error });
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => throw error });
 
         // Act
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
@@ -613,7 +613,7 @@ public sealed partial class AgentMcpSkillsTests
 
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = _ => throw new InvalidOperationException("Must not run."),
+            CacheIsolationKeySelector = _ => throw new InvalidOperationException("Must not run."),
         });
         using var cts = new CancellationTokenSource();
 
@@ -641,7 +641,7 @@ public sealed partial class AgentMcpSkillsTests
             lists++;
             return Task.FromResult(TtlListResult(1000, Entry()));
         });
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => key }, null, clock);
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => key }, null, clock);
         var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         clock.Advance(TimeSpan.FromMilliseconds(500));
         key = "B";
@@ -685,7 +685,7 @@ public sealed partial class AgentMcpSkillsTests
             reads++;
             return Task.FromResult(ResourceReadResult(SkillUri, 1000, changed ? SkillContent + "\nChanged." : SkillContent));
         });
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => key }, null, clock);
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => key }, null, clock);
         var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         await first[0].GetContentAsync();
         key = "B";
@@ -735,7 +735,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = context => ReferenceEquals(context, contextA) ? "A" : "B",
+            CacheIsolationKeySelector = context => ReferenceEquals(context, contextA) ? "A" : "B",
         });
         Task<IList<AgentSkill>>[] requests = Enumerable.Range(0, 32).Select(index => Task.Run(async () =>
         {
@@ -768,7 +768,7 @@ public sealed partial class AgentMcpSkillsTests
             Interlocked.Increment(ref lists) == 1 ? release.Task : Task.FromResult(TtlListResult(60000, Entry())));
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = context => ReferenceEquals(context, contextA) ? "A" : "B",
+            CacheIsolationKeySelector = context => ReferenceEquals(context, contextA) ? "A" : "B",
         });
 
         // Act
@@ -804,7 +804,7 @@ public sealed partial class AgentMcpSkillsTests
         var client = CreateTtlClient((request, _) => request.Method == "skills/list"
             ? key == "B" && inFlight ? release.Task : Task.FromResult(TtlListResult(60000, Entry()))
             : Task.FromResult(ResourceReadResult(SkillUri, 60000, SkillContent)));
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => key });
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => key });
         var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         key = "B";
         var second = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
@@ -854,7 +854,7 @@ public sealed partial class AgentMcpSkillsTests
 
             return Task.FromResult(result);
         });
-        using var source = new AgentMcpSkillsSource(client.Object, new() { CachePartitionKeySelector = _ => "authorization-context" });
+        using var source = new AgentMcpSkillsSource(client.Object, new() { CacheIsolationKeySelector = _ => "authorization-context" });
 
         // Act & Assert
         for (int attempt = 0; attempt < 2; attempt++)
@@ -941,7 +941,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
-            CachePartitionKeySelector = _ => PartitionKey,
+            CacheIsolationKeySelector = _ => PartitionKey,
         }, loggerFactory.Object);
 
         // Act

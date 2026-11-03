@@ -91,14 +91,14 @@ By default, it doesn't: all callers share one cache, so the source accepts only 
 `InvalidOperationException` for a private one. Each response is checked on its own, so a skill from a public
 list can still fail if its `SKILL.md` or another file is returned as private.
 
-To accept private responses, set `CachePartitionKeySelector` to return a key for the current caller, such as
+To accept private responses, set `CacheIsolationKeySelector` to return a key for the current caller, such as
 a user or tenant ID. Each key gets its own cache partition, so cached skills are never shared between keys.
 Set it whenever the server can return private responses, even if your app has only one user:
 
 ```csharp
 var options = new AgentMcpSkillsSourceOptions
 {
-    CachePartitionKeySelector = context => GetApplicationAuthorizationKey(context),
+    CacheIsolationKeySelector = context => GetApplicationAuthorizationKey(context),
     MaxCachedPartitions = 1000,
     PartitionSlidingExpiration = TimeSpan.FromMinutes(30),
     PartitionAbsoluteExpiration = TimeSpan.FromHours(8),

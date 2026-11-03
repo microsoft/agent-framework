@@ -35,7 +35,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// By default, all callers share one cache. If this source is shared by several users or tenants,
-/// set <see cref="AgentMcpSkillsSourceOptions.CachePartitionKeySelector"/> so each of them gets its own cache partition.
+/// set <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/> so each of them gets its own cache partition.
 /// </para>
 /// <para>
 /// According to the MCP specification, each <c>skills/list</c>, <c>skills/get</c>, and <c>resources/read</c> response
@@ -43,7 +43,7 @@ namespace Microsoft.Agents.AI;
 /// <list type="bullet">
 /// <item><description>Missing or <see langword="null"/>: treated as <c>public</c>.</description></item>
 /// <item><description><c>public</c>: always accepted.</description></item>
-/// <item><description><c>private</c>: accepted only when <see cref="AgentMcpSkillsSourceOptions.CachePartitionKeySelector"/> is set;
+/// <item><description><c>private</c>: accepted only when <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/> is set;
 /// otherwise, <see cref="InvalidOperationException"/> is thrown.</description></item>
 /// </list>
 /// Each response is checked on its own. For example, a skill from a public list still fails if its
@@ -163,7 +163,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return [];
         }
 
-        string? key = this._options?.CachePartitionKeySelector is { } selector
+        string? key = this._options?.CacheIsolationKeySelector is { } selector
             ? Throw.IfNullOrWhitespace(selector(context))
             : null;
 
