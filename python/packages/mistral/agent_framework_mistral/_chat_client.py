@@ -361,7 +361,7 @@ class RawMistralChatClient(
                 Can also be set via environment variable ``MISTRAL_CHAT_MODEL``.
             api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
             server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
-                environment variable, or the Mistral default. Ignored when ``client`` is provided.
+                environment variable, or the Mistral default. Ignored when a Mistral SDK ``client`` is provided.
             client: Optional pre-configured ``mistralai.client.Mistral``.
             http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key
                 is not required and the client is expected to carry its own auth headers.
@@ -994,7 +994,7 @@ class MistralChatClient(
                 Can also be set via environment variable ``MISTRAL_CHAT_MODEL``.
             api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
             server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
-                environment variable, or the Mistral default. Ignored when ``client`` is provided.
+                environment variable, or the Mistral default. Ignored when a Mistral SDK ``client`` is provided.
             client: Optional pre-configured ``mistralai.client.Mistral``.
             http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key
                 is not required and the client is expected to carry its own auth headers.
