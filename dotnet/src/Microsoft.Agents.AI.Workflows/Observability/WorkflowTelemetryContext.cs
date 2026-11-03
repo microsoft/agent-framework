@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using OpenTelemetry;
 
 namespace Microsoft.Agents.AI.Workflows.Observability;
 
@@ -109,15 +110,34 @@ internal sealed class WorkflowTelemetryContext
     /// Starts a workflow run activity if enabled. This represents a single
     /// input-to-halt cycle within a workflow session.
     /// </summary>
+    /// <param name="workflowName">The optional application-defined workflow name.</param>
     /// <returns>An activity if workflow run telemetry is enabled, otherwise null.</returns>
-    public Activity? StartWorkflowRunActivity()
+    public Activity? StartWorkflowRunActivity(string? workflowName)
     {
         if (!this.IsEnabled || this.Options.DisableWorkflowRun)
         {
             return null;
         }
 
-        return this.ActivitySource.StartActivity(ActivityNames.WorkflowInvoke);
+        ActivityTagsCollection tags = new() { { Tags.OperationName, ActivityNames.WorkflowInvoke } };
+        string activityName = ActivityNames.WorkflowInvoke;
+        if (!string.IsNullOrWhiteSpace(workflowName))
+        {
+            tags.Add(Tags.WorkflowName, workflowName);
+            activityName += " " + workflowName;
+        }
+
+        string? conversationId = Baggage.GetBaggage(Tags.ConversationId);
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            conversationId = Activity.Current?.GetBaggageItem(Tags.ConversationId);
+        }
+        if (!string.IsNullOrWhiteSpace(conversationId))
+        {
+            tags.Add(Tags.ConversationId, conversationId);
+        }
+
+        return this.ActivitySource.StartActivity(activityName, ActivityKind.Internal, parentContext: default, tags: tags);
     }
 
     /// <summary>
