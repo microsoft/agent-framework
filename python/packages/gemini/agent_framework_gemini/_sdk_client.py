@@ -40,8 +40,14 @@ def load_gemini_settings(*, client: genai.Client | None, **kwargs: Any) -> Googl
         return load_settings(GoogleGeminiSettings, env_prefix="GOOGLE_", **kwargs)
     settings: GoogleGeminiSettings = load_settings(_GoogleGeminiModelSettings, env_prefix="GOOGLE_", **kwargs)  # type: ignore[assignment]
     for key in ("genai_use_enterprise", "genai_use_vertexai"):
-        if kwargs.get(key) is not None:
-            settings[key] = kwargs[key]
+        if (value := kwargs.get(key)) is not None:
+            # Match the override type check an owned client gets from load_settings.
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Invalid type for setting '{key}' from explicit override: "
+                    f"expected bool, got {type(value).__name__}."
+                )
+            settings[key] = value
     return settings
 
 

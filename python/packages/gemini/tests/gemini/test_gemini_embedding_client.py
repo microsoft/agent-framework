@@ -255,6 +255,16 @@ def test_injected_sdk_client_without_mode_uses_explicit_mode(
     assert client._vertexai is True
 
 
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_rejects_non_bool_explicit_mode(mode_arg: str) -> None:
+    """Explicit mode arguments are type-checked for an injected client, like for an owned one."""
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+
+    with pytest.raises(ValueError, match=f"genai_use_{mode_arg}"):
+        RawGeminiEmbeddingClient(client=sdk, model="gemini-embedding-2-preview", **{mode_arg: "false"})
+
+
 async def test_close_only_closes_owned_sdk_client(clear_google_env: None) -> None:
     owned_sdk = _make_sdk_client()
     with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=owned_sdk):

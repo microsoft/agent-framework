@@ -304,9 +304,10 @@ class RawGeminiChatClient(
                 Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is and the API key,
-                project, and location arguments and environment settings are not read. Explicit mode
-                arguments only apply when the client does not expose its own mode.
+            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is: the API key,
+                project, and location arguments and connection environment settings are not read.
+                ``GOOGLE_MODEL`` still applies. Explicit mode arguments only apply when the client does not
+                expose its own mode.
             additional_properties: Extra properties stored on the client instance.
             max_tracked_thought_signatures: Maximum number of Gemini 3 thought signatures retained
                 for replay, keyed by call ID. Least-recently-used entries are evicted beyond this.
@@ -1395,9 +1396,10 @@ class GeminiChatClient(
                 Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is and the API key,
-                project, and location arguments and environment settings are not read. Explicit mode
-                arguments only apply when the client does not expose its own mode.
+            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is: the API key,
+                project, and location arguments and connection environment settings are not read.
+                ``GOOGLE_MODEL`` still applies. Explicit mode arguments only apply when the client does not
+                expose its own mode.
             additional_properties: Extra properties stored on the client instance.
             middleware: Optional middleware chain applied to every call.
             function_invocation_configuration: Optional configuration for the function invocation loop.

@@ -3041,6 +3041,16 @@ def test_injected_sdk_client_without_mode_uses_explicit_mode(
     assert client.service_url() == "https://aiplatform.googleapis.com"
 
 
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_rejects_non_bool_explicit_mode(mode_arg: str) -> None:
+    """Explicit mode arguments are type-checked for an injected client, like for an owned one."""
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+
+    with pytest.raises(ValueError, match=f"genai_use_{mode_arg}"):
+        RawGeminiChatClient(client=sdk, model="gemini-2.5-flash", **{mode_arg: "false"})
+
+
 def test_owned_client_still_validates_connection_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without an injected SDK client, invalid connection settings still fail construction."""
     monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "not-a-bool")

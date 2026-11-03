@@ -137,8 +137,9 @@ class RawGeminiEmbeddingClient(
         location: Enterprise (Vertex AI) region, or ``GOOGLE_CLOUD_LOCATION``.
         credentials: Google Cloud credentials for Enterprise; the SDK can also use ADC.
         client: Preconfigured ``genai.Client``; the caller retains ownership of it. When provided, the
-            API key, project, and location arguments and environment settings are not read. Explicit mode
-            arguments only apply when the client does not expose its own mode.
+            API key, project, and location arguments and connection environment settings are not read.
+            ``GOOGLE_EMBEDDING_MODEL`` still applies. Explicit mode arguments only apply when the client
+            does not expose its own mode.
         additional_properties: Extra properties stored on the client instance.
         env_file_path: Optional ``.env`` file for settings.
         env_file_encoding: Encoding for the ``.env`` file.
