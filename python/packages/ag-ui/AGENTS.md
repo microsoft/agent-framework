@@ -131,6 +131,17 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `single_user=True` assigns one opaque authorization scope for the lifetime of that endpoint registration and must not
   be used for callers with distinct authorization. Use an explicit resolver when snapshots, checkpoints, or provider
   state must retain the same scope across process restarts.
+- An `AgentExecutor` owns one `AgentSession` (history, pending approvals, standing approval rules) that is not tied to a
+  caller. `_session_ownership.claim_agent_executors` binds every `AgentExecutor` of a workflow, including the ones in
+  nested `WorkflowExecutor` workflows and in the workflow behind a `WorkflowAgent` that an `AgentExecutor` wraps, to the
+  first non-`None` Snapshot Scope that runs it. The claim is one process-wide locked check-and-bind.
+  `AgentFrameworkWorkflow.run` and the `WorkflowAgent` branch of `run_agent_stream` call it before any workflow state is
+  read; another scope receives `RUN_STARTED` and `RUN_ERROR` with `WORKFLOW_SCOPE_CONFLICT` and never reaches the
+  model. It covers a shared `Workflow` or `WorkflowAgent` and a `workflow_factory` that returns shared workflows or
+  executors. It does not apply to workflows without an `AgentExecutor`, to a `None` scope, or to custom executors that
+  keep their own state, and it does not partition the threads of one scope: `single_user=True` or a constant resolver
+  shares one conversation state across the threads of a shared workflow. Never reset sessions or clone executors to
+  resolve a conflict; the factory builds new executors.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
   state, and provider-owned keys.

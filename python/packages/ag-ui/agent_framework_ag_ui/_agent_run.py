@@ -114,6 +114,12 @@ from ._run_common import (
     _resolve_ui_payload,  # type: ignore
     _track_tool_call_segment,  # type: ignore
 )
+from ._session_ownership import (
+    SCOPE_CONFLICT_CODE,
+    SCOPE_CONFLICT_LOG_MESSAGE,
+    SCOPE_CONFLICT_MESSAGE,
+    claim_agent_executors,
+)
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
@@ -2983,6 +2989,11 @@ async def _run_agent_stream(
     thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = supplied_run_id or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
+    if isinstance(agent, WorkflowAgent) and not claim_agent_executors(agent.workflow, snapshot_scope):
+        logger.error(SCOPE_CONFLICT_LOG_MESSAGE, agent.name or agent.id)
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield RunErrorEvent(message=SCOPE_CONFLICT_MESSAGE, code=SCOPE_CONFLICT_CODE)
+        return
     session_id = _session_id_for_thread(
         scope=snapshot_scope,
         thread_id=thread_id,

@@ -49,6 +49,12 @@ from ._run_common import (
     _snapshot_messages_match,
     _snapshot_overlap_length,
 )
+from ._session_ownership import (
+    SCOPE_CONFLICT_CODE,
+    SCOPE_CONFLICT_LOG_MESSAGE,
+    SCOPE_CONFLICT_MESSAGE,
+    claim_agent_executors,
+)
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
@@ -671,8 +677,13 @@ class AgentFrameworkWorkflow:
         """Initialize the AG-UI workflow wrapper.
 
         Args:
-            workflow: Optional workflow instance to expose.
-            workflow_factory: Optional factory for thread-scoped workflow instances.
+            workflow: Optional workflow instance to expose. One instance serves every request, so its executors keep
+                their state across callers. When requests carry an authorization scope, a workflow that holds
+                ``AgentExecutor`` instances serves only the first scope that runs it; a run in another scope ends
+                with a ``WORKFLOW_SCOPE_CONFLICT`` ``RUN_ERROR``.
+            workflow_factory: Optional factory for thread-scoped workflow instances. Build a new workflow, including
+                new ``AgentExecutor`` instances, on every call. Each authorization scope and thread then keeps its own
+                executor sessions.
             name: Optional workflow name.
             description: Optional workflow description.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
@@ -806,6 +817,11 @@ class AgentFrameworkWorkflow:
             )
             return
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
+        if not claim_agent_executors(workflow, snapshot_scope):
+            logger.error(SCOPE_CONFLICT_LOG_MESSAGE, self.name)
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=SCOPE_CONFLICT_MESSAGE, code=SCOPE_CONFLICT_CODE)
+            return
         checkpoint_storage = self.checkpoint_storage or _workflow_checkpoint_storage(workflow)
         owned_checkpoint_storage = (
             _OwnedWorkflowCheckpointStorage(

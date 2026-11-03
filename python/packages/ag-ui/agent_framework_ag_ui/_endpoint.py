@@ -164,7 +164,8 @@ def add_agent_framework_fastapi_endpoint(
             authorization_scope_resolver for new FastAPI applications because it can consume authenticated dependency
             results. This resolver also scopes internal Agent Sessions, in-memory workflow_factory instances, and
             approval state. It must return a non-empty string derived from authorized request context; invalid results
-            fail the request before accessing state or invoking the runner.
+            fail the request before accessing state or invoking the runner. The shared-workflow rule described for
+            authorization_scope_resolver applies to this resolver as well.
         checkpoint_storage: Optional workflow checkpoint storage, applied when the endpoint exposes a workflow.
             When provided, each run creates a checkpoint at the end of every superstep, and a run may resume from
             a persisted checkpoint by supplying its id in the AG-UI forwarded props
@@ -188,13 +189,19 @@ def add_agent_framework_fastapi_endpoint(
         authorization_scope_resolver: Optional FastAPI dependency callable that returns a non-empty authorization
             scope derived from authenticated request context. The callable may declare normal FastAPI dependencies,
             headers, security schemes, or the current Request. Its result scopes snapshots, internal Agent Sessions,
-            workflow instances and checkpoints, detached-run admission, and server-side approval state.
+            workflow instances and checkpoints, detached-run admission, and server-side approval state. An
+            ``AgentExecutor`` owns one ``AgentSession`` (history, pending approvals, standing approval rules), so a
+            shared ``Workflow`` or ``WorkflowAgent`` that holds one serves only the first scope that runs it. A run in
+            another scope ends with a ``WORKFLOW_SCOPE_CONFLICT`` ``RUN_ERROR`` before it reaches the model. Pass
+            ``AgentFrameworkWorkflow(workflow_factory=...)`` with a factory that builds a new workflow, including new
+            ``AgentExecutor`` instances, for every call to serve several scopes.
         single_user: Explicitly declare that every caller of this endpoint belongs to one authorization principal.
             The endpoint receives one opaque scope that remains stable for that registration and separates equal route
             paths registered by other applications. Use an explicit resolver when scope continuity must survive process
             restarts or when storage is shared beyond one registration. A single-user application can return its own
             stable application scope from authorization_scope_resolver. Never enable this mode for callers with distinct
-            authorization.
+            authorization. A shared workflow keeps one conversation state for every thread of that principal; use
+            ``workflow_factory`` when threads must stay independent.
     """
     _validate_keepalive_seconds(keepalive_seconds)
     _validate_detached_run_options(max_detached_runs, detached_run_timeout_seconds)

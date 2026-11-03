@@ -65,9 +65,15 @@ app = FastAPI()
 add_agent_framework_fastapi_endpoint(app, workflow, "/", single_user=True)
 ```
 
+One workflow instance serves every request, so its executors keep their state across callers. A shared workflow that
+holds an `AgentExecutor` (its `AgentSession` keeps history, pending approvals, and standing approval rules) serves only
+the first authorization scope that runs it. Use `workflow_factory`, as shown next, to serve several scopes.
+
 ### Server (Thread-Scoped WorkflowBuilder)
 
-Use `workflow_factory` when your workflow keeps runtime state (for example pending `request_info` interrupts) and must be isolated per AG-UI thread:
+Use `workflow_factory` when your workflow keeps runtime state (for example pending `request_info` interrupts or
+`AgentExecutor` sessions) and must be isolated per authorization scope and AG-UI thread. Build the workflow and its
+executors inside the factory:
 
 ```python
 from fastapi import FastAPI
@@ -76,7 +82,7 @@ from agent_framework.ag_ui import AgentFrameworkWorkflow, add_agent_framework_fa
 
 
 def build_workflow_for_thread(thread_id: str) -> Workflow:
-    # Build a fresh workflow instance for each thread id.
+    # Build a fresh workflow instance, including new AgentExecutor instances, for each thread id.
     return WorkflowBuilder(start_executor=...).build()
 
 
@@ -349,6 +355,20 @@ Every AG-UI endpoint must choose an authorization mode:
 Authentication in the separate `dependencies` list can allow or reject a request, but its return value does not scope
 server-side state. Do not combine authentication-only dependencies with `single_user=True` when different authenticated
 callers can reach the endpoint.
+
+### Workflows That Hold Agent Sessions
+
+An `AgentExecutor` owns one `AgentSession` for its whole lifetime. Conversation history, pending approval requests, and
+standing "always approve" rules live there, and the session is not tied to a caller. An endpoint therefore binds each
+`AgentExecutor` to the first authorization scope that runs it. A shared `Workflow` or `WorkflowAgent` that holds one
+serves only that scope. A run in another scope ends with a `WORKFLOW_SCOPE_CONFLICT` `RUN_ERROR` before it reaches the
+model. Pass `AgentFrameworkWorkflow(workflow_factory=...)` with a factory that builds a new workflow, including new
+`AgentExecutor` instances, for every call to serve several scopes. A factory that returns a workflow or executor it
+shares with another scope is refused the same way. Workflows without an `AgentExecutor` are not bound to a scope; their
+pending interrupts stay fenced to the scope and thread that raised them.
+
+With `single_user=True`, or with a resolver that returns one constant scope, a shared workflow keeps one conversation
+state for every thread. Use `workflow_factory` when threads must stay independent.
 
 ### Stable Single-User Scope
 
