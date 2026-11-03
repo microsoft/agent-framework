@@ -51,11 +51,11 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     private readonly string _skillRootUri;
     private readonly IReadOnlyList<McpSkillResourceEntry> _resources;
     private readonly long _maxResourceSizeBytes;
-    private readonly McpSkillsCatalog _skillsCatalog;
     private readonly bool _hasIsolationKey;
     private readonly TimeProvider _timeProvider;
     private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
     private readonly McpCache<string, ResourceContents> _resourceCache;
+    private volatile bool _needsRefresh;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkill"/> class.
@@ -64,7 +64,6 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="uri">The resource URI of the skill's <c>SKILL.md</c>.</param>
     /// <param name="resources">The allowed resource URIs and their expected sizes and content hashes, including <c>SKILL.md</c>.</param>
     /// <param name="client">The MCP client used to fetch <c>SKILL.md</c> and supporting resources.</param>
-    /// <param name="catalog">The catalog to notify when a content mismatch requires updated skill details.</param>
     /// <param name="logger">Optional logger for validation diagnostics.</param>
     /// <param name="maxResourceSizeBytes">The maximum allowed resource size in bytes.</param>
     /// <param name="timeProvider">Optional clock for resource expiration.</param>
@@ -72,7 +71,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="ttlResolver">Optional callback to override the server's resource TTLs.</param>
     /// <param name="hasIsolationKey">Whether the skill belongs to a cache partition key.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> is not positive.</exception>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, McpSkillsCatalog catalog, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false)
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this.Uri = Throw.IfNullOrWhitespace(uri);
@@ -80,7 +79,6 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         this._skillRootUri = this.Uri[..^"SKILL.md".Length];
         this._resources = Throw.IfNull(resources);
         this._client = Throw.IfNull(client);
-        this._skillsCatalog = Throw.IfNull(catalog);
         this._hasIsolationKey = hasIsolationKey;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = ttlResolver;
@@ -102,6 +100,11 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// Gets the skill lifetime.
     /// </summary>
     internal McpCacheLifetime MetadataLifetime { get; }
+
+    /// <summary>
+    /// Gets whether a resource mismatch requires updated skill metadata.
+    /// </summary>
+    internal bool NeedsRefresh => this._needsRefresh;
 
     /// <inheritdoc/>
     /// <remarks>
@@ -208,7 +211,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             cancellationToken.ThrowIfCancellationRequested();
 
             // The resource may have changed; request a new manifest without changing this skill's held manifest.
-            this._skillsCatalog.QueueSkillRefresh(this);
+            this._needsRefresh = true;
             LogResourceIntegrityMismatch(this._logger, resource.Uri, this.Uri, mismatch);
             cancellationToken.ThrowIfCancellationRequested();
 

@@ -36,8 +36,7 @@ public sealed partial class AgentMcpSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        var catalog = CreateCatalog();
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client, catalog);
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client);
 
         // Assert
         Assert.Same(frontmatter, skill.Frontmatter);
@@ -51,14 +50,13 @@ public sealed partial class AgentMcpSkillTests
         // Arrange
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, SkillContent)));
         await using var client = await server.CreateClientAsync();
-        var catalog = CreateCatalog();
         McpCacheLifetime? lifetime = provideLifetime
             ? new McpCacheLifetime(TimeProvider.System.GetTimestamp(), TimeSpan.FromSeconds(1))
             : null;
 
         // Act
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
-            [Resource(SkillUri, SkillContent)], client, catalog, metadataLifetime: lifetime);
+            [Resource(SkillUri, SkillContent)], client, metadataLifetime: lifetime);
 
         // Assert
         Assert.Same(lifetime ?? McpCacheLifetime.Infinite, skill.MetadataLifetime);
@@ -76,12 +74,11 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Nested instructions."));
         });
         await using var client = await server.CreateClientAsync();
-        var catalog = CreateCatalog();
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
         [
             Resource(NestedUri, "Nested instructions."),
             Resource(SkillUri, SkillContent),
-        ], client, catalog);
+        ], client);
 
         // Act
         string instructions = await skill.GetContentAsync();
@@ -111,8 +108,7 @@ public sealed partial class AgentMcpSkillTests
         McpSkillResourceEntry[] resources = includeNestedInstructions
             ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
             : [];
-        var catalog = CreateCatalog();
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, resources, client, catalog);
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, resources, client);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
@@ -464,8 +460,7 @@ public sealed partial class AgentMcpSkillTests
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
-        var catalog = CreateCatalog();
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client, catalog);
+        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client);
 
         // Act
         string verified = await skill.GetContentAsync();
@@ -902,8 +897,7 @@ public sealed partial class AgentMcpSkillTests
 
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        var catalog = CreateCatalog();
-        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client, catalog);
+        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client);
 
         // Act & Assert
         if (useCharacterCount)
@@ -1172,13 +1166,7 @@ public sealed partial class AgentMcpSkillTests
                 Resource(root + "assets/icon.bin", new byte[] { 1, 2, 3, 4 }),
                 Resource(root + "empty.txt", ""),
             ],
-        ], client, CreateCatalog(timeProvider), maxResourceSizeBytes: maxResourceSizeBytes, timeProvider: timeProvider);
-
-    /// <summary>
-    /// Creates a catalog that fails on unexpected listing or skill-refresh requests.
-    /// </summary>
-    private static McpSkillsCatalog CreateCatalog(TimeProvider? timeProvider = null) =>
-        new(new Mock<McpClient>(MockBehavior.Strict).Object, timeProvider: timeProvider);
+        ], client, maxResourceSizeBytes: maxResourceSizeBytes, timeProvider: timeProvider);
 
     /// <summary>
     /// Creates a resource entry with the supplied text's expected size and content hash.

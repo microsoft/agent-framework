@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -30,7 +29,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
-/// Queued refresh requests and individual metadata expiration trigger <c>skills/get</c> while the list is fresh.
+/// Skills marked for refresh and individual metadata expiration trigger <c>skills/get</c> while the list is fresh.
 /// Full discovery takes priority when the list expires.
 /// </para>
 /// <para>
@@ -42,7 +41,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Resource retrieval, verification, and content caching remain the responsibility of each skill object.
-/// A size or digest mismatch queues a metadata refresh through <see cref="QueueSkillRefresh"/>.
+/// A size or digest mismatch marks the skill for metadata refresh through <see cref="AgentMcpSkill.NeedsRefresh"/>.
 /// </para>
 /// <para>
 /// Only one caller can fetch or update the skill list at a time; other callers wait and then check the cache again.
@@ -66,7 +65,6 @@ internal sealed partial class McpSkillsCatalog
     private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
     private readonly bool _hasIsolationKey;
     private readonly McpCache<string, IList<AgentSkill>> _catalogCache;
-    private readonly ConcurrentDictionary<AgentMcpSkill, byte> _skillsToRefresh = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="McpSkillsCatalog"/> class.
@@ -103,35 +101,11 @@ internal sealed partial class McpSkillsCatalog
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        IList<AgentSkill> skills = await this._catalogCache.GetOrRefreshAsync(
+        return await this._catalogCache.GetOrRefreshAsync(
             CatalogKey,
             this.RefreshCatalogAsync,
             cancellationToken,
-            needsRefresh: cached => !this._skillsToRefresh.IsEmpty ||
-                cached.OfType<AgentMcpSkill>().Any(skill => !skill.MetadataLifetime.IsFresh(this._timeProvider))).ConfigureAwait(false);
-
-        this.RemoveObsoleteRefreshRequests();
-
-        return skills;
-    }
-
-    /// <summary>
-    /// Queues a skill from the cached list for refresh on the next <see cref="GetSkillsAsync"/> call.
-    /// </summary>
-    /// <remarks>
-    /// Called after a resource's size or content hash differs from the values recorded for its owning skill.
-    /// Requests for skill objects no longer in the cached list are ignored.
-    /// </remarks>
-    /// <param name="skill">The skill object whose server-provided details need to be fetched again.</param>
-    public void QueueSkillRefresh(AgentMcpSkill skill)
-    {
-        _ = Throw.IfNull(skill);
-
-        // Ignore refresh requests when the skill is no longer in the cache.
-        if (this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
-        {
-            this._skillsToRefresh.TryAdd(skill, 0);
-        }
+            needsRefresh: cached => cached.OfType<AgentMcpSkill>().Any(this.NeedsRefresh)).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -149,7 +123,7 @@ internal sealed partial class McpSkillsCatalog
     }
 
     /// <summary>
-    /// Queues expired skills and stores the updated list only if every queued refresh succeeds.
+    /// Refreshes marked and expired skills and stores the updated list only if every refresh succeeds.
     /// </summary>
     /// <remarks>
     /// Replaces updated skills and removes missing ones in a new list, preserving the catalog's lifetime.
@@ -157,24 +131,12 @@ internal sealed partial class McpSkillsCatalog
     /// </remarks>
     private async Task<McpCacheEntry<IList<AgentSkill>>> RefreshSkillsAsync(McpCacheEntry<IList<AgentSkill>> cached, CancellationToken cancellationToken)
     {
-        // Queue skills whose individual TTL has expired alongside those queued after a resource mismatch.
-        // Skills loaded through listing use Infinite and are refreshed with the catalog instead.
-        foreach (AgentMcpSkill skill in cached.Value.OfType<AgentMcpSkill>())
-        {
-            if (!skill.MetadataLifetime.IsFresh(this._timeProvider))
-            {
-                this._skillsToRefresh.TryAdd(skill, 0);
-            }
-        }
-
         List<AgentSkill>? updated = null;
 
-        foreach (AgentMcpSkill skill in this._skillsToRefresh.Keys)
+        foreach (AgentMcpSkill skill in cached.Value.OfType<AgentMcpSkill>())
         {
-            // Remove refresh requests for skill instances that are no longer in the cached catalog.
-            if (!cached.Value.Contains(skill))
+            if (!this.NeedsRefresh(skill))
             {
-                this._skillsToRefresh.TryRemove(skill, out _);
                 continue;
             }
 
@@ -204,24 +166,16 @@ internal sealed partial class McpSkillsCatalog
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Commit only after every refresh succeeds; failures leave the catalog and pending work intact.
+        // Commit only after every refresh succeeds. Old flags remain set for retries; replacements start unmarked.
         return new(updated, cached.Lifetime);
     }
 
     /// <summary>
-    /// Removes pending refresh requests for skill objects no longer in the published list.
+    /// Returns whether a skill was marked for refresh or its metadata expired.
     /// </summary>
-    private void RemoveObsoleteRefreshRequests()
+    private bool NeedsRefresh(AgentMcpSkill skill)
     {
-        // Keep requests for skills still in the list: they may have been queued during the refresh
-        // or just after the new catalog was stored.
-        foreach (AgentMcpSkill skill in this._skillsToRefresh.Keys)
-        {
-            if (!this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
-            {
-                this._skillsToRefresh.TryRemove(skill, out _);
-            }
-        }
+        return skill.NeedsRefresh || !skill.MetadataLifetime.IsFresh(this._timeProvider);
     }
 
     /// <summary>
@@ -297,7 +251,7 @@ internal sealed partial class McpSkillsCatalog
 
         List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
+        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
     }
 
     /// <summary>

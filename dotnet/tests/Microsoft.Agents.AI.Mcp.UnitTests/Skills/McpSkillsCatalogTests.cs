@@ -28,16 +28,6 @@ public sealed partial class McpSkillsCatalogTests
     }
 
     [Fact]
-    public void QueueSkillRefresh_NullSkill_ThrowsArgumentNullException()
-    {
-        // Arrange
-        var catalog = new McpSkillsCatalog(new Mock<McpClient>().Object);
-
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>("skill", () => catalog.QueueSkillRefresh(null!));
-    }
-
-    [Fact]
     public async Task GetSkillsAsync_PositiveTtl_ReusesListUntilExactExpirationAsync()
     {
         // Arrange
