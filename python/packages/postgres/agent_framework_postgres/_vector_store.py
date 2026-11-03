@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import date, datetime
 from itertools import groupby
-from typing import Any, ClassVar, Generic, TypeAlias, cast
+from typing import Any, ClassVar, Generic, Self, TypeAlias, cast
 from uuid import UUID
 
 from agent_framework import (
@@ -35,7 +35,7 @@ from psycopg import AsyncConnection, Error, sql
 from psycopg.rows import dict_row, tuple_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)

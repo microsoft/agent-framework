@@ -295,11 +295,11 @@ class OtelAttr(str, Enum):
     WORKFLOW_ID = "workflow.id"
     WORKFLOW_BUILDER_NAME = "workflow_builder.name"
     WORKFLOW_BUILDER_DESCRIPTION = "workflow_builder.description"
-    WORKFLOW_NAME = "workflow.name"
+    WORKFLOW_NAME = "gen_ai.workflow.name"
     WORKFLOW_DESCRIPTION = "workflow.description"
     WORKFLOW_DEFINITION = "workflow.definition"
     WORKFLOW_BUILD_SPAN = "workflow.build"
-    WORKFLOW_RUN_SPAN = "workflow.run"
+    WORKFLOW_RUN_SPAN = "invoke_workflow"
     WORKFLOW_STARTED = "workflow.started"
     WORKFLOW_COMPLETED = "workflow.completed"
     WORKFLOW_ERROR = "workflow.error"
@@ -1355,7 +1355,7 @@ class ObservabilitySettings:
             logger_provider = LoggerProvider(resource=resource)
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-            # Attach a handler with the provider to the root logger
+            # Attach a handler with the provider to the agent_framework logger
             handler = LoggingHandler(logger_provider=logger_provider)
             logger.addHandler(handler)
             set_logger_provider(logger_provider)
@@ -1646,6 +1646,17 @@ def configure_otel_providers(
         you can choose to use this method and take the exporter and provider that we created.
         Alternatively, you can setup the providers yourself, or through another library
         (e.g., Azure Monitor) and just call `enable_sensitive_telemetry()` to opt-in to sensitive data capture.
+
+    Note:
+        This is a convenience setup for Agent Framework telemetry. It attaches an OpenTelemetry
+        `LoggingHandler` to the `agent_framework` logger only, and it does not inspect, coordinate with,
+        or make assumptions about the application's other logging handlers. For example, if the
+        application also attaches its own `LoggingHandler` to the root logger, `agent_framework` records
+        propagate to it and are exported by both handlers. Applications that combine this function with
+        their own logging configuration own that composition and should use manual OpenTelemetry setup
+        when they need custom providers, filters, propagation, or exporters. See
+        `python/samples/02-agents/observability/advanced_manual_setup_console_output.py` for a manual
+        setup example.
 
     Note:
         By default, the Agent Framework emits metrics with the prefixes `agent_framework`
@@ -3657,15 +3668,19 @@ def workflow_tracer() -> Tracer:
     return get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
 
 
-def _workflow_span_attributes(
+def _prepare_workflow_span(
     name: str,
     attributes: Mapping[str, str | int] | None = None,
-) -> dict[str, str | int] | None:
+) -> tuple[str, dict[str, str | int] | None]:
     span_attributes: dict[str, str | int] = dict(attributes) if attributes is not None else {}
     conversation_id = _TELEMETRY_CONVERSATION_ID.get()
-    if name == OtelAttr.WORKFLOW_RUN_SPAN and conversation_id is not None:
-        span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
-    return span_attributes or None
+    if name == OtelAttr.WORKFLOW_RUN_SPAN:
+        span_attributes[OtelAttr.OPERATION] = "invoke_workflow"
+        if conversation_id is not None:
+            span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
+        if workflow_name := span_attributes.get(OtelAttr.WORKFLOW_NAME):
+            name = f"{name} {workflow_name}"
+    return name, span_attributes or None
 
 
 @contextlib.contextmanager
@@ -3693,11 +3708,12 @@ def create_workflow_span(
     generator is later closed on GC from a different ``Context``. Streaming
     workflow runs should use :func:`start_workflow_span` instead.
     """
+    name, span_attributes = _prepare_workflow_span(name, attributes)
     return _capture_span_exceptions(
         workflow_tracer().start_as_current_span(
             name,
             kind=kind,
-            attributes=_workflow_span_attributes(name, attributes),
+            attributes=span_attributes,
             record_exception=False,
             set_status_on_exception=False,
         )
@@ -3717,7 +3733,8 @@ def start_workflow_span(
     across a yield causes ``ValueError: Token was created in a different
     Context`` when the generator is garbage-collected.
     """
-    return workflow_tracer().start_span(name, kind=kind, attributes=_workflow_span_attributes(name, attributes))
+    name, span_attributes = _prepare_workflow_span(name, attributes)
+    return workflow_tracer().start_span(name, kind=kind, attributes=span_attributes)
 
 
 def create_processing_span(

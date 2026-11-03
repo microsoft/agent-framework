@@ -18,12 +18,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import currentframe, isawaitable
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, TypeAlias, TypedDict, TypeVar, cast
 
 if sys.version_info >= (3, 13):
     from warnings import deprecated  # pragma: no cover
 else:
     from typing_extensions import deprecated  # pragma: no cover
+
 
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
@@ -54,11 +55,6 @@ from .observability import (
     create_mcp_client_span,
     set_mcp_span_error,
 )
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
     # TODO(jpalvarezl): clean up and consolidate under httpx2
@@ -1078,14 +1074,11 @@ def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextM
 def _should_propagate_cancelled_error(ex: BaseException) -> bool:
     """Return True if *ex* is a genuine task-cancellation that should propagate unchanged.
 
-    On Python >= 3.11, ``task.cancelling() > 0`` distinguishes a real caller-driven
+    ``task.cancelling() > 0`` distinguishes a real caller-driven
     cancellation from a CancelledError raised internally by a library (e.g. via an
-    anyio cancel scope).  On older Python versions the API is unavailable, so we
-    always return False and let callers wrap the error in ToolException instead.
+    anyio cancel scope).
     """
     if not isinstance(ex, asyncio.CancelledError):
-        return False
-    if sys.version_info < (3, 11):
         return False
     task = asyncio.current_task()
     return task is not None and task.cancelling() > 0

@@ -58,7 +58,7 @@ relying on remembered preview-era syntax.
 
 ## Defaults
 
-- For new environments, use Python 3.11 or later within Agent Framework's currently supported range. Prefer the latest
+- Agent Framework requires Python 3.11 or later. Prefer the latest
   supported Python release or the previous release (N-1), unless a required dependency has a narrower compatibility
   range.
 - Install the narrow Agent Framework distribution needed by the application instead of defaulting to the

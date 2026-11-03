@@ -523,6 +523,28 @@ def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
     return normalized
 
 
+def _canonicalize_schema(schema: Any) -> Any:
+    """Recursively sort schema dictionary keys deterministically to preserve prompt cache stability.
+
+    Sorts all object-level keyword keys alphabetically, and recursively canonicalizes nested
+    schemas in mappings (properties, patternProperties, $defs, definitions, dependentSchemas)
+    and sequences (items, allOf, anyOf, oneOf). Non-dict/list values are returned unmodified.
+    """
+    if isinstance(schema, dict):
+        schema_dict = cast(dict[str, Any], schema)
+        result: dict[str, Any] = {}
+        for key, val in sorted(schema_dict.items(), key=lambda pair: pair[0]):
+            if isinstance(val, (dict, list)):
+                result[key] = _canonicalize_schema(val)
+            else:
+                result[key] = val
+        return result
+    if isinstance(schema, list):
+        schema_list = cast(list[Any], schema)
+        return [_canonicalize_schema(item) for item in schema_list]
+    return schema
+
+
 def _format_tool_parameters(  # pyright: ignore[reportUnusedFunction]
     parameters: dict[str, Any],
     *,
@@ -1349,11 +1371,14 @@ class FunctionTool(SerializationMixin):
         """Create the JSON schema of the parameters.
 
         Returns:
-            A dictionary containing the JSON schema for the function's parameters.
+            A dictionary containing the JSON schema for the function's parameters,
+            with deterministic recursive sorting to preserve prompt cache stability.
             The result is cached after the first call for performance.
         """
         if self._cached_parameters is None:
-            self._cached_parameters = self._input_schema
+            raw_schema = self._input_schema
+            canonical = _canonicalize_schema(raw_schema) if isinstance(raw_schema, dict) else raw_schema
+            self._cached_parameters = canonical if isinstance(canonical, dict) else {}
         return self._cached_parameters
 
     @staticmethod
@@ -1361,8 +1386,8 @@ class FunctionTool(SerializationMixin):
         """Recursively convert a value to a JSON-dumpable form."""
         from ._types import Content
 
-        if isinstance(value, list):
-            list_value = cast(list[object], value)
+        if isinstance(value, (list, tuple)):
+            list_value = cast(list[object] | tuple[object, ...], value)
             return [FunctionTool._make_dumpable(item) for item in list_value]
         if isinstance(value, dict):
             dict_value = cast(dict[object, object], value)
@@ -1404,7 +1429,7 @@ class FunctionTool(SerializationMixin):
             return [Content.from_text(result)]
         if isinstance(result, Content):
             return [result]
-        if isinstance(result, list) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
+        if isinstance(result, (list, tuple)) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
             parsed_items: list[Content] = []
             for item in result:  # type: ignore[reportUnknownVariableType]
                 if isinstance(item, Content):
@@ -1599,7 +1624,11 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
         case "string":
             return isinstance(value, str)
         case "integer":
-            return isinstance(value, int) and not isinstance(value, bool)
+            # JSON Schema "integer" is a number without a fraction, so 3.0
+            # is valid (#9843). bool is not an integer here.
+            return (isinstance(value, int) and not isinstance(value, bool)) or (
+                isinstance(value, float) and value.is_integer()
+            )
         case "number":
             return (isinstance(value, int | float)) and not isinstance(value, bool)
         case "boolean":
@@ -1612,6 +1641,21 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
             return value is None
         case _:
             return True
+
+
+def _normalize_json_schema_value(value: Any, allowed_types: list[str]) -> Any:
+    """Coerce a value to the type the schema asked for, where JSON is looser.
+
+    JSON has a single number type, so a model sends ``3.0`` for a parameter the
+    schema declares as ``integer``. Accepting it is only half the fix: a tool that
+    runs ``range(count)`` or indexes with it still raises on a float. Whole-number
+    floats become ``int`` when ``integer`` is the only numeric type allowed. When
+    ``number`` is allowed too the value's own type is the answer, so nothing is
+    narrowed to fit a declaration that also permits fractions.
+    """
+    if isinstance(value, float) and value.is_integer() and "integer" in allowed_types and "number" not in allowed_types:
+        return int(value)
+    return value
 
 
 def _validate_arguments_against_schema(
@@ -1634,7 +1678,7 @@ def _validate_arguments_against_schema(
         if unexpected_fields:
             raise TypeError(f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}")
 
-    for field_name, field_value in parsed_arguments.items():
+    for field_name, field_value in list(parsed_arguments.items()):
         if not isinstance(properties.get(field_name), dict):
             continue
 
@@ -1649,6 +1693,7 @@ def _validate_arguments_against_schema(
                     f"Invalid type for '{field_name}' in '{tool_name}': "
                     f"expected {schema_type}, got {type(field_value).__name__}"
                 )
+            parsed_arguments[field_name] = _normalize_json_schema_value(field_value, [schema_type])
             continue
 
         if isinstance(schema_type, list):
@@ -1658,6 +1703,7 @@ def _validate_arguments_against_schema(
                     f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
                     f"{allowed_types}, got {type(field_value).__name__}"
                 )
+            parsed_arguments[field_name] = _normalize_json_schema_value(field_value, allowed_types)
 
     return parsed_arguments
 
