@@ -317,11 +317,14 @@ async def test_injected_clients_ignore_connection_settings(target: str, file_opt
 def test_injected_proxy_rejects_mismatched_name(target: str) -> None:
     client = MagicMock()
     client.id = "injected"
+    kwargs: dict[str, Any] = (
+        {"database_client": client, "database_name": "other"}
+        if target.endswith("database")
+        else {"container_client": client, "collection_name": "other"}
+    )
     if target.endswith("database"):
-        kwargs: dict[str, Any] = {"database_client": client, "database_name": "other"}
         message = "database_name must match the injected database_client id."
     else:
-        kwargs = {"container_client": client, "collection_name": "other"}
         message = "collection_name must match the injected container_client id."
     with pytest.raises(ValueError) as exc:
         if target.startswith("store"):
@@ -335,10 +338,11 @@ def test_injected_proxy_rejects_mismatched_name(target: str) -> None:
 def test_injected_proxy_accepts_matching_name(target: str) -> None:
     client = MagicMock()
     client.id = "injected"
-    if target.endswith("database"):
-        kwargs: dict[str, Any] = {"database_client": client, "database_name": "injected"}
-    else:
-        kwargs = {"container_client": client, "collection_name": "injected"}
+    kwargs: dict[str, Any] = (
+        {"database_client": client, "database_name": "injected"}
+        if target.endswith("database")
+        else {"container_client": client, "collection_name": "injected"}
+    )
     if target.startswith("store"):
         assert CosmosStore(**kwargs).database_name == "injected"
     else:
