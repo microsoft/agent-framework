@@ -31,9 +31,18 @@ class _GoogleGeminiModelSettings(TypedDict, total=False):
 
 
 def load_gemini_settings(*, client: genai.Client | None, **kwargs: Any) -> GoogleGeminiSettings:
-    """Load ``GOOGLE_*`` settings, skipping auth, mode, project, and location for an injected client."""
-    settings_type: type[Any] = GoogleGeminiSettings if client is None else _GoogleGeminiModelSettings
-    return load_settings(settings_type, env_prefix="GOOGLE_", **kwargs)
+    """Load ``GOOGLE_*`` settings, skipping auth, mode, project, and location for an injected client.
+
+    For an injected client, explicit mode arguments are kept (environment mode is not read) so they
+    remain the fallback when the SDK client does not expose its mode.
+    """
+    if client is None:
+        return load_settings(GoogleGeminiSettings, env_prefix="GOOGLE_", **kwargs)
+    settings: GoogleGeminiSettings = load_settings(_GoogleGeminiModelSettings, env_prefix="GOOGLE_", **kwargs)  # type: ignore[assignment]
+    for key in ("genai_use_enterprise", "genai_use_vertexai"):
+        if kwargs.get(key) is not None:
+            settings[key] = kwargs[key]
+    return settings
 
 
 _GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"

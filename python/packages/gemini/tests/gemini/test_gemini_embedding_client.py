@@ -238,6 +238,23 @@ def test_injected_sdk_client_ignores_invalid_connection_settings(
     assert client.model == "gemini-embedding-2-preview"
 
 
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_without_mode_uses_explicit_mode(
+    clear_google_env: None,
+    mode_arg: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit mode stays the fallback when the injected SDK client does not expose its mode."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "not-a-bool")
+    sdk = _make_sdk_client()
+    sdk._api_client.vertexai = None
+
+    client = RawGeminiEmbeddingClient(client=sdk, model="gemini-embedding-2-preview", **{mode_arg: True})
+
+    assert client._genai_client is sdk
+    assert client._vertexai is True
+
+
 async def test_close_only_closes_owned_sdk_client(clear_google_env: None) -> None:
     owned_sdk = _make_sdk_client()
     with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=owned_sdk):
