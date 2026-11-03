@@ -75,8 +75,9 @@ validate query credentials before resolving connection settings or creating owne
 Both constructors create owned clients through `_create_index_client`, reusing `AzureAISearchSettings`
 and the public AF `load_settings` / `SecretString` API with the `AZURE_SEARCH_` prefix. Explicit settings
 override the selected `.env` file, which overrides the process environment. `env_file_path` and
-`env_file_encoding` are supported on both. Injected clients bypass settings entirely and reject explicit
-connection/file overrides; store-created collections reuse its resolved client without another load.
+`env_file_encoding` are supported on both. Injected clients take precedence over connection/file
+overrides, bypass settings entirely, and remain caller-owned; store-created collections reuse its
+resolved client without another load.
 The store tracks open collections in insertion order with constant-time removal. A collection's
 private close callback removes its registration and is cleared even when client cleanup fails;
 store shutdown still attempts all remaining owned clients without closing borrowed credentials.
