@@ -254,6 +254,7 @@ _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY = 0.1
 _MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
 
 _DEFAULT_MCP_DISCOVERY_MAX_PAGES = 100
+_DEFAULT_MCP_DISCOVERY_MAX_ITEMS = 1_000
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
 
 
@@ -1186,6 +1187,7 @@ class MCPTool:
         always_load: Collection[str] | None = None,
         *,
         max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
     ) -> None:
@@ -1212,6 +1214,8 @@ class MCPTool:
             )
         if max_discovery_pages is not None and max_discovery_pages <= 0:
             raise ValueError("max_discovery_pages must be positive or None.")
+        if max_discovery_items is not None and max_discovery_items <= 0:
+            raise ValueError("max_discovery_items must be positive or None.")
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
         if request_timeout is not None and request_timeout <= 0:
@@ -1241,6 +1245,7 @@ class MCPTool:
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
         self._max_discovery_pages = max_discovery_pages
+        self._max_discovery_items = max_discovery_items
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
@@ -3005,8 +3010,18 @@ class MCPTool:
         prompt_functions: list[FunctionTool] = []
         retained_prompt_names: set[str] = set()
         new_functions: list[FunctionTool] = []
+        items_loaded = 0
 
         def stage_prompt_page(prompt_list: types.ListPromptsResult) -> None:
+            nonlocal items_loaded
+            items_loaded += len(prompt_list.prompts)
+            if self._max_discovery_items is not None and items_loaded > self._max_discovery_items:
+                raise _mcp_tool_execution_exception(
+                    f"MCP prompt discovery exceeded max_discovery_items={self._max_discovery_items}; "
+                    f"the server returned {items_loaded} prompts. Increase max_discovery_items, "
+                    "or set it to None only for a trusted MCP server."
+                )
+
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
@@ -3062,8 +3077,9 @@ class MCPTool:
         while cursor is not None:
             if self._max_discovery_pages is not None and pages_loaded >= self._max_discovery_pages:
                 raise _mcp_tool_execution_exception(
-                    f"MCP prompt discovery reached the configured maximum of "
-                    f"{self._max_discovery_pages} pages before the server completed pagination."
+                    f"MCP prompt discovery exceeded max_discovery_pages={self._max_discovery_pages}; "
+                    f"the server returned a continuation cursor after page {pages_loaded}. "
+                    "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
                 )
 
             prompt_list = await self._try_list_prompts_page_with_recovery(types.PaginatedRequestParams(cursor=cursor))
@@ -3202,8 +3218,18 @@ class MCPTool:
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         tool_param_names_by_name: dict[str, set[str]] = {}
         tool_annotations_by_name: dict[str, Any] = {}
+        items_loaded = 0
 
         def stage_tool_page(tool_list: types.ListToolsResult) -> None:
+            nonlocal items_loaded
+            items_loaded += len(tool_list.tools)
+            if self._max_discovery_items is not None and items_loaded > self._max_discovery_items:
+                raise _mcp_tool_execution_exception(
+                    f"MCP tool discovery exceeded max_discovery_items={self._max_discovery_items}; "
+                    f"the server returned {items_loaded} tools. Increase max_discovery_items, "
+                    "or set it to None only for a trusted MCP server."
+                )
+
             for tool in tool_list.tools:
                 task_support = getattr(getattr(tool, "execution", None), "task_support", None)
                 if task_support == "required":
@@ -3291,8 +3317,9 @@ class MCPTool:
         while cursor is not None:
             if self._max_discovery_pages is not None and pages_loaded >= self._max_discovery_pages:
                 raise _mcp_tool_execution_exception(
-                    f"MCP tool discovery reached the configured maximum of "
-                    f"{self._max_discovery_pages} pages before the server completed pagination."
+                    f"MCP tool discovery exceeded max_discovery_pages={self._max_discovery_pages}; "
+                    f"the server returned a continuation cursor after page {pages_loaded}. "
+                    "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
                 )
 
             tool_list = await self._try_list_tools_page_with_recovery(types.PaginatedRequestParams(cursor=cursor))
@@ -3808,6 +3835,7 @@ class MCPStdioTool(MCPTool):
         task_options: Any | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -3918,6 +3946,10 @@ class MCPStdioTool(MCPTool):
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
             max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
                 ``None`` disables the limit.
+            max_discovery_items: Maximum number of tools or prompts accepted across all discovery pages.
+                Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
+                each page and do not bound the encoded response size; connect only to servers trusted to return
+                reasonably sized responses and configure transport-specific size limits where available.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -3974,6 +4006,7 @@ class MCPStdioTool(MCPTool):
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
             max_discovery_pages=max_discovery_pages,
+            max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -4070,6 +4103,7 @@ class MCPStreamableHTTPTool(MCPTool):
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         task_options: Any = None,
         max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -4251,6 +4285,10 @@ class MCPStreamableHTTPTool(MCPTool):
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
             max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
                 ``None`` disables the limit.
+            max_discovery_items: Maximum number of tools or prompts accepted across all discovery pages.
+                Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
+                each page and do not bound the encoded response size; connect only to servers trusted to return
+                reasonably sized responses and configure transport-specific size limits where available.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -4307,6 +4345,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
             max_discovery_pages=max_discovery_pages,
+            max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -4739,6 +4778,7 @@ class MCPWebsocketTool(MCPTool):
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         task_options: Any = None,
         max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -4834,6 +4874,10 @@ class MCPWebsocketTool(MCPTool):
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
             max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
                 ``None`` disables the limit.
+            max_discovery_items: Maximum number of tools or prompts accepted across all discovery pages.
+                Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
+                each page and do not bound the encoded response size; connect only to servers trusted to return
+                reasonably sized responses and configure transport-specific size limits where available.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -4862,6 +4906,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
             max_discovery_pages=max_discovery_pages,
+            max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )

@@ -68,7 +68,7 @@ Agent Framework owns:
 
 - transport and Client construction, Client entry, and resource cleanup for framework-created connections;
 - the lifecycle-owner task, locks, connection publication, reset coordination, and cancellation cleanup;
-- the default request read timeout for framework-created Clients and the configurable page bound for
+- the default request read timeout for framework-created Clients and configurable page/item bounds for
   Agent Framework-driven tool and prompt catalog discovery;
 - request-scoped HTTP header identity and reconnects caused by identity changes;
 - tool argument filtering and trusted request metadata merging;
@@ -84,13 +84,17 @@ For **caller-supplied** connections, the caller owns:
 - constructing and closing a **supplied** low-level `ClientSession`;
 - the transport, authentication, callbacks, request timeout, and other configuration already captured by either
   supplied object. Agent Framework does not overwrite that request policy, while its own catalog-materialization
-  page bound still applies.
+  page and item bounds still apply.
 
 Transport-specific tool constructors enforce the same ownership boundary. A URL or command selects
 framework-owned Client construction; a supplied high-level `mcp.Client` selects caller-owned construction and
 lifecycle. Constructor combinations that mix those ownership modes or configure a transport the caller already
 owns raise `ValueError` instead of silently ignoring parameters. Temporarily retained legacy constructor and
 `ClientSession` combinations remain compatible and will be removed in vNext.
+
+Catalog page and item limits apply after the MCP SDK parses each response. They do not establish a universal
+transport response-size bound; applications must connect to MCP servers trusted to return reasonably sized responses
+and configure transport-specific limits where the selected transport exposes them.
 
 The SDK `Client` owns:
 

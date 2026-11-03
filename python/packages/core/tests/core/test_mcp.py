@@ -329,22 +329,30 @@ def test_mcp_transport_subclasses_default_discovery_page_limit() -> None:
         ]
 
     assert all(tool._max_discovery_pages == 100 for tool in tools)
+    assert all(tool._max_discovery_items == 1_000 for tool in tools)
 
 
 def test_mcp_transport_subclasses_forward_discovery_page_limit() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         tools = [
-            MCPStdioTool(name="stdio", command="python", max_discovery_pages=101),
-            MCPStreamableHTTPTool(name="http", url="https://example.com/mcp", max_discovery_pages=102),
+            MCPStdioTool(name="stdio", command="python", max_discovery_pages=101, max_discovery_items=1_001),
+            MCPStreamableHTTPTool(
+                name="http",
+                url="https://example.com/mcp",
+                max_discovery_pages=102,
+                max_discovery_items=1_002,
+            ),
             MCPWebsocketTool(  # ty: ignore[deprecated]
                 name="websocket",
                 url="wss://example.com/mcp",
                 max_discovery_pages=103,
+                max_discovery_items=1_003,
             ),
         ]
 
     assert [tool._max_discovery_pages for tool in tools] == [101, 102, 103]
+    assert [tool._max_discovery_items for tool in tools] == [1_001, 1_002, 1_003]
 
 
 @pytest.mark.parametrize("max_discovery_pages", [0, -1])
@@ -353,6 +361,15 @@ def test_mcp_tool_rejects_non_positive_discovery_page_limit(max_discovery_pages:
         MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
             name="test_tool",
             max_discovery_pages=max_discovery_pages,
+        )
+
+
+@pytest.mark.parametrize("max_discovery_items", [0, -1])
+def test_mcp_tool_rejects_non_positive_discovery_item_limit(max_discovery_items: int) -> None:
+    with pytest.raises(ValueError, match="max_discovery_items must be positive or None"):
+        MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            max_discovery_items=max_discovery_items,
         )
 
 
@@ -6988,7 +7005,7 @@ async def test_load_tools_rejects_catalog_exceeding_page_limit() -> None:
 
     mock_session.list_tools = AsyncMock(side_effect=list_tools)
 
-    with pytest.raises(ToolExecutionException, match="configured maximum of 2 pages"):
+    with pytest.raises(ToolExecutionException, match="max_discovery_pages=2"):
         await tool.load_tools()
 
     assert mock_session.list_tools.await_count == 2
@@ -7045,6 +7062,67 @@ async def test_load_tools_allows_unbounded_pagination_when_limit_is_none() -> No
 
     assert pages_served == 101
     assert mock_session.list_tools.await_count == 101
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_accepts_items_at_limit(catalog_kind: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_items=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+        mock_session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(name="first", input_schema={"type": "object", "properties": {}}),
+                    types.Tool(name="second", input_schema={"type": "object", "properties": {}}),
+                ]
+            )
+        )
+        await tool.load_tools()
+    else:
+        mock_session.list_prompts = AsyncMock(
+            return_value=types.ListPromptsResult(prompts=[types.Prompt(name="first"), types.Prompt(name="second")])
+        )
+        await tool.load_prompts()
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_rejects_items_exceeding_limit(catalog_kind: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_items=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+        mock_session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(name=name, input_schema={"type": "object", "properties": {}})
+                    for name in ("first", "second", "third")
+                ]
+            )
+        )
+        load_catalog = tool.load_tools
+    else:
+        mock_session.list_prompts = AsyncMock(
+            return_value=types.ListPromptsResult(
+                prompts=[types.Prompt(name=name) for name in ("first", "second", "third")]
+            )
+        )
+        load_catalog = tool.load_prompts
+
+    with pytest.raises(ToolExecutionException, match="max_discovery_items=2"):
+        await load_catalog()
+
+    assert tool.functions == []
 
 
 async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
@@ -7218,7 +7296,7 @@ async def test_load_prompts_rejects_catalog_exceeding_page_limit() -> None:
 
     mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
 
-    with pytest.raises(ToolExecutionException, match="configured maximum of 2 pages"):
+    with pytest.raises(ToolExecutionException, match="max_discovery_pages=2"):
         await tool.load_prompts()
 
     assert mock_session.list_prompts.await_count == 2
