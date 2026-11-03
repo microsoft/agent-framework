@@ -148,7 +148,6 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "MemoryTopicRecord",
     ),
     "._harness._mode": ("DEFAULT_MODE_SOURCE_ID", "AgentModeProvider", "get_agent_mode", "set_agent_mode"),
-    "._harness._request_broker": ("AsyncRequestBroker",),
     "._harness._todo": (
         "DEFAULT_TODO_SOURCE_ID",
         "TodoFileStore",
@@ -452,7 +451,6 @@ __all__ = [
     "AgentSession",
     "AggregatingSkillsSource",
     "Annotation",
-    "AsyncRequestBroker",
     "BackgroundAgentsProvider",
     "BackgroundTaskInfo",
     "BackgroundTaskStatus",

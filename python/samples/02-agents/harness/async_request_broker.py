@@ -1,110 +1,228 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import warnings
+import logging
+import sys
+from collections.abc import Awaitable, Mapping, Sequence
+from typing import Any
 
-from agent_framework import AsyncRequestBroker
+from agent_framework import (
+    Agent,
+    AgentSession,
+    BaseChatClient,
+    ChatResponse,
+    Content,
+    FunctionInvocationLayer,
+    Message,
+)
+from agent_framework_tools.shell import LocalShellTool
 
-"""AsyncRequestBroker: pause server-side work until a client responds.
+"""MAF approval pause-and-resume for shell commands.
 
-This sample demonstrates how to use `AsyncRequestBroker` to let server-side
-code (for example a running agent or tool) stop partway through, ask a
-connected client for a decision, and continue once the client answers.
+Agent Framework's approval contract is pause-and-resume, not "block and wait":
 
-A typical case is a tool that needs human approval before it runs. The server
-calls `await broker.request(request_id)` and sends the request ID to the UI
-over whatever transport you use (websocket, SSE, HTTP). When the user answers,
-the client handler calls `broker.resolve(request_id, value)` or
-`broker.reject(request_id, exception)`, and the awaiting coroutine continues.
+1. A tool created with ``approval_mode="always_require"`` does NOT run. The
+   agent returns early and ``response.user_input_requests`` contains a
+   function-approval request.
+2. Your application delivers that request to whoever decides (a UI, a chat
+   channel, a reviewer) over a transport that YOU own.
+3. When a decision arrives, call ``agent.run(...)`` again with the SAME
+   ``AgentSession`` and an approval response built with
+   ``request.to_function_approval_response(approved)``.
 
-The sample covers three cases:
-1. The server awaits a request and the client resolves it.
-2. The server awaits a request, the client rejects it, and the server handles
-   the error.
-3. The server awaits a request with a timeout that nobody answers.
+The framework deliberately ships no request broker: where pending requests
+live, how they reach a client, and how long they wait are application concerns.
 
-No LLM or credentials are needed. The "client" is simulated with
-`asyncio.create_task` in the same event loop.
+This sample shows that split. ``_PendingApprovals`` below is a minimal
+``asyncio.Future``-based mailbox that stands in for your transport. It is
+process-lifetime only: if the process exits, pending requests are lost. It is
+NOT a substitute for a durable queue or workflow engine; use one of those when
+approvals must survive restarts or span multiple workers.
+
+No LLM or credentials are needed. A scripted chat client emits a shell tool
+call, and the real ``LocalShellTool`` runs it only after approval. Shell
+policy/outcome events are emitted on the ``agent_framework.shell.audit``
+logger; the sample enables it so you can see them.
 """
 
-# AsyncRequestBroker is experimental; silence the warning to keep output tidy.
-warnings.filterwarnings("ignore", message=r"\[HARNESS\]")
+
+class _AuditPrinter(logging.Handler):
+    """Print shell audit events (policy decision and outcome) with their structured fields."""
+
+    _FIELDS = ("policy_decision", "outcome", "exit_code", "timed_out")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        fields = {k: record.__dict__[k] for k in self._FIELDS if k in record.__dict__}
+        print(f"    [audit] {record.getMessage()} {fields}")
 
 
-class ApprovalDenied(Exception):
-    """Raised on the server when the client denies an approval request."""
+_audit_logger = logging.getLogger("agent_framework.shell.audit")
+_audit_logger.setLevel(logging.INFO)
+_audit_logger.addHandler(_AuditPrinter())
 
 
-async def server_delete_files(broker: AsyncRequestBroker[bool], request_id: str, path: str) -> None:
-    """Server-side work that pauses for client approval before continuing."""
-    print(f"[server] Requesting approval to delete '{path}' (id={request_id})")
+class _PendingApprovals:
+    """Application-owned mailbox: request id -> Future[bool]. Process-lifetime only."""
+
+    def __init__(self) -> None:
+        self._futures: dict[str, asyncio.Future[bool]] = {}
+
+    def submit(self, request_id: str) -> asyncio.Future[bool]:
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._futures[request_id] = future
+        return future
+
+    def answer(self, request_id: str, approved: bool) -> None:
+        future = self._futures.pop(request_id, None)
+        if future is not None and not future.done():
+            future.set_result(approved)
+
+    def discard(self, request_id: str) -> None:
+        self._futures.pop(request_id, None)
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._futures)
+
+
+class _ScriptedShellClient(FunctionInvocationLayer, BaseChatClient):
+    """Stands in for an LLM: asks to run one shell command, then summarizes."""
+
+    def __init__(self, command: str) -> None:
+        super().__init__()
+        self._command = command
+        self._asked = False
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse]:
+        async def _get() -> ChatResponse:
+            if not self._asked:
+                self._asked = True
+                call = Content.from_function_call(
+                    call_id="call-1", name="run_shell", arguments={"command": self._command}
+                )
+                return ChatResponse(messages=Message(role="assistant", contents=[call]))
+            return ChatResponse(messages=Message(role="assistant", contents=["The command finished."]))
+
+        return _get()
+
+
+def _make_agent(command: str) -> Agent[Any]:
+    shell = LocalShellTool(mode="stateless", approval_mode="always_require")
+    return Agent(client=_ScriptedShellClient(command), tools=[shell.as_function()])
+
+
+async def simulated_client(pending: _PendingApprovals, request_id: str, *, approve: bool, delay: float) -> None:
+    """Simulate a remote reviewer answering after a delay (or never, if delay is None-like)."""
+    await asyncio.sleep(delay)
+    print(f"[client] {'Approving' if approve else 'Denying'} {request_id}")
+    pending.answer(request_id, approve)
+
+
+async def run_with_approval(
+    agent: Agent[Any],
+    session: AgentSession,
+    pending: _PendingApprovals,
+    prompt: str,
+    *,
+    answer_timeout: float,
+    client_task_factory: Any,
+) -> str:
+    """Drive pause-and-resume. ``client_task_factory(request_id)`` starts the simulated client."""
+    response = await agent.run(prompt, session=session)
+    if not response.user_input_requests:
+        return response.text
+
+    request = response.user_input_requests[0]
+    assert request.function_call is not None
+    request_id = request.id or request.function_call.call_id
+    print(f"[server] Paused: approval needed for {request.function_call.name}({request.function_call.arguments})")
+
+    # Deliver the request to the client over *your* transport, then wait for a decision.
+    decision = pending.submit(request_id)
+    client_task = client_task_factory(request_id)
     try:
-        # Suspends here, without blocking the event loop, until the client answers.
-        approved = await broker.request(request_id)
-    except ApprovalDenied as ex:
-        print(f"[server] Request {request_id} was rejected: {ex}. Skipping.")
-        return
-    print(f"[server] Request {request_id} answered: approved={approved}. Deleting '{path}'.")
+        approved = await asyncio.wait_for(decision, timeout=answer_timeout)
+    except asyncio.TimeoutError:
+        # Nobody answered. The agent is NOT blocked -- it already returned -- but this
+        # conversation is stuck in a "pending approval" state until you act. Decide a
+        # policy: keep waiting, escalate, or resume with a denial.
+        print(f"[server] No answer within {answer_timeout}s; request {request_id} is still unresolved.")
+        pending.discard(request_id)
+        client_task.cancel()
+        return "STUCK: approval was never answered (session left paused)"
 
-
-async def client_respond(broker: AsyncRequestBroker[bool], request_id: str, *, approve: bool) -> None:
-    """Simulate a client (e.g. a UI) answering the request after a short delay."""
-    await asyncio.sleep(0.1)  # The user thinks about it...
-    if approve:
-        print(f"[client] Approving {request_id}")
-        broker.resolve(request_id, True)
-    else:
-        print(f"[client] Denying {request_id}")
-        broker.reject(request_id, ApprovalDenied("user said no"))
+    # Resume: same session, plus the approval response.
+    print(f"[server] Resuming with approved={approved}")
+    resumed = await agent.run(
+        [
+            Message("assistant", [request]),
+            Message("user", [request.to_function_approval_response(approved)]),
+        ],
+        session=session,
+    )
+    return resumed.text
 
 
 async def main() -> None:
-    broker: AsyncRequestBroker[bool] = AsyncRequestBroker()
+    command = "Write-Output hello" if sys.platform == "win32" else "echo hello from approved shell"
+    pending = _PendingApprovals()
 
-    # 1. Resolve: the client approves and the server continues with the result.
-    print("=== Resolve ===")
-    await asyncio.gather(
-        server_delete_files(broker, "req-1", "./tmp/cache"),
-        client_respond(broker, "req-1", approve=True),
+    print("=== 1. Approved: the command runs after the client says yes ===")
+    agent, session = _make_agent(command), AgentSession()
+    print(
+        "[agent]",
+        await run_with_approval(
+            agent,
+            session,
+            pending,
+            "Run the greeting command",
+            answer_timeout=2.0,
+            client_task_factory=lambda rid: asyncio.create_task(
+                simulated_client(pending, rid, approve=True, delay=0.1)
+            ),
+        ),
     )
 
-    # 2. Reject: the client denies and the server gets the exception.
-    print("\n=== Reject ===")
-    await asyncio.gather(
-        server_delete_files(broker, "req-2", "./important"),
-        client_respond(broker, "req-2", approve=False),
+    print("\n=== 2. Denied: the command never runs ===")
+    agent, session = _make_agent(command), AgentSession()
+    print(
+        "[agent]",
+        await run_with_approval(
+            agent,
+            session,
+            pending,
+            "Run the greeting command",
+            answer_timeout=2.0,
+            client_task_factory=lambda rid: asyncio.create_task(
+                simulated_client(pending, rid, approve=False, delay=0.1)
+            ),
+        ),
     )
 
-    # 3. Timeout: nobody answers, so the server stops waiting.
-    print("\n=== Timeout ===")
-    try:
-        await broker.request("req-3", timeout=0.2)
-    except asyncio.TimeoutError:
-        print("[server] Request req-3 timed out with no response.")
-
-    # A late reply for a settled request is ignored. resolve() returns True to
-    # show the ID is known but already settled.
-    print(f"[client] Late reply to req-3 accepted as already settled: {broker.resolve('req-3', True)}")
-    print(f"Pending requests: {broker.pending_count}")
+    print("\n=== 3. Nobody answers: the session is stuck pending ===")
+    agent, session = _make_agent(command), AgentSession()
+    print(
+        "[agent]",
+        await run_with_approval(
+            agent,
+            session,
+            pending,
+            "Run the greeting command",
+            answer_timeout=0.3,
+            client_task_factory=lambda rid: asyncio.create_task(
+                simulated_client(pending, rid, approve=True, delay=30.0)
+            ),
+        ),
+    )
+    print(f"Pending requests: {pending.pending_count}")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-"""
-Sample output:
-=== Resolve ===
-[server] Requesting approval to delete './tmp/cache' (id=req-1)
-[client] Approving req-1
-[server] Request req-1 answered: approved=True. Deleting './tmp/cache'.
-
-=== Reject ===
-[server] Requesting approval to delete './important' (id=req-2)
-[client] Denying req-2
-[server] Request req-2 was rejected: user said no. Skipping.
-
-=== Timeout ===
-[server] Request req-3 timed out with no response.
-[client] Late reply to req-3 accepted as already settled: True
-Pending requests: 0
-"""

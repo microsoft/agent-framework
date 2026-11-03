@@ -15,7 +15,6 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
 from .._feature_usage import FeatureIndex
-from ._audit import ShellAuditLog
 from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
 from ._resolve import is_powershell, resolve_shell
@@ -29,6 +28,7 @@ from ._types import (
 )
 
 logger = logging.getLogger(__name__)
+_audit_logger = logging.getLogger("agent_framework.shell.audit")
 
 
 def _quote_posix(value: str) -> str:
@@ -145,9 +145,14 @@ class LocalShellTool:
         on_command: Optional audit hook called with the command string for
             every command that passes policy. Use for logging / telemetry.
 
-    Attributes:
-        audit_log: :class:`ShellAuditLog` recording every evaluated command
-            (allowed or denied) with its policy decision and exit code.
+    Note:
+        Shell execution events are emitted through
+        ``logging.getLogger("agent_framework.shell.audit")`` with ``shell.policy``
+        (policy decisions) and ``shell.execution`` (outcomes) messages.
+        Configure a handler on that logger to collect, store, or forward events.
+        Commands are not included in log records by default because they may
+        contain secrets; use the ``on_command`` hook if you need them in a
+        controlled environment.
     """
 
     def __init__(
@@ -186,7 +191,6 @@ class LocalShellTool:
         self._max_output_bytes = max_output_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
-        self.audit_log: ShellAuditLog = ShellAuditLog()
 
         merged_env: dict[str, str] | None
         if env is None and not clean_env:
@@ -242,6 +246,9 @@ class LocalShellTool:
 
     # ------------------------------------------------------------------ core run
 
+    def _effective_workdir(self) -> str:
+        return os.path.abspath(self._workdir) if self._workdir is not None else os.getcwd()
+
     async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
         """Execute ``command`` directly and return its :class:`ShellResult`.
 
@@ -262,11 +269,18 @@ class LocalShellTool:
         mark_feature_used(FeatureIndex.TOOLS_SHELL)
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
-        record = self.audit_log.record(
-            command=command,
-            policy_decision=decision.decision,
-            denial_reason=decision.reason if decision.decision == "deny" else "",
-            workdir=request.workdir,
+        # Resolve the effective cwd so records never report ``None``.
+        # In persistent mode the shell's real cwd may differ if
+        # ``confine_workdir=False``; this reports the configured location.
+        effective_workdir = self._effective_workdir()
+        _audit_logger.info(
+            "shell.policy",
+            extra={
+                "policy_decision": decision.decision,
+                "denial_reason": decision.reason if decision.decision == "deny" else "",
+                "workdir": effective_workdir,
+                # command is intentionally omitted -- it may contain secrets.
+            },
         )
         if decision.decision == "deny":
             raise ShellCommandError(f"Command rejected by policy: {decision.reason}")
@@ -278,26 +292,43 @@ class LocalShellTool:
 
         effective_timeout = self._timeout if timeout is None else timeout
 
-        if self._mode == "persistent":
-            if self._session is None:
-                await self.start()
-            if self._session is None:
-                raise RuntimeError("LocalShellTool session failed to start")
-            effective = self._maybe_reanchor(command)
-            result = await self._session.run(effective, timeout=effective_timeout)
-            record.exit_code = result.exit_code
+        exit_code: int | None = None
+        timed_out = False
+        outcome = "unknown"
+        try:
+            if self._mode == "persistent":
+                if self._session is None:
+                    await self.start()
+                if self._session is None:
+                    raise RuntimeError("LocalShellTool session failed to start")
+                effective = self._maybe_reanchor(command)
+                result = await self._session.run(effective, timeout=effective_timeout)
+            else:
+                result = await run_stateless(
+                    self._stateless_argv,
+                    command,
+                    workdir=self._workdir,
+                    env=self._env,
+                    timeout=effective_timeout,
+                    max_output_bytes=self._max_output_bytes,
+                )
+            exit_code = result.exit_code
+            timed_out = bool(getattr(result, "timed_out", False))
+            outcome = "timeout" if timed_out else ("success" if exit_code == 0 else "failure")
             return result
-
-        result = await run_stateless(
-            self._stateless_argv,
-            command,
-            workdir=self._workdir,
-            env=self._env,
-            timeout=effective_timeout,
-            max_output_bytes=self._max_output_bytes,
-        )
-        record.exit_code = result.exit_code
-        return result
+        except BaseException as exc:
+            outcome = "cancelled" if isinstance(exc, asyncio.CancelledError) else "exception"
+            raise
+        finally:
+            _audit_logger.info(
+                "shell.execution",
+                extra={
+                    "exit_code": exit_code,
+                    "timed_out": timed_out,
+                    "outcome": outcome,
+                    "workdir": effective_workdir,
+                },
+            )
 
     # ------------------------------------------------------------------ AF wiring
 

@@ -30,7 +30,7 @@ Each feature can be disabled or customized via keyword arguments.
 |------|-------------|
 | `harness_research.py` | Interactive research assistant with web search, a plan/execute workflow, and an execute-mode loop that re-invokes the agent until every todo is complete |
 | `harness_data_processing.py` | Data-processing assistant over a folder of CSV files, demonstrating file-access tools and tool approval |
-| `async_request_broker.py` | `AsyncRequestBroker` basics with no LLM required: server-side code awaits a request that a client resolves, rejects, or never answers (timeout) |
+| `async_request_broker.py` | MAF approval pause-and-resume: agent pauses for shell-command approval, application delivers the request to a simulated client, and resumes the agent with the decision |
 | [`build_your_own_claw/`](./build_your_own_claw/README.md) | *Build your own claw* blog series — a personal finance assistant built step by step |
 
 ## Running

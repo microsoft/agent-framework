@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -848,95 +849,66 @@ async def test_persistent_confines_workdir_by_default_powershell(tmp_path: os.Pa
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
 
 
-async def test_audit_log_records_allowed_command() -> None:
+def _audit_records(caplog: pytest.LogCaptureFixture, message: str) -> list[Any]:
+    return [r for r in caplog.records if r.name == "agent_framework.shell.audit" and r.message == message]
+
+
+async def test_shell_logging_records_policy_decision_for_allowed_command(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
-    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
-    await tool.run(cmd)
-
-    record = tool.audit_log.records[0]
-    assert record.command == cmd
-    assert record.policy_decision == "allow"
-    assert record.exit_code == 0
-    assert record.workdir is None
-    assert record.timestamp_utc
-
-
-async def test_audit_log_records_denied_command() -> None:
-    tool = LocalShellTool(
-        mode="stateless",
-        policy=ShellPolicy(denylist=[r"forbidden"]),
-        approval_mode="never_require",
-        acknowledge_unsafe=True,
-    )
-    with pytest.raises(ShellCommandError):
-        await tool.run("echo forbidden")
-
-    record = tool.audit_log.records[0]
-    assert record.policy_decision == "deny"
-    assert record.exit_code is None
-    assert record.denial_reason
-    assert record.workdir is None
-
-
-async def test_audit_log_records_workdir_for_denied_command(tmp_path: Any) -> None:
-    tool = LocalShellTool(
-        mode="stateless",
-        policy=ShellPolicy(denylist=[r"forbidden"]),
-        approval_mode="never_require",
-        acknowledge_unsafe=True,
-        workdir=tmp_path,
-    )
-    with pytest.raises(ShellCommandError):
-        await tool.run("echo forbidden")
-
-    record = tool.audit_log.records[0]
-    assert record.policy_decision == "deny"
-    assert record.workdir == str(tmp_path)
-
-
-async def test_audit_log_records_distinct_workdirs_for_same_command(tmp_path: Any) -> None:
-    dir_a = tmp_path / "a"
-    dir_b = tmp_path / "b"
-    dir_a.mkdir()
-    dir_b.mkdir()
-    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
-
-    tool_a = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, workdir=dir_a)
-    tool_b = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, workdir=dir_b)
-    await tool_a.run(cmd)
-    await tool_b.run(cmd)
-
-    record_a = tool_a.audit_log.records[0]
-    record_b = tool_b.audit_log.records[0]
-    assert record_a.command == record_b.command == cmd
-    assert record_a.workdir == str(dir_a)
-    assert record_b.workdir == str(dir_b)
-    assert record_a.workdir != record_b.workdir
-
-
-async def test_audit_log_accumulates_multiple() -> None:
-    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
-    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
-    for _ in range(3):
+    cmd = "Write-Output hi" if sys.platform == "win32" else "echo hi"
+    with caplog.at_level(logging.INFO, logger="agent_framework.shell.audit"):
         await tool.run(cmd)
-    assert len(tool.audit_log) == 3
+    records = _audit_records(caplog, "shell.policy")
+    assert len(records) == 1
+    assert records[0].__dict__["policy_decision"] == "allow"
+    assert records[0].__dict__["denial_reason"] == ""
+    assert "command" not in records[0].__dict__
 
 
-async def test_audit_log_records_are_detached_snapshots() -> None:
+async def test_shell_logging_records_execution_outcome(caplog: pytest.LogCaptureFixture) -> None:
     tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
-    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
-    await tool.run(cmd)
+    cmd = "Write-Output hi" if sys.platform == "win32" else "echo hi"
+    with caplog.at_level(logging.INFO, logger="agent_framework.shell.audit"):
+        await tool.run(cmd)
+    records = _audit_records(caplog, "shell.execution")
+    assert len(records) == 1
+    assert records[0].__dict__["exit_code"] == 0
+    assert records[0].__dict__["timed_out"] is False
+    assert records[0].__dict__["outcome"] == "success"
 
-    snapshot = tool.audit_log.records[0]
-    snapshot.command = "tampered"
-    snapshot.policy_decision = "deny"
-    snapshot.exit_code = 99
-    snapshot.workdir = "tampered"
-    tool.audit_log.records.clear()
 
-    record = tool.audit_log.records[0]
-    assert len(tool.audit_log) == 1
-    assert record.command == cmd
-    assert record.policy_decision == "allow"
-    assert record.exit_code == 0
-    assert record.workdir is None
+async def test_shell_logging_records_denial(caplog: pytest.LogCaptureFixture) -> None:
+    tool = LocalShellTool(
+        mode="stateless",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        policy=ShellPolicy(denylist=[r".*"]),
+    )
+    with caplog.at_level(logging.INFO, logger="agent_framework.shell.audit"), pytest.raises(ShellCommandError):
+        await tool.run("echo hi")
+    policy_records = _audit_records(caplog, "shell.policy")
+    assert len(policy_records) == 1
+    assert policy_records[0].__dict__["policy_decision"] == "deny"
+    assert policy_records[0].__dict__["denial_reason"]
+    assert _audit_records(caplog, "shell.execution") == []
+
+
+async def test_shell_logging_effective_workdir_resolves_none(caplog: pytest.LogCaptureFixture) -> None:
+    """With no workdir configured, the logged workdir is the process cwd, not None."""
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    cmd = "Write-Output hi" if sys.platform == "win32" else "echo hi"
+    with caplog.at_level(logging.INFO, logger="agent_framework.shell.audit"):
+        await tool.run(cmd)
+    records = _audit_records(caplog, "shell.policy")
+    assert records[0].__dict__["workdir"] == os.getcwd()
+
+
+async def test_shell_logging_records_configured_workdir(caplog: pytest.LogCaptureFixture, tmp_path: Any) -> None:
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, workdir=tmp_path)
+    cmd = "Write-Output hi" if sys.platform == "win32" else "echo hi"
+    with caplog.at_level(logging.INFO, logger="agent_framework.shell.audit"):
+        await tool.run(cmd)
+    assert _audit_records(caplog, "shell.policy")[0].__dict__["workdir"] == os.path.abspath(tmp_path)
+    assert _audit_records(caplog, "shell.execution")[0].__dict__["workdir"] == os.path.abspath(tmp_path)
