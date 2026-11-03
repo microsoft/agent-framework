@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -103,7 +105,8 @@ class WorkflowBuilder:
                 for all workflow instances created from this builder. If not provided, a unique name
                 will be generated. This will be useful for versioning, monitoring, checkpointing, and
                 debugging workflows. Keeping this name unique across versions of your workflow definitions
-                is recommended for better observability and management.
+                is recommended for better observability and management. Generated names are omitted from
+                workflow invocation span names and the ``gen_ai.workflow.name`` attribute.
             description: Optional description of what the workflow does.
             start_executor: The starting executor for the workflow. Can be an Executor instance
                 or SupportsAgentRun instance.
@@ -146,6 +149,7 @@ class WorkflowBuilder:
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._max_iterations: int = max_iterations
         self._name: str = name or f"WorkflowBuilder-{uuid.uuid4()!s}"
+        self._generated_name: str | None = self._name if not name else None
         self._description: str | None = description
         # Maps underlying SupportsAgentRun object id -> wrapped Executor so we reuse the same wrapper
         # across start_executor / add_edge calls. This avoids multiple AgentExecutor instances
@@ -859,6 +863,7 @@ class WorkflowBuilder:
                     output_from=output_for_workflow,
                     intermediate_output_from=intermediate_output_for_workflow,
                 )
+                workflow._generated_name = self._generated_name  # pyright: ignore[reportPrivateUsage]
                 build_attributes: dict[str, Any] = {
                     OtelAttr.WORKFLOW_BUILDER_NAME: self._name,
                     OtelAttr.WORKFLOW_ID: workflow.id,
