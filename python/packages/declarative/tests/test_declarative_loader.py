@@ -6,7 +6,7 @@ import sys
 import threading
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -720,19 +720,22 @@ instructions: You are a helpful assistant.
     ) -> None:
         """Extra model options are sent to the provider as regular request fields."""
         pytest.importorskip("agent_framework_openai")
-        import httpx
-        from openai import AsyncOpenAI
+        from importlib import import_module
+
+        from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
         from agent_framework_declarative import AgentFactory
 
+        # Use the httpx package that the installed openai SDK is built on.
+        openai_httpx = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
         requests: list[dict[str, Any]] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: Any) -> Any:
             requests.append(json.loads(request.content))
-            return httpx.Response(200, json=response_body)
+            return openai_httpx.Response(200, json=response_body)
 
         openai_client = AsyncOpenAI(
-            api_key="test-key", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            api_key="test-key", http_client=DefaultAsyncHttpxClient(transport=openai_httpx.MockTransport(handler))
         )
         factory = AgentFactory(client_kwargs={"async_client": openai_client})
         agent = factory.create_agent_from_dict({
