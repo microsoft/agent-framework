@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import get_type_hints
+from typing import Any, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import SecretString, VectorStoreCollectionDefinition, load_settings
+from agent_framework import SecretString, VectorStoreCollectionDefinition, load_settings, register_vectorstoremodel
 from agent_framework.exceptions import SettingNotFoundError
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
@@ -140,7 +140,7 @@ async def test_injected_objects_ignore_connection_settings(
     monkeypatch.setenv("AZURE_DOCUMENTDB_CONNECTION_STRING", "")
     monkeypatch.setenv("AZURE_DOCUMENTDB_DATABASE_NAME", "x" * 64)
     monkeypatch.setenv("AZURE_DOCUMENTDB_COLLECTION_NAME", "x" * 256)
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "connection_string": "mongodb://ignored",
         "client_options": {"tls": False},
         "env_file_path": str(tmp_path / "missing.env"),
@@ -157,6 +157,7 @@ async def test_injected_objects_ignore_connection_settings(
         kwargs["collection_name"] = "explicit_collection"
 
     with patch.object(module, "load_settings", side_effect=AssertionError("settings must be bypassed")):
+        resource: Any
         if target.startswith("store"):
             resource = AzureDocumentDBStore(**kwargs)
         else:
@@ -174,9 +175,10 @@ def test_injected_account_resolves_database_independently(
 ):
     client, database, _ = pymongo_objects
     monkeypatch.setenv("AZURE_DOCUMENTDB_DATABASE_NAME", "environment_db")
-    kwargs = {"client": client}
+    kwargs: dict[str, Any] = {"client": client}
     if explicit:
         kwargs["database_name"] = "explicit_db"
+    resource: Any
     if target == "store":
         resource = AzureDocumentDBStore(**kwargs)
     else:
@@ -226,6 +228,25 @@ def test_injected_collection_uses_registered_definition_before_environment(
     assert resource.definition is definition
 
 
+@pytest.mark.parametrize("kind", ["account", "database"])
+def test_registered_model_definition_precedes_environment_without_explicit_definition(
+    kind, definition_factory, pymongo_objects, monkeypatch
+):
+    class RegisteredRecord:
+        pass
+
+    definition = VectorStoreCollectionDefinition(definition_factory().fields, collection_name="registered_collection")
+    register_vectorstoremodel(RegisteredRecord, definition=definition, decoder=lambda data: RegisteredRecord())
+    monkeypatch.setenv("AZURE_DOCUMENTDB_COLLECTION_NAME", "environment_collection")
+    client, database, _ = pymongo_objects
+    kwargs: dict[str, Any] = {"client": client, "database_name": "db"} if kind == "account" else {"database": database}
+
+    resource = AzureDocumentDBCollection(RegisteredRecord, **kwargs)
+
+    assert resource.collection_name == "registered_collection"
+    assert resource.definition is definition
+
+
 @pytest.mark.parametrize("target", ["store-account", "collection-account", "collection-database"])
 def test_injected_objects_report_missing_selector(target, definition_factory, pymongo_objects, monkeypatch):
     monkeypatch.delenv("AZURE_DOCUMENTDB_DATABASE_NAME", raising=False)
@@ -233,7 +254,7 @@ def test_injected_objects_report_missing_selector(target, definition_factory, py
     client, database, _ = pymongo_objects
     kwargs = {"database": database} if target.endswith("database") else {"client": client}
     selector = "AZURE_DOCUMENTDB_DATABASE_NAME" if target == "store-account" else "AZURE_DOCUMENTDB_COLLECTION_NAME"
-    with pytest.raises(SettingNotFoundError, match=selector):
+    with pytest.raises(SettingNotFoundError, match=selector) as exc:
         if target.startswith("store"):
             AzureDocumentDBStore(**kwargs)
         else:
@@ -242,12 +263,14 @@ def test_injected_objects_report_missing_selector(target, definition_factory, py
                 definition=VectorStoreCollectionDefinition(definition_factory().fields),
                 **kwargs,
             )
+    parameter = "database_name" if target == "store-account" else "collection_name"
+    assert parameter in str(exc.value)
 
 
 @pytest.mark.parametrize("target", ["store-database", "collection-database", "collection-collection"])
 def test_injected_proxy_rejects_mismatched_name(target, definition_factory, pymongo_objects):
     _, database, collection = pymongo_objects
-    kwargs = {"collection": collection, "collection_name": "other"}
+    kwargs: dict[str, Any] = {"collection": collection, "collection_name": "other"}
     message = "collection_name must match the injected collection."
     if target.endswith("database"):
         kwargs = {"database": database, "database_name": "other"}

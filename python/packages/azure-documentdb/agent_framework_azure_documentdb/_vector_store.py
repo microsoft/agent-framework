@@ -113,18 +113,30 @@ def _validate_collection_name(name: Any) -> str:
     return name
 
 
-class _AzureDocumentDBResourceSettings(TypedDict, total=False):
-    name: str | None
+class _AzureDocumentDBDatabaseSettings(TypedDict, total=False):
+    database_name: str | None
+
+
+class _AzureDocumentDBCollectionSettings(TypedDict, total=False):
+    collection_name: str | None
 
 
 def _resolve_resource_name(value: str | None, kind: str) -> str:
     if value is None:
-        settings = load_settings(
-            _AzureDocumentDBResourceSettings,
-            env_prefix=f"AZURE_DOCUMENTDB_{kind.upper()}_",
-            required_fields=["name"],
-        )
-        value = settings.get("name")
+        if kind == "database":
+            settings = load_settings(
+                _AzureDocumentDBDatabaseSettings,
+                env_prefix="AZURE_DOCUMENTDB_",
+                required_fields=["database_name"],
+            )
+            value = settings.get("database_name")
+        else:
+            settings = load_settings(
+                _AzureDocumentDBCollectionSettings,
+                env_prefix="AZURE_DOCUMENTDB_",
+                required_fields=["collection_name"],
+            )
+            value = settings.get("collection_name")
     if kind == "database":
         return _validate_database_name(value)
     return _validate_collection_name(value)
