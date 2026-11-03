@@ -169,6 +169,8 @@ internal sealed class SkillResources
     private static readonly string s_skillsListJson = $$"""
         {
             "resultType": "complete",
+            "ttlMs": 300000,
+            "cacheScope": "public",
             "skills": [
                 {
                     "uri": "{{SkillUri}}",
@@ -187,9 +189,7 @@ internal sealed class SkillResources
                             "digest": "{{ComputeDigest(ConversionTable)}}",
                             "size": {{Encoding.UTF8.GetByteCount(ConversionTable)}}
                         }
-                    ],
-                    "ttlMs": 300000,
-                    "cacheScope": "public"
+                    ]
                 }
             ]
         }
