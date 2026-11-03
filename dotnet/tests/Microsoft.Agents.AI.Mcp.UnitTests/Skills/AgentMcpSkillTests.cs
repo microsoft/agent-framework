@@ -14,7 +14,6 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
-using Moq;
 
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
