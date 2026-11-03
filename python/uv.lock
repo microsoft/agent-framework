@@ -172,7 +172,6 @@ tool-markdown = [{ name = "pygments", specifier = "==2.21.0" }]
 tool-runtime = [
     { name = "packaging", specifier = "==26.3" },
     { name = "rich", specifier = ">=13.7.1,<16.0.0" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = "==2.5.0" },
 ]
 
 [[package]]
@@ -533,7 +532,7 @@ requires-dist = [
     { name = "agent-framework-foundry-hosting", marker = "extra == 'all'", editable = "packages/foundry_hosting" },
     { name = "agent-framework-foundry-local", marker = "extra == 'all'", editable = "packages/foundry_local" },
     { name = "agent-framework-gemini", marker = "extra == 'all'", editable = "packages/gemini" },
-    { name = "agent-framework-github-copilot", marker = "python_full_version >= '3.11' and extra == 'all'", editable = "packages/github_copilot" },
+    { name = "agent-framework-github-copilot", marker = "extra == 'all'", editable = "packages/github_copilot" },
     { name = "agent-framework-hyperlight", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'all') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'all')", editable = "packages/hyperlight" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-mistral", marker = "extra == 'all'", editable = "packages/mistral" },
@@ -789,7 +788,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = ">=1.0.16,<2.0" },
+    { name = "github-copilot-sdk", specifier = ">=1.0.16,<2.0" },
 ]
 
 [[package]]

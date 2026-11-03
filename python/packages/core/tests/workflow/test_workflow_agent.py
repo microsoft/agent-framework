@@ -3,10 +3,9 @@
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, Never, assert_type, cast, overload
 
 import pytest
-from typing_extensions import Never, assert_type
 
 from agent_framework import (
     AgentExecutorRequest,

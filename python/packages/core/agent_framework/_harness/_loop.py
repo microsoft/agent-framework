@@ -30,10 +30,9 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Self, TypeAlias
 
 from pydantic import BaseModel, Field
-from typing_extensions import Self
 
 from .._agents import (
     _LOOP_ITERATION_TOKEN_KEY,  # pyright: ignore[reportPrivateUsage] -- shared loop-turn marker, see _agents.py

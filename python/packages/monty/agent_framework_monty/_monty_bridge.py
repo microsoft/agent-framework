@@ -39,8 +39,10 @@ def _ensure_json_value(value: Any) -> Any:
     raise ValueError(f"Value of type {type(value).__name__} is not JSON-safe.")
 
 
-def _external_error(exc: Exception) -> dict[str, str]:
-    return {"exc_type": type(exc).__name__, "message": str(exc)}
+def _external_error(exc: Exception, *, include_detailed_errors: bool = False) -> dict[str, str]:
+    if include_detailed_errors:
+        return {"exc_type": type(exc).__name__, "message": str(exc)}
+    return {"exc_type": "RuntimeError", "message": "Host tool execution failed."}
 
 
 def _parse_call_tool(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -210,11 +212,13 @@ class InlineCodeBridge:
         type_stubs: str | None = None,
         mounts: Sequence[Any] | None = None,
         resource_limits: dict[str, Any] | None = None,
+        include_detailed_errors: bool = False,
     ) -> None:
         self.tool_map: dict[str, Callable[..., Any]] = dict(tool_map)
         self.type_stubs: str | None = type_stubs
         self._mounts = tuple(mounts) if mounts else ()
         self._resource_limits = resource_limits
+        self._include_detailed_errors = include_detailed_errors
         self._pending_calls: dict[int, tuple[str, dict[str, Any]]] = {}
 
     async def run(self, code: str) -> dict[str, Any]:
@@ -301,7 +305,7 @@ class InlineCodeBridge:
                 raise ValueError(f"Tool {name!r} is not registered. Available tools: {allowed}")
             self._pending_calls[int(snapshot.call_id)] = (name, kwargs)
         except Exception as exc:
-            return snapshot.resume(_external_error(exc))
+            return snapshot.resume(_external_error(exc, include_detailed_errors=True))
         return snapshot.resume({"future": ...})
 
     async def _handle_future(self, snapshot: Any) -> Any:
@@ -331,4 +335,4 @@ class InlineCodeBridge:
             result = await self.tool_map[name](**kwargs)
             return cid, {"return_value": _ensure_json_value(result)}
         except Exception as exc:
-            return cid, _external_error(exc)
+            return cid, _external_error(exc, include_detailed_errors=self._include_detailed_errors)

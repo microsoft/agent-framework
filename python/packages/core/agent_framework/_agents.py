@@ -18,6 +18,8 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    Self,
+    TypedDict,
     cast,
     overload,
     runtime_checkable,
@@ -78,10 +80,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import Self, TypedDict  # pragma: no cover
-else:
-    from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from collections.abc import Collection

@@ -6,9 +6,9 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, Never, cast
 
-from typing_extensions import Never, TypedDict
+from typing_extensions import TypedDict
 
 from agent_framework import Content
 

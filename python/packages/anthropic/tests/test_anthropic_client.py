@@ -39,11 +39,17 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
+    BetaCitationCharLocation,
+    BetaCitationsDelta,
+    BetaCitationsWebSearchResultLocation,
     BetaMessage,
     BetaMessageDeltaUsage,
+    BetaRawContentBlockDeltaEvent,
+    BetaRawContentBlockStartEvent,
     BetaRedactedThinkingBlock,
     BetaServerToolUseBlock,
     BetaTextBlock,
+    BetaTextDelta,
     BetaToolUseBlock,
     BetaUsage,
     BetaWebSearchResultBlock,
@@ -3203,7 +3209,13 @@ def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_c
     assert result.role == "assistant"
 
 
-def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> MagicMock:
+def _usage_message_start_event(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_input_tokens: int | None = None,
+    cache_read_input_tokens: int | None = None,
+) -> MagicMock:
     event = MagicMock()
     event.type = "message_start"
     event.message.id = "msg_usage"
@@ -3211,7 +3223,12 @@ def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> Magi
     event.message.model = "claude-3-5-sonnet-20241022"
     event.message.content = []
     event.message.stop_reason = None
-    event.message.usage = BetaUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    event.message.usage = BetaUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )
     return event
 
 
@@ -3280,6 +3297,48 @@ def test_streaming_usage_delta_input_not_double_counted(mock_anthropic_client: M
     assert response.usage_details is not None
     assert response.usage_details["output_token_count"] == 25
     assert response.usage_details["input_token_count"] == 12
+
+
+def test_streaming_usage_preserves_cache_tokens_across_delta(mock_anthropic_client: MagicMock) -> None:
+    """message_delta omitting cache_* must keep cache tokens in input_token_count.
+
+    Anthropic often reports cache_creation/cache_read only on message_start. A later
+    message_delta with a higher input_tokens and omitted cache fields must still include
+    the last-seen cache components so incremental conversion reconstructs
+    input + cache_creation + cache_read (e.g. 120+20+30=170), not bare input (120).
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    emitted: dict[str, int] = {}
+    raw_carry: dict[str, int] = {}
+    updates = [
+        u
+        for u in (
+            client._process_stream_event(
+                _usage_message_start_event(
+                    input_tokens=100,
+                    output_tokens=1,
+                    cache_creation_input_tokens=20,
+                    cache_read_input_tokens=30,
+                ),
+                emitted,
+                raw_usage_carry=raw_carry,
+            ),
+            client._process_stream_event(
+                _usage_message_delta_event(input_tokens=120, output_tokens=25),
+                emitted,
+                raw_usage_carry=raw_carry,
+            ),
+        )
+        if u is not None
+    ]
+
+    response = ChatResponse.from_updates(updates)
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 25
+    assert response.usage_details["input_token_count"] == 170
+    assert response.usage_details["cache_creation_input_token_count"] == 20
+    assert response.usage_details["cache_read_input_token_count"] == 30
 
 
 def test_process_stream_event_message_start_role_prevents_tool_use_collapse() -> None:
@@ -4886,7 +4945,8 @@ def test_parse_usage_with_cache_tokens(mock_anthropic_client: MagicMock) -> None
     assert result is not None
     result_dict = cast("dict[str, Any]", result)
     assert result["output_token_count"] == 50
-    assert result["input_token_count"] == 100
+    # 100 input + 20 cache_creation + 30 cache_read
+    assert result["input_token_count"] == 150
     assert result_dict["anthropic.cache_creation_input_tokens"] == 20
     assert result_dict["anthropic.cache_read_input_tokens"] == 30
     assert result["cache_creation_input_token_count"] == 20
@@ -5370,6 +5430,89 @@ def test_parse_citations_search_result_location(
 
     assert result is not None
     assert len(result) > 0
+
+
+def test_parse_citations_char_location_uses_document_title(mock_anthropic_client: MagicMock) -> None:
+    """A real char_location citation exposes ``document_title``; parsing must not read a missing ``title``."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    citation = BetaCitationCharLocation(
+        type="char_location",
+        cited_text="The sky is blue.",
+        document_index=0,
+        document_title="Facts",
+        start_char_index=0,
+        end_char_index=16,
+        file_id=None,
+    )
+    block = BetaTextBlock(type="text", text="The sky is blue.", citations=[citation])
+
+    result = client._parse_citations_from_anthropic(block)
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["title"] == "Facts"
+    assert result[0]["snippet"] == "The sky is blue."
+    assert result[0]["annotated_regions"] == [{"type": "text_span", "start_index": 0, "end_index": 16}]
+
+
+async def test_streaming_citations_delta_surfaces_annotations(mock_anthropic_client: MagicMock) -> None:
+    """Citations streamed as citations_delta events end up as annotations on the text, like non-streaming."""
+    char_citation = BetaCitationCharLocation(
+        type="char_location",
+        cited_text="Paris is sunny today.",
+        document_index=0,
+        document_title="Weather report",
+        start_char_index=0,
+        end_char_index=21,
+        file_id=None,
+    )
+    web_citation = BetaCitationsWebSearchResultLocation(
+        type="web_search_result_location",
+        url="https://example.com/paris",
+        title="Paris weather",
+        cited_text="Paris is sunny today.",
+        encrypted_index="enc-1",
+    )
+
+    async def events() -> Any:
+        yield _message_start_event("msg_cited")
+        yield BetaRawContentBlockStartEvent(
+            type="content_block_start", index=0, content_block=BetaTextBlock(type="text", text="", citations=None)
+        )
+        for citation in (char_citation, web_citation):
+            yield BetaRawContentBlockDeltaEvent(
+                type="content_block_delta",
+                index=0,
+                delta=BetaCitationsDelta(type="citations_delta", citation=citation),
+            )
+        yield BetaRawContentBlockDeltaEvent(
+            type="content_block_delta", index=0, delta=BetaTextDelta(type="text_delta", text="It is sunny in Paris.")
+        )
+        yield _content_block_stop_event()
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    async def create(**kwargs: Any) -> Any:
+        return events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response([Message(role="user", contents=["Weather in Paris?"])], stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert response.text == "It is sunny in Paris."
+    annotations = [
+        annotation
+        for message in response.messages
+        for content in message.contents
+        if content.type == "text"
+        for annotation in content.annotations or []
+    ]
+    assert [annotation["title"] for annotation in annotations] == ["Weather report", "Paris weather"]
+    assert annotations[1]["url"] == "https://example.com/paris"
+    assert all(annotation["snippet"] == "Paris is sunny today." for annotation in annotations)
 
 
 @pytest.mark.parametrize(

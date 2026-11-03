@@ -31,6 +31,10 @@ class MontyCodeActProvider(ContextProvider):
     names to either format. Missing names use compact; rich schemas fall back
     to full JSON Schema. Mappings are copied on construction and for each run,
     retaining entries for tools registered later.
+
+    Keyword Args:
+        include_detailed_errors: Expose host exception and execution diagnostics only for a trusted
+            channel. Defaults to ``False`` and is independent of outer-client error/logging settings.
     """
 
     DEFAULT_SOURCE_ID = "monty_codeact"
@@ -45,6 +49,7 @@ class MontyCodeActProvider(ContextProvider):
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
     ) -> None:
         super().__init__(source_id)
         self._execute_code_tool = MontyExecuteCodeTool(
@@ -54,6 +59,7 @@ class MontyCodeActProvider(ContextProvider):
             file_mounts=file_mounts,
             resource_limits=resource_limits,
             tool_description_format=tool_description_format,
+            include_detailed_errors=include_detailed_errors,
         )
 
     def add_tools(

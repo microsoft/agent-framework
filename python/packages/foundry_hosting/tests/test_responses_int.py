@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Never, cast
 from unittest.mock import MagicMock
 
 import httpx
@@ -48,7 +48,6 @@ from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponsesServerOptions
 from azure.identity import AzureCliCredential
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
-from typing_extensions import Never
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 

@@ -8,9 +8,9 @@ import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, NotRequired, cast
 
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._filesystem import (

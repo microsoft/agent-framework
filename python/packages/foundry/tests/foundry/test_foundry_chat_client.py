@@ -183,12 +183,7 @@ def _with_foundry_debug() -> Any:
                     f"project_endpoint={os.getenv('FOUNDRY_PROJECT_ENDPOINT', '<unset>')}, "
                     f"model={os.getenv('FOUNDRY_MODEL', '<unset>')}"
                 )
-                if hasattr(exc, "add_note"):
-                    cast(Any, exc).add_note(debug_message)
-                elif exc.args:
-                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
-                else:
-                    exc.args = (debug_message,)
+                exc.add_note(debug_message)
                 raise
 
         return wrapper
@@ -2327,3 +2322,76 @@ async def test_shared_chat_client_keeps_concurrent_agent_runs_isolated(
     assert first_session.service_session_id == "response-first"
     assert second_session.service_session_id == "response-second"
     assert transport.max_active_requests == 2
+
+
+async def test_multi_message_response_attaches_reasoning_replay_to_owning_message() -> None:
+    """Reasoning replay data must land on the message that owns the reasoning content.
+
+    #9768 made multi-message responses possible (e.g. preamble + follow-up message).
+    A reasoning item that trails the last message is parsed into that message, but
+    the Foundry replay attachment only searched ``messages[0]``: it appended a
+    duplicate empty reasoning content there while the real reasoning content in the
+    later message kept no replay payload.
+    """
+    from openai.types.responses.response_output_message import ResponseOutputMessage
+    from openai.types.responses.response_output_text import ResponseOutputText
+    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
+
+    def message_item(item_id: str, text: str) -> ResponseOutputMessage:
+        return ResponseOutputMessage.model_construct(
+            type="message",
+            id=item_id,
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText.model_construct(type="output_text", text=text, annotations=[])],
+        )
+
+    reasoning_item = ResponseReasoningItem.model_construct(
+        type="reasoning",
+        id="rs_trailing",
+        response_id="response_123",
+        summary=[],
+        content=[],
+    )
+
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[message_item("message_0", "A"), message_item("message_1", "B"), reasoning_item],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert [message.text for message in response.messages] == ["A", "B"]
+    reasoning_contents = [
+        content for message in response.messages for content in message.contents if content.type == "text_reasoning"
+    ]
+    assert len(reasoning_contents) == 1, [
+        (message.message_id, content.type, content.id) for message in response.messages for content in message.contents
+    ]
+    assert reasoning_contents[0].id == "rs_trailing"
+    assert reasoning_contents[0].additional_properties.get("__foundry_reasoning_replay_item__") is not None
+    # Pin the owning message: a flattened check would also pass if the reasoning
+    # content (with its replay payload) were attached to message_0 instead.
+    owning_message_ids = [
+        message.message_id
+        for message in response.messages
+        if any(content.type == "text_reasoning" for content in message.contents)
+    ]
+    assert owning_message_ids == ["message_1"]
