@@ -106,6 +106,7 @@ from agent_framework_foundry_hosting._responses import (
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _release_conversation_claim,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
@@ -806,14 +807,37 @@ class _FailingSessionStore(SessionStore):
 
 
 class _ConflictingConversationStore(SessionStore):
+    """Accept the pre-dispatch claim write but reject any later write to the conversation head."""
+
     def __init__(self) -> None:
         super().__init__()
-        self.fail_conversation = False
+        self.fail_conversation_commit = False
 
     async def set(self, session_id: str, session: AgentSession) -> None:
-        if self.fail_conversation and session_id == "conversation-head":
+        is_claim = "_foundry_conversation_claim" in session.state
+        if self.fail_conversation_commit and session_id == "conversation-head" and not is_claim:
             raise RuntimeError("Another request advanced this agent session; reload before writing.")
         await super().set(session_id, session)
+
+
+class _InterruptingSessionStore(SessionStore):
+    """Interrupt a chosen write: block it until released, or cancel it after the backend has committed it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.block_key: str | None = None
+        self.cancel_after_claim_commit_key: str | None = None
+        self.blocked = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        if session_id == self.block_key:
+            self.blocked.set()
+            await self.release.wait()
+        await super().set(session_id, session)
+        if session_id == self.cancel_after_claim_commit_key and "_foundry_conversation_claim" in session.state:
+            self.cancel_after_claim_commit_key = None
+            raise asyncio.CancelledError
 
 
 _SESSION_STORE_UNSET = object()
@@ -3432,10 +3456,318 @@ class TestAgentSessionPersistence:
                 with suppress(asyncio.CancelledError):
                     await pending
 
+    async def test_agent_server_conversation_claim_runs_replayed_approval_once(self) -> None:
+        conversation_id = f"conversation-{uuid.uuid4().hex}"
+        both_loaded = asyncio.Event()
+        release_run = asyncio.Event()
+        run_started = asyncio.Event()
+        reads = 0
+        original_get = FoundryAgentSessionStore.get
+
+        async def concurrent_get(store: FoundryAgentSessionStore, key: str) -> AgentSession | None:
+            nonlocal reads
+            session = await original_get(store, key)
+            if key == conversation_id and reads < 2:
+                reads += 1
+                if reads == 2:
+                    both_loaded.set()
+                await asyncio.wait_for(both_loaded.wait(), timeout=10)
+            return session
+
+        dispatched: list[str] = []
+        agent = _make_agent()
+
+        def run(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args
+            session: AgentSession = kwargs["session"]
+            pending: list[str] = session.state.get("pending_approvals", [])
+            dispatched.extend(pending)
+            session.state["pending_approvals"] = []
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                if pending:
+                    run_started.set()
+                    await release_run.wait()
+                yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
+
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run)
+        server = _make_server(agent)
+        session_store = server._session_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+            config=server.config, platform_context=get_request_context()
+        )
+        pending_session = AgentSession()
+        pending_session.state["pending_approvals"] = ["approval-1"]
+        await session_store.set(conversation_id, pending_session)
+
+        async def collect(response_id: str) -> list[Any]:
+            context = ResponseContext(
+                response_id=response_id,
+                conversation_id=conversation_id,
+                mode_flags=MagicMock(),
+            )
+            return [
+                event
+                async for event in server._handle_response(
+                    CreateResponse(input="approve", store=True), context, asyncio.Event()
+                )
+            ]
+
+        with (
+            patch.object(FoundryAgentSessionStore, "get", new=concurrent_get),
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            pending = {asyncio.create_task(collect(f"response-{uuid.uuid4().hex}")) for _ in range(2)}
+            try:
+                await asyncio.wait_for(run_started.wait(), timeout=10)
+                done, pending = await asyncio.wait(pending, timeout=10, return_when=asyncio.FIRST_COMPLETED)
+                assert len(done) == len(pending) == 1
+                assert "Another request advanced this agent session" in _failure_message(next(iter(done)).result())
+                assert dispatched == ["approval-1"]
+
+                blocked = await collect("blocked-while-turn-in-flight")
+                assert "in-flight turn" in _failure_message(blocked)
+                assert dispatched == ["approval-1"]
+
+                release_run.set()
+                winner = await asyncio.wait_for(next(iter(pending)), timeout=10)
+                assert winner[-1]["type"] == "response.completed"
+            finally:
+                release_run.set()
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+            head_store = server._session_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+                config=server.config, platform_context=get_request_context()
+            )
+            head = await head_store.get(conversation_id)
+            assert head is not None and "_foundry_conversation_claim" not in head.state
+            assert head.state["pending_approvals"] == []
+
+            replay = await collect("sequential-replay")
+            assert replay[-1]["type"] == "response.completed"
+            assert dispatched == ["approval-1"]
+
+    async def test_failed_agent_server_conversation_turn_releases_claim_and_restores_pre_turn_state(self) -> None:
+        store = SessionStore()
+        conversation_id = "failed-agent-server-conversation"
+        pre_turn = AgentSession()
+        pre_turn.state["pending_approvals"] = ["approval-1"]
+        await store.set(conversation_id, pre_turn)
+        calls = 0
+        agent = _make_agent()
+
+        def run(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            nonlocal calls
+            del args
+            calls += 1
+            session: AgentSession = kwargs["session"]
+            if calls == 1:
+                session.state["pending_approvals"] = []
+                return ResponseStream(_raising_updates("model timed out"), finalizer=AgentResponse.from_updates)
+            return ResponseStream(_single_state_update(session), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run)
+        server = _make_server(agent, session_store=store)
+
+        async def collect(response_id: str) -> list[Any]:
+            context = ResponseContext(response_id=response_id, conversation_id=conversation_id, mode_flags=MagicMock())
+            return [
+                event
+                async for event in server._handle_response(
+                    CreateResponse(input="hello", store=True), context, asyncio.Event()
+                )
+            ]
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            failed = await collect("failed-turn")
+            head_after_failure = await store.get(conversation_id)
+            retry = await collect("retry-turn")
+
+        assert _failure_message(failed) == "An internal server error occurred."
+        assert head_after_failure is not None
+        assert "_foundry_conversation_claim" not in head_after_failure.state
+        assert head_after_failure.state["pending_approvals"] == ["approval-1"]
+        assert retry[-1]["type"] == "response.completed"
+        assert calls == 2
+
+    async def test_cancelled_agent_server_conversation_turn_releases_claim(self) -> None:
+        store = SessionStore()
+        started = asyncio.Event()
+        agent = _make_agent()
+
+        async def blocked() -> AsyncIterator[AgentResponseUpdate]:
+            started.set()
+            await asyncio.Event().wait()
+            yield AgentResponseUpdate(contents=[Content.from_text("too late")], role="assistant")
+
+        agent.run = MagicMock(side_effect=lambda **kwargs: ResponseStream(blocked()))
+        server = _make_server(agent, session_store=store)
+        conversation_id = "cancelled-agent-server-conversation"
+        context = ResponseContext(response_id="cancelled-turn", conversation_id=conversation_id, mode_flags=MagicMock())
+        signal = asyncio.Event()
+
+        async def collect() -> list[Any]:
+            return [
+                event
+                async for event in server._handle_response(CreateResponse(input="hello", store=True), context, signal)
+            ]
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            pending = asyncio.create_task(collect())
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                held = await store.get(conversation_id)
+                assert held is not None and held.state["_foundry_conversation_claim"] == "cancelled-turn"
+                context.client_cancelled = True
+                signal.set()
+                await asyncio.wait_for(pending, timeout=5)
+            finally:
+                pending.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending
+
+        head = await store.get(conversation_id)
+        assert head is not None and "_foundry_conversation_claim" not in head.state
+
+    async def test_failed_approval_turn_keeps_consumed_approval_and_does_not_repeat_the_tool(self) -> None:
+        store = SessionStore()
+        conversation_id = "failed-approval-conversation"
+        pre_turn = AgentSession()
+        pre_turn.state["pending_approvals"] = ["approval-1"]
+        await store.set(conversation_id, pre_turn)
+        dispatched: list[str] = []
+        agent = _make_agent()
+
+        def run(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args
+            session: AgentSession = kwargs["session"]
+            pending: list[str] = session.state.get("pending_approvals", [])
+            dispatched.extend(pending)
+            session.state["pending_approvals"] = []
+            if pending:
+                # The approved tool ran; the following model call fails.
+                return ResponseStream(_raising_updates("model timed out"), finalizer=AgentResponse.from_updates)
+            return ResponseStream(_single_state_update(session), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run)
+        server = _make_server(agent, session_store=store)
+        approval: Any = [{"type": "mcp_approval_response", "approval_request_id": "approval-1", "approve": True}]
+
+        async def collect(response_id: str) -> list[Any]:
+            context = ResponseContext(response_id=response_id, conversation_id=conversation_id, mode_flags=MagicMock())
+            return [
+                event
+                async for event in server._handle_response(
+                    CreateResponse(input=approval, store=True), context, asyncio.Event()
+                )
+            ]
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            failed = await collect("failed-approval-turn")
+            head_after_failure = await store.get(conversation_id)
+            retry = await collect("retry-approval-turn")
+
+        assert _failure_message(failed) == "An internal server error occurred."
+        assert head_after_failure is not None
+        assert "_foundry_conversation_claim" not in head_after_failure.state
+        assert head_after_failure.state["pending_approvals"] == []
+        assert retry[-1]["type"] == "response.completed"
+        assert dispatched == ["approval-1"]
+
+    async def test_cancellation_during_response_snapshot_write_releases_claim(self) -> None:
+        store = _InterruptingSessionStore()
+        agent = _make_agent()
+        agent.run = MagicMock(
+            side_effect=lambda **kwargs: ResponseStream(
+                _single_state_update(kwargs["session"]), finalizer=AgentResponse.from_updates
+            )
+        )
+        server = _make_server(agent, session_store=store)
+        conversation_id = "cancelled-snapshot-conversation"
+        store.block_key = "snapshot-response"
+        context = ResponseContext(
+            response_id="snapshot-response", conversation_id=conversation_id, mode_flags=MagicMock()
+        )
+
+        async def collect() -> list[Any]:
+            return [
+                event
+                async for event in server._handle_response(
+                    CreateResponse(input="hello", store=True), context, asyncio.Event()
+                )
+            ]
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            pending = asyncio.create_task(collect())
+            try:
+                await asyncio.wait_for(store.blocked.wait(), timeout=5)
+                held = await store.get(conversation_id)
+                assert held is not None and held.state["_foundry_conversation_claim"] == "snapshot-response"
+                pending.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending
+            finally:
+                store.release.set()
+
+        head = await store.get(conversation_id)
+        assert head is not None and "_foundry_conversation_claim" not in head.state
+
+    async def test_cancellation_after_claim_commit_releases_claim(self) -> None:
+        store = _InterruptingSessionStore()
+        conversation_id = "cancelled-claim-conversation"
+        store.cancel_after_claim_commit_key = conversation_id
+        agent = _make_agent()
+        agent.run = MagicMock()
+        server = _make_server(agent, session_store=store)
+        context = ResponseContext(response_id="claim-response", conversation_id=conversation_id, mode_flags=MagicMock())
+
+        async def collect() -> None:
+            async for _ in server._handle_response(CreateResponse(input="hello", store=True), context, asyncio.Event()):
+                pass
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            task = asyncio.create_task(collect())
+            with suppress(asyncio.CancelledError):
+                await task
+
+        agent.run.assert_not_called()
+        head = await store.get(conversation_id)
+        assert head is not None and "_foundry_conversation_claim" not in head.state
+
+    async def test_release_conversation_claim_leaves_a_claim_owned_by_another_response(self) -> None:
+        store = SessionStore()
+        other = AgentSession()
+        other.state["_foundry_conversation_claim"] = "other-response"
+        await store.set("conversation", other)
+
+        await _release_conversation_claim(store, "conversation", "this-response")
+
+        head = await store.get("conversation")
+        assert head is not None and head.state["_foundry_conversation_claim"] == "other-response"
+
     async def test_conversation_write_conflict_keeps_response_snapshot(self) -> None:
         store = _ConflictingConversationStore()
         await store.set("conversation-head", AgentSession())
-        store.fail_conversation = True
+        store.fail_conversation_commit = True
         agent = _make_agent()
         agent.run = MagicMock(
             side_effect=lambda **kwargs: ResponseStream(
