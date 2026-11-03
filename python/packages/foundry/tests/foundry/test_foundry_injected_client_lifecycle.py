@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from typing import Any
-from unittest.mock import AsyncMock
-
-import pytest
-from typing_extensions import Self
+from typing import Any, Self
+from unittest.mock import AsyncMock, patch
 
 from agent_framework_foundry import FoundryMemoryProvider, RawFoundryEmbeddingClient
 
@@ -21,7 +18,6 @@ class _InjectedProjectClient(AsyncMock, AbstractAsyncContextManager):  # type: i
         await AsyncMock.__aexit__(self, *args)
 
 
-@pytest.mark.asyncio
 async def test_raw_foundry_embedding_close_skips_injected_clients() -> None:
     text = AsyncMock()
     image = AsyncMock()
@@ -38,7 +34,6 @@ async def test_raw_foundry_embedding_close_skips_injected_clients() -> None:
     image.close.assert_not_awaited()
 
 
-@pytest.mark.asyncio
 async def test_foundry_memory_provider_skips_injected_project_client_lifecycle() -> None:
     project = _InjectedProjectClient()
     memory = FoundryMemoryProvider(
@@ -48,8 +43,14 @@ async def test_foundry_memory_provider_skips_injected_project_client_lifecycle()
     )
 
     assert memory._owns_project_client is False
-    await memory.__aenter__()
-    await memory.__aexit__(None, None, None)
+    enter_mock = AsyncMock()
+    exit_mock = AsyncMock()
+    with (
+        patch.object(project, "__aenter__", enter_mock),
+        patch.object(project, "__aexit__", exit_mock),
+    ):
+        await memory.__aenter__()
+        await memory.__aexit__(None, None, None)
 
-    project.__aenter__.assert_not_awaited()
-    project.__aexit__.assert_not_awaited()
+    enter_mock.assert_not_awaited()
+    exit_mock.assert_not_awaited()
