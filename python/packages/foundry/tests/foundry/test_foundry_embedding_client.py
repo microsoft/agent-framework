@@ -662,6 +662,164 @@ class TestInjectedEmbeddingClients:
         image_factory.assert_not_called()
         project_factory.assert_not_called()
 
+    @pytest.mark.parametrize("client_type", [RawFoundryEmbeddingClient, FoundryEmbeddingClient])
+    @pytest.mark.parametrize("project_source", ["project_client", "project_endpoint", "environment"])
+    async def test_image_client_preserves_lazy_project_text_embeddings(
+        self,
+        client_type: type[RawFoundryEmbeddingClient[Any]],
+        project_source: str,
+        mock_image_client: AsyncMock,
+    ) -> None:
+        """An injected image transport leaves project-backed text available on demand."""
+        project_endpoint = "https://test.services.ai.azure.com/api/projects/test"
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        project_client.close = AsyncMock()
+        credential = MagicMock()
+        default_headers = {"X-Test": "value"}
+        kwargs: dict[str, Any] = {"default_headers": default_headers}
+        env: dict[str, str] = {}
+        if project_source == "project_client":
+            kwargs["project_client"] = project_client
+        else:
+            kwargs.update(credential=credential, allow_preview=True)
+            if project_source == "project_endpoint":
+                kwargs["project_endpoint"] = project_endpoint
+            else:
+                env["FOUNDRY_PROJECT_ENDPOINT"] = project_endpoint
+        mock_image_client._config.endpoint = "https://image.inference.ai.azure.com"
+        image = Content.from_data(data=b"\x89PNG", media_type="image/png")
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("azure.ai.projects.aio.AIProjectClient", return_value=project_client) as project_factory,
+            patch("agent_framework_foundry._embedding_client.EmbeddingsClient") as text_factory,
+            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient") as image_factory,
+        ):
+            client = client_type(
+                model="text-model", image_model="image-model", image_client=mock_image_client, **kwargs
+            )
+            project_factory.assert_not_called()
+            project_client.get_openai_client.assert_not_called()
+
+            image_result = await client.get_embeddings([image])
+            assert image_result[0].vector == [0.4, 0.5, 0.6]
+            mock_image_client.embed.assert_awaited_once()
+            project_factory.assert_not_called()
+            project_client.get_openai_client.assert_not_called()
+
+            text_result = await client.get_embeddings(["hello"])
+            assert text_result[0].vector == [0.1, 0.2, 0.3]
+            openai_client.embeddings.create.assert_awaited_once_with(input=["hello"], model="text-model")
+
+            mixed_result = await client.get_embeddings([image, "hello"])
+            assert [embedding.vector for embedding in mixed_result] == [[0.4, 0.5, 0.6], [0.1, 0.2, 0.3]]
+            assert openai_client.embeddings.create.await_count == 2
+            assert mock_image_client.embed.await_count == 2
+            assert mock_image_client.embed.call_args.kwargs["model"] == "image-model"
+            assert client.service_url() == "https://image.inference.ai.azure.com"
+            assert str(openai_client.base_url) == "https://test.openai.azure.com/openai/v1/"
+            await client.close()
+
+        text_factory.assert_not_called()
+        image_factory.assert_not_called()
+        openai_client.close.assert_awaited_once()
+        if project_source == "project_client":
+            project_factory.assert_not_called()
+            project_client.get_openai_client.assert_called_once_with(default_headers=default_headers)
+            project_client.close.assert_not_called()
+        else:
+            project_factory.assert_called_once_with(
+                endpoint=project_endpoint,
+                credential=credential,
+                allow_preview=True,
+                user_agent=get_user_agent(),
+                per_retry_policies=[ANY],
+            )
+            project_client.get_openai_client.assert_called_once_with(default_headers=default_headers, http_client=ANY)
+            project_client.close.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("credential", "message"),
+        [(None, "Azure credential is required"), (AzureKeyCredential("test-key"), "A token credential is required")],
+    )
+    async def test_image_client_defers_project_credential_validation_until_text_is_requested(
+        self, credential: AzureKeyCredential | None, message: str, mock_image_client: AsyncMock
+    ) -> None:
+        """Incomplete project settings do not prevent requests through the injected image client."""
+        image = Content.from_data(data=b"\x89PNG", media_type="image/png")
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("azure.ai.projects.aio.AIProjectClient") as project_factory,
+        ):
+            client = RawFoundryEmbeddingClient(
+                model="embedding-model",
+                project_endpoint="https://test.services.ai.azure.com/api/projects/test",
+                credential=credential,
+                image_client=mock_image_client,
+            )
+            result = await client.get_embeddings([image])
+            assert result[0].vector == [0.4, 0.5, 0.6]
+            with pytest.raises(ValueError, match=message):
+                await client.get_embeddings(["hello", image])
+
+        mock_image_client.embed.assert_awaited_once()
+        project_factory.assert_not_called()
+
+    async def test_injected_text_and_image_clients_keep_precedence_over_project(
+        self, mock_text_client: AsyncMock, mock_image_client: AsyncMock
+    ) -> None:
+        """A project client is unused when both modalities have injected transports."""
+        project_client = MagicMock()
+        image = Content.from_data(data=b"\x89PNG", media_type="image/png")
+        with patch.dict(os.environ, {}, clear=True):
+            client = RawFoundryEmbeddingClient(
+                model="embedding-model",
+                project_client=project_client,
+                text_client=mock_text_client,
+                image_client=mock_image_client,
+            )
+            result = await client.get_embeddings(["hello", image])
+
+        assert [embedding.vector for embedding in result] == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        mock_text_client.embed.assert_awaited_once()
+        mock_image_client.embed.assert_awaited_once()
+        project_client.get_openai_client.assert_not_called()
+
+    async def test_image_client_retains_models_precedence_when_both_endpoints_come_from_env(
+        self, mock_image_client: AsyncMock
+    ) -> None:
+        """An injected image client does not change the legacy text source selection from env."""
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FOUNDRY_PROJECT_ENDPOINT": "https://test.services.ai.azure.com/api/projects/test",
+                    "FOUNDRY_MODELS_ENDPOINT": "https://test.inference.ai.azure.com",
+                    "FOUNDRY_MODELS_API_KEY": "test-key",
+                },
+                clear=True,
+            ),
+            patch("azure.ai.projects.aio.AIProjectClient") as project_factory,
+            patch("agent_framework_foundry._embedding_client.EmbeddingsClient") as text_factory,
+            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient") as image_factory,
+        ):
+            text_factory.return_value.embed = AsyncMock(return_value=_make_embed_response([[0.7]]))
+            client = RawFoundryEmbeddingClient(model="embedding-model", image_client=mock_image_client)
+            text_factory.assert_not_called()
+            result = await client.get_embeddings(["hello"])
+
+        assert result[0].vector == [0.7]
+        text_factory.assert_called_once_with(
+            endpoint="https://test.inference.ai.azure.com",
+            credential=ANY,
+            user_agent=get_user_agent(),
+            per_retry_policies=[ANY],
+        )
+        project_factory.assert_not_called()
+        image_factory.assert_not_called()
+        mock_image_client.embed.assert_not_awaited()
+
     def test_minimal_reproduction_constructs(self) -> None:
         """The reported MagicMock reproduction no longer fails during construction."""
         with patch.dict(os.environ, {}, clear=True):

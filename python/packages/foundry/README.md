@@ -80,6 +80,8 @@ The injected client is the transport for that modality and takes precedence over
 environment settings, and framework defaults, so no endpoint, API key, credential, or Foundry environment is
 required for it. `model` and `image_model` keep their usual explicit-argument, environment, then default
 resolution. The other modality is created only when a request needs it and enough settings are available.
+For example, an injected `image_client` can be combined with project configuration for text embeddings;
+the project text transport is initialized only when a request includes text.
 
 ## Evaluations
 
