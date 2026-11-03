@@ -28,6 +28,7 @@ In every case, the input for the next iteration is controlled by the ``next_mess
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import math
 import time
@@ -138,6 +139,8 @@ DEFAULT_JUDGE_MAX_ITERATIONS = 5
 class AgentBudget(TypedDict, total=False):
     """Budget constraints for an :class:`AgentLoopMiddleware` autonomous loop.
 
+    ``max_tokens`` is a thinking budget (a bound on total inference work), not a cost estimate.
+
     Both ``max_tokens`` and ``max_duration`` are optional with no default — they are
     workload-specific and must be set explicitly for production autonomous sessions.
     When a budget dimension is omitted or ``None``, it is unconstrained. Because this is a
@@ -167,35 +170,33 @@ class AgentBudget(TypedDict, total=False):
     """
 
     max_tokens: int | None
-    """Maximum token spend (input + output) of the wrapped agent across all loop iterations.
+    """Maximum token budget for the loop agent across all iterations.
 
-    Each iteration is charged the ``total_token_count`` from the agent response's usage details,
-    falling back to ``input_token_count + output_token_count`` when ``total_token_count`` is
-    absent. That usage covers every model call the agent makes during the iteration, including
-    each round of tool calling.
+    This is a **thinking budget** — a uniform bound on total inference work — not
+    a cost estimate. Tokens are treated as an interchangeable unit of reasoning work
+    regardless of model, so usage from background sub-agents via
+    :class:`~agent_framework.BackgroundAgentsProvider` rolls into the parent's
+    running total. Applications that need to bound spend should implement their own
+    model-specific cost accounting outside the framework.
 
-    Calls the loop framework makes on its own behalf are never charged: the judge call made by
-    :meth:`AgentLoopMiddleware.with_judge` does not count toward this budget.
+    Each iteration is charged the ``total_token_count`` from the response's usage
+    details, falling back to ``input_token_count + output_token_count`` when
+    ``total_token_count`` is absent. The judge call from
+    :meth:`AgentLoopMiddleware.with_judge` is never charged.
 
-    Sub-agent usage counts too: an agent exposed as a tool via :meth:`~agent_framework.Agent.as_tool`
-    rolls its response usage (including its own sub-agents) into the calling agent's usage details,
-    and a :class:`~agent_framework.BackgroundAgentsProvider` task's usage is charged once, to the
-    parent run that first observes the task finished. Remaining gaps: a sub-agent run that fails or
-    is cancelled produces no response, so its tokens are not counted; background tasks that are never
-    observed as finished (including tasks abandoned when their session is released) are not counted;
-    and custom tools that call ``agent.run`` directly do not report the nested run's usage.
-
-    This accounting is fixed and not configurable.
+    Known gaps: failed or cancelled sub-agent runs produce no response and are not
+    counted; background tasks abandoned at session release are not counted; custom
+    tools that call ``agent.run`` directly do not report nested usage.
     """
 
     max_duration: float | None
     """Maximum wall-clock time in seconds for the entire loop run.
 
-    Measured with :func:`time.monotonic` and checked between iterations, after each
-    iteration completes: once exceeded, no new iteration is started. It does not
-    interrupt an in-flight model or tool call, so a single slow or hung call can run
-    past the deadline. Callers that need a hard deadline should wrap the run in their
-    own cancellation/timeout (for example ``asyncio.timeout``).
+    Measured with :func:`time.monotonic`. The limit is enforced both between
+    iterations and during in-flight model or tool calls: when time runs out
+    mid-iteration, the call is cancelled (for asyncio callers). Callers should
+    be prepared to handle :exc:`asyncio.CancelledError` or :exc:`TimeoutError`
+    if the first iteration exceeds the limit and no partial result exists.
     """
 
 
@@ -412,15 +413,15 @@ class AgentLoopMiddleware(AgentMiddleware):
                 persists server-side across iterations. Used by :meth:`with_judge` to tell the agent
                 about the criteria its response must satisfy, but available to any loop.
             budget: Optional :class:`AgentBudget` (or a plain ``dict`` with the same keys) bounding total
-                token spend and/or wall-clock time. ``max_tokens`` counts the wrapped agent's
+                token budget (a thinking budget, not a cost estimate) and/or wall-clock
+                time. ``max_tokens`` counts the wrapped agent's
                 ``total_token_count`` (falling back to input + output tokens) per iteration; the
-                judge call made by :meth:`with_judge` is never counted, while sub-agent usage from
-                ``as_tool`` and background agents is included, with the gaps listed on
-                :attr:`AgentBudget.max_tokens`. Not configurable. Checked after each iteration, before
-                ``should_continue`` is evaluated. When exceeded the loop stops and (non-streaming
-                only) stamps ``loop_exit_reason``. Budgets do not interrupt an in-flight model/tool
-                call; use ``asyncio.timeout`` (or similar) around the run for a hard wall-clock
-                deadline.
+                judge call made by :meth:`with_judge` is never counted, while
+                :class:`~agent_framework.BackgroundAgentsProvider` usage is included, with the gaps
+                listed on :attr:`AgentBudget.max_tokens`. Not configurable. Checked after each
+                iteration, before ``should_continue`` is evaluated. When exceeded the loop stops and
+                (non-streaming only) stamps ``loop_exit_reason``. ``max_duration`` also bounds the
+                in-flight model/tool call of each iteration.
 
         Raises:
             ValueError: If ``max_iterations`` is not ``None`` and is less than 1, or if ``budget``
@@ -515,8 +516,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                 baseline between iterations. See :meth:`__init__` for the full semantics. Defaults to
                 ``False``.
             budget: Optional :class:`AgentBudget`. See :meth:`__init__`. The judge call's own token
-                usage is never charged against ``max_tokens``; the agent's sub-agent usage (``as_tool``
-                and background agents) is, as described on :attr:`AgentBudget.max_tokens`.
+                usage is never charged against ``max_tokens``; background-agent usage
+                (:class:`~agent_framework.BackgroundAgentsProvider`) is, as described on :attr:`AgentBudget.max_tokens`.
         """
         judge_instructions = (instructions or DEFAULT_JUDGE_INSTRUCTIONS).replace(
             CRITERIA_PLACEHOLDER, _render_criteria_block(criteria)
@@ -648,7 +649,25 @@ class AgentLoopMiddleware(AgentMiddleware):
         context.options = stamped_options
         try:
             while True:
-                await call_next()
+                # Bound the call by the remaining wall-clock budget. If time has already run out,
+                # stop before starting another iteration.
+                if self._budget_max_duration is not None:
+                    remaining = self._budget_max_duration - (time.monotonic() - budget_start)
+                    if remaining <= 0:
+                        budget_exit = "time_budget_exceeded"
+                        break
+                    try:
+                        # wait_for (not asyncio.timeout) keeps Python 3.10 support.
+                        await asyncio.wait_for(call_next(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        # Iteration timed out mid-flight. With a prior result, stop cleanly;
+                        # otherwise re-raise so the caller knows nothing was produced.
+                        if final_result is None:
+                            raise
+                        budget_exit = "time_budget_exceeded"
+                        break
+                else:
+                    await call_next()
                 iteration += 1
 
                 result = context.result
@@ -663,7 +682,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                 if result.usage_details is not None:
                     aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
 
-                # Accumulate token spend for budget enforcement.
+                # Accumulate token usage for budget enforcement.
                 if self._budget_max_tokens is not None and result.usage_details is not None:
                     ud = result.usage_details
                     tokens_used += ud.get("total_token_count") or (
@@ -771,7 +790,20 @@ class AgentLoopMiddleware(AgentMiddleware):
             try:
                 while True:
                     try:
-                        await call_next()
+                        if self._budget_max_duration is not None:
+                            remaining = self._budget_max_duration - (time.monotonic() - budget_start)
+                            if remaining <= 0:
+                                return
+                            try:
+                                # wait_for (not asyncio.timeout) keeps Python 3.10 support.
+                                await asyncio.wait_for(call_next(), timeout=remaining)
+                            except asyncio.TimeoutError:
+                                # Timed out mid-flight: stop cleanly with a prior result, else re-raise.
+                                if holder["final"] is None:
+                                    raise
+                                return
+                        else:
+                            await call_next()
                         inner = context.result
                         if not isinstance(inner, ResponseStream):
                             raise TypeError(

@@ -752,8 +752,6 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            from ._tools import _record_tool_usage  # pyright: ignore[reportPrivateUsage]
-
             parent_session = ctx.session
             session = AgentSession()
             child_approval_source_ids = _tool_approval_source_ids(self.middleware)
@@ -840,10 +838,6 @@ class BaseAgent(SerializationMixin):
                         if isawaitable(callback_result):
                             await callback_result
                 final_response = await stream.get_final_response()
-                # Report the sub-agent's token usage (including its own sub-agents) to the calling loop,
-                # which folds it into the parent response's usage_details exactly once. Recorded before
-                # the approval/user-input raises below so that usage is not lost on those paths.
-                _record_tool_usage(ctx, final_response.usage_details)
                 approval_requests = [
                     request
                     for request in final_response.user_input_requests
