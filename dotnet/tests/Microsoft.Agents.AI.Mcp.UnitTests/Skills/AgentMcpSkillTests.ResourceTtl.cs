@@ -197,7 +197,7 @@ public sealed partial class AgentMcpSkillTests
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
             .Callback(() => clock.Advance(TimeSpan.FromMilliseconds(validationMilliseconds)));
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
-            [Resource(SkillUri, Content)], client, CreateCatalog(clock), logger.Object, timeProvider: clock);
+            [Resource(SkillUri, Content)], client, logger.Object, timeProvider: clock);
 
         // Act
         Assert.Equal(Content, await skill.GetContentAsync());
@@ -254,9 +254,8 @@ public sealed partial class AgentMcpSkillTests
                     cts.Cancel();
                 }
             });
-        using var catalog = CreateCatalog(clock);
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
-            [Resource(SkillUri, Content)], client.Object, catalog, logger.Object, timeProvider: clock);
+            [Resource(SkillUri, Content)], client.Object, logger.Object, timeProvider: clock);
         if (cached)
         {
             Assert.Equal(Content, await skill.GetContentAsync());
@@ -376,7 +375,7 @@ public sealed partial class AgentMcpSkillTests
         logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
             [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
-            client, CreateCatalog(clock), logger.Object, timeProvider: clock);
+            client, logger.Object, timeProvider: clock);
         await ReadSnapshotAsync(skill, instructions);
         clock.Advance(TimeSpan.FromMilliseconds(Math.Max(ttl.GetValueOrDefault(), 0)));
 
@@ -532,10 +531,9 @@ public sealed partial class AgentMcpSkillTests
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
             .Callback(cts.Cancel);
-        using var catalog = CreateCatalog(clock);
         var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
             [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
-            client.Object, catalog, logger.Object, timeProvider: clock);
+            client.Object, logger.Object, timeProvider: clock);
         if (cached)
         {
             await ReadSnapshotAsync(skill, instructions);

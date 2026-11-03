@@ -75,6 +75,81 @@ still applies.
 
 ## Security Considerations
 
+### Sharing a source across authorization contexts
+
+According to the MCP specification, each `skills/list`, `skills/get`, and `resources/read` response must include
+a `cacheScope` field that tells the client who may reuse the cached response:
+
+- `public` - the response is the same for every caller and may be shared between them.
+- `private` - the response is specific to the caller's credentials (for example, a user or tenant)
+  and must not be shared with other callers.
+
+Not all servers follow the specification yet, so a missing or `null` `cacheScope` is treated as `public`.
+
+To keep private responses from leaking between callers, the source needs to know who the current caller is.
+By default, it doesn't: all callers share one cache, so the source accepts only public responses and throws
+`InvalidOperationException` for a private one. Each response is checked on its own, so a skill from a public
+list can still fail if its `SKILL.md` or another file is returned as private.
+
+To accept private responses, set `CacheIsolationKeySelector` to return a key for the current caller, such as
+a user or tenant ID. Each key gets its own cache partition, so cached skills are never shared between keys.
+Set it whenever the server can return private responses, even if your app has only one user:
+
+```csharp
+var options = new AgentMcpSkillsSourceOptions
+{
+    CacheIsolationKeySelector = (context, _) => new ValueTask<string>(GetApplicationAuthorizationKey(context)),
+    MaxCachedPartitions = 1000,
+    PartitionSlidingExpiration = TimeSpan.FromMinutes(30),
+    PartitionAbsoluteExpiration = TimeSpan.FromHours(8),
+};
+
+using var provider = new AgentSkillsProviderBuilder()
+    .UseMcpSkills(sharedMcpClient, options)
+    .DisableCaching()
+    .Build();
+```
+
+The builder adds a separate cache for the resolved skill list. `CacheIsolationKeySelector` above
+configures only the MCP source's internal caches, not the builder's cache. By default, the builder's
+cache can return one caller's skills to another without invoking the MCP source or its key selector.
+`DisableCaching()` removes only that outer cache; the MCP source still caches skills and resources
+within each partition. Every call reaches the source so it can select the caller's partition and
+check MCP response expiration.
+
+`GetApplicationAuthorizationKey` is your own helper, not a framework API. It should return a non-empty ID
+for the caller whose credentials the MCP client sends, for example a user or tenant ID.
+Use an opaque ID, not an access token.
+
+If resolving the key requires asynchronous work, the selector can await it and use the supplied
+cancellation token:
+
+```csharp
+options.CacheIsolationKeySelector = async (context, cancellationToken) =>
+    await ResolveAuthorizationKeyAsync(context, cancellationToken);
+```
+
+`ResolveAuthorizationKeyAsync` is an application helper, just like `GetApplicationAuthorizationKey`.
+
+The source only separates caches; it does not handle authentication. Your app is responsible for:
+
+- configuring the MCP client to send the current caller's credentials;
+- keeping the same caller's credentials when a returned skill later reads `SKILL.md` or other files;
+- not sharing returned skills between callers.
+
+By default, the source keeps up to 100 cache partitions. Adjust the limit or configure expiration
+to control how many partitions are kept and for how long:
+
+- `MaxCachedPartitions` - the maximum number of partitions to keep. Defaults to 100; set to `null` for no partition-count limit or `0` to disable partition caching. When full, expired and least recently used partitions are removed to make room for a new key.
+- `PartitionSlidingExpiration` - removes a partition that has not been used for this long.
+- `PartitionAbsoluteExpiration` - removes a partition this long after it was created, even if it is still in use.
+
+When a partition is removed, the next call for its key fetches skills from the server again.
+Skills that were already returned keep working. These options don't change how long MCP responses
+are cached; use `TtlResolver` for that.
+
+### Trust and size limits
+
 Discovering skills over MCP means an external MCP server controls what skill content (including
 instructions and supporting resources) reaches the agent. A compromised or
 untrustworthy server could return adversarial content designed to manipulate the agent (indirect

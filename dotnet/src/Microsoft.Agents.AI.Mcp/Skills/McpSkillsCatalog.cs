@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -30,7 +29,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
-/// Queued refresh requests and individual metadata expiration trigger <c>skills/get</c> while the list is fresh.
+/// Skills marked for refresh and individual metadata expiration trigger <c>skills/get</c> while the list is fresh.
 /// Full discovery takes priority when the list expires.
 /// </para>
 /// <para>
@@ -42,15 +41,14 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Resource retrieval, verification, and content caching remain the responsibility of each skill object.
-/// A size or digest mismatch queues a metadata refresh through <see cref="QueueSkillRefresh"/>.
+/// A size or digest mismatch marks the skill for metadata refresh through <see cref="AgentMcpSkill.NeedsRefresh"/>.
 /// </para>
 /// <para>
 /// Only one caller can fetch or update the skill list at a time; other callers wait and then check the cache again.
-/// No refreshes run in the background. Disposing the catalog clears its cached list and pending requests,
-/// but does not dispose the MCP client or prevent previously returned skills from reading resources.
+/// No refreshes run in the background.
 /// </para>
 /// </remarks>
-internal sealed partial class McpSkillsCatalog : IDisposable
+internal sealed partial class McpSkillsCatalog
 {
     private const string CatalogKey = "catalog";
     private const string CompleteResultType = "complete";
@@ -65,9 +63,8 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     private readonly int _maxSkillCount;
     private readonly TimeProvider _timeProvider;
     private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
+    private readonly bool _hasIsolationKey;
     private readonly McpCache<string, IList<AgentSkill>> _catalogCache;
-    private readonly ConcurrentDictionary<AgentMcpSkill, byte> _skillsToRefresh = new();
-    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="McpSkillsCatalog"/> class.
@@ -76,9 +73,10 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
     /// <param name="logger">Optional logger for skill validation diagnostics.</param>
     /// <param name="timeProvider">Optional clock for checking expiration.</param>
+    /// <param name="hasIsolationKey">Whether this catalog belongs to a cache partition key.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
-    public McpSkillsCatalog(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILogger? logger = null, TimeProvider? timeProvider = null)
+    public McpSkillsCatalog(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILogger? logger = null, TimeProvider? timeProvider = null, bool hasIsolationKey = false)
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
@@ -87,6 +85,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = options?.TtlResolver;
+        this._hasIsolationKey = hasIsolationKey;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
@@ -100,49 +99,13 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// <returns>The shared mutable skill list for the cached or updated catalog.</returns>
     public async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(this._disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        IList<AgentSkill> skills = await this._catalogCache.GetOrRefreshAsync(
+        return await this._catalogCache.GetOrRefreshAsync(
             CatalogKey,
             this.RefreshCatalogAsync,
             cancellationToken,
-            needsRefresh: cached => !this._skillsToRefresh.IsEmpty ||
-                cached.OfType<AgentMcpSkill>().Any(skill => !skill.MetadataLifetime.IsFresh(this._timeProvider))).ConfigureAwait(false);
-
-        this.RemoveObsoleteRefreshRequests();
-
-        return skills;
-    }
-
-    /// <inheritdoc/>
-    public void Dispose()
-    {
-        if (!this._disposed)
-        {
-            this._disposed = true;
-            this._catalogCache.Clear();
-            this._skillsToRefresh.Clear();
-        }
-    }
-
-    /// <summary>
-    /// Queues a skill from the cached list for refresh on the next <see cref="GetSkillsAsync"/> call.
-    /// </summary>
-    /// <remarks>
-    /// Called after a resource's size or content hash differs from the values recorded for its owning skill.
-    /// Requests for skill objects no longer in the cached list, or made after disposal, are ignored.
-    /// </remarks>
-    /// <param name="skill">The skill object whose server-provided details need to be fetched again.</param>
-    public void QueueSkillRefresh(AgentMcpSkill skill)
-    {
-        _ = Throw.IfNull(skill);
-
-        // Ignore refresh requests after disposal or when the skill is no longer in the cache.
-        if (!this._disposed && this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
-        {
-            this._skillsToRefresh.TryAdd(skill, 0);
-        }
+            needsRefresh: cached => cached.OfType<AgentMcpSkill>().Any(this.NeedsRefresh)).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -160,7 +123,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     }
 
     /// <summary>
-    /// Queues expired skills and stores the updated list only if every queued refresh succeeds.
+    /// Refreshes marked and expired skills and stores the updated list only if every refresh succeeds.
     /// </summary>
     /// <remarks>
     /// Replaces updated skills and removes missing ones in a new list, preserving the catalog's lifetime.
@@ -168,24 +131,12 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// </remarks>
     private async Task<McpCacheEntry<IList<AgentSkill>>> RefreshSkillsAsync(McpCacheEntry<IList<AgentSkill>> cached, CancellationToken cancellationToken)
     {
-        // Queue skills whose individual TTL has expired alongside those queued after a resource mismatch.
-        // Skills loaded through listing use Infinite and are refreshed with the catalog instead.
-        foreach (AgentMcpSkill skill in cached.Value.OfType<AgentMcpSkill>())
-        {
-            if (!skill.MetadataLifetime.IsFresh(this._timeProvider))
-            {
-                this._skillsToRefresh.TryAdd(skill, 0);
-            }
-        }
-
         List<AgentSkill>? updated = null;
 
-        foreach (AgentMcpSkill skill in this._skillsToRefresh.Keys)
+        foreach (AgentMcpSkill skill in cached.Value.OfType<AgentMcpSkill>())
         {
-            // Remove refresh requests for skill instances that are no longer in the cached catalog.
-            if (!cached.Value.Contains(skill))
+            if (!this.NeedsRefresh(skill))
             {
-                this._skillsToRefresh.TryRemove(skill, out _);
                 continue;
             }
 
@@ -215,24 +166,16 @@ internal sealed partial class McpSkillsCatalog : IDisposable
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Commit only after every refresh succeeds; failures leave the catalog and pending work intact.
+        // Commit only after every refresh succeeds. Old flags remain set for retries; replacements start unmarked.
         return new(updated, cached.Lifetime);
     }
 
     /// <summary>
-    /// Removes pending refresh requests for skill objects no longer in the published list.
+    /// Returns whether a skill was marked for refresh or its metadata expired.
     /// </summary>
-    private void RemoveObsoleteRefreshRequests()
+    private bool NeedsRefresh(AgentMcpSkill skill)
     {
-        // Keep requests for skills still in the list: they may have been queued during the refresh
-        // or just after the new catalog was stored.
-        foreach (AgentMcpSkill skill in this._skillsToRefresh.Keys)
-        {
-            if (!this._catalogCache.Contains(CatalogKey, skills => skills.Contains(skill)))
-            {
-                this._skillsToRefresh.TryRemove(skill, out _);
-            }
-        }
+        return skill.NeedsRefresh || !skill.MetadataLifetime.IsFresh(this._timeProvider);
     }
 
     /// <summary>
@@ -292,6 +235,8 @@ internal sealed partial class McpSkillsCatalog : IDisposable
             throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
         }
 
+        result.CacheScope = ValidateAndNormalizeCacheScope(result.CacheScope, this._hasIsolationKey, this._logger, "skills/get");
+
         // Unlike listing responses, skills/get provides a TTL for this skill,
         // allowing it to expire and refresh independently of the catalog.
         return this.CreateSkill(result.Skill, McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
@@ -306,7 +251,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
 
         List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver);
+        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
     }
 
     /// <summary>
@@ -350,6 +295,7 @@ internal sealed partial class McpSkillsCatalog : IDisposable
         HashSet<string> cursors = new(StringComparer.Ordinal);
         string? cursor = null;
         int pageCount = 0;
+        CacheScope? declaredScope = null;
 
         do
         {
@@ -393,6 +339,15 @@ internal sealed partial class McpSkillsCatalog : IDisposable
             {
                 throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
             }
+
+            result.CacheScope = ValidateAndNormalizeCacheScope(result.CacheScope, this._hasIsolationKey, this._logger, "skills/list");
+
+            if (declaredScope is { } previousScope && previousScope != result.CacheScope)
+            {
+                throw new InvalidOperationException("All skills/list pages must declare the same cacheScope.");
+            }
+
+            declaredScope = result.CacheScope;
 
             pageLifetimes.Add(McpCacheLifetime.Create(receivedTimestamp, result.TimeToLive, this._ttlResolver));
 
@@ -535,4 +490,31 @@ internal sealed partial class McpSkillsCatalog : IDisposable
     /// </summary>
     [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ResourceDigestRegex();
+
+    /// <summary>
+    /// Treats missing or null scopes as public and rejects private responses without a cache partition key.
+    /// </summary>
+    internal static CacheScope ValidateAndNormalizeCacheScope(CacheScope? scope, bool hasIsolationKey, ILogger logger, string method)
+    {
+        if (scope is null)
+        {
+            LogUnspecifiedCacheScope(logger, method);
+            scope = CacheScope.Public;
+        }
+
+        if (scope == CacheScope.Private && !hasIsolationKey)
+        {
+            throw new InvalidOperationException(
+                $"The {method} response has a private cacheScope, but no cache partition key was provided. " +
+                $"Configure {nameof(AgentMcpSkillsSourceOptions)}.{nameof(AgentMcpSkillsSourceOptions.CacheIsolationKeySelector)} to return a nonempty authorization-context key.");
+        }
+
+        return scope.Value;
+    }
+
+    /// <summary>
+    /// Logs that a response has no <c>cacheScope</c> and is treated as public.
+    /// </summary>
+    [LoggerMessage(LogLevel.Debug, "The {Method} response has a missing or null cacheScope; treating it as public.")]
+    internal static partial void LogUnspecifiedCacheScope(ILogger logger, string method);
 }

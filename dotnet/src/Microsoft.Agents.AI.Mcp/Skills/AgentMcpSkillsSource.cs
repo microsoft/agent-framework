@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
@@ -30,6 +32,22 @@ namespace Microsoft.Agents.AI;
 /// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override page, skill metadata, and resource TTLs.
 /// Disable other caches around this source, including the builder's cache through
 /// <see cref="AgentSkillsProviderBuilder.DisableCaching"/>, so this source can check expiration on each call.
+/// </para>
+/// <para>
+/// By default, all callers share one cache. If this source is shared by several users or tenants,
+/// set <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/> so each of them gets its own cache partition.
+/// </para>
+/// <para>
+/// According to the MCP specification, each <c>skills/list</c>, <c>skills/get</c>, and <c>resources/read</c> response
+/// must declare a <c>cacheScope</c>. Not all servers do, so the source handles it as follows:
+/// <list type="bullet">
+/// <item><description>Missing or <see langword="null"/>: treated as <c>public</c>.</description></item>
+/// <item><description><c>public</c>: always accepted.</description></item>
+/// <item><description><c>private</c>: accepted only when <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/> is set;
+/// otherwise, <see cref="InvalidOperationException"/> is thrown.</description></item>
+/// </list>
+/// Each response is checked on its own. For example, a skill from a public list still fails if its
+/// <c>SKILL.md</c> is returned as private and no selector is set.
 /// </para>
 /// <para>
 /// Listing a skill does not fetch its files. The returned skill object fetches <c>SKILL.md</c>
@@ -93,12 +111,18 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     private readonly McpClient _client;
     private readonly ILogger _logger;
     private readonly McpSkillsCatalog _catalog;
+    private readonly AgentMcpSkillsSourceOptions? _options;
+    private readonly TimeProvider _timeProvider;
+    private readonly MemoryCache _catalogs;
+    private readonly int? _maxCachedPartitions;
+    private readonly MemoryCacheEntryOptions? _catalogEntryOptions;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="options">Optional cache partitioning and retention settings, TTL resolver, and limits for listing pages, skill counts, and resource sizes.</param>
     /// <param name="loggerFactory">Optional factory for diagnostic logging.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
@@ -112,7 +136,18 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         this._client = Throw.IfNull(client);
         loggerFactory ??= NullLoggerFactory.Instance;
         this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
-        this._catalog = new McpSkillsCatalog(this._client, options, this._logger, Throw.IfNull(timeProvider));
+        this._timeProvider = Throw.IfNull(timeProvider);
+        this._options = options;
+
+        this._catalog = new McpSkillsCatalog(this._client, this._options, this._logger, this._timeProvider);
+
+        var cacheOptions = options?.ToMemoryCacheOptions() ?? new MemoryCacheOptions();
+        cacheOptions.Clock = new CatalogClock(this._timeProvider);
+
+        this._catalogs = new MemoryCache(cacheOptions);
+        this._maxCachedPartitions = options?.MaxCachedPartitions;
+
+        this._catalogEntryOptions = options?.ToMemoryCacheEntryOptions();
     }
 
     /// <inheritdoc/>
@@ -130,19 +165,65 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return [];
         }
 
-        IList<AgentSkill> skills = await this._catalog.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        string? key = this._options?.CacheIsolationKeySelector is { } selector
+            ? Throw.IfNullOrWhitespace(await selector(context, cancellationToken).ConfigureAwait(false))
+            : null;
 
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(this._disposed, this);
+
+        McpSkillsCatalog catalog = key is null
+            ? this._catalog
+            : this.GetOrCreateCatalog(key);
+
+        IList<AgentSkill> skills = await catalog.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
         LogSkillsLoadedTotal(this._logger, skills.Count);
 
         return skills;
     }
 
+    private McpSkillsCatalog GetOrCreateCatalog(string key)
+    {
+        if (this._catalogs.TryGetValue(key, out McpSkillsCatalog? catalog))
+        {
+            return catalog!;
+        }
+
+        // Serialize partition creation and compaction so a new partition has room in the cache.
+        lock (this._catalogs)
+        {
+            if (this._catalogs.TryGetValue(key, out catalog))
+            {
+                return catalog!;
+            }
+
+            int count = this._catalogs.Count;
+            if (this._maxCachedPartitions is > 0 && count >= this._maxCachedPartitions)
+            {
+                // Target 5% (5 of 100 entries) to avoid compacting for every new key.
+                // Since Compact rounds down, 1.0 / count ensures a target of at least one entry for small caches.
+                this._catalogs.Compact(Math.Max(0.05, 1.0 / count));
+            }
+
+            return this._catalogs.GetOrCreate(
+                key,
+                _ => new McpSkillsCatalog(this._client, this._options, this._logger, this._timeProvider, hasIsolationKey: true),
+                this._catalogEntryOptions)!;
+        }
+    }
+
+    private sealed class CatalogClock(TimeProvider timeProvider) : ISystemClock
+    {
+        public DateTimeOffset UtcNow => timeProvider.GetUtcNow();
+    }
+
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && !this._disposed)
         {
-            this._catalog.Dispose();
+            this._disposed = true;
+            this._catalogs.Dispose();
         }
 
         base.Dispose(disposing);

@@ -15,7 +15,7 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// </summary>
     /// <param name="builder">The builder to extend.</param>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>.</param>
-    /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="options">Optional cache partitioning and retention settings, TTL resolver, and limits for listing pages, skill counts, and resource sizes.</param>
     /// <returns>The builder for chaining calls.</returns>
     /// <remarks>
     /// <para>
@@ -30,6 +30,8 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override TTLs for list pages, skill metadata, and resources.
     /// Call <see cref="AgentSkillsProviderBuilder.DisableCaching"/> and disable other caches around
     /// this source so it can refresh the skill list when its cached data expires.
+    /// If the source is shared by several users or tenants, or the server returns private responses,
+    /// set <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/>.
     /// </para>
     /// <code>
     /// var provider = new AgentSkillsProviderBuilder()

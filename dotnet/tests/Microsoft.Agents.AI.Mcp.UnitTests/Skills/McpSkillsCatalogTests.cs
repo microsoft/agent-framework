@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,9 +13,9 @@ using Moq;
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 /// <summary>
-/// Tests skill-list caching, refresh coordination, and catalog disposal.
+/// Tests skill-list caching and refresh coordination.
 /// </summary>
-public sealed class McpSkillsCatalogTests
+public sealed partial class McpSkillsCatalogTests
 {
     [Fact]
     public void Constructor_NullClient_ThrowsArgumentNullException()
@@ -26,16 +25,6 @@ public sealed class McpSkillsCatalogTests
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>("client", () => new McpSkillsCatalog(null!, timeProvider: clock));
-    }
-
-    [Fact]
-    public void QueueSkillRefresh_NullSkill_ThrowsArgumentNullException()
-    {
-        // Arrange
-        using var catalog = new McpSkillsCatalog(new Mock<McpClient>().Object);
-
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>("skill", () => catalog.QueueSkillRefresh(null!));
     }
 
     [Fact]
@@ -50,7 +39,7 @@ public sealed class McpSkillsCatalogTests
             return Task.FromResult(CreateListResult(1000));
         }
 
-        using var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
+        var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
 
         // Act
         var first = await catalog.GetSkillsAsync(CancellationToken.None);
@@ -80,7 +69,7 @@ public sealed class McpSkillsCatalogTests
         // Arrange
         var clock = new ManualTimeProvider();
         int calls = 0;
-        using var catalog = new McpSkillsCatalog(CreateClient((_, _) =>
+        var catalog = new McpSkillsCatalog(CreateClient((_, _) =>
         {
             calls++;
             return Task.FromResult(CreateListResult(1000));
@@ -124,7 +113,7 @@ public sealed class McpSkillsCatalogTests
             return Task.FromResult(result);
         }
 
-        using var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
+        var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
         var first = await catalog.GetSkillsAsync(CancellationToken.None);
 
         // Act
@@ -147,7 +136,7 @@ public sealed class McpSkillsCatalogTests
         int calls = 0;
         Task<JsonObject> DiscoverAsync(JsonRpcRequest request, CancellationToken token) =>
             ++calls == 1 ? release.Task : Task.FromResult(CreateListResult(ttl));
-        using var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
+        var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
 
         // Act
         Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
@@ -180,7 +169,7 @@ public sealed class McpSkillsCatalogTests
         int calls = 0;
         Task<JsonObject> DiscoverAsync(JsonRpcRequest request, CancellationToken token) =>
             ++calls == 1 ? release.Task : Task.FromResult(CreateListResult(1000));
-        using var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
+        var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
         var active = catalog.GetSkillsAsync(CancellationToken.None);
         var waiting = catalog.GetSkillsAsync(CancellationToken.None);
 
@@ -213,7 +202,7 @@ public sealed class McpSkillsCatalogTests
             return Task.FromResult(CreateListResult(1000));
         }
 
-        using var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
+        var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => catalog.GetSkillsAsync(cts.Token));
@@ -237,7 +226,7 @@ public sealed class McpSkillsCatalogTests
             return Task.FromResult(CreateListResult(1000));
         }
 
-        using var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
+        var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
 
         if (cached)
         {
@@ -250,65 +239,6 @@ public sealed class McpSkillsCatalogTests
         // Act & Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => catalog.GetSkillsAsync(cts.Token));
         Assert.Equal(cached ? 1 : 0, calls);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task GetSkillsAsync_DisposedCatalog_ThrowsWithoutInvokingDiscoveryAsync(bool cached)
-    {
-        // Arrange
-        var clock = new ManualTimeProvider();
-        int calls = 0;
-        Task<JsonObject> DiscoverAsync(JsonRpcRequest request, CancellationToken token)
-        {
-            calls++;
-            return Task.FromResult(CreateListResult(1000));
-        }
-
-        using var catalog = new McpSkillsCatalog(CreateClient(DiscoverAsync), timeProvider: clock);
-
-        if (cached)
-        {
-            await catalog.GetSkillsAsync(CancellationToken.None);
-        }
-
-        // Act
-        catalog.Dispose();
-        catalog.Dispose();
-
-        // Assert
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => catalog.GetSkillsAsync(CancellationToken.None));
-        Assert.Equal(cached ? 1 : 0, calls);
-    }
-
-    [Fact]
-    public async Task Dispose_RetainedSkill_DoesNotKeepOtherSkillsAliveAsync()
-    {
-        // Arrange
-        using var catalog = new McpSkillsCatalog(CreateClient((_, _) =>
-            Task.FromResult(CreateListResult(3600000, "test-skill", "other-skill"))));
-        var (retained, other) = await PopulateCatalogAsync(catalog);
-
-        // Act
-        catalog.Dispose();
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-
-        // Assert
-        Assert.False(other.TryGetTarget(out _));
-        GC.KeepAlive(retained);
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        static async Task<(AgentMcpSkill Retained, WeakReference<AgentMcpSkill> Other)> PopulateCatalogAsync(McpSkillsCatalog catalog)
-        {
-            IList<AgentSkill> skills = await catalog.GetSkillsAsync(CancellationToken.None);
-            var retained = Assert.IsType<AgentMcpSkill>(skills[0]);
-            var other = Assert.IsType<AgentMcpSkill>(skills[1]);
-            catalog.QueueSkillRefresh(other);
-            return (retained, new(other));
-        }
     }
 
     /// <summary>

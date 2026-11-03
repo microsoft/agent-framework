@@ -52,6 +52,7 @@ await using McpClient client = await McpClient.CreateAsync(
 
 var skillsProvider = new AgentSkillsProviderBuilder()
     .UseMcpSkills(client)
+    .DisableCaching()
     .Build();
 
 // --- Agent ---
@@ -168,6 +169,8 @@ internal sealed class SkillResources
     private static readonly string s_skillsListJson = $$"""
         {
             "resultType": "complete",
+            "ttlMs": 300000,
+            "cacheScope": "public",
             "skills": [
                 {
                     "uri": "{{SkillUri}}",
@@ -205,12 +208,22 @@ internal sealed class SkillResources
     /// </summary>
     [McpServerResource(UriTemplate = SkillUri, Name = "Unit Converter Skill", MimeType = "text/markdown")]
     [Description("Unit converter skill instructions")]
-    public static string GetSkillMd() => SkillMd;
+    public static ReadResourceResult GetSkillMd() => new()
+    {
+        Contents = [new TextResourceContents { Uri = SkillUri, Text = SkillMd, MimeType = "text/markdown" }],
+        TimeToLive = TimeSpan.FromMinutes(5),
+        CacheScope = CacheScope.Public,
+    };
 
     /// <summary>
     /// Returns the conversion factors used by the unit-converter skill.
     /// </summary>
     [McpServerResource(UriTemplate = ConversionTableUri, Name = "Conversion Table", MimeType = "text/markdown")]
     [Description("Unit conversion factors")]
-    public static string GetConversionTable() => ConversionTable;
+    public static ReadResourceResult GetConversionTable() => new()
+    {
+        Contents = [new TextResourceContents { Uri = ConversionTableUri, Text = ConversionTable, MimeType = "text/markdown" }],
+        TimeToLive = TimeSpan.FromMinutes(5),
+        CacheScope = CacheScope.Public,
+    };
 }

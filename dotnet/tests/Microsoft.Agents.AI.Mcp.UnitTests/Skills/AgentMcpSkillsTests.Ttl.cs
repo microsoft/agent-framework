@@ -786,6 +786,9 @@ public sealed partial class AgentMcpSkillsTests
 
         public override long TimestampFrequency => timestampFrequency;
 
+        public override DateTimeOffset GetUtcNow() =>
+            DateTimeOffset.UnixEpoch + TimeSpan.FromSeconds((double)Interlocked.Read(ref this._timestamp) / this.TimestampFrequency);
+
         public override long GetTimestamp()
         {
             long timestamp = Interlocked.Read(ref this._timestamp);
