@@ -13,6 +13,7 @@
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
+    <InjectSharedHostedAgents>true</InjectSharedHostedAgents>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -28,6 +29,7 @@
   
   <ItemGroup>
     <InternalsVisibleTo Include="AgentWebChat.Web" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.A2A.UnitTests" />
   </ItemGroup>
 </Project>
