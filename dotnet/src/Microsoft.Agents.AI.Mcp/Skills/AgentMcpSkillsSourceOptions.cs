@@ -55,8 +55,8 @@ public sealed class AgentMcpSkillsSourceOptions
     /// </summary>
     /// <remarks>
     /// Defaults to <c>100</c>. Set to <see langword="null"/> for no partition-count limit.
-    /// When the limit is reached, skills for a new key are still returned,
-    /// but are fetched from the server again on the next call. Must not be negative.
+    /// When the limit is reached, expired and least recently used partitions are removed to make room for a new key.
+    /// Set to <c>0</c> to disable partition caching. Must not be negative.
     /// </remarks>
     public int? MaxCachedPartitions { get; set; } = 100;
 

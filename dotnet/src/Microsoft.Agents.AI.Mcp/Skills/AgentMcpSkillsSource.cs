@@ -114,6 +114,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     private readonly AgentMcpSkillsSourceOptions? _options;
     private readonly TimeProvider _timeProvider;
     private readonly MemoryCache _catalogs;
+    private readonly int? _maxCachedPartitions;
     private readonly MemoryCacheEntryOptions? _catalogEntryOptions;
     private bool _disposed;
 
@@ -144,6 +145,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         cacheOptions.Clock = new CatalogClock(this._timeProvider);
 
         this._catalogs = new MemoryCache(cacheOptions);
+        this._maxCachedPartitions = options?.MaxCachedPartitions;
 
         this._catalogEntryOptions = options?.ToMemoryCacheEntryOptions();
     }
@@ -187,9 +189,22 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return catalog!;
         }
 
-        // MemoryCache.GetOrCreate may run the factory concurrently; the lock ensures one partition per key.
+        // Serialize partition creation and compaction so a new partition has room in the cache.
         lock (this._catalogs)
         {
+            if (this._catalogs.TryGetValue(key, out catalog))
+            {
+                return catalog!;
+            }
+
+            int count = this._catalogs.Count;
+            if (this._maxCachedPartitions is > 0 && count >= this._maxCachedPartitions)
+            {
+                // Target 5% (5 of 100 entries) to avoid compacting for every new key.
+                // Since Compact rounds down, 1.0 / count ensures a target of at least one entry for small caches.
+                this._catalogs.Compact(Math.Max(0.05, 1.0 / count));
+            }
+
             return this._catalogs.GetOrCreate(
                 key,
                 _ => new McpSkillsCatalog(this._client, this._options, this._logger, this._timeProvider, hasIsolationKey: true),

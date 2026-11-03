@@ -140,7 +140,7 @@ The source only separates caches; it does not handle authentication. Your app is
 By default, the source keeps up to 100 cache partitions. Adjust the limit or configure expiration
 to control how many partitions are kept and for how long:
 
-- `MaxCachedPartitions` - the maximum number of partitions to keep. Defaults to 100; set to `null` for no partition-count limit.
+- `MaxCachedPartitions` - the maximum number of partitions to keep. Defaults to 100; set to `null` for no partition-count limit or `0` to disable partition caching. When full, expired and least recently used partitions are removed to make room for a new key.
 - `PartitionSlidingExpiration` - removes a partition that has not been used for this long.
 - `PartitionAbsoluteExpiration` - removes a partition this long after it was created, even if it is still in use.
 

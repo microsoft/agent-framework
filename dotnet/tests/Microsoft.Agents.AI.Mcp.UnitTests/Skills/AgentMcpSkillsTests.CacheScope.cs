@@ -53,16 +53,131 @@ public sealed partial class AgentMcpSkillsTests
         key = "user-100";
         var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        Assert.Same(first, second);
+        Assert.Equal(101, lists);
         if (unlimited)
         {
-            Assert.Same(first, second);
+            for (int i = 0; i < 100; i++)
+            {
+                key = $"user-{i}";
+                await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+            }
+
+            Assert.Equal(101, lists);
         }
-        else
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(19)]
+    [InlineData(20)]
+    [InlineData(100)]
+    public async Task GetSkillsAsync_FullPartitionCache_EvictsLeastRecentlyUsedAndCachesNewKeyAsync(int limit)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        string key = "";
+        int lists = 0;
+        var client = CreateTtlClient((_, _) =>
         {
-            Assert.NotSame(first, second);
+            lists++;
+            return Task.FromResult(TtlListResult(60000, Entry()));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, new()
+        {
+            CacheIsolationKeySelector = (_, _) => new(key),
+            MaxCachedPartitions = limit,
+        }, null, clock);
+        var partitions = new List<IList<AgentSkill>>();
+        for (int i = 0; i < limit; i++)
+        {
+            key = $"user-{i}";
+            partitions.Add(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            clock.Advance(TimeSpan.FromMilliseconds(1));
         }
 
-        Assert.Equal(unlimited ? 101 : 102, lists);
+        key = $"user-{limit - 1}";
+        Assert.Same(partitions[limit - 1], await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+
+        // Act
+        key = "new-user";
+        var added = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var reused = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Same(added, reused);
+        Assert.Equal(limit + 1, lists);
+        if (limit > 1)
+        {
+            key = $"user-{limit - 1}";
+            Assert.Same(partitions[limit - 1], await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Equal(limit + 1, lists);
+        }
+
+        key = "user-0";
+        Assert.NotSame(partitions[0], await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(limit + 2, lists);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ZeroPartitionLimit_DoesNotCachePartitionsAsync()
+    {
+        // Arrange
+        int lists = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            lists++;
+            return Task.FromResult(TtlListResult(60000, Entry()));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, new()
+        {
+            CacheIsolationKeySelector = (_, _) => new("A"),
+            MaxCachedPartitions = 0,
+        });
+
+        // Act
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.NotSame(first, second);
+        Assert.Equal(2, lists);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    [InlineData(100)]
+    public async Task GetSkillsAsync_PartitionLimitChangedAfterConstruction_UsesOriginalLimitAsync(int? updatedLimit)
+    {
+        // Arrange
+        string key = "A";
+        int lists = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            lists++;
+            return Task.FromResult(TtlListResult(60000, Entry()));
+        });
+        var options = new AgentMcpSkillsSourceOptions
+        {
+            CacheIsolationKeySelector = (_, _) => new(key),
+            MaxCachedPartitions = 1,
+        };
+        using var source = new AgentMcpSkillsSource(client.Object, options);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        options.MaxCachedPartitions = updatedLimit;
+
+        // Act
+        key = "B";
+        var added = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var reused = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Same(added, reused);
+        Assert.Equal(2, lists);
     }
 
     [Theory]
@@ -875,8 +990,10 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Equal(3, reads);
     }
 
-    [Fact]
-    public async Task GetSkillsAsync_ConcurrentPartitionCreation_SharesPartitionPerKeyAsync()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(2)]
+    public async Task GetSkillsAsync_ConcurrentPartitionCreation_SharesPartitionPerKeyAsync(int? limit)
     {
         // Arrange
         var contextA = TestAgentSkillsSourceContextFactory.Create();
@@ -891,6 +1008,7 @@ public sealed partial class AgentMcpSkillsTests
         using var source = new AgentMcpSkillsSource(client.Object, new()
         {
             CacheIsolationKeySelector = (context, _) => new(ReferenceEquals(context, contextA) ? "A" : "B"),
+            MaxCachedPartitions = limit,
         });
         Task<IList<AgentSkill>>[] requests = Enumerable.Range(0, 32).Select(index => Task.Run(async () =>
         {
