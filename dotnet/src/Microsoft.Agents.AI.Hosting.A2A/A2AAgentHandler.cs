@@ -88,12 +88,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// The response shape is decided by two independent inputs:
     /// <list type="number">
     /// <item><description>
-    /// Which A2A artifact the server returns. This is configured per agent registration, for example:
-    /// <code>
-    /// builder.AddA2AServer(agent, (A2AServerRegistrationOptions options) =>
-    ///     options.AgentRunMode = AgentRunMode.ReturnTask);
-    /// </code>
-    /// Use <c>AgentRunMode.ReturnMessage</c> to always respond with a message instead of a task.
+    /// Which A2A artifact the handler returns, as specified by its constructor's run mode.
+    /// The default server registration always uses <c>AgentRunMode.ReturnMessage</c>.
     /// </description></item>
     /// <item><description>
     /// Whether the client asked for an immediate response. In the A2A protocol this is the

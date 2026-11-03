@@ -250,7 +250,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         services.AddA2AServer(AgentName, options =>
         {
             callbackInvoked = true;
-            options.AgentRunMode = AgentRunMode.ReturnTask;
+            options.ServerOptions = new A2AServerOptions { SupportsStreaming = false };
         });
 
         // Assert - callback is invoked during resolution
@@ -569,13 +569,22 @@ public sealed class A2AServerServiceCollectionExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that a non-immediate request waits for all streaming updates and returns a completed task.
+    /// Verifies that new requests return one aggregated message regardless of registration,
+    /// streaming, or the caller's ReturnImmediately setting.
     /// </summary>
-    [Fact]
-    public async Task AddA2AServer_WithBackgroundResponsesAndNonImmediateRequest_ReturnsCompletedTaskAsync()
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public async Task AddA2AServer_WithNewRequest_ReturnsAggregatedMessageAsync(bool registerByName, bool streaming, bool returnImmediately)
     {
         // Arrange
-        const string AgentName = "completed-task-request";
+        const string AgentName = "message-only-request";
         var services = new ServiceCollection();
         Mock<AIAgent> agentMock = CreateAgentMockForRequests(AgentName);
         agentMock
@@ -590,23 +599,42 @@ public sealed class A2AServerServiceCollectionExtensionsTests
                 new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" },
                 new AgentResponseUpdate(ChatRole.Assistant, "chunk 2") { ResponseId = "r1", MessageId = "m1" }
             ]));
-        services.AddKeyedSingleton(AgentName, (_, _) => agentMock.Object);
-        services.AddA2AServer(
-            AgentName,
-            options => options.AgentRunMode = AgentRunMode.ReturnTask);
+        if (registerByName)
+        {
+            services.AddKeyedSingleton(AgentName, (_, _) => agentMock.Object);
+            services.AddA2AServer(AgentName);
+        }
+        else
+        {
+            services.AddA2AServer(agentMock.Object);
+        }
         await using var provider = services.BuildServiceProvider();
         var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
         SendMessageRequest request = CreateTestSendMessageRequest();
-        request.Configuration = new SendMessageConfiguration { ReturnImmediately = false };
+        request.Configuration = new SendMessageConfiguration { ReturnImmediately = returnImmediately };
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        SendMessageResponse response = await server.SendMessageAsync(request, requestContext: null, cts.Token);
+        if (streaming)
+        {
+            var responses = new List<StreamResponse>();
+            await foreach (var response in server.SendStreamingMessageAsync(request, requestContext: null, cts.Token))
+            {
+                responses.Add(response);
+            }
 
-        // Assert
-        Assert.Equal(SendMessageResponseCase.Task, response.PayloadCase);
-        Assert.Equal(TaskState.Completed, response.Task!.Status.State);
-        Assert.Equal("chunk 1chunk 2", Assert.Single(Assert.Single(response.Task.Artifacts!).Parts!).Text);
+            // Assert
+            Message message = Assert.IsType<Message>(Assert.Single(responses).Message);
+            Assert.Equal("chunk 1chunk 2", Assert.Single(message.Parts).Text);
+        }
+        else
+        {
+            SendMessageResponse response = await server.SendMessageAsync(request, requestContext: null, cts.Token);
+
+            // Assert
+            Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
+            Assert.Equal("chunk 1chunk 2", Assert.Single(response.Message!.Parts).Text);
+        }
     }
 
     /// <summary>
