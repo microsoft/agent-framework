@@ -415,13 +415,28 @@ class TestRawFoundryEmbeddingClient:
             with pytest.raises(ValueError, match="A token credential is required"):
                 RawFoundryEmbeddingClient(credential=AzureKeyCredential("test-key"))
 
-    def test_explicit_project_and_inference_sources_raise(self) -> None:
-        """Explicit project and Models endpoint configuration cannot be combined."""
-        with pytest.raises(ValueError, match="cannot be combined with Foundry Models"):
+    @pytest.mark.parametrize("project_source", ["project_endpoint", "project_client"])
+    @pytest.mark.parametrize(
+        ("models_source", "models_value"),
+        [("endpoint", "https://test.inference.ai.azure.com"), ("api_key", "test-key")],
+    )
+    def test_explicit_project_and_inference_sources_raise(
+        self, project_source: str, models_source: str, models_value: str
+    ) -> None:
+        """Explicit project and Models settings still conflict without an injected SDK client."""
+        kwargs: dict[str, Any] = {
+            project_source: MagicMock()
+            if project_source == "project_client"
+            else "https://test.services.ai.azure.com/api/projects/test",
+            models_source: models_value,
+        }
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            pytest.raises(ValueError, match="cannot be combined with Foundry Models"),
+        ):
             RawFoundryEmbeddingClient(
                 model="text-embedding-3-small",
-                project_client=MagicMock(),
-                endpoint="https://test.inference.ai.azure.com",
+                **kwargs,
             )
 
     @pytest.mark.parametrize(("endpoint", "api_key"), [("", ""), ("   ", "   ")])
@@ -592,6 +607,57 @@ class TestInjectedEmbeddingClients:
         assert client.service_url() == ""
         image_client.embed.assert_awaited_once()
         assert image_client.embed.call_args.kwargs["model"] == "image-embedding-model"
+        text_factory.assert_not_called()
+        image_factory.assert_not_called()
+        project_factory.assert_not_called()
+
+    @pytest.mark.parametrize("client_type", [RawFoundryEmbeddingClient, FoundryEmbeddingClient])
+    @pytest.mark.parametrize("injected_client_name", ["text_client", "image_client"])
+    @pytest.mark.parametrize("project_source", ["project_endpoint", "project_client"])
+    @pytest.mark.parametrize(
+        "models_settings",
+        [{}, {"endpoint": "https://explicit.inference.ai.azure.com", "api_key": "test-key"}],
+        ids=["no-models-settings", "explicit-models-settings"],
+    )
+    async def test_injected_client_takes_precedence_over_explicit_project_settings(
+        self,
+        client_type: type[RawFoundryEmbeddingClient[Any]],
+        injected_client_name: str,
+        project_source: str,
+        models_settings: dict[str, str],
+        mock_text_client: AsyncMock,
+        mock_image_client: AsyncMock,
+    ) -> None:
+        """Explicit project settings cannot block or replace an injected transport."""
+        injected_client = mock_text_client if injected_client_name == "text_client" else mock_image_client
+        injected_client._config.endpoint = "https://injected.inference.ai.azure.com"
+        project_client = MagicMock()
+        kwargs: dict[str, Any] = {
+            project_source: project_client
+            if project_source == "project_client"
+            else "https://test.services.ai.azure.com/api/projects/test",
+            injected_client_name: injected_client,
+            **models_settings,
+        }
+        values: Sequence[Content | str] = (
+            ["hello"]
+            if injected_client_name == "text_client"
+            else [Content.from_data(data=b"\x89PNG", media_type="image/png")]
+        )
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("agent_framework_foundry._embedding_client.EmbeddingsClient") as text_factory,
+            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient") as image_factory,
+            patch("azure.ai.projects.aio.AIProjectClient") as project_factory,
+        ):
+            client = client_type(model="embedding-model", **kwargs)
+            result = await client.get_embeddings(values)
+
+        expected_vector = [0.1, 0.2, 0.3] if injected_client_name == "text_client" else [0.4, 0.5, 0.6]
+        assert result[0].vector == expected_vector
+        assert client.service_url() == "https://injected.inference.ai.azure.com"
+        injected_client.embed.assert_awaited_once()
+        project_client.get_openai_client.assert_not_called()
         text_factory.assert_not_called()
         image_factory.assert_not_called()
         project_factory.assert_not_called()

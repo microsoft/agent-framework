@@ -229,12 +229,13 @@ class RawFoundryEmbeddingClient(
         ):
             api_key = None
 
+        has_injected_client = text_client is not None or image_client is not None
         explicit_project_source = project_client is not None or project_endpoint is not None
         explicit_inference_source = any(value is not None for value in (endpoint, api_key, text_client, image_client))
-        if explicit_project_source and explicit_inference_source:
+        if not has_injected_client and explicit_project_source and explicit_inference_source:
             raise ValueError(
                 "Foundry project embedding configuration cannot be combined with Foundry Models "
-                "'endpoint', 'api_key', 'text_client', or 'image_client' configuration."
+                "'endpoint' or 'api_key' configuration."
             )
 
         settings = load_settings(
@@ -254,8 +255,14 @@ class RawFoundryEmbeddingClient(
         self.image_model: str = settings.get("image_embedding_model") or self.model  # type: ignore[assignment]
         resolved_models_endpoint = settings.get("models_endpoint") or None
         resolved_project_endpoint = settings.get("project_endpoint") or None
-        use_project_client = explicit_project_source or (
-            not explicit_inference_source and resolved_models_endpoint is None and resolved_project_endpoint is not None
+        # Injected SDK clients own their transport even when explicit project settings are also provided.
+        use_project_client = not has_injected_client and (
+            explicit_project_source
+            or (
+                not explicit_inference_source
+                and resolved_models_endpoint is None
+                and resolved_project_endpoint is not None
+            )
         )
 
         self.project_client: AIProjectClient | None = None
@@ -269,10 +276,6 @@ class RawFoundryEmbeddingClient(
         )
 
         if use_project_client:
-            if text_client is not None or image_client is not None:
-                raise ValueError(
-                    "'text_client' and 'image_client' cannot be used with 'project_endpoint' or 'project_client'."
-                )
             if project_client is None:
                 if not resolved_project_endpoint:
                     raise ValueError(
