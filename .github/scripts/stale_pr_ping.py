@@ -2,10 +2,10 @@
 
 """Warn and close stale external-authored pull requests.
 
-After a CODEOWNER's latest conversation comment, warn and apply
-'requested-info' after the warning threshold, then close after the closing
-threshold without activity. CODEOWNER-authored and 'dont-close'-labeled pull
-requests are exempt.
+After a repository or organization member's latest conversation comment, warn
+and apply 'requested-info' after the warning threshold, then close after the
+closing threshold without activity. Member-authored and 'dont-close'-labeled
+pull requests are exempt. Membership uses GitHub's exact MEMBER association.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 from github import Auth, Github, GithubException
 from github.IssueComment import IssueComment
 from github.PullRequest import PullRequest
-from github.Repository import Repository
 
 
+MEMBER_ASSOCIATION = "MEMBER"
 REQUESTED_INFO_LABEL = "requested-info"
 DONT_CLOSE_LABEL = "dont-close"
 WARNING_MARKER = "<!-- stale-pr-warning -->"
@@ -36,36 +36,6 @@ CLOSING_COMMENT = (
     "Closing this pull request because there was no further activity "
     "after the automated warning. (This is an automated message.)"
 )
-
-
-def get_maintainers(repo: Repository) -> set[str]:
-    """Fetch maintainer usernames from CODEOWNERS on the default branch."""
-    codeowners = repo.get_contents(
-        ".github/CODEOWNERS",
-        ref=repo.default_branch,
-    )
-
-    if isinstance(codeowners, list):
-        raise RuntimeError("Expected CODEOWNERS to be a file")
-
-    content = codeowners.decoded_content.decode("utf-8")
-    owners = set()
-
-    for line in content.splitlines():
-        parts = line.split()
-        if not parts or parts[0] not in {"/python/", "/dotnet/"}:
-            continue
-
-        owners.update(
-            owner.removeprefix("@").lower()
-            for owner in parts[1:]
-            if owner.startswith("@")
-        )
-
-    if not owners:
-        raise RuntimeError("No maintainers found in CODEOWNERS")
-
-    return owners
 
 
 def get_latest_comment(pull_request: PullRequest) -> IssueComment | None:
@@ -105,10 +75,10 @@ def has_warning_marker(comment: IssueComment | None) -> bool:
     return bool(comment and WARNING_MARKER in (comment.body or ""))
 
 
-def is_exempt(pull_request: PullRequest, maintainers: set[str]) -> bool:
+def is_exempt(pull_request: PullRequest) -> bool:
     """Return whether a pull request is exempt from the lifecycle."""
     return (
-        pull_request.user.login.lower() in maintainers
+        pull_request.author_association == MEMBER_ASSOCIATION
         or any(label.name == DONT_CLOSE_LABEL for label in pull_request.labels)
     )
 
@@ -116,12 +86,11 @@ def is_exempt(pull_request: PullRequest, maintainers: set[str]) -> bool:
 def should_warn(
     pull_request: PullRequest,
     latest_comment: IssueComment | None,
-    maintainers: set[str],
     now: datetime,
     warning_threshold_days: int,
 ) -> bool:
     """Return whether an external pull request is ready for its warning."""
-    if is_exempt(pull_request, maintainers):
+    if is_exempt(pull_request):
         return False
     if any(label.name == REQUESTED_INFO_LABEL for label in pull_request.labels):
         return False
@@ -133,20 +102,18 @@ def should_warn(
 
     return bool(
         latest_comment
-        and latest_comment.user
-        and latest_comment.user.login.lower() in maintainers
+        and latest_comment.author_association == MEMBER_ASSOCIATION
     )
 
 
 def should_close(
     pull_request: PullRequest,
     latest_comment: IssueComment | None,
-    maintainers: set[str],
     now: datetime,
     closing_threshold_days: int,
 ) -> bool:
     """Return whether a warned external pull request is ready to close."""
-    if is_exempt(pull_request, maintainers):
+    if is_exempt(pull_request):
         return False
     if not any(
         label.name == REQUESTED_INFO_LABEL
@@ -345,12 +312,6 @@ def main() -> None:
     g = Github(auth=Auth.Token(token))
     repo = g.get_repo(repository)
 
-    print("Fetching maintainers...")
-    maintainers = get_maintainers(repo)
-    print(f"Found {len(maintainers)} maintainers.\n")
-    for maintainer in sorted(maintainers):
-        print(f"  @{maintainer}")
-
     now = datetime.now(timezone.utc)
     warned = []
     closed = []
@@ -368,7 +329,7 @@ def main() -> None:
     for pull_request in pull_requests:
         scanned += 1
 
-        if is_exempt(pull_request, maintainers):
+        if is_exempt(pull_request):
             continue
 
         lookup_succeeded, latest_comment = get_latest_comment_with_retry(
@@ -397,7 +358,6 @@ def main() -> None:
         if should_close(
             pull_request,
             latest_comment,
-            maintainers,
             now,
             closing_threshold_days,
         ):
@@ -410,7 +370,6 @@ def main() -> None:
         if should_warn(
             pull_request,
             latest_comment,
-            maintainers,
             now,
             warning_threshold_days,
         ):

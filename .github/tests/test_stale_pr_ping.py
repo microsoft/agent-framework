@@ -19,6 +19,7 @@ from stale_pr_ping import (
     CLOSING_COMMENT,
     CLOSING_THRESHOLD_DAYS,
     DONT_CLOSE_LABEL,
+    MEMBER_ASSOCIATION,
     REQUESTED_INFO_LABEL,
     WARNING_COMMENT,
     WARNING_MARKER,
@@ -27,7 +28,6 @@ from stale_pr_ping import (
     close,
     get_latest_comment,
     get_latest_comment_with_retry,
-    get_maintainers,
     get_runtime_thresholds,
     has_warning_marker,
     main,
@@ -37,11 +37,14 @@ from stale_pr_ping import (
     warn,
 )
 
-MAINTAINERS = {"alice", "bob"}
 NOW = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _make_comment(login: str | None, body: str = "") -> MagicMock:
+def _make_comment(
+    login: str | None,
+    body: str = "",
+    author_association: str = "CONTRIBUTOR",
+) -> MagicMock:
     comment = MagicMock()
     if login is None:
         comment.user = None
@@ -49,6 +52,7 @@ def _make_comment(login: str | None, body: str = "") -> MagicMock:
         comment.user = MagicMock()
         comment.user.login = login
     comment.body = body
+    comment.author_association = author_association
     return comment
 
 
@@ -60,6 +64,7 @@ def _make_label(name: str) -> MagicMock:
 
 def _make_pull_request(
     author: str = "external",
+    author_association: str = "CONTRIBUTOR",
     labels: list[str] | None = None,
     comments: list[MagicMock] | None = None,
     number: int = 42,
@@ -68,6 +73,7 @@ def _make_pull_request(
     pull_request = MagicMock()
     pull_request.user = MagicMock()
     pull_request.user.login = author
+    pull_request.author_association = author_association
     pull_request.number = number
     pull_request.labels = [
         _make_label(name)
@@ -190,8 +196,11 @@ class TestPolicyThresholds:
 
 
 class TestShouldWarn:
-    def test_warns_at_threshold_for_latest_maintainer_comment(self):
-        latest_comment = _make_comment("alice")
+    def test_warns_at_threshold_for_latest_member_comment(self):
+        latest_comment = _make_comment(
+            "alice",
+            author_association=MEMBER_ASSOCIATION,
+        )
         pull_request = _make_pull_request(
             updated_at=NOW - timedelta(days=4),
         )
@@ -199,13 +208,15 @@ class TestShouldWarn:
         assert should_warn(
             pull_request,
             latest_comment,
-            MAINTAINERS,
             NOW,
             4,
         ) is True
 
     def test_recent_activity_resets_warning_clock(self):
-        latest_comment = _make_comment("alice")
+        latest_comment = _make_comment(
+            "alice",
+            author_association=MEMBER_ASSOCIATION,
+        )
         pull_request = _make_pull_request(
             updated_at=NOW - timedelta(days=3),
         )
@@ -213,28 +224,32 @@ class TestShouldWarn:
         assert should_warn(
             pull_request,
             latest_comment,
-            MAINTAINERS,
             NOW,
             4,
         ) is False
 
-    def test_maintainer_authored_pr_is_exempt(self):
-        latest_comment = _make_comment("bob")
+    def test_member_authored_pr_is_exempt(self):
+        latest_comment = _make_comment(
+            "bob",
+            author_association=MEMBER_ASSOCIATION,
+        )
         pull_request = _make_pull_request(
-            author="Alice",
+            author_association=MEMBER_ASSOCIATION,
             updated_at=NOW - timedelta(days=4),
         )
 
         assert should_warn(
             pull_request,
             latest_comment,
-            MAINTAINERS,
             NOW,
             4,
         ) is False
 
     def test_requested_info_pr_is_not_warned_again(self):
-        latest_comment = _make_comment("alice")
+        latest_comment = _make_comment(
+            "alice",
+            author_association=MEMBER_ASSOCIATION,
+        )
         pull_request = _make_pull_request(
             labels=[REQUESTED_INFO_LABEL],
             updated_at=NOW - timedelta(days=4),
@@ -243,13 +258,15 @@ class TestShouldWarn:
         assert should_warn(
             pull_request,
             latest_comment,
-            MAINTAINERS,
             NOW,
             4,
         ) is False
 
     def test_dont_close_pr_is_not_warned(self):
-        latest_comment = _make_comment("alice")
+        latest_comment = _make_comment(
+            "alice",
+            author_association=MEMBER_ASSOCIATION,
+        )
         pull_request = _make_pull_request(
             labels=[DONT_CLOSE_LABEL],
             updated_at=NOW - timedelta(days=4),
@@ -258,7 +275,6 @@ class TestShouldWarn:
         assert should_warn(
             pull_request,
             latest_comment,
-            MAINTAINERS,
             NOW,
             4,
         ) is False
@@ -271,13 +287,22 @@ class TestShouldWarn:
         assert should_warn(
             pull_request,
             None,
-            MAINTAINERS,
             NOW,
             4,
         ) is False
 
-    def test_latest_external_comment_is_skipped(self):
-        latest_comment = _make_comment("external")
+    @pytest.mark.parametrize(
+        "author_association",
+        ["OWNER", "COLLABORATOR", "CONTRIBUTOR"],
+    )
+    def test_non_member_latest_comment_is_skipped(
+        self,
+        author_association,
+    ):
+        latest_comment = _make_comment(
+            "external",
+            author_association=author_association,
+        )
         pull_request = _make_pull_request(
             updated_at=NOW - timedelta(days=4),
         )
@@ -285,13 +310,12 @@ class TestShouldWarn:
         assert should_warn(
             pull_request,
             latest_comment,
-            MAINTAINERS,
             NOW,
             4,
         ) is False
 
     def test_deleted_latest_comment_author_is_skipped(self):
-        latest_comment = _make_comment(None)
+        latest_comment = _make_comment(None, author_association="NONE")
         pull_request = _make_pull_request(
             updated_at=NOW - timedelta(days=4),
         )
@@ -299,10 +323,33 @@ class TestShouldWarn:
         assert should_warn(
             pull_request,
             latest_comment,
-            MAINTAINERS,
             NOW,
             4,
         ) is False
+
+    @pytest.mark.parametrize(
+        "author_association",
+        ["OWNER", "COLLABORATOR", "CONTRIBUTOR"],
+    )
+    def test_non_member_pr_author_is_not_exempt(
+        self,
+        author_association,
+    ):
+        latest_comment = _make_comment(
+            "alice",
+            author_association=MEMBER_ASSOCIATION,
+        )
+        pull_request = _make_pull_request(
+            author_association=author_association,
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_warn(
+            pull_request,
+            latest_comment,
+            NOW,
+            4,
+        ) is True
 
 
 class TestWarn:
@@ -389,7 +436,6 @@ class TestShouldClose:
         assert should_close(
             pull_request,
             _make_warning_comment(),
-            MAINTAINERS,
             NOW,
             4,
         ) is True
@@ -403,14 +449,13 @@ class TestShouldClose:
         assert should_close(
             pull_request,
             _make_warning_comment(),
-            MAINTAINERS,
             NOW,
             4,
         ) is False
 
-    def test_maintainer_authored_pr_is_exempt(self):
+    def test_member_authored_pr_is_exempt(self):
         pull_request = _make_pull_request(
-            author="Alice",
+            author_association=MEMBER_ASSOCIATION,
             labels=[REQUESTED_INFO_LABEL],
             updated_at=NOW - timedelta(days=4),
         )
@@ -418,10 +463,30 @@ class TestShouldClose:
         assert should_close(
             pull_request,
             _make_warning_comment(),
-            MAINTAINERS,
             NOW,
             4,
         ) is False
+
+    @pytest.mark.parametrize(
+        "author_association",
+        ["OWNER", "COLLABORATOR", "CONTRIBUTOR"],
+    )
+    def test_non_member_pr_author_is_not_exempt(
+        self,
+        author_association,
+    ):
+        pull_request = _make_pull_request(
+            author_association=author_association,
+            labels=[REQUESTED_INFO_LABEL],
+            updated_at=NOW - timedelta(days=4),
+        )
+
+        assert should_close(
+            pull_request,
+            _make_warning_comment(),
+            NOW,
+            4,
+        ) is True
 
     def test_unlabeled_pr_is_not_closed(self):
         pull_request = _make_pull_request(
@@ -431,7 +496,6 @@ class TestShouldClose:
         assert should_close(
             pull_request,
             _make_warning_comment(),
-            MAINTAINERS,
             NOW,
             4,
         ) is False
@@ -445,7 +509,6 @@ class TestShouldClose:
         assert should_close(
             pull_request,
             _make_warning_comment(),
-            MAINTAINERS,
             NOW,
             4,
         ) is False
@@ -459,7 +522,6 @@ class TestShouldClose:
         assert should_close(
             pull_request,
             _make_comment("alice", "manual comment"),
-            MAINTAINERS,
             NOW,
             4,
         ) is False
@@ -561,54 +623,6 @@ class TestClose:
         assert mock_sleep.call_count == 2
 
 
-class TestGetMaintainers:
-    def test_fetches_and_parses_unique_python_and_dotnet_owners(self):
-        repo = MagicMock()
-        repo.default_branch = "feature-branch"
-        codeowners = MagicMock()
-        codeowners.decoded_content = b"""
-/python/ @Alice @shared
-/dotnet/ @BOB @Shared
-/docs/ @ignored
-"""
-        repo.get_contents.return_value = codeowners
-
-        assert get_maintainers(repo) == {"alice", "bob", "shared"}
-        repo.get_contents.assert_called_once_with(
-            ".github/CODEOWNERS",
-            ref="feature-branch",
-        )
-
-    def test_rejects_directory_response(self):
-        repo = MagicMock()
-        repo.get_contents.return_value = [MagicMock()]
-
-        with pytest.raises(RuntimeError, match="Expected CODEOWNERS to be a file"):
-            get_maintainers(repo)
-
-    def test_rejects_codeowners_without_matching_owners(self):
-        repo = MagicMock()
-        codeowners = MagicMock()
-        codeowners.decoded_content = b"""
-/docs/ @docs-owner
-/python/** @python-owner
-"""
-        repo.get_contents.return_value = codeowners
-
-        with pytest.raises(RuntimeError, match="No maintainers found in CODEOWNERS"):
-            get_maintainers(repo)
-
-    def test_propagates_codeowners_fetch_failure(self):
-        repo = MagicMock()
-        error = GithubException(404, {"message": "Not Found"}, None)
-        repo.get_contents.side_effect = error
-
-        with pytest.raises(GithubException) as exc_info:
-            get_maintainers(repo)
-
-        assert exc_info.value is error
-
-
 class TestMain:
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_github_token(self, capsys):
@@ -651,17 +665,20 @@ class TestMain:
         clear=True,
     )
     @patch("stale_pr_ping.datetime")
-    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
     @patch("stale_pr_ping.Github")
     def test_scans_only_open_prs_and_defers_new_warning(
         self,
         mock_github,
-        mock_get_maintainers,
         mock_datetime,
         capsys,
     ):
         pull_request = _make_pull_request(
-            comments=[_make_comment("alice")],
+            comments=[
+                _make_comment(
+                    "alice",
+                    author_association=MEMBER_ASSOCIATION,
+                )
+            ],
             updated_at=NOW - timedelta(days=7),
         )
         repo = mock_github.return_value.get_repo.return_value
@@ -670,7 +687,6 @@ class TestMain:
 
         main()
 
-        mock_get_maintainers.assert_called_once_with(repo)
         repo.get_pulls.assert_called_once_with(state="open")
         repo.get_issues.assert_not_called()
         pull_request.create_issue_comment.assert_called_once_with(
@@ -693,12 +709,10 @@ class TestMain:
         clear=True,
     )
     @patch("stale_pr_ping.datetime")
-    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
     @patch("stale_pr_ping.Github")
     def test_existing_requested_info_pr_closes_before_warning_check(
         self,
         mock_github,
-        mock_get_maintainers,
         mock_datetime,
         capsys,
     ):
@@ -724,7 +738,6 @@ class TestMain:
 
         main()
 
-        mock_get_maintainers.assert_called_once_with(repo)
         pull_request.get_issue_comments.assert_called_once_with()
         pull_request.create_issue_comment.assert_called_once_with(CLOSING_COMMENT)
         pull_request.edit.assert_called_once_with(state="closed")
@@ -741,12 +754,10 @@ class TestMain:
         clear=True,
     )
     @patch("stale_pr_ping.datetime")
-    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
     @patch("stale_pr_ping.Github")
     def test_manual_requested_info_is_cleared_instead_of_closed(
         self,
         mock_github,
-        mock_get_maintainers,
         mock_datetime,
     ):
         pull_request = _make_pull_request(
@@ -760,7 +771,6 @@ class TestMain:
 
         main()
 
-        mock_get_maintainers.assert_called_once_with(repo)
         pull_request.remove_from_labels.assert_called_once_with(
             REQUESTED_INFO_LABEL
         )
@@ -776,12 +786,10 @@ class TestMain:
         clear=True,
     )
     @patch("stale_pr_ping.datetime")
-    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
     @patch("stale_pr_ping.Github")
     def test_warning_marker_restores_missing_label_without_reposting(
         self,
         mock_github,
-        mock_get_maintainers,
         mock_datetime,
     ):
         pull_request = _make_pull_request(
@@ -794,7 +802,6 @@ class TestMain:
 
         main()
 
-        mock_get_maintainers.assert_called_once_with(repo)
         pull_request.add_to_labels.assert_called_once_with(REQUESTED_INFO_LABEL)
         pull_request.create_issue_comment.assert_not_called()
         pull_request.edit.assert_not_called()
@@ -809,12 +816,10 @@ class TestMain:
         clear=True,
     )
     @patch("stale_pr_ping.datetime")
-    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
     @patch("stale_pr_ping.Github")
     def test_recovery_dry_run_mutates_nothing(
         self,
         mock_github,
-        mock_get_maintainers,
         mock_datetime,
     ):
         manual_label = _make_pull_request(
@@ -832,7 +837,6 @@ class TestMain:
 
         main()
 
-        mock_get_maintainers.assert_called_once_with(repo)
         manual_label.remove_from_labels.assert_not_called()
         missing_label.add_to_labels.assert_not_called()
         manual_label.edit.assert_not_called()
@@ -848,18 +852,21 @@ class TestMain:
     )
     @patch("stale_pr_ping.datetime")
     @patch("stale_pr_ping.warn", return_value=False)
-    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
     @patch("stale_pr_ping.Github")
     def test_failed_warning_is_reported_and_exits(
         self,
         mock_github,
-        mock_get_maintainers,
         mock_warn,
         mock_datetime,
         capsys,
     ):
         pull_request = _make_pull_request(
-            comments=[_make_comment("alice")],
+            comments=[
+                _make_comment(
+                    "alice",
+                    author_association=MEMBER_ASSOCIATION,
+                )
+            ],
             updated_at=NOW - timedelta(days=WARNING_THRESHOLD_DAYS),
         )
         repo = mock_github.return_value.get_repo.return_value
@@ -869,7 +876,6 @@ class TestMain:
         with pytest.raises(SystemExit):
             main()
 
-        mock_get_maintainers.assert_called_once_with(repo)
         mock_warn.assert_called_once_with(
             pull_request,
             False,
@@ -889,12 +895,10 @@ class TestMain:
     )
     @patch("stale_pr_ping.time.sleep")
     @patch("stale_pr_ping.datetime")
-    @patch("stale_pr_ping.get_maintainers", return_value=MAINTAINERS)
     @patch("stale_pr_ping.Github")
     def test_lookup_failure_is_recorded_and_later_pr_is_processed(
         self,
         mock_github,
-        mock_get_maintainers,
         mock_datetime,
         mock_sleep,
         capsys,
@@ -906,7 +910,12 @@ class TestMain:
             None,
         )
         later_pull_request = _make_pull_request(
-            comments=[_make_comment("alice")],
+            comments=[
+                _make_comment(
+                    "alice",
+                    author_association=MEMBER_ASSOCIATION,
+                )
+            ],
             number=42,
             updated_at=NOW - timedelta(days=WARNING_THRESHOLD_DAYS),
         )
@@ -920,7 +929,6 @@ class TestMain:
         with pytest.raises(SystemExit):
             main()
 
-        mock_get_maintainers.assert_called_once_with(repo)
         assert failed_pull_request.get_issue_comments.call_count == 3
         assert mock_sleep.call_args_list == [call(2), call(4)]
         later_pull_request.create_issue_comment.assert_called_once_with(
