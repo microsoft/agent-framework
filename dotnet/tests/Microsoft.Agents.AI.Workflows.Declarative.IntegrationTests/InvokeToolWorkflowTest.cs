@@ -303,7 +303,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
             .SetHandlerLifetime(TimeSpan.FromMinutes(5));
         using ServiceProvider serviceProvider = services.BuildServiceProvider();
         DefaultHttpRequestHandler httpRequestHandler = new(
-            [s_armEndpoint.IdnHost], serviceProvider.GetRequiredService<IHttpClientFactory>(), "WorkflowArm");
+            [s_armEndpoint.IdnHost], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "WorkflowArm");
 
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(
             externalConversation: false,

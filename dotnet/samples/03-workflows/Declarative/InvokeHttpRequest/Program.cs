@@ -63,7 +63,7 @@ internal sealed class Program
             .SetHandlerLifetime(TimeSpan.FromMinutes(5));
         using ServiceProvider serviceProvider = services.BuildServiceProvider();
         DefaultHttpRequestHandler httpRequestHandler = new(
-            ["api.github.com"], serviceProvider.GetRequiredService<IHttpClientFactory>(), "WorkflowHttp");
+            ["api.github.com"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "WorkflowHttp");
 
         // Create the workflow factory with the HTTP request handler
         WorkflowFactory workflowFactory = new("InvokeHttpRequest.yaml", foundryEndpoint)

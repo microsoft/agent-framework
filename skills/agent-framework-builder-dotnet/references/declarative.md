@@ -22,10 +22,11 @@ commitments.
 
 - Supply the chat clients, project clients, connections, tools, and external handlers the definition references.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
-- `DefaultHttpRequestHandler` requires an application-owned `IHttpClientFactory`. It creates and disposes a client
-  for each request, including redirects; the factory pools the underlying handlers. It has no disposal method.
+- `DefaultHttpRequestHandler` requires an application-owned `IHttpMessageHandlerFactory`, registered by
+  `AddHttpClient`. It creates and disposes a client for each request, including redirects, without disposing
+  the factory-owned handler pipeline. It has no disposal method.
 - `DefaultHttpRequestHandler` accepts HTTP(S) URLs only and denies every request unless the application supplies
-  allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"], httpClientFactory, "WorkflowHttp")`.
+  allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"], httpMessageHandlerFactory, "WorkflowHttp")`.
   Configure the allowlist in trusted application code, not in workflow content; an empty list allows no hosts.
   The handler copies the list and checks it before creating a client and on every handler-managed redirect.
   Workflow-supplied `Host` headers are rejected before client creation; the transport derives the authority
@@ -40,11 +41,15 @@ commitments.
   before supplying an authenticated client if plaintext HTTP must not be allowed.
   Explicitly allowed internal hosts are supported on every target framework. Normal DNS resolution, proxy use,
   and routing are delegated to the HTTP transport; allowing a name trusts the host's DNS and network configuration.
-- Configure the factory's named client with `AllowAutoRedirect = false`, `UseCookies = false`, certificate
-  revocation checking, and a finite handler lifetime. Automatic redirects inside the transport bypass the
-  handler's destination checks. Workflow headers are removed on redirects, but factory default headers and
-  delegating handlers still apply. Bind authentication to the intended scheme, host, and port on each request
-  in a delegating handler; do not put credentials in default headers when multiple origins are allowed.
+- Configure the factory's named pipeline with an `HttpClientHandler`, or on .NET a `SocketsHttpHandler`,
+  with `AllowAutoRedirect = false` and `UseCookies = false`. Other primary transports, incomplete pipelines,
+  and transports with either setting enabled are rejected before sending. Configure certificate revocation
+  checking and a finite handler lifetime. Application-owned delegating handlers must preserve the validated
+  destination and must not follow redirects themselves.
+  `IHttpClientFactory` client configuration, including default headers, base address, and timeout, does not
+  apply. Configure headers and origin-bound authentication in delegating handlers; workflow headers are
+  removed on redirects, but delegating handlers still apply. Bind credentials to the intended scheme, host,
+  and port on every request.
 - Migrate direct `HttpClient`, callback, and allowlist-only construction to the factory constructor. Remove
   handler disposal calls, await active requests before disposing application services, and keep the factory
   alive for the workflow's lifetime.

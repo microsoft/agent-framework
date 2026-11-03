@@ -19,11 +19,13 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This handler obtains and disposes an HTTP client from the application-owned <see cref="IHttpClientFactory"/>
-/// for each request, including redirects. The factory manages the lifetime of the underlying HTTP handlers.
-/// Configure the named client with automatic redirects and cookies disabled. Authentication handlers must
+/// This handler obtains a handler pipeline from the application-owned <see cref="IHttpMessageHandlerFactory"/>
+/// and creates and disposes an HTTP client for each request, including redirects, without disposing the pipeline.
+/// The factory manages the lifetime of the underlying HTTP handlers.
+/// Configure the named pipeline with automatic redirects and cookies disabled. Authentication handlers must
 /// bind credentials to the intended origin on each request, including redirects; do not put credentials in
-/// default request headers when multiple origins are allowed.
+/// headers when multiple origins are allowed. Client configuration registered through
+/// <see cref="IHttpClientFactory"/> does not apply; configure headers and authentication in delegating handlers.
 /// </para>
 /// <para>
 /// Requests must use HTTP or HTTPS and target a host explicitly allowed by the application, including after
@@ -41,8 +43,9 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </para>
 /// <para>
 /// Redirects are handled explicitly so each destination is checked against the allowlist and workflow-supplied
-/// headers are not forwarded. Redirects followed inside a factory-configured transport are not visible to this
-/// handler, so automatic redirects must be disabled by the application.
+/// headers are not forwarded. Before sending, the pipeline must terminate in a supported HTTP transport with
+/// automatic redirects and cookies disabled. Unsupported transports are rejected. Application-owned delegating
+/// handlers must preserve the validated destination and must not follow redirects themselves.
 /// </para>
 /// </remarks>
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
@@ -50,12 +53,12 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
     private const int MaxAutomaticRedirections = 50;
 
     private readonly HashSet<string> _allowedHosts;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IHttpMessageHandlerFactory _httpMessageHandlerFactory;
     private readonly string _httpClientName;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
-    /// and an application-owned HTTP client factory.
+    /// and an application-owned HTTP message handler factory.
     /// </summary>
     /// <param name="allowedHosts">
     /// The exact DNS names or IP literals, optionally including a port, the application permits.
@@ -63,20 +66,22 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
     /// Schemes, paths, and wildcards are not supported. An empty collection rejects all requests.
     /// The collection is copied.
     /// </param>
-    /// <param name="httpClientFactory">
-    /// The factory supplying request-owned clients. Configure automatic redirects and cookies off and bind
-    /// authentication to the intended origin in a delegating handler. The application owns the factory.
+    /// <param name="httpMessageHandlerFactory">
+    /// The factory supplying pooled handler pipelines. The primary handler must be a
+    /// <see cref="HttpClientHandler"/> or, on .NET, a <c>SocketsHttpHandler</c>,
+    /// with automatic redirects and cookies disabled. Bind authentication to the intended origin in a
+    /// delegating handler. The application owns the factory and its handlers.
     /// </param>
     /// <param name="httpClientName">The configured client name, or <see langword="null"/> for the default client.</param>
     /// <exception cref="ArgumentNullException">An argument other than <paramref name="httpClientName"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
     public DefaultHttpRequestHandler(
         IEnumerable<string> allowedHosts,
-        IHttpClientFactory httpClientFactory,
+        IHttpMessageHandlerFactory httpMessageHandlerFactory,
         string? httpClientName = null)
     {
         Throw.IfNull(allowedHosts);
-        Throw.IfNull(httpClientFactory);
+        Throw.IfNull(httpMessageHandlerFactory);
         this._allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string host in allowedHosts)
         {
@@ -104,7 +109,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
             this._allowedHosts.Add(NormalizeDestination(new UriBuilder(Uri.UriSchemeHttps, hostName, port).Uri));
         }
 
-        this._httpClientFactory = httpClientFactory;
+        this._httpMessageHandlerFactory = httpMessageHandlerFactory;
         this._httpClientName = httpClientName ?? string.Empty;
     }
 
@@ -154,11 +159,9 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
                 throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
             }
 
-            using HttpClient client = this._httpClientFactory.CreateClient(this._httpClientName);
-            if (!string.IsNullOrEmpty(client.DefaultRequestHeaders.Host))
-            {
-                throw new HttpRequestException("Request headers must not override the Host header.");
-            }
+            HttpMessageHandler messageHandler = this._httpMessageHandlerFactory.CreateHandler(this._httpClientName);
+            ValidateTransport(messageHandler);
+            using HttpClient client = new(messageHandler, disposeHandler: false);
 
             using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
 
@@ -194,6 +197,41 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
         }
 
         throw new HttpRequestException($"The maximum number of HTTP redirects ({MaxAutomaticRedirections}) was exceeded.");
+    }
+
+    private static void ValidateTransport(HttpMessageHandler handler)
+    {
+        while (handler is DelegatingHandler delegatingHandler)
+        {
+            handler = delegatingHandler.InnerHandler
+                ?? throw new InvalidOperationException("The HTTP handler pipeline must have a primary handler.");
+        }
+
+        bool allowAutoRedirect;
+        bool useCookies;
+        if (handler.GetType() == typeof(HttpClientHandler))
+        {
+            HttpClientHandler transport = (HttpClientHandler)handler;
+            allowAutoRedirect = transport.AllowAutoRedirect;
+            useCookies = transport.UseCookies;
+        }
+#if NET
+        else if (handler.GetType() == typeof(SocketsHttpHandler))
+        {
+            SocketsHttpHandler transport = (SocketsHttpHandler)handler;
+            allowAutoRedirect = transport.AllowAutoRedirect;
+            useCookies = transport.UseCookies;
+        }
+#endif
+        else
+        {
+            throw new InvalidOperationException("The HTTP handler pipeline must use a supported primary HTTP handler.");
+        }
+
+        if (allowAutoRedirect || useCookies)
+        {
+            throw new InvalidOperationException("The primary HTTP handler must disable automatic redirects and cookies.");
+        }
     }
 
     private static async Task<string> ReadResponseBodyAsStringAsync(HttpContent content, CancellationToken cancellationToken)

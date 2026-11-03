@@ -27,7 +27,7 @@ public sealed class DefaultHttpRequestHandlerTests
     #region Constructor Tests
 
     [Fact]
-    public void ConstructorWithNullHttpClientFactoryThrows()
+    public void ConstructorWithNullHttpMessageHandlerFactoryThrows()
     {
         // Act
         static void act() => _ = new DefaultHttpRequestHandler([], null!);
@@ -37,7 +37,7 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncUsesNamedFactoryAndDisposesClientsAsync()
+    public async Task SendAsyncUsesNamedFactoryWithoutDisposingHandlersAsync()
     {
         // Arrange
         using HttpResponseMessage firstResponse = new(HttpStatusCode.OK)
@@ -53,12 +53,8 @@ public sealed class DefaultHttpRequestHandlerTests
         using TestHttpMessageHandler messageHandler = new((_, _) =>
             Task.FromResult(requestCount++ == 0 ? firstResponse : secondResponse));
 #pragma warning restore CA2025
-        using HttpClient firstClient = new(messageHandler, disposeHandler: false);
-        using HttpClient secondClient = new(messageHandler, disposeHandler: false);
-        Mock<IHttpClientFactory> factory = new();
-        factory.SetupSequence(f => f.CreateClient("workflow"))
-            .Returns(firstClient)
-            .Returns(secondClient);
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler("workflow")).Returns(messageHandler);
         DefaultHttpRequestHandler handler = new(["api.example.test"], factory.Object, "workflow");
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -68,22 +64,21 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Assert
         Assert.NotNull(messageHandler.LastRequest);
-        Assert.Equal(TestUrl, messageHandler.LastRequest!.RequestUri!.ToString());
+        Assert.NotNull(messageHandler.LastRequest.RequestUri);
+        Assert.Equal(TestUrl, messageHandler.LastRequest.RequestUri.ToString());
         Assert.Equal("ok", result.Body);
-        factory.Verify(f => f.CreateClient("workflow"), Times.Exactly(2));
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => firstClient.GetAsync(new Uri(TestUrl)));
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => secondClient.GetAsync(new Uri(TestUrl)));
+        factory.Verify(f => f.CreateHandler("workflow"), Times.Exactly(2));
+        Assert.False(messageHandler.IsDisposed);
     }
 
     [Fact]
-    public async Task SendAsyncDisposesFactoryClientOnFailureAsync()
+    public async Task SendAsyncDoesNotDisposeFactoryHandlerOnFailureAsync()
     {
         // Arrange
         using TestHttpMessageHandler messageHandler = new((_, _) =>
             throw new HttpRequestException("Transport failed."));
-        using HttpClient client = new(messageHandler);
-        Mock<IHttpClientFactory> factory = new();
-        factory.Setup(f => f.CreateClient(string.Empty)).Returns(client);
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler(string.Empty)).Returns(messageHandler);
         DefaultHttpRequestHandler handler = new(["api.example.test"], factory.Object);
 
         // Act
@@ -91,7 +86,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Assert
         await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.GetAsync(new Uri(TestUrl)));
+        Assert.False(messageHandler.IsDisposed);
     }
 
     #endregion
@@ -99,10 +94,101 @@ public sealed class DefaultHttpRequestHandlerTests
     #region Argument Validation Tests
 
     [Fact]
+    public async Task SendAsyncRejectsAutomaticRedirectsBeforeTransportAsync()
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        ServiceCollection services = new();
+        services.AddHttpClient();
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultHttpRequestHandler handler = new(
+            [new Uri(server.Url).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
+        HttpRequestInfo request = new() { Url = server.Url };
+
+        // Act
+        Exception? exception = await Record.ExceptionAsync(() => handler.SendAsync(request, TestContext.Current.CancellationToken));
+        string? rawRequest = await server.TryReadRequestAsync();
+
+        // Assert
+        Assert.IsType<InvalidOperationException>(exception);
+        Assert.Null(rawRequest);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task SendAsyncRejectsInvalidHttpClientHandlerSettingsBeforeTransportAsync(bool allowAutoRedirect, bool useCookies)
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        using HttpClientHandler transport = new()
+        {
+            AllowAutoRedirect = allowAutoRedirect,
+            UseCookies = useCookies,
+            CheckCertificateRevocationList = true,
+        };
+        DefaultHttpRequestHandler handler = new([new Uri(server.Url).Authority], CreateHttpMessageHandlerFactory(transport).Object);
+
+        // Act
+        Exception? exception = await Record.ExceptionAsync(() =>
+            handler.SendAsync(new HttpRequestInfo { Url = server.Url }, TestContext.Current.CancellationToken));
+        string? rawRequest = await server.TryReadRequestAsync();
+
+        // Assert
+        Assert.IsType<InvalidOperationException>(exception);
+        Assert.Null(rawRequest);
+    }
+
+#if NET
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task SendAsyncRejectsInvalidSocketsHttpHandlerSettingsBeforeTransportAsync(bool allowAutoRedirect, bool useCookies)
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        using SocketsHttpHandler transport = new()
+        {
+            AllowAutoRedirect = allowAutoRedirect,
+            UseCookies = useCookies,
+        };
+        DefaultHttpRequestHandler handler = new([new Uri(server.Url).Authority], CreateHttpMessageHandlerFactory(transport).Object);
+
+        // Act
+        Exception? exception = await Record.ExceptionAsync(() =>
+            handler.SendAsync(new HttpRequestInfo { Url = server.Url }, TestContext.Current.CancellationToken));
+        string? rawRequest = await server.TryReadRequestAsync();
+
+        // Assert
+        Assert.IsType<InvalidOperationException>(exception);
+        Assert.Null(rawRequest);
+    }
+
+    [Fact]
+    public async Task SendAsyncAcceptsSocketsHttpHandlerWithRedirectsAndCookiesDisabledAsync()
+    {
+        // Arrange
+        await using RawHttpServer server = new();
+        using SocketsHttpHandler transport = new()
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+        };
+        DefaultHttpRequestHandler handler = new([new Uri(server.Url).Authority], CreateHttpMessageHandlerFactory(transport).Object);
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = server.Url }, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal("ok", result.Body);
+    }
+#endif
+
+    [Fact]
     public async Task SendAsyncWithoutAllowedHostsRejectsBeforeTransportAsync()
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
         using TestHttpMessageHandler messageHandler = new((_, _) =>
             Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         using HttpClient client = new(messageHandler);
@@ -124,7 +210,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncRejectsWorkflowHostHeaderBeforeFactoryAsync(string headerName, string headerValue)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
         using TestHttpMessageHandler messageHandler = new((_, _) =>
             Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         using HttpClient client = new(messageHandler);
@@ -145,15 +231,11 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncRejectsClientDefaultHostHeaderBeforeTransportAsync()
+    public async Task SendAsyncRejectsUnsupportedPrimaryHandlerBeforeTransportAsync()
     {
         // Arrange
-        using TestHttpMessageHandler messageHandler = new((_, _) =>
-            Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
-        using HttpClient client = new(messageHandler);
-        client.DefaultRequestHeaders.Host = "other.example.test";
-        Mock<IHttpClientFactory> factory = new();
-        factory.Setup(f => f.CreateClient(string.Empty)).Returns(client);
+        using HttpMessageHandler messageHandler = Mock.Of<HttpMessageHandler>();
+        Mock<IHttpMessageHandlerFactory> factory = CreateHttpMessageHandlerFactory(messageHandler);
         DefaultHttpRequestHandler handler = new(["api.example.test"], factory.Object);
         HttpRequestInfo request = new() { Url = TestUrl };
 
@@ -161,9 +243,23 @@ public sealed class DefaultHttpRequestHandlerTests
         async Task actAsync() => await handler.SendAsync(request, TestContext.Current.CancellationToken);
 
         // Assert
-        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        Assert.Equal("Request headers must not override the Host header.", exception.Message);
-        Assert.Null(messageHandler.LastRequest);
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
+        Assert.Contains("supported primary HTTP handler", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SendAsyncRejectsIncompletePipelineBeforeTransportAsync()
+    {
+        // Arrange
+        using DelegatingHandler messageHandler = Mock.Of<DelegatingHandler>();
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = TestUrl }, TestContext.Current.CancellationToken);
+
+        // Assert
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
+        Assert.Contains("must have a primary handler", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -171,7 +267,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         using ServiceProvider serviceProvider = CreateServiceProvider();
-        DefaultHttpRequestHandler handler = new(["api.example.test"], serviceProvider.GetRequiredService<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new(["api.example.test"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
 
         // Act
         async Task actAsync() => await handler.SendAsync(null!);
@@ -185,7 +281,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         using ServiceProvider serviceProvider = CreateServiceProvider();
-        DefaultHttpRequestHandler handler = new(["api.example.test"], serviceProvider.GetRequiredService<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new(["api.example.test"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
         HttpRequestInfo request = new() { Method = "GET", Url = "" };
 
         // Act
@@ -200,7 +296,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         using ServiceProvider serviceProvider = CreateServiceProvider();
-        DefaultHttpRequestHandler handler = new(["api.example.test"], serviceProvider.GetRequiredService<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new(["api.example.test"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
         HttpRequestInfo request = new() { Method = "", Url = TestUrl };
 
         // Act
@@ -216,7 +312,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         await using RawHttpServer server = new();
         using ServiceProvider serviceProvider = CreateServiceProvider();
-        DefaultHttpRequestHandler handler = new([], serviceProvider.GetRequiredService<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new([], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
         HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
 
         // Act
@@ -255,7 +351,7 @@ public sealed class DefaultHttpRequestHandlerTests
         using TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(response));
 #pragma warning restore CA2025
         using HttpClient client = new(messageHandler);
-        DefaultHttpRequestHandler handler = new([allowedHost], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new([allowedHost], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         // Act
         HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = url });
@@ -274,7 +370,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncRejectsUnlistedHostBeforeFactoryAsync(string url)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
         DefaultHttpRequestHandler handler = new(["api.example.test"], factory.Object);
 
         // Act
@@ -295,7 +391,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public async Task SendAsyncRejectsUnlistedPortBeforeFactoryAsync(string allowedHost, string url)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
         using TestHttpMessageHandler messageHandler = new((_, _) =>
             Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         using HttpClient client = new(messageHandler);
@@ -333,7 +429,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public void ConstructorRejectsInvalidAllowedHost(string? host)
     {
         // Act
-        void act() => _ = new DefaultHttpRequestHandler([host!], Mock.Of<IHttpClientFactory>());
+        void act() => _ = new DefaultHttpRequestHandler([host!], Mock.Of<IHttpMessageHandlerFactory>());
 
         // Assert
         Assert.Throws<ArgumentException>(act);
@@ -343,7 +439,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public void ConstructorRejectsNullAllowlist()
     {
         // Act
-        static void act() => _ = new DefaultHttpRequestHandler(allowedHosts: null!, Mock.Of<IHttpClientFactory>());
+        static void act() => _ = new DefaultHttpRequestHandler(allowedHosts: null!, Mock.Of<IHttpMessageHandlerFactory>());
 
         // Assert
         Assert.Throws<ArgumentNullException>(act);
@@ -354,7 +450,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         List<string> allowedHosts = ["api.example.test"];
-        DefaultHttpRequestHandler handler = new(allowedHosts, Mock.Of<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new(allowedHosts, Mock.Of<IHttpMessageHandlerFactory>());
         allowedHosts.Add("other.example.test");
 
         // Act
@@ -377,7 +473,7 @@ public sealed class DefaultHttpRequestHandlerTests
 #pragma warning disable CA2025
         using TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(redirectResponse));
 #pragma warning restore CA2025
-        Mock<IHttpClientFactory> factory = CreateHttpClientFactory(messageHandler);
+        Mock<IHttpMessageHandlerFactory> factory = CreateHttpMessageHandlerFactory(messageHandler);
         DefaultHttpRequestHandler handler = new(["api.example.test"], factory.Object);
 
         // Act
@@ -385,7 +481,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Assert
         await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        factory.Verify(f => f.CreateClient(string.Empty), Times.Once);
+        factory.Verify(f => f.CreateHandler(string.Empty), Times.Once);
         Assert.Single(messageHandler.RequestMethods);
     }
 
@@ -407,7 +503,7 @@ public sealed class DefaultHttpRequestHandlerTests
         });
 #pragma warning restore CA2025
         DefaultHttpRequestHandler handler = new(
-            ["api.example.test", "api.example.test:8443"], CreateHttpClientFactory(messageHandler).Object);
+            ["api.example.test", "api.example.test:8443"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         // Act
         HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = TestUrl });
@@ -427,7 +523,7 @@ public sealed class DefaultHttpRequestHandlerTests
         using TestHttpMessageHandler messageHandler = new((_, _) =>
             Task.FromException<HttpResponseMessage>(new InvalidOperationException("Unexpected HTTP request.")));
         using HttpClient client = new(messageHandler);
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         // Act
         async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = url });
@@ -443,7 +539,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         await using RawHttpServer server = new();
         using ServiceProvider serviceProvider = CreateServiceProvider();
-        DefaultHttpRequestHandler handler = new([new Uri(server.Url).Authority], serviceProvider.GetRequiredService<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new([new Uri(server.Url).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
 
         // Act
         HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = server.Url }, TestContext.Current.CancellationToken);
@@ -467,7 +563,7 @@ public sealed class DefaultHttpRequestHandlerTests
                 Content = new StringContent("hello", Encoding.UTF8, "text/plain"),
             }));
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -490,7 +586,7 @@ public sealed class DefaultHttpRequestHandlerTests
         using TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         foreach (string method in new[] { "GET", "POST", "PUT", "PATCH", "DELETE", "CUSTOM" })
         {
@@ -510,7 +606,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         using TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
         HttpRequestInfo request = new() { Method = "  custom  ", Url = TestUrl };
 
         // Act
@@ -527,7 +623,7 @@ public sealed class DefaultHttpRequestHandlerTests
         using TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new()
         {
@@ -552,7 +648,7 @@ public sealed class DefaultHttpRequestHandlerTests
         using TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new()
         {
@@ -580,7 +676,7 @@ public sealed class DefaultHttpRequestHandlerTests
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using RawHttpServer server = new();
         using HttpClientHandler messageHandler = new() { AllowAutoRedirect = false, UseCookies = false, CheckCertificateRevocationList = true };
-        DefaultHttpRequestHandler handler = new(["api.example.test", new Uri(server.Url).Authority], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test", new Uri(server.Url).Authority], CreateHttpMessageHandlerFactory(messageHandler).Object);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -606,7 +702,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         using TestHttpMessageHandler messageHandler = new((_, _) =>
             throw new InvalidOperationException("The request should be rejected before transport."));
-        DefaultHttpRequestHandler handler = new(["api.example.test", "127.0.0.1"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test", "127.0.0.1"], CreateHttpMessageHandlerFactory(messageHandler).Object);
         HttpRequestInfo request = new()
         {
             Method = "POST",
@@ -630,7 +726,7 @@ public sealed class DefaultHttpRequestHandlerTests
         using TestHttpMessageHandler messageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new()
         {
@@ -668,7 +764,7 @@ public sealed class DefaultHttpRequestHandlerTests
 #pragma warning restore CA2025
         });
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -690,7 +786,7 @@ public sealed class DefaultHttpRequestHandlerTests
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
         using ServiceProvider serviceProvider = CreateServiceProvider();
-        DefaultHttpRequestHandler handler = new([new Uri(server.SetCookieRedirectUrl).Authority], serviceProvider.GetRequiredService<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new([new Uri(server.SetCookieRedirectUrl).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -716,7 +812,7 @@ public sealed class DefaultHttpRequestHandlerTests
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using CookieCaptureServer server = new();
         using ServiceProvider serviceProvider = CreateServiceProvider();
-        DefaultHttpRequestHandler handler = new([new Uri(server.SetCookieUrl).Authority], serviceProvider.GetRequiredService<IHttpClientFactory>());
+        DefaultHttpRequestHandler handler = new([new Uri(server.SetCookieUrl).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>());
         HttpRequestInfo victimRequest = new()
         {
             Method = "GET",
@@ -751,7 +847,7 @@ public sealed class DefaultHttpRequestHandlerTests
                 Content = new StringContent("bad request", Encoding.UTF8, "text/plain"),
             }));
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
 
@@ -774,7 +870,7 @@ public sealed class DefaultHttpRequestHandlerTests
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new()
         {
@@ -808,7 +904,7 @@ public sealed class DefaultHttpRequestHandlerTests
 #pragma warning restore CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
         });
 
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -1205,7 +1301,7 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncFactoryClientAllowsDefaultHeadersAsync()
+    public async Task SendAsyncFactoryPipelineAppliesHeadersAsync()
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
@@ -1215,13 +1311,13 @@ public sealed class DefaultHttpRequestHandlerTests
         };
 #pragma warning disable CA2025
         using TestHttpMessageHandler messageHandler = new((req, _) =>
-            Task.FromResult(okResponse));
+        {
+            req.Headers.TryAddWithoutValidation("X-Client-Token", "factory-header-value");
+            return Task.FromResult(okResponse);
+        });
 #pragma warning restore CA2025
-        using HttpClient factoryClient = new(messageHandler);
-        factoryClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Token", "factory-header-value");
 
-        Mock<IHttpClientFactory> factory = new();
-        factory.Setup(f => f.CreateClient(string.Empty)).Returns(factoryClient);
+        Mock<IHttpMessageHandlerFactory> factory = CreateHttpMessageHandlerFactory(messageHandler);
         DefaultHttpRequestHandler handler = new(["api.example.test"], factory.Object);
 
         HttpRequestInfo request = new()
@@ -1256,7 +1352,7 @@ public sealed class DefaultHttpRequestHandlerTests
             return Task.FromResult(okResponse);
         });
 #pragma warning restore CA2025
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
 
         HttpRequestInfo request = new()
         {
@@ -1273,7 +1369,7 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncCreatesFactoryClientForRedirectDestinationAsync()
+    public async Task SendAsyncCreatesFactoryPipelineForRedirectDestinationAsync()
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
@@ -1294,7 +1390,7 @@ public sealed class DefaultHttpRequestHandlerTests
         });
 #pragma warning restore CA2025
 
-        Mock<IHttpClientFactory> factory = CreateHttpClientFactory(messageHandler);
+        Mock<IHttpMessageHandlerFactory> factory = CreateHttpMessageHandlerFactory(messageHandler);
         DefaultHttpRequestHandler handler = new(["api.example.test", "secondary.example.test"], factory.Object);
 
         HttpRequestInfo request = new()
@@ -1308,7 +1404,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Assert
         Assert.Equal("redirected", result.Body);
-        factory.Verify(f => f.CreateClient(string.Empty), Times.Exactly(2));
+        factory.Verify(f => f.CreateHandler(string.Empty), Times.Exactly(2));
         Assert.Equal([TestUrl, "https://secondary.example.test/next"], requestUrls);
     }
 
@@ -1322,7 +1418,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         using TestHttpMessageHandler fake = new(static (req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(string.Empty) }));
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(fake).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(fake).Object);
 
         HttpRequestInfo info = new()
         {
@@ -1351,7 +1447,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         using TestHttpMessageHandler fake = new(static (req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(string.Empty) }));
-        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpClientFactory(fake).Object);
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(fake).Object);
 
         HttpRequestInfo info = new()
         {
@@ -1374,14 +1470,14 @@ public sealed class DefaultHttpRequestHandlerTests
 
     private static DefaultHttpRequestHandler CreateHandlerWithMessageHandler(HttpMessageHandler messageHandler)
     {
-        return new(["api.example.test", "secondary.example.test"], CreateHttpClientFactory(messageHandler).Object);
+        return new(["api.example.test", "secondary.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
     }
 
-    private static Mock<IHttpClientFactory> CreateHttpClientFactory(HttpMessageHandler messageHandler)
+    private static Mock<IHttpMessageHandlerFactory> CreateHttpMessageHandlerFactory(HttpMessageHandler messageHandler)
     {
-        Mock<IHttpClientFactory> factory = new();
-        factory.Setup(f => f.CreateClient(It.IsAny<string>()))
-            .Returns(() => new HttpClient(messageHandler, disposeHandler: false));
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler(It.IsAny<string>()))
+            .Returns(messageHandler);
         return factory;
     }
 
@@ -1398,11 +1494,17 @@ public sealed class DefaultHttpRequestHandlerTests
         return services.BuildServiceProvider();
     }
 
-    private sealed class TestHttpMessageHandler : HttpMessageHandler
+    private sealed class TestHttpMessageHandler : DelegatingHandler
     {
         private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _responseFactory;
 
         public TestHttpMessageHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responseFactory)
+            : base(new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                CheckCertificateRevocationList = true,
+            })
         {
             this._responseFactory = responseFactory;
         }
@@ -1412,6 +1514,8 @@ public sealed class DefaultHttpRequestHandlerTests
         public string? LastRequestBody { get; private set; }
 
         public string? LastRequestContentType { get; private set; }
+
+        public bool IsDisposed { get; private set; }
 
         public List<string> RequestMethods { get; } = [];
 
@@ -1436,6 +1540,16 @@ public sealed class DefaultHttpRequestHandlerTests
                 this.RequestBodies.Add(null);
             }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.IsDisposed = true;
+            }
+
+            base.Dispose(disposing);
         }
     }
 
