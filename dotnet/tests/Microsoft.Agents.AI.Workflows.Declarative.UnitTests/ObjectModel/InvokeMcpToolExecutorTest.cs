@@ -130,41 +130,6 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     [Fact]
-    public async Task InvokeMcpToolExecuteWithoutApproval_EmitsPairedMcpCallAndResultAsync()
-    {
-        // Arrange
-        this.State.InitializeSystem();
-        InvokeMcpTool.Builder builder = this.CreateModel(
-            displayName: nameof(InvokeMcpToolExecuteWithoutApproval_EmitsPairedMcpCallAndResultAsync),
-            serverUrl: TestServerUrl,
-            serverLabel: TestServerLabel,
-            toolName: TestToolName,
-            requireApproval: false).ToBuilder();
-        builder.Output = new InvokeToolOutput.Builder
-        {
-            AutoSend = BoolExpression.Literal(true).ToBuilder(),
-        };
-        MockMcpToolProvider provider = new();
-        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
-        InvokeMcpToolExecutor action = new(model, provider.Object, new MockAgentProvider().Object, this.State);
-
-        // Act
-        WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
-
-        // Assert
-        AIContent[] contents = events
-            .OfType<AgentResponseEvent>()
-            .SelectMany(responseEvent => responseEvent.Response.Messages)
-            .SelectMany(message => message.Contents)
-            .ToArray();
-        McpServerToolCallContent call = Assert.Single(contents.OfType<McpServerToolCallContent>());
-        McpServerToolResultContent result = Assert.Single(contents.OfType<McpServerToolResultContent>());
-        Assert.Equal(call.CallId, result.CallId);
-        Assert.Equal(TestServerLabel, call.ServerName);
-        Assert.Equal(TestToolName, call.Name);
-    }
-
-    [Fact]
     public async Task InvokeMcpToolExecuteWithServerLabelAsync()
     {
         // Arrange

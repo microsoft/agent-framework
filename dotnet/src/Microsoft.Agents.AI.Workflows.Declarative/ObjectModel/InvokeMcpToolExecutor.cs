@@ -109,14 +109,7 @@ internal sealed class InvokeMcpToolExecutor(
             return default;
         }
 
-        // The MCP handler owns transport execution, while this executor owns the stable call identity
-        // carried through workflow output and hosted protocol projection.
-        string callId = Guid.NewGuid().ToString("N");
-        McpServerToolCallContent toolCall = CreateMcpToolCall(
-            callId,
-            serverLabel ?? serverUrl,
-            toolName,
-            arguments);
+        // No approval required - invoke the tool directly
         McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
             serverUrl,
             serverLabel,
@@ -125,15 +118,8 @@ internal sealed class InvokeMcpToolExecutor(
             headers,
             connectionName,
             cancellationToken).ConfigureAwait(false);
-        resultContent = CopyResultWithCallId(resultContent, callId);
 
-        await this.ProcessResultAsync(
-            context,
-            toolCall,
-            resultContent,
-            conversationId,
-            autoSend,
-            cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, autoSend, cancellationToken).ConfigureAwait(false);
 
         // Signal completion so the workflow routes via RequiresNothing
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
@@ -215,15 +201,8 @@ internal sealed class InvokeMcpToolExecutor(
             headers,
             snapshot.ConnectionName,
             cancellationToken).ConfigureAwait(false);
-        resultContent = CopyResultWithCallId(resultContent, approvalResponse.ToolCall.CallId);
 
-        await this.ProcessResultAsync(
-            context,
-            toolCall: null,
-            resultContent,
-            conversationId,
-            autoSend,
-            cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, autoSend, cancellationToken).ConfigureAwait(false);
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -323,11 +302,10 @@ internal sealed class InvokeMcpToolExecutor(
         this._approvalHeaderSnapshots[requestId] = new HeaderSnapshot(headers);
 
         // Transport headers are intentionally excluded from externally-surfaced approval content.
-        McpServerToolCallContent toolCall = CreateMcpToolCall(
-            requestId,
-            serverLabel ?? serverUrl,
-            toolName,
-            arguments);
+        McpServerToolCallContent toolCall = new(requestId, toolName, serverLabel ?? serverUrl)
+        {
+            Arguments = arguments
+        };
 
         ToolApprovalRequestContent approvalRequest = new(requestId, toolCall);
         ChatMessage requestMessage = new(ChatRole.Assistant, [approvalRequest]);
@@ -336,7 +314,6 @@ internal sealed class InvokeMcpToolExecutor(
 
     private async ValueTask ProcessResultAsync(
         IWorkflowContext context,
-        McpServerToolCallContent? toolCall,
         McpServerToolResultContent resultContent,
         string? conversationId,
         bool autoSend,
@@ -354,14 +331,7 @@ internal sealed class InvokeMcpToolExecutor(
         // Auto-send the result if configured
         if (autoSend)
         {
-            List<ChatMessage> responseMessages = [];
-            if (toolCall is not null)
-            {
-                responseMessages.Add(new ChatMessage(ChatRole.Assistant, [toolCall]));
-            }
-
-            responseMessages.Add(new ChatMessage(ChatRole.Tool, [resultContent]));
-            AgentResponse resultResponse = new(responseMessages);
+            AgentResponse resultResponse = new([resultMessage]);
             await context.AddEventAsync(new AgentResponseEvent(this.Id, resultResponse), cancellationToken).ConfigureAwait(false);
         }
 
@@ -372,27 +342,6 @@ internal sealed class InvokeMcpToolExecutor(
             await agentProvider.CreateMessageAsync(conversationId, assistantMessage, cancellationToken).ConfigureAwait(false);
         }
     }
-
-    private static McpServerToolCallContent CreateMcpToolCall(
-        string callId,
-        string serverName,
-        string toolName,
-        IDictionary<string, object?>? arguments) =>
-        new(callId, toolName, serverName)
-        {
-            Arguments = arguments
-        };
-
-    private static McpServerToolResultContent CopyResultWithCallId(
-        McpServerToolResultContent result,
-        string callId) =>
-        new(callId)
-        {
-            AdditionalProperties = result.AdditionalProperties,
-            Annotations = result.Annotations,
-            Outputs = result.Outputs,
-            RawRepresentation = result.RawRepresentation,
-        };
 
     private async ValueTask AssignResultAsync(IWorkflowContext context, McpServerToolResultContent toolResult)
     {
