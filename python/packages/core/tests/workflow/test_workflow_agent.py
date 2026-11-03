@@ -3,10 +3,9 @@
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, Never, assert_type, cast, overload
 
 import pytest
-from typing_extensions import Never, assert_type
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -3150,9 +3149,7 @@ class TestWorkflowAsAgentFilteringRound8:
             ctx: WorkflowContext[Never, AgentResponseUpdate],  # type: ignore[valid-type]
         ) -> None:
             await ctx.yield_output(
-                AgentResponseUpdate(
-                    contents=[Content.from_text("user said hi")], role="user", message_id="m-user"
-                )
+                AgentResponseUpdate(contents=[Content.from_text("user said hi")], role="user", message_id="m-user")
             )
             await ctx.yield_output(
                 AgentResponseUpdate(contents=[Content.from_text("assistant answer")], message_id="m-answer")

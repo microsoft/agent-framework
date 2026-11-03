@@ -21,6 +21,7 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    Self,
     TypedDict,
     cast,
     overload,
@@ -40,16 +41,12 @@ from ._types import (
     ResponseStream,
     validate_chat_options,
 )
+from .exceptions import ChatClientInvalidRequestException
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 
 if TYPE_CHECKING:
@@ -295,6 +292,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     When ``True``, the agent skips auto-injecting ``InMemoryHistoryProvider`` unless the
     user explicitly sets ``store=False``.
     """
+    SERVICE_CONTINUATION_OPTION_NAMES: ClassVar[tuple[str, ...]] = ("conversation_id",)
+    """Option names that activate provider-managed conversation continuation."""
     # OTEL_PROVIDER_NAME is used for OTel setup, should be overridden in subclasses
 
     def __init__(
@@ -406,8 +405,37 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         *,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        options: Mapping[str, Any] | None = None,
     ) -> list[Message]:
         prepared_messages = list(messages)
+        if compaction_strategy is not None:
+            from ._compaction import _requires_client_managed_history  # pyright: ignore[reportPrivateUsage]
+            from ._sessions import is_local_history_conversation_id
+
+            if _requires_client_managed_history(compaction_strategy):
+                store = options.get("store") if options is not None else None
+                service_stores_history = (
+                    getattr(self, "STORES_BY_DEFAULT", False) if store is None else store is not False
+                )
+                has_service_conversation = False
+                if options is not None:
+                    for option_name in self.SERVICE_CONTINUATION_OPTION_NAMES:
+                        value = options.get(option_name)
+                        if value is None or value == "":
+                            continue
+                        if (
+                            option_name == "conversation_id"
+                            and isinstance(value, str)
+                            and is_local_history_conversation_id(value)
+                        ):
+                            continue
+                        has_service_conversation = True
+                        break
+                if service_stores_history or has_service_conversation:
+                    raise ChatClientInvalidRequestException(
+                        "Agent-triggered compaction requires client-managed history. "
+                        "Set store=False and do not use a service-managed continuation option."
+                    )
         if compaction_strategy is None:
             if tokenizer is None:
                 return prepared_messages
@@ -549,6 +577,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             tokenizer=tokenizer,
         )
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        evaluation_tool_capture = cast(
+            Callable[[Any], None] | None, merged_client_kwargs.pop("_evaluation_tool_capture", None)
+        )
+        if evaluation_tool_capture is not None:
+            evaluation_tool_capture((options or {}).get("tools"))
 
         if not compaction_overrides:
             return self._inner_get_response(
@@ -564,6 +597,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 prepared_messages = await self._prepare_messages_for_model_call(
                     messages,
                     **compaction_overrides,
+                    options=options,
                 )
                 stream_response = self._inner_get_response(
                     messages=prepared_messages,
@@ -584,6 +618,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             prepared_messages = await self._prepare_messages_for_model_call(
                 messages,
                 **compaction_overrides,
+                options=options,
             )
             return await self._inner_get_response(
                 messages=prepared_messages,

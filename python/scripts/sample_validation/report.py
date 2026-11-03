@@ -5,10 +5,9 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Never
 
 from agent_framework import Executor, WorkflowContext, handler
-from typing_extensions import Never
-
 from sample_validation.models import ExecutionResult, Report, RunResult, RunStatus
 
 

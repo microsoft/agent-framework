@@ -39,14 +39,11 @@ This selective approach is useful when you know which integrations you need, and
 
 Supported Platforms:
 
-- Python: 3.10–3.15
+- Python: 3.11–3.15
 - OS: Windows, macOS, Linux
 
-Python 3.10 remains supported and tested for this release, but it is deprecated
-because upstream Python 3.10 has reached end of life. New environments should
-use Python 3.11 or later. A future Agent Framework release will raise the
-minimum version separately; this release does not remove Python 3.10 from
-package metadata or CI.
+Python 3.11 or later is required. Supported environments are subject to the
+integration-specific limits below.
 
 ### Python 3.15 limitations
 

@@ -36,7 +36,10 @@ complete option list.
 - Load skills and background agents only from trusted sources; their content crosses the model and tool boundary.
 - Bound autonomous loops and stop for unresolved approvals or user input.
 - Treat shell command filters as a usability guard, not a security boundary. The host owns sandboxing and executor
-  lifecycle.
+  lifecycle. Apply resource limits to the host agent process as well as the shell container; container memory
+  limits do not cover output captured outside the container. `LocalShellTool` and `DockerShellTool` independently
+  limit retained normal and error output through `max_stdout_bytes` and `max_stderr_bytes`, each defaulting to
+  64 KiB. Both settings must be positive; they do not impose a total process-memory limit.
 
 ## Validation
 

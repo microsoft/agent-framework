@@ -2,7 +2,7 @@
 name = "agent-framework-hosting-sample-mcp"
 version = "0.0.1"
 description = "Streamable HTTP MCP server using Agent Framework hosting helpers."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "agent-framework-core",
     "agent-framework-foundry",

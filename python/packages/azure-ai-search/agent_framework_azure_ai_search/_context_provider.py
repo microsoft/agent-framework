@@ -12,9 +12,8 @@ import copy
 import importlib.metadata
 import inspect
 import logging
-import sys
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypedDict, overload
 
 from agent_framework import (
     AgentSession,
@@ -70,10 +69,6 @@ if TYPE_CHECKING:
         KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
     )
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 # Runtime imports for agentic mode. Core knowledge base retrieval works on both the
 # stable/GA SDK (api-version 2026-04-01) and the preview SDK (api-version

@@ -44,6 +44,7 @@ framework_projects=(
     Microsoft.Agents.AI
     Microsoft.Agents.AI.Workflows
     Microsoft.Agents.AI.Hosting
+    Microsoft.Agents.AI.Harness
     Microsoft.Agents.AI.LocalCodeAct
     Microsoft.Agents.AI.Mcp
     Microsoft.Agents.AI.Foundry

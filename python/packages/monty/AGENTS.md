@@ -36,6 +36,10 @@ from agent_framework.monty import (
 - `file_mounts` — sequence of `FileMountInput` (str shorthand,
   `(host_path, mount_path)` tuple, or `FileMount`)
 - `resource_limits` — Monty `ResourceLimits` TypedDict
+- `include_detailed_errors` — keyword-only Boolean, default `False`. Host failures become generic
+  `RuntimeError`s and execution errors omit raw details. Trusted opt-in preserves original diagnostics.
+  The flag is not a code input, is independent of outer-client error/logging settings, and is copied
+  into run snapshots and serializable state.
 - `tool_description_format` — keyword-only
   `Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact"`.
   Selects parameter documentation in both the description and instructions.

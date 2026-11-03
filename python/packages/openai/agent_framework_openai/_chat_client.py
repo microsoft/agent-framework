@@ -114,6 +114,9 @@ from openai.types.responses.tool_param import (
     CodeInterpreterContainerCodeInterpreterToolAuto,
     ImageGeneration,
     Mcp,
+    McpRequireApprovalMcpToolApprovalFilter,
+    McpRequireApprovalMcpToolApprovalFilterAlways,
+    McpRequireApprovalMcpToolApprovalFilterNever,
 )
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -138,10 +141,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 _prompt_cache_options_supported = hasattr(response_create_params, "PromptCacheOptions")
 
@@ -623,6 +622,11 @@ class RawOpenAIChatClient(
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
     STORES_BY_DEFAULT: ClassVar[bool] = True
+    SERVICE_CONTINUATION_OPTION_NAMES: ClassVar[tuple[str, ...]] = (
+        "conversation_id",
+        "previous_response_id",
+        "conversation",
+    )
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
@@ -752,9 +756,12 @@ class RawOpenAIChatClient(
         """Initialize a raw OpenAI Chat client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
-                or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for
+                Azure. An injected ``AsyncOpenAI`` client has no deployment, so the OpenAI
+                variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -1670,10 +1677,18 @@ class RawOpenAIChatClient(
             if isinstance(approval_mode, str):
                 mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
             else:
+                # Both keys can be supplied together ("and/or" per the docstring), so build
+                # one combined mapping instead of letting the second assignment overwrite
+                # the first, which silently dropped the always-approval tool list.
+                require_approval = McpRequireApprovalMcpToolApprovalFilter()
                 if always_require := approval_mode.get("always_require_approval"):
-                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                    require_approval["always"] = McpRequireApprovalMcpToolApprovalFilterAlways(
+                        tool_names=always_require
+                    )
                 if never_require := approval_mode.get("never_require_approval"):
-                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
+                    require_approval["never"] = McpRequireApprovalMcpToolApprovalFilterNever(tool_names=never_require)
+                if require_approval:
+                    mcp["require_approval"] = require_approval
 
         return mcp
 
@@ -4813,10 +4828,12 @@ class OpenAIChatClient(
         """Initialize an OpenAI Responses client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
-                routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then
-                ``AZURE_OPENAI_MODEL`` for Azure routing.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL``
+                for Azure routing. An injected ``AsyncOpenAI`` client has no deployment, so the
+                OpenAI variables still apply.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,

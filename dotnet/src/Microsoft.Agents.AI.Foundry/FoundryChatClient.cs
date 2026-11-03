@@ -16,6 +16,7 @@ using Microsoft.Shared.Diagnostics;
 using OpenAI.Files;
 using OpenAI.Responses;
 using OpenAI.VectorStores;
+using OpenAIAgentReference = Azure.AI.Extensions.OpenAI.AgentReference;
 
 #pragma warning disable OPENAI001
 
@@ -42,7 +43,7 @@ namespace Microsoft.Agents.AI.Foundry;
 /// </para>
 /// <list type="bullet">
 ///   <item><description><b>Responses Agent</b> (Mode 1): direct Responses API call against a project-level model id; no server-side agent definition exists. Constructed from <c>(AIProjectClient, modelId)</c>.</description></item>
-///   <item><description><b>Prompt Agent</b> (Mode 2): server-side agent definition (a <see cref="ProjectsAgentDefinition"/>, typically a <see cref="DeclarativeAgentDefinition"/>) invoked by <see cref="AgentReference"/> against the project Responses URL. Constructed from <see cref="AgentReference"/>, <see cref="ProjectsAgentVersion"/>, or <see cref="ProjectsAgentRecord"/>.</description></item>
+///   <item><description><b>Prompt Agent</b> (Mode 2): server-side agent definition (a <see cref="ProjectsAgentDefinition"/>, typically a <see cref="DeclarativeAgentDefinition"/>) invoked by <see cref="OpenAIAgentReference"/> against the project Responses URL. Constructed from <see cref="OpenAIAgentReference"/>, <see cref="ProjectsAgentVersion"/>, or <see cref="ProjectsAgentRecord"/>.</description></item>
 ///   <item><description><b>Agent Endpoint</b> (Mode 3): invocation via the per-agent endpoint URL <c>…/projects/{p}/agents/{name}/endpoint/protocols/openai</c>. The agent behind the endpoint can be either a hosted (container-backed) agent or a Prompt Agent. Constructed from <c>(Uri agentEndpoint, credential)</c>.</description></item>
 /// </list>
 /// <para>
@@ -55,7 +56,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
 {
     private readonly ChatClientMetadata _metadata;
     private readonly AIProjectClient? _aiProjectClient;
-    private readonly AgentReference? _agentReference;
+    private readonly OpenAIAgentReference? _agentReference;
     private readonly ProjectsAgentVersion? _agentVersion;
     private readonly ProjectsAgentRecord? _agentRecord;
     private readonly ChatOptions? _baseChatOptions;
@@ -80,9 +81,9 @@ public sealed class FoundryChatClient : DelegatingChatClient
 
     /// <summary>
     /// Initializes a new instance for the Prompt Agent mode (Mode 2): server-side agent
-    /// definition invoked by <see cref="AgentReference"/>.
+    /// definition invoked by <see cref="OpenAIAgentReference"/>.
     /// </summary>
-    internal FoundryChatClient(AIProjectClient aiProjectClient, AgentReference agentReference, string? defaultModelId, ChatOptions? baseChatOptions)
+    internal FoundryChatClient(AIProjectClient aiProjectClient, OpenAIAgentReference agentReference, string? defaultModelId, ChatOptions? baseChatOptions)
         : base(Throw.IfNull(aiProjectClient)
             .GetProjectOpenAIClient()
             .GetProjectResponsesClientForAgent(Throw.IfNull(agentReference))
@@ -171,7 +172,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
     /// <list type="bullet">
     /// <item>
     /// <description>
-    /// Prompt Agent mode (Mode 2): the value of <see cref="AgentReference.Name"/> supplied at
+    /// Prompt Agent mode (Mode 2): the value of <see cref="OpenAIAgentReference.Name"/> supplied at
     /// construction.
     /// </description>
     /// </item>
@@ -196,7 +197,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
             ? this._metadata
             : (serviceKey is null && serviceType == typeof(AIProjectClient))
             ? this._aiProjectClient
-            : (serviceKey is null && serviceType == typeof(AgentReference))
+            : (serviceKey is null && serviceType == typeof(OpenAIAgentReference))
             ? this._agentReference
             : (serviceKey is null && serviceType == typeof(ProjectsAgentVersion))
             ? this._agentVersion
@@ -587,12 +588,12 @@ public sealed class FoundryChatClient : DelegatingChatClient
         return agentEnabledChatOptions;
     }
 
-    private static AgentReference CreateAgentReference(ProjectsAgentVersion agentVersion)
+    private static OpenAIAgentReference CreateAgentReference(ProjectsAgentVersion agentVersion)
     {
         // If the version is null, empty, or whitespace, use "latest" as the default. This handles
         // cases where hosted agents (like MCP agents) may not have a version assigned.
         var version = string.IsNullOrWhiteSpace(agentVersion.Version) ? "latest" : agentVersion.Version;
-        return new AgentReference(agentVersion.Name, version);
+        return new OpenAIAgentReference(agentVersion.Name, version);
     }
 
     private static AgentEndpointInner BuildAgentEndpointInner(

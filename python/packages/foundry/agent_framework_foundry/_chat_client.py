@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, cast
 
 from agent_framework import (
     ChatMiddlewareLayer,
@@ -75,10 +75,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes
@@ -380,14 +376,52 @@ class RawFoundryChatClient(
     ) -> ChatResponse:
         chat_response = super()._parse_response_from_openai(response, options)
         if chat_response.messages:
+            messages = chat_response.messages
             for item in getattr(response, "output", ()):
                 if getattr(item, "type", None) != "reasoning":
                     continue
-                self._attach_foundry_reasoning_replay_item(chat_response.messages[0].contents, item)
-            chat_response.messages[0].contents.extend(
-                parse_oauth_consent_output_items(getattr(response, "output", None))
-            )
+                self._attach_foundry_reasoning_replay_item_to_messages(messages, item)
+            messages[0].contents.extend(parse_oauth_consent_output_items(getattr(response, "output", None)))
         return chat_response
+
+    @classmethod
+    def _attach_foundry_reasoning_replay_item_to_messages(cls, messages: list[Message], item: Any) -> None:
+        """Attach replay data to the message that owns the reasoning content.
+
+        Multi-message responses keep one message per provider output message, and a
+        trailing reasoning item is parsed into the last message, so the owning
+        content can live in any message. Search every message (most recent first)
+        and only append to the last message when no parsed content matches, instead
+        of always targeting the first message, which duplicated the reasoning
+        content there while the real one kept no replay data.
+        """
+        payload = cls._prepare_foundry_reasoning_replay_item(item)
+        if payload is None:
+            return
+        reasoning_id = cast(str, payload["id"])
+        for message in reversed(messages):
+            for content in reversed(message.contents):
+                if content.type == "text_reasoning" and content.id == reasoning_id:
+                    updated = with_namespaced_value(
+                        content.additional_properties,
+                        "foundry",
+                        "reasoning_item",
+                        payload,
+                    )
+                    updated[_FOUNDRY_REASONING_REPLAY_ITEM_KEY] = payload
+                    content.additional_properties = updated
+                    return
+        messages[-1].contents.append(
+            Content.from_text_reasoning(
+                id=reasoning_id,
+                text="",
+                raw_representation=item,
+                additional_properties={
+                    "foundry": {"reasoning_item": payload},
+                    _FOUNDRY_REASONING_REPLAY_ITEM_KEY: payload,
+                },
+            )
+        )
 
     @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:
@@ -828,10 +862,16 @@ class RawFoundryChatClient(
             if isinstance(approval_mode, str):
                 mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
             else:
+                # Both keys can be supplied together ("and/or" per the docstring), so build
+                # one combined mapping instead of letting the second assignment overwrite
+                # the first, which silently dropped the always-approval tool list.
+                require_approval: dict[str, Any] = {}
                 if always_require := approval_mode.get("always_require_approval"):
-                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                    require_approval["always"] = {"tool_names": always_require}
                 if never_require := approval_mode.get("never_require_approval"):
-                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
+                    require_approval["never"] = {"tool_names": never_require}
+                if require_approval:
+                    mcp["require_approval"] = require_approval
 
         return mcp
 
@@ -972,15 +1012,16 @@ class RawFoundryChatClient(
         Older supported SDK releases can still import this client; calling this
         factory on those releases raises ``ImportError`` with upgrade guidance.
         """
-        try:
-            from azure.ai.projects.models import ComputerTool
-        except ImportError as exc:
+        from azure.ai.projects import models
+
+        computer_tool_cls = getattr(models, "ComputerTool", None)
+        if computer_tool_cls is None:
             raise ImportError(
                 "FoundryChatClient.get_computer_tool() requires ComputerTool from azure-ai-projects>=2.3.0. "
                 "Upgrade azure-ai-projects to >=2.3.0 to use this tool."
-            ) from exc
+            )
 
-        return ComputerTool()
+        return computer_tool_cls()
 
     @staticmethod
     @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
