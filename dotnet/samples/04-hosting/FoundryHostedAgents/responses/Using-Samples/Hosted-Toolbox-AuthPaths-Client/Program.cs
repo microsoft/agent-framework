@@ -156,19 +156,24 @@ while (true)
 
             List<ChatMessage> decisions = approvals.ConvertAll(approval =>
             {
-                string name = (approval.ToolCall as FunctionCallContent)?.Name ?? "tool";
+                string name = approval.ToolCall switch
+                {
+                    FunctionCallContent functionCall => functionCall.Name,
+                    McpServerToolCallContent mcpCall => mcpCall.Name,
+                    _ => "tool",
+                };
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.Write($"Approve tool call '{name}'? [Y/N] ");
                 Console.ResetColor();
                 bool approved = Console.ReadLine()?.Trim().Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
-                // Hosted MCP approval IDs use the mcpr_ wire prefix. They need the native OpenAI
-                // response item; CreateResponse produces the Agent Framework function-tool shape.
-                AIContent decision = approval.RequestId.StartsWith("mcpr_", StringComparison.Ordinal)
-                    ? new AIContent
-                    {
-                        RawRepresentation = new McpToolCallApprovalResponseItem(approval.RequestId, approved),
-                    }
-                    : approval.CreateResponse(approved);
+                ToolApprovalResponseContent decision = approval.CreateResponse(approved);
+                if (approval.RequestId.StartsWith("mcpr_", StringComparison.Ordinal))
+                {
+                    // Keep the framework response so the pending approval is settled exactly once,
+                    // while the raw representation preserves the native hosted MCP wire contract.
+                    decision.RawRepresentation = new McpToolCallApprovalResponseItem(approval.RequestId, approved);
+                }
+
                 return new ChatMessage(ChatRole.User, [decision]);
             });
 

@@ -171,6 +171,11 @@ To approve and execute `load_skill`, use the
 detects `mcp_approval_request`, asks for `Y` or `N`, and sends the native OpenAI
 `mcp_approval_response` item on the same session.
 
+After approval, `load_skill` is returned as `function_call` plus `function_call_output`, followed by
+the assistant message. These are Agent Framework's built-in skill functions. The Toolbox MCP
+connection supplies the skill source; it is not the tool call exposed to the model, so this path does
+not produce an `mcp_call`.
+
 ### Step 4: clean up
 
 ```
