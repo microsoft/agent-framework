@@ -53,8 +53,10 @@ from ._request import (
 from ._responses import (
     _HOSTED_PROVIDER_USAGE_KEY,  # pyright: ignore[reportPrivateUsage]
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
+    _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
 )
 from ._scope import FoundryRequestScope
@@ -392,7 +394,10 @@ class NativeResponsesWorkflow:
         cancellation_signal: asyncio.Event,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Validate, run, pair, close owned resources, and only then publish terminal success."""
-        stream = ResponseEventStream(response_id=context.response_id, request=request)
+        stream = ResponseEventStream(
+            response_id=context.response_id,
+            request=_request_without_reserved_metadata(request),
+        )
         run: HostedWorkflowRun | None = None
         phase = "preparation"
         completed = False
@@ -515,7 +520,7 @@ class NativeResponsesWorkflow:
                 for event in buffered:
                     events.extend(await _project(event, draft, next_tracker, approval_projection))
                 events.extend(next_tracker.close())
-                draft.internal_metadata[_HOSTED_PROVIDER_USAGE_KEY] = next_tracker.usage_details
+                _hosted_internal_metadata(draft)[_HOSTED_PROVIDER_USAGE_KEY] = next_tracker.usage_details
                 await run.stage(_snapshot(draft), approvals=next_aliases, checkpoint_id=checkpoint_id)
                 stream, tracker, aliases = draft, next_tracker, next_aliases
                 buffered.clear()
