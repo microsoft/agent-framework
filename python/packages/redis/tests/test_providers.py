@@ -417,12 +417,17 @@ class TestRedisHistoryProviderInit:
         "connection_kwargs",
         [
             {"redis_url": "redis://ignored:6379"},
+            {"credential_provider": MagicMock()},
             {
                 "credential_provider": MagicMock(),
                 "host": "ignored",
                 "port": 1234,
                 "ssl": False,
                 "username": "ignored",
+            },
+            {
+                "redis_url": "redis://ignored:6379",
+                "credential_provider": MagicMock(),
             },
         ],
     )
