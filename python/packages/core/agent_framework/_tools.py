@@ -138,9 +138,9 @@ _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
-_SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[contextvars.ContextVar[tuple[Any, Callable[[Any], None]] | None]] = (
-    contextvars.ContextVar("_security_argument_materialization_context", default=None)
-)
+_SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[
+    contextvars.ContextVar[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None]
+] = contextvars.ContextVar("_security_argument_materialization_context", default=None)
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
@@ -1163,15 +1163,6 @@ class FunctionTool(SerializationMixin):
         from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
 
-        security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
-        if security_materialization is not None:
-            active_context, materialize = security_materialization
-            if active_context.function is self and (context is None or context is active_context):
-                active_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
-                materialize(active_context)
-                arguments = active_context.arguments
-                context = active_context
-
         configured_parser = self.result_parser
         skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
 
@@ -1179,7 +1170,6 @@ class FunctionTool(SerializationMixin):
         direct_argument_kwargs = (
             {key: value for key, value in kwargs.items() if key in parameter_names} if arguments is None else {}
         )
-        runtime_kwargs = dict(context.kwargs) if context is not None else {}
         unexpected_kwargs = {key: value for key, value in kwargs.items() if key not in direct_argument_kwargs}
         if unexpected_kwargs:
             unexpected_names = ", ".join(sorted(unexpected_kwargs))
@@ -1192,6 +1182,23 @@ class FunctionTool(SerializationMixin):
         if arguments is None and context is not None:
             arguments = context.arguments
 
+        security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
+        if security_materialization is not None:
+            active_context, materialize, origin_task = security_materialization
+            if (
+                asyncio.current_task() is origin_task
+                and active_context.function is self
+                and (context is None or context is active_context)
+            ):
+                direct_arguments = self._arguments_as_mapping(arguments)
+                if direct_arguments is not None:
+                    active_context.arguments = direct_arguments
+                active_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+                materialize(active_context)
+                arguments = active_context.arguments
+                context = active_context
+
+        runtime_kwargs = dict(context.kwargs) if context is not None else {}
         current_arguments = self._arguments_as_mapping(arguments)
         approval_visible_arguments = self._approval_visible_arguments(arguments, context)
         self._ensure_security_arguments_unchanged(context, current_arguments)

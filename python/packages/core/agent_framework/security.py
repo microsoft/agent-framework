@@ -1077,6 +1077,8 @@ def _strict_json_value(
 def _security_invocation_authority_token(
     function_name: str,
     *,
+    session: AgentSession | None,
+    security_scope: _SecurityScope,
     source_arguments: Any,
     source_kwargs: Mapping[str, Any],
     resolved_arguments: Any,
@@ -1084,7 +1086,7 @@ def _security_invocation_authority_token(
     labels: Sequence[ContentLabel],
 ) -> Any:
     """Bind inspected references, resolved values, and policy labels without validators."""
-    return _argument_authority_token(
+    arguments_token = _argument_authority_token(
         {
             "name": function_name,
             "source_arguments": source_arguments,
@@ -1095,6 +1097,7 @@ def _security_invocation_authority_token(
         },
         boundary="security policy",
     )
+    return session, security_scope, arguments_token
 
 
 def _bindable_runtime_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -1901,6 +1904,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         security_kwargs = _bindable_runtime_kwargs(kwargs)
         authority_token = _security_invocation_authority_token(
             context.function.name,
+            session=context.session,
+            security_scope=self._scope,
             source_arguments=source_arguments,
             source_kwargs=source_security_kwargs,
             resolved_arguments=arguments,
@@ -1933,7 +1938,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
     def _materialized_authority_token(self, context: FunctionInvocationContext) -> Any:
         """Bind one fully materialized execution attempt."""
-        return _argument_authority_token(
+        arguments_token = _argument_authority_token(
             {
                 "name": context.function.name,
                 "arguments": context.arguments,
@@ -1941,6 +1946,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             },
             boundary="materialized security policy",
         )
+        return context.session, self._scope, arguments_token
 
     def _materialize_arguments(self, context: FunctionInvocationContext) -> None:
         """Apply preflighted hidden values and validate only after policy allows the call."""
@@ -1980,6 +1986,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             post_validation_token = _argument_authority_token(context.arguments, boundary="security policy")
             context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = post_validation_token
             if pre_validation_token != post_validation_token:
+                if context.metadata.get("user_approved_violation") is True:
+                    raise MiddlewareFailure("Function arguments changed during validation after FIDES policy approval.")
                 self._degrade_rewritten_arguments(context)
         context.metadata[_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY] = self._materialized_authority_token(context)
         context.metadata[_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY] = True
@@ -2134,7 +2142,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         scope_token = self._activate_security_scope(context)
         middleware_token = _current_middleware.set(self)
         context_token = _current_context.set(context)
-        materialization_token: Token[tuple[Any, Callable[[Any], None]] | None] | None = None
+        materialization_token: Token[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None] | None = None
         try:
             function_name = context.function.name
             if "original_arguments_for_messages" not in context.metadata:
@@ -2217,6 +2225,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             materialization_token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set((
                 context,
                 self._materialize_arguments,
+                asyncio.current_task(),
             ))
             try:
                 await call_next()
