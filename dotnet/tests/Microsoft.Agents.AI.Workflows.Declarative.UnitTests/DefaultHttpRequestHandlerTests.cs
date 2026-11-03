@@ -861,6 +861,30 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncHonorsTimeoutLongerThanDefaultClientTimeoutAsync()
+    {
+        // Arrange
+        using TestHttpMessageHandler messageHandler = new(async (_, cancellationToken) =>
+        {
+            // Return headers after HttpClient's default 100-second timeout.
+            await Task.Delay(TimeSpan.FromSeconds(101), cancellationToken).ConfigureAwait(false);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+        HttpRequestInfo request = new()
+        {
+            Url = TestUrl,
+            Timeout = TimeSpan.FromMinutes(3),
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(200, result.StatusCode);
+    }
+
+    [Fact]
     public async Task SendAsyncTimeoutCancelsRequestAsync()
     {
         // Arrange

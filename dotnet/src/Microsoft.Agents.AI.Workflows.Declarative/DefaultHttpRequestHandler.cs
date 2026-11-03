@@ -39,7 +39,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </para>
 /// <para>
 /// The handler applies the per-request <see cref="HttpRequestInfo.Timeout"/> using a linked <see cref="CancellationTokenSource"/>
-/// so it does not mutate <see cref="HttpClient.Timeout"/> on shared instances.
+/// for the entire operation, including redirects and response body reads. A positive per-request timeout
+/// disables the client's independent timeout so longer workflow deadlines are honored.
 /// </para>
 /// <para>
 /// Redirects are handled explicitly so each destination is checked against the allowlist and workflow-supplied
@@ -162,6 +163,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
             HttpMessageHandler messageHandler = this._httpMessageHandlerFactory.CreateHandler(this._httpClientName);
             ValidateTransport(messageHandler);
             using HttpClient client = new(messageHandler, disposeHandler: false);
+            if (timeoutCts is not null)
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            }
 
             using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
 

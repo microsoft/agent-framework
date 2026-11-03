@@ -50,6 +50,8 @@ commitments.
   apply. Configure headers and origin-bound authentication in delegating handlers; workflow headers are
   removed on redirects, but delegating handlers still apply. Bind credentials to the intended scheme, host,
   and port on every request.
+  A positive workflow request timeout governs the whole operation, including redirects and response body reads,
+  without the client's default 100-second timeout imposing an earlier deadline.
 - Migrate direct `HttpClient`, callback, and allowlist-only construction to the factory constructor. Remove
   handler disposal calls, await active requests before disposing application services, and keep the factory
   alive for the workflow's lifetime.
