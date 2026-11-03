@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import builtins
+import json
 import sys
 import threading
 from copy import deepcopy
@@ -672,9 +673,85 @@ instructions: You are a helpful assistant.
                 agent = factory.create_agent_from_dict(agent_def)
 
             assert agent.default_options["tool_choice"] == (tool_choice or "auto")
-            assert agent.default_options["additional_chat_options"] == {"custom_option": {"nested": ["value"]}}
+            assert agent.default_options["custom_option"] == {"nested": ["value"]}
 
         assert agent_def == original
+
+    @pytest.mark.parametrize(
+        ("api_type", "response_body"),
+        [
+            pytest.param(
+                "Chat",
+                {
+                    "id": "chatcmpl-1",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "gpt-4o-mini",
+                    "choices": [
+                        {"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}
+                    ],
+                },
+                id="chat",
+            ),
+            pytest.param(
+                "Responses",
+                {
+                    "id": "resp_1",
+                    "object": "response",
+                    "created_at": 0,
+                    "model": "gpt-4o-mini",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "id": "msg_1",
+                            "role": "assistant",
+                            "status": "completed",
+                            "content": [{"type": "output_text", "text": "hi", "annotations": []}],
+                        }
+                    ],
+                },
+                id="responses",
+            ),
+        ],
+    )
+    async def test_additional_model_options_reach_openai_request(
+        self, api_type: str, response_body: dict[str, Any]
+    ) -> None:
+        """Extra model options are sent to the provider as regular request fields."""
+        pytest.importorskip("agent_framework_openai")
+        import httpx
+        from openai import AsyncOpenAI
+
+        from agent_framework_declarative import AgentFactory
+
+        requests: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json=response_body)
+
+        openai_client = AsyncOpenAI(
+            api_key="test-key", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+        factory = AgentFactory(client_kwargs={"async_client": openai_client})
+        agent = factory.create_agent_from_dict({
+            "kind": "Prompt",
+            "name": "ExtraOptionsAgent",
+            "model": {
+                "id": "gpt-4o-mini",
+                "provider": "OpenAI",
+                "apiType": api_type,
+                "options": {"temperature": 0.2, "user": "alice"},
+            },
+        })
+
+        response = await agent.run("hello")
+
+        assert response.text == "hi"
+        assert requests[-1]["user"] == "alice"
+        assert requests[-1]["temperature"] == 0.2
+        assert "additional_chat_options" not in requests[-1]
 
 
 class TestAgentFactorySafeMode:
@@ -1416,15 +1493,17 @@ class TestAgentFactoryChatOptions:
         # Create a Model with additional properties
         options = ModelOptions(temperature=0.5)
         options.additionalProperties["customOption"] = "customValue"
+        options.additionalProperties["temperature"] = 0.9
 
         model = Model(id="gpt-4", options=options)
 
         # Parse the options
         chat_options = factory._parse_chat_options(model)
 
-        # Verify additional properties are preserved
-        assert "additional_chat_options" in chat_options
-        assert chat_options["additional_chat_options"].get("customOption") == "customValue"
+        # Verify additional properties are passed through as top-level options
+        assert chat_options["customOption"] == "customValue"
+        assert chat_options["temperature"] == 0.5
+        assert "additional_chat_options" not in chat_options
 
 
 class TestAgentFactoryToolParsing:
