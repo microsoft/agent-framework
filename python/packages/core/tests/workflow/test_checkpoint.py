@@ -3909,6 +3909,22 @@ async def test_file_checkpoint_storage_get_latest_reads_selected_file_once(
     assert reads == 1
 
 
+async def test_file_checkpoint_storage_get_latest_does_not_discover_child_storage_checkpoints(
+    tmp_path: Path,
+) -> None:
+    """get_latest() stays scoped to the immediate storage directory."""
+    parent_storage = FileCheckpointStorage(tmp_path)
+    parent_id = await parent_storage.save(_stamped_checkpoint({"stage": "parent"}, "2026-01-01T10:00:00+00:00"))
+
+    child_storage = FileCheckpointStorage(tmp_path / "archive")
+    await child_storage.save(_stamped_checkpoint({"stage": "child"}, "2026-01-01T11:00:00+00:00"))
+
+    latest = await parent_storage.get_latest(workflow_name="recovery-workflow")
+    assert latest is not None
+    assert latest.checkpoint_id == parent_id
+    assert latest.state == {"stage": "parent"}
+
+
 async def test_file_checkpoint_storage_get_latest_quarantines_duplicate_workflow_name_keys(
     tmp_path: Path,
 ) -> None:

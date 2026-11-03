@@ -953,31 +953,11 @@ class FileCheckpointStorage:
         def _checkpoint_paths(root: Path) -> tuple[list[Path], dict[Path, tuple[int, int, int]]]:
             paths: list[Path] = []
             directories: dict[Path, tuple[int, int, int]] = {}
-            pending = [root]
-            is_root_iteration = True
-            while pending:
-                directory = pending.pop().resolve()
-                if not directory.is_relative_to(root):
-                    raise WorkflowCheckpointException(
-                        f"Checkpoint directory {directory} is outside storage root {root}"
-                    )
-                if directory in directories:
-                    continue
-                try:
-                    directories[directory] = _version(directory.stat())
-                    with os.scandir(directory) as entries:
-                        for entry in entries:
-                            if entry.is_dir():
-                                pending.append(Path(entry.path))
-                            elif os.path.normcase(entry.name).endswith(".json"):
-                                paths.append(Path(entry.path))
-                except FileNotFoundError as e:
-                    if is_root_iteration:
-                        raise
-                    raise _CheckpointScanInvalidated(
-                        f"Checkpoint directory {directory} disappeared during the scan; retry get_latest"
-                    ) from e
-                is_root_iteration = False
+            directories[root] = _version(root.stat())
+            with os.scandir(root) as entries:
+                for entry in entries:
+                    if os.path.normcase(entry.name).endswith(".json"):
+                        paths.append(Path(entry.path))
             return paths, directories
 
         def _make_duplicate_capturing_hook() -> tuple[
