@@ -26,6 +26,9 @@ into application code.
   checkpoint restoration.
 - Make session, checkpoint, response, identity, approval, storage, and cleanup ownership explicit.
 
+For MCP agent tools, `AgentMCPTool.call_tool(...)` validates the generated input schema before execution or
+session-store access. Applications using `mcp_to_run(...)` directly must validate their own schema before conversion.
+
 Read the selected host's public docstrings and maintained sample for constructor options, parsers, history modes,
 storage providers, and protocol details.
 

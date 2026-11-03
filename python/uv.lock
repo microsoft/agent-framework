@@ -826,6 +826,7 @@ source = { editable = "packages/hosting-mcp" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "agent-framework-hosting" },
+    { name = "jsonschema" },
     { name = "mcp" },
     { name = "pydantic" },
 ]
@@ -834,6 +835,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "jsonschema", specifier = ">=4.20.0,<5" },
     { name = "mcp", specifier = ">=2.2.0,<3" },
     { name = "pydantic", specifier = ">=2,<3" },
 ]

@@ -24,6 +24,11 @@ contract. Define it once and use the same value in both the native tool schema
 and `mcp_to_run(...)`:
 
 ```python
+from jsonschema import validate
+from mcp.types import Tool
+
+from agent_framework_hosting_mcp import mcp_to_run
+
 agent_input_argument = "task"
 chat_option_arguments = {
     "reasoning_effort": {
@@ -34,7 +39,7 @@ chat_option_arguments = {
 
 tool = Tool(
     name="run_agent",
-    inputSchema={
+    input_schema={
         "type": "object",
         "properties": {
             agent_input_argument: {"type": "string"},
@@ -43,6 +48,7 @@ tool = Tool(
         "required": [agent_input_argument],
     },
 )
+validate(instance=arguments, schema=tool.input_schema)
 run = mcp_to_run(
     arguments,
     argument_name=agent_input_argument,
@@ -52,13 +58,19 @@ run = mcp_to_run(
 
 Only names listed in `chat_option_arguments` are copied to `run["options"]`;
 other MCP arguments remain available in the message's raw representation but
-are not forwarded to the model client. The native MCP schema remains
-responsible for validating exposed option types and ranges.
+are not forwarded to the model client. Applications using the conversion
+helper directly must validate arguments against their tool schema before
+conversion. Declaring a schema does not enforce it in the low-level MCP server.
 
 For an agent exposed as one MCP tool, use the adapter so the schema and
 conversion cannot drift:
 
 ```python
+from mcp import types
+from mcp.server import Server, ServerRequestContext
+
+from agent_framework_hosting_mcp import AgentMCPTool
+
 agent_tool = AgentMCPTool(
     agent,
     name="run_agent",
@@ -72,19 +84,34 @@ agent_tool = AgentMCPTool(
     },
 )
 
-@server.list_tools()
-async def list_tools():
+
+async def list_tools(
+    _ctx: ServerRequestContext[dict[str, object]],
+    _params: types.PaginatedRequestParams | None,
+) -> types.ListToolsResult:
     return await agent_tool.list_tools()
 
-@server.call_tool()
-async def call_tool(name, arguments):
-    return await agent_tool.call_tool(name, arguments)
+
+async def call_tool(
+    _ctx: ServerRequestContext[dict[str, object]],
+    params: types.CallToolRequestParams,
+) -> types.CallToolResult:
+    return await agent_tool.call_tool(params.name, params.arguments)
+
+
+server = Server("agent-server", on_list_tools=list_tools, on_call_tool=call_tool)
 ```
 
 `AgentMCPTool` uses the agent's name and description unless overridden.
 `parameters` adds app-owned JSON Schema properties that remain available in the
 raw MCP arguments. `chat_option_parameters` adds properties and explicitly
 copies their values into Agent Framework chat options.
+
+`call_tool(...)` validates the complete generated input schema, including
+nested constraints, before conversion, agent execution, or session-store
+access. Invalid arguments raise `MCPError` with `INVALID_PARAMS`. Valid exposed
+chat options still override the agent's defaults. The adapter's
+`mcp_to_run(...)` method remains a conversion helper, not a schema validator.
 
 For a workflow exposed as one MCP tool, use `WorkflowMCPTool`:
 
