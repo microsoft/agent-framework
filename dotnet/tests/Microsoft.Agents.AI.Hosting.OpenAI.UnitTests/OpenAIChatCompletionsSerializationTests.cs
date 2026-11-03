@@ -4,8 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Tests;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -381,6 +383,24 @@ public sealed class OpenAIChatCompletionsSerializationTests : ConformanceTestBas
         Assert.Equal(response.Created, roundtripped.Created);
         Assert.Equal(response.Model, roundtripped.Model);
         Assert.Equal(response.Choices.Count, roundtripped.Choices.Count);
+    }
+
+    #endregion
+
+    #region Function Call Conversion Tests
+
+    [Fact]
+    public void ToChoiceMessageToolCall_NonAsciiArguments_PreservesCharacters()
+    {
+        // Arrange
+        var functionCall = new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" });
+
+        // Act
+        ChoiceMessageToolCall toolCall = functionCall.ToChoiceMessageToolCall();
+
+        // Assert
+        Assert.NotNull(toolCall.Function);
+        Assert.Equal("""{"location":"Ереван"}""", toolCall.Function.Arguments);
     }
 
     #endregion

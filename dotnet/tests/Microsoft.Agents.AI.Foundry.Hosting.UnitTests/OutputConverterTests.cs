@@ -443,6 +443,84 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallNonAsciiArguments_PreservesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            Contents = [new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" })]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.Equal("""{"location":"Ереван"}""", done.Arguments);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallHtmlSensitiveArguments_EscapesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            Contents = [new FunctionCallContent("call_1", "search", new Dictionary<string, object?> { ["query"] = "<tag>&" })]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.Equal("""{"query":"\u003Ctag\u003E\u0026"}""", done.Arguments);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalRequestNonAsciiArguments_PreservesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var functionCall = new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" });
+        var update = new AgentResponseUpdate { Contents = [new ToolApprovalRequestContent("af_request_1", functionCall)] };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream, new AgentSessionStateBag()))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var item = Assert.IsType<OutputItemMcpApprovalRequest>(added.Item);
+        Assert.Equal("""{"location":"Ереван"}""", item.Arguments);
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_NonAsciiObject_PreservesCharacters()
+    {
+        // Arrange
+        var result = new { city = "Ереван" };
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(result);
+
+        // Assert
+        Assert.Equal("""{"city":"Ереван"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
     // G-04
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_DoesNotEmitWireItemAsync()
