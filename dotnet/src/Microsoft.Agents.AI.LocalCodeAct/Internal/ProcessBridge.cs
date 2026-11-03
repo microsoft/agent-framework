@@ -268,7 +268,7 @@ internal sealed class ProcessBridge
         {
             await SendToolResponseAsync(process, callId, ok: false, result: null,
                 excType: this._includeDetailedErrors ? ex.GetType().Name : "RuntimeError",
-                excMessage: this._includeDetailedErrors ? ex.Message : "Host tool execution failed.",
+                excMessage: this._includeDetailedErrors ? ex.ToString() : "Host tool execution failed.",
                 cancellationToken).ConfigureAwait(false);
         }
     }

@@ -33,11 +33,12 @@ public sealed class ToolBridgeTests
     {
         // Arrange
         const string Detail = "synthetic backend diagnostic";
-        static int Boom() => throw new InvalidOperationException(Detail);
+        const string InnerDetail = "synthetic inner diagnostic";
+        static int Boom() => throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
         static async Task<int> BoomAsync()
         {
             await Task.Yield();
-            throw new InvalidOperationException(Detail);
+            throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
         }
 
         var tool = isAsync
@@ -50,8 +51,20 @@ public sealed class ToolBridgeTests
         // Assert
         using var doc = JsonDocument.Parse(result);
         Assert.True(doc.RootElement.TryGetProperty("error", out var err));
-        Assert.Equal(includeDetailedErrors ? Detail : "Host tool execution failed.", err.GetString());
-        Assert.Equal(includeDetailedErrors, result.Contains(Detail, StringComparison.Ordinal));
+        var message = err.GetString()!;
+        Assert.Equal(includeDetailedErrors, message.Contains(Detail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, message.Contains(InnerDetail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, message.Contains("   at ", StringComparison.Ordinal));
+        if (includeDetailedErrors)
+        {
+            Assert.StartsWith($"System.InvalidOperationException: {Detail}", message, StringComparison.Ordinal);
+            Assert.Contains($"System.ArgumentException: {InnerDetail}", message, StringComparison.Ordinal);
+            Assert.Contains(isAsync ? nameof(BoomAsync) : nameof(Boom), message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Equal("Host tool execution failed.", message);
+        }
     }
 
     [Fact]
@@ -68,19 +81,30 @@ public sealed class ToolBridgeTests
         Assert.Equal("\"hi\"", result);
     }
 
-    [Fact]
-    public async Task InvokeAsync_NonObjectJson_ReturnsErrorAsync()
+    [Theory]
+    [InlineData(false, "[1, 2, 3]")]
+    [InlineData(true, "[1, 2, 3]")]
+    [InlineData(false, "{")]
+    [InlineData(true, "{")]
+    public async Task InvokeAsync_InvalidArgumentsFollowDetailedPolicyAsync(bool includeDetailedErrors, string argsJson)
     {
         // Arrange
         static string Hi() => "hi";
         var tool = AIFunctionFactory.Create(Hi, name: "hi");
 
         // Act
-        var result = await ToolBridge.InvokeAsync(tool, "[1, 2, 3]");
+        var result = await ToolBridge.InvokeAsync(tool, argsJson, includeDetailedErrors);
 
         // Assert
         using var doc = JsonDocument.Parse(result);
         Assert.True(doc.RootElement.TryGetProperty("error", out var error));
-        Assert.Contains("Tool arguments must be a JSON object.", error.GetString()!, StringComparison.Ordinal);
+        var message = error.GetString()!;
+        Assert.NotEmpty(message);
+        Assert.Equal(includeDetailedErrors, message.Contains("   at ", StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, message.Contains(nameof(ToolBridge.ParseArguments), StringComparison.Ordinal));
+        if (argsJson.StartsWith("[", StringComparison.Ordinal))
+        {
+            Assert.Contains("Tool arguments must be a JSON object.", message, StringComparison.Ordinal);
+        }
     }
 }

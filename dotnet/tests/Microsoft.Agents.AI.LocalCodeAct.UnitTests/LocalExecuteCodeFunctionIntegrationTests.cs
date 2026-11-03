@@ -59,11 +59,12 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         // Arrange
         SkipIfNoPython();
         const string Detail = "synthetic backend diagnostic";
-        static string Fail() => throw new InvalidOperationException(Detail);
+        const string InnerDetail = "synthetic inner diagnostic";
+        static string Fail() => throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
         static async Task<string> FailAsync()
         {
             await Task.Yield();
-            throw new InvalidOperationException(Detail);
+            throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
         }
 
         var tool = isAsync
@@ -95,6 +96,9 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         var text = GetResultText(result);
         Assert.Contains(includeDetailedErrors ? Detail : "Host tool execution failed.", text, StringComparison.Ordinal);
         Assert.Equal(includeDetailedErrors, text.Contains(Detail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains(InnerDetail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains("   at ", StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains(isAsync ? nameof(FailAsync) : nameof(Fail), StringComparison.Ordinal));
     }
 
     [Theory]
@@ -105,8 +109,9 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         // Arrange
         SkipIfNoPython();
         const string Detail = "synthetic backend diagnostic";
+        const string InnerDetail = "synthetic inner diagnostic";
         var tool = AIFunctionFactory.Create(
-            (Func<string>)(() => throw new InvalidOperationException(Detail)), name: "failing_tool");
+            (Func<string>)(() => throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail))), name: "failing_tool");
         var function = new LocalExecuteCodeFunction(s_python!, new LocalCodeActProviderOptions
         {
             Tools = [tool],
@@ -120,6 +125,8 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         // Assert
         Assert.Contains(includeDetailedErrors ? Detail : "Host tool execution failed.", error.Message, StringComparison.Ordinal);
         Assert.Equal(includeDetailedErrors, error.Message.Contains(Detail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, error.Message.Contains(InnerDetail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, error.Message.Contains("   at ", StringComparison.Ordinal));
     }
 
     [Theory]

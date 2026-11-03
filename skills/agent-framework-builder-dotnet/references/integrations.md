@@ -41,7 +41,8 @@ otherwise see [Extensibility](extensibility.md#custom-providers).
   [Hosting and deployment](hosting-and-deployment.md).
 
 LocalCodeAct and Hyperlight redact host tool exception diagnostics by default. Enable
-`IncludeDetailedErrors` on their provider options only for a trusted channel. This is separate from the
+`IncludeDetailedErrors` on their provider options only for a trusted channel; full exceptions include
+stack traces and inner exceptions. This is separate from the
 outer `FunctionInvokingChatClient` error policy and sensitive-data logging; outer redaction cannot repair
 diagnostics already caught and returned by generated code.
 

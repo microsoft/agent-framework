@@ -42,7 +42,8 @@ using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
 Host tool failures send a generic failed response to generated Python code by
 default. `LocalCodeActProviderOptions.IncludeDetailedErrors` defaults to `false`
 for both the provider and standalone function. Set it to `true` only for a
-trusted channel: original exception types and messages can contain sensitive data.
+trusted channel: full exception details, including stack traces and inner
+exceptions, can contain sensitive data.
 
 The policy is captured at construction and passed through run snapshots. It is
 independent of the outer `FunctionInvokingChatClient` error policy and

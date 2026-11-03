@@ -41,6 +41,8 @@ public sealed class SandboxExecutorTests
             Assert.Equal(-1, json.RootElement.GetProperty("exit_code").GetInt32());
             var error = json.RootElement.GetProperty("stderr").GetString()!;
             Assert.Equal(includeDetailedErrors, error.Contains(Detail, StringComparison.Ordinal));
+            Assert.Equal(includeDetailedErrors, error.Contains("   at ", StringComparison.Ordinal));
+            Assert.Equal(includeDetailedErrors, error.Contains(nameof(SandboxExecutor.ExecuteAsync), StringComparison.Ordinal));
             if (!includeDetailedErrors)
             {
                 Assert.Equal("Code execution failed.", error);

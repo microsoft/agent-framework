@@ -246,7 +246,7 @@ internal sealed class SandboxExecutor : IDisposable
                 failure = new AggregateException(ex, cleanupError);
             }
 
-            return BuildErrorResult(snapshot.IncludeDetailedErrors ? failure.Message : "Code execution failed.");
+            return BuildErrorResult(snapshot.IncludeDetailedErrors ? failure.ToString() : "Code execution failed.");
         }
 #pragma warning restore CA1031
         finally

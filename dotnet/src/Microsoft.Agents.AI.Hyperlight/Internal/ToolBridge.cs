@@ -45,7 +45,7 @@ internal static class ToolBridge
             }
             catch (Exception ex) when (ex is JsonException or ArgumentException)
             {
-                return SerializeError(ex.Message);
+                return SerializeError(includeDetailedErrors ? ex.ToString() : ex.Message);
             }
 
             var result = await tool.InvokeAsync(new AIFunctionArguments(arguments)).ConfigureAwait(false);
@@ -55,7 +55,7 @@ internal static class ToolBridge
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            return SerializeError(includeDetailedErrors ? ex.Message : "Host tool execution failed.");
+            return SerializeError(includeDetailedErrors ? ex.ToString() : "Host tool execution failed.");
         }
     }
 

@@ -86,6 +86,7 @@ public sealed class HyperlightCodeActProviderOptions
     /// Defaults to <see langword="false"/>.
     /// </summary>
     /// <remarks>
+    /// Detailed errors include exception types, stack traces, and inner exceptions.
     /// Enable only for a trusted channel: diagnostics can contain sensitive host data.
     /// This is independent of the outer chat client's error policy and sensitive-data logging.
     /// </remarks>
