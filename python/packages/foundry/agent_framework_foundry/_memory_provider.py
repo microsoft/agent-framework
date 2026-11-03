@@ -9,8 +9,9 @@ This module provides ``FoundryMemoryProvider``, built on
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import (
     AgentSession,
@@ -24,6 +25,11 @@ from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
 from ._feature_usage import FeatureIndex, create_feature_usage_policy
+
+if sys.version_info >= (3, 11):
+    from typing import Self, TypedDict  # pragma: no cover
+else:
+    from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun

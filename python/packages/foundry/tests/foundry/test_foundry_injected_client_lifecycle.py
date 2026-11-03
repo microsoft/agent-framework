@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Self
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from typing_extensions import Self
 
 from agent_framework_foundry import FoundryMemoryProvider, RawFoundryEmbeddingClient
 
