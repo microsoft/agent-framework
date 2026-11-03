@@ -17,11 +17,12 @@ from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
+    Generator,
     Iterable,
     Mapping,
     Sequence,
 )
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
@@ -145,6 +146,16 @@ _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
 _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
+
+
+@contextmanager
+def _suspend_security_argument_materialization() -> Generator[None]:
+    """Prevent nested tool calls from inheriting one invocation's materialization capability."""
+    token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set(None)
+    try:
+        yield
+    finally:
+        _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.reset(token)
 
 
 class _FunctionArgumentValidationError(TypeError):
@@ -1230,7 +1241,8 @@ class FunctionTool(SerializationMixin):
         if not OBSERVABILITY_SETTINGS.ENABLED:
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {observable_kwargs}")
-            result = await self._invoke_function(call_kwargs)
+            with _suspend_security_argument_materialization():
+                result = await self._invoke_function(call_kwargs)
             if skip_parsing:
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
@@ -1309,7 +1321,8 @@ class FunctionTool(SerializationMixin):
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
             try:
-                result = await self._invoke_function(call_kwargs)
+                with _suspend_security_argument_materialization():
+                    result = await self._invoke_function(call_kwargs)
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()

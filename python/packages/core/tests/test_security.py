@@ -7784,7 +7784,7 @@ class TestVariableArgumentPolicy:
         assert executed is False
 
     async def test_direct_composition_waits_for_all_policies_before_validation(self) -> None:
-        """Direct composition keeps hidden values detached until every policy allows execution."""
+        """Direct composition fails closed before any policy can expose hidden values."""
         tracker = LabelTrackingFunctionMiddleware()
         permissive_policy = PolicyEnforcementFunctionMiddleware(allow_untrusted_tools={"validator_sink"})
         strict_policy = PolicyEnforcementFunctionMiddleware()
@@ -7828,7 +7828,7 @@ class TestVariableArgumentPolicy:
             nonlocal executed
             executed = True
 
-        with pytest.raises(MiddlewareTermination):
+        with pytest.raises(MiddlewareFailure, match="require FunctionMiddlewarePipeline"):
             await tracker.process(
                 context,
                 lambda: permissive_policy.process(
@@ -7838,6 +7838,29 @@ class TestVariableArgumentPolicy:
             )
 
         assert observed == []
+        assert executed is False
+        assert cast(dict[str, Any], context.arguments)["value"] == reference
+
+    async def test_direct_composition_fails_before_allowed_hidden_execution(self) -> None:
+        """Allowed hidden arguments require a terminal middleware-pipeline boundary."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=True)
+        reference = f"[{variable_id}]"
+        context = FunctionInvocationContext(function=sink, arguments={"value": reference})
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareFailure, match="require FunctionMiddlewarePipeline"):
+            await tracker.process(context, lambda: policy.process(context, execute))
+
         assert executed is False
         assert cast(dict[str, Any], context.arguments)["value"] == reference
 
@@ -8203,6 +8226,33 @@ class TestVariableArgumentPolicy:
 
         assert received == ["parent", "child"]
         assert child_result[0].text == "child"
+
+    async def test_nested_same_task_invocation_cannot_reuse_parent_materialization(self) -> None:
+        """User tool code cannot reuse its parent's materialization capability."""
+        tracker = LabelTrackingFunctionMiddleware()
+        received: list[str] = []
+        nested_result: list[Content] = []
+
+        async def sink(value: str) -> str:
+            received.append(value)
+            if value == "parent":
+                nested_result.extend(await sink_tool.invoke(value="child"))
+            return value
+
+        sink_tool = FunctionTool(
+            func=sink,
+            name="nested_task_local_sink",
+            additional_properties={"accepts_untrusted": True},
+        )
+        context = FunctionInvocationContext(function=sink_tool, arguments={"value": "parent"})
+
+        async def execute() -> None:
+            context.result = await sink_tool.invoke(value="parent")
+
+        await tracker.process(context, execute)
+
+        assert received == ["parent", "child"]
+        assert nested_result[0].text == "child"
 
     async def test_callable_policy_blocks_before_hidden_value_validation(self) -> None:
         """A wrapped policy callable still authorizes before hidden-value validation."""

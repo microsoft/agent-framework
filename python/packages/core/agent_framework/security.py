@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import (
+    _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     FunctionInvocationContext,
     FunctionMiddleware,
     MiddlewareFailure,
@@ -113,6 +114,7 @@ _VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
 _REWRITTEN_ARGUMENT_INDICES_KEY = "_rewritten_argument_indices"
 _SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_security_policy_errors"
 _SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_security_arguments_materialized"
+_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY = "_security_arguments_require_materialization"
 _SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_security_materialized_authority"
 _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
@@ -2154,6 +2156,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             else:
                 context.kwargs = dict(cast(dict[str, Any], context.metadata["security_original_runtime_kwargs"]))
             context.metadata.pop(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY, None)
             context.metadata.pop(_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY, None)
             context.metadata.pop(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY, None)
             context.metadata.pop(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY, None)
@@ -2172,6 +2175,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             resolved = self._resolve_invocation_arguments(context)
             resolved_labels = list(resolved.labels)
             context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = resolved.rewritten_arguments
+            context.metadata[_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY] = bool(
+                resolved.rewritten_arguments
+            )
             context.metadata[_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY] = resolved.authority_token
 
             argument_labels = [*input_labels, *resolved_labels]
@@ -3342,6 +3348,21 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         }
         raise MiddlewareTermination("Invalid FIDES tool policy")
 
+    @staticmethod
+    def _ensure_terminal_materialization_boundary(context: FunctionInvocationContext) -> None:
+        """Reject allowed hidden arguments when no terminal pipeline boundary can materialize them."""
+        if context.metadata.get(_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY) is not True:
+            return
+        active_pipeline = _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT.get()
+        if (
+            active_pipeline is None
+            or active_pipeline[0] is not context
+            or active_pipeline[1] is not asyncio.current_task()
+        ):
+            raise MiddlewareFailure(
+                "Hidden function arguments require FunctionMiddlewarePipeline for terminal materialization."
+            )
+
     async def process(
         self,
         context: FunctionInvocationContext,
@@ -3451,6 +3472,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             })
 
         if not violations:
+            self._ensure_terminal_materialization_boundary(context)
             await call_next()
             return
         for violation in violations:
@@ -3488,6 +3510,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         else:
             logger.warning("WARNING: Tool '%s' policy violation(s) [%s] (allowed)", function_name, disclosed)
 
+        self._ensure_terminal_materialization_boundary(context)
         await call_next()
 
     @staticmethod
