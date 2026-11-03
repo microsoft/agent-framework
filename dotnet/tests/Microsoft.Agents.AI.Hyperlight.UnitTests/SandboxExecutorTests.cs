@@ -65,6 +65,37 @@ public sealed class SandboxExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_CancellationDuringGuestExecutionReleasesLockAsync()
+    {
+        // Arrange
+        using var cancellation = new CancellationTokenSource();
+        var cancelRun = AIFunctionFactory.Create(() =>
+        {
+            cancellation.Cancel();
+            return "cancelled";
+        }, name: "cancel_run");
+        var snapshot = new SandboxExecutor.RunSnapshot(
+            [cancelRun], [], [], new HyperlightCodeActProviderOptions { IncludeDetailedErrors = true });
+        using var executor = new SandboxExecutor();
+        var warmup = await executor.ExecuteAsync(snapshot, "console.log('ready');", CancellationToken.None);
+        using var warmupJson = JsonDocument.Parse(warmup);
+        Assert.True(
+            warmupJson.RootElement.GetProperty("success").GetBoolean(),
+            warmupJson.RootElement.GetProperty("stderr").GetString());
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteAsync(snapshot, "call_tool('cancel_run', {});", cancellation.Token));
+
+        var recovered = await executor.ExecuteAsync(snapshot, "console.log('recovered');", CancellationToken.None);
+        using var recoveredJson = JsonDocument.Parse(recovered);
+        Assert.True(
+            recoveredJson.RootElement.GetProperty("success").GetBoolean(),
+            recoveredJson.RootElement.GetProperty("stderr").GetString());
+        Assert.Contains("recovered", recoveredJson.RootElement.GetProperty("stdout").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Fingerprint_DifferentToolSets_DifferentFingerprints()
     {
         // Arrange
