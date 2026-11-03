@@ -1036,6 +1036,131 @@ def test_prepare_message_for_anthropic_mcp_server_tool_result_after_round_trip(
     json.dumps(result)
 
 
+def _mcp_tool_result_block(*, is_error: bool | None, text: str = "Result text") -> MagicMock:
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = text
+
+    block = MagicMock()
+    block.type = "mcp_tool_result"
+    block.tool_use_id = "call_123"
+    block.content = [text_block]
+    block.is_error = is_error
+    return block
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_preserves_is_error(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """The provider error status must survive parsing, persistence, and replay."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    block = _mcp_tool_result_block(is_error=True, text="failed result")
+
+    parsed = client._parse_contents_from_anthropic([block])
+    restored = Message.from_dict(Message(role="tool", contents=parsed).to_dict())
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["content"] == [{"type": "text", "text": "failed result"}]
+    assert result["content"][0]["is_error"] is True
+
+
+def test_process_stream_event_anthropic_mcp_tool_result_preserves_is_error(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming MCP results must keep is_error through the real stream-event path."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    block = _mcp_tool_result_block(is_error=True, text="streamed failure")
+
+    event = MagicMock()
+    event.type = "content_block_start"
+    event.content_block = block
+
+    update = client._process_stream_event(event)
+    assert update is not None
+
+    restored = Message.from_dict(Message(role="tool", contents=update.contents).to_dict())
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["content"] == [{"type": "text", "text": "streamed failure"}]
+    assert result["content"][0]["is_error"] is True
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_preserves_false_after_persistence(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A false MCP error status must survive message persistence and replay."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    parsed = client._parse_contents_from_anthropic([_mcp_tool_result_block(is_error=False)])
+    restored = Message.from_dict(Message(role="tool", contents=parsed).to_dict())
+
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["is_error"] is False
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_without_is_error(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """An absent provider error field must remain absent in the replay payload."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = "result"
+
+    block = MagicMock()
+    block.type = "mcp_tool_result"
+    block.tool_use_id = "call_without_error_flag"
+    block.content = [text_block]
+    # Deliberately do not set is_error; the parser must omit the metadata.
+
+    parsed = client._parse_contents_from_anthropic([block])
+    result = client._prepare_message_for_anthropic(Message(role="tool", contents=parsed))
+
+    assert "is_error" not in result["content"][0]
+
+
+@pytest.mark.parametrize(("is_error", "expected"), [(False, False), (None, None)])
+def test_prepare_message_for_anthropic_mcp_server_tool_result_is_error_optional(
+    mock_anthropic_client: MagicMock,
+    is_error: bool | None,
+    expected: bool | None,
+) -> None:
+    """A false status is preserved; a missing status is omitted."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    parsed = client._parse_contents_from_anthropic([_mcp_tool_result_block(is_error=is_error)])
+
+    result = client._prepare_message_for_anthropic(Message(role="tool", contents=parsed))
+
+    if expected is None:
+        assert "is_error" not in result["content"][0]
+    else:
+        assert result["content"][0]["is_error"] is expected
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        object(),
+        b"binary",
+        Content.from_text("single content"),
+        MappingProxyType({"value": object()}),
+    ],
+)
+def test_prepare_message_for_anthropic_rejects_unsupported_mcp_tool_result_output(
+    mock_anthropic_client: MagicMock,
+    output: Any,
+) -> None:
+    """Unsupported MCP output shapes fail explicitly instead of being stringified."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[Content.from_mcp_server_tool_result(call_id="mcp_call", output=output)],
+    )
+
+    with pytest.raises(ContentError):
+        client._prepare_message_for_anthropic(message)
+
+
 def test_prepare_messages_for_anthropic_with_system(
     mock_anthropic_client: MagicMock,
 ) -> None:
