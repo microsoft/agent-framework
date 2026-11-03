@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, Union, cast
 
 from agent_framework import get_namespaced_value
 from agent_framework._settings import SecretString, load_settings
@@ -20,11 +19,6 @@ from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
 from ._feature_usage import create_feature_usage_http_client
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import Content

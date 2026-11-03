@@ -23,7 +23,7 @@ from contextlib import aclosing, asynccontextmanager, suppress
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Literal, cast, overload
+from typing import Any, Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -88,7 +88,6 @@ from openai.types.responses import ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
-from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (

@@ -8,7 +8,7 @@ import logging
 import sys
 from collections import OrderedDict
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, TypedDict, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -64,10 +64,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.gemini")
 

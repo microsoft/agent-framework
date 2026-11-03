@@ -640,8 +640,7 @@ class TestProviderLifetimes:
             patch.object(FakeTool, "close", close),
         ):
             handler = DefaultMCPToolHandler(client_provider=AsyncMock(return_value=None))
-            # Python 3.10 may drop the message when a cancelled task's result is retrieved again.
-            with pytest.raises(asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError, match="cleanup stopped"):
                 await handler.invoke_tool(_invocation(headers={"X-Test": "1"}))
             assert handler._invocation_context.get() == ()
             assert not handler._active_invocations

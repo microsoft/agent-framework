@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
-from typing import Any, ClassVar, Literal, TypeVar, cast
+from typing import Any, ClassVar, Literal, Never, TypeVar, cast
 
 from agent_framework import (
     AgentResponse,
@@ -27,7 +27,7 @@ from agent_framework._workflows._model_utils import DictConvertible, encode_valu
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
-from typing_extensions import Never, Sentinel
+from typing_extensions import Sentinel
 
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
