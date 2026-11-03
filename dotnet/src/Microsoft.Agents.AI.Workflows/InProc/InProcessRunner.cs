@@ -68,6 +68,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     /// <inheritdoc cref="ISuperStepRunner.StartExecutorId"/>
     public string StartExecutorId { get; }
 
+    /// <inheritdoc cref="ISuperStepRunner.WorkflowName"/>
+    public string? WorkflowName => this.Workflow.Name;
+
     /// <summary>
     /// Gating flag for deferred event republishing after checkpoint restore.
     /// </summary>

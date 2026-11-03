@@ -484,7 +484,7 @@ class DockerShellTool:
         try:
             try:
                 await output.wait(timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timed_out = True
                 await self._terminate_stateless(proc, per_call_name)
                 await output.finish()
@@ -522,11 +522,11 @@ class DockerShellTool:
             try:
                 try:
                     kill_ok = await asyncio.wait_for(killer.wait(), timeout=5.0) == 0
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     killer.kill()
                     try:
                         await asyncio.wait_for(killer.wait(), timeout=5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning("docker kill client for %s did not exit after termination", name)
             finally:
                 if killer.returncode is None:
@@ -545,7 +545,7 @@ class DockerShellTool:
                 try:
                     try:
                         await diagnostic.wait(5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         reaper.kill()
                         await diagnostic.finish()
                         logger.error("docker rm -f %s timed out; container may be leaked", name)
@@ -616,7 +616,7 @@ class DockerShellTool:
             try:
                 _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
                 return proc.returncode, err.decode("utf-8", errors="replace").strip()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 with contextlib.suppress(Exception):
                     await proc.wait()

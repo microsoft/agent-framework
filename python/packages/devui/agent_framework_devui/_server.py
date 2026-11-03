@@ -899,7 +899,7 @@ class DevServer:
                     # Wait briefly for cancellation to propagate
                     try:  # ruff:ignore[suppressible-exception]
                         await asyncio.wait_for(task, timeout=0.5)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                    except (asyncio.CancelledError, TimeoutError):
                         pass
                     return {"status": "cancelled", "response_id": response_id}
                 logger.warning(f"[CANCELLATION] Task already completed for {response_id}")
@@ -1404,7 +1404,7 @@ class DevServer:
                 # Note: We should NOT use asyncio.shield here as it prevents cancellation
                 try:
                     await asyncio.wait_for(task, timeout=1.0)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (asyncio.CancelledError, TimeoutError):
                     logger.debug(f"[CANCELLATION] Task cancelled successfully for {response_id}")
                 except Exception as e:
                     logger.warning(f"[CANCELLATION] Error during task cancellation for {response_id}: {e}")

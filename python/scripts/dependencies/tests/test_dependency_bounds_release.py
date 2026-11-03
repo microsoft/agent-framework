@@ -33,7 +33,7 @@ def test_core_all_dependencies_are_bounded_to_the_current_workspace_versions(tmp
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core[all]==1.2.0"]
 
 [tool.uv.workspace]
@@ -49,7 +49,7 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 all = [
@@ -67,7 +67,7 @@ name = "agent_framework"
 [project]
 name = "agent-framework-connector"
 version = "1.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core>=1,<2"]
 
 [tool.flit.module]
@@ -86,7 +86,7 @@ def test_core_all_dependency_bounds_reject_missing_or_empty_extra(tmp_path: Path
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core[all]==1.2.0"]
 
 [tool.uv.workspace]
@@ -102,7 +102,7 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 {all_config}
 
@@ -130,7 +130,7 @@ def test_core_all_dependency_bounds_reject_unbounded_or_stale_cohorts(tmp_path: 
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core[all]==1.2.0"]
 
 [tool.uv.workspace]
@@ -146,7 +146,7 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 all = [{requirement!r}]
@@ -161,7 +161,7 @@ name = "agent_framework"
 [project]
 name = "agent-framework-connector"
 version = "1.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core>=1,<2"]
 
 [tool.flit.module]
@@ -180,7 +180,7 @@ def test_release_probe_uses_only_the_required_internal_dependency_closure(tmp_pa
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core[all]==1.2.0"]
 
 [tool.uv.workspace]
@@ -196,7 +196,7 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["pydantic>=2,<3"]
 
 [project.optional-dependencies]
@@ -213,7 +213,7 @@ name = "agent_framework"
 [project]
 name = "agent-framework-connector"
 version = "1.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core>=1,<2", "httpx>=0.27,<1"]
 
 [tool.flit.module]
@@ -226,7 +226,7 @@ name = "agent_framework_connector"
 [project]
 name = "agent-framework-provider"
 version = "1.0.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = ["agent-framework-core>=1,<2", "openai>=2,<3"]
 
 [tool.flit.module]
@@ -241,14 +241,14 @@ name = "agent_framework_provider"
     assert "packages/provider" in provider_editables
     assert "packages/core" in provider_editables
     assert "packages/connector" not in provider_editables
-    assert provider_plan.python_version == "3.11"
+    assert provider_plan.python_version == "3.12"
 
     root_plan = _build_release_probe_plan(tmp_path, projects["agent-framework"], projects)
     root_editables = "\n".join(root_plan.editable_specs)
     assert "packages/core" in root_editables
     assert "packages/connector" in root_editables
     assert "pytest" not in root_plan.reported_distributions
-    assert root_plan.python_version == "3.10"
+    assert root_plan.python_version == "3.11"
 
 
 def test_release_probe_repeats_internal_prerelease_requirements_at_the_probe_root(tmp_path: Path) -> None:
@@ -258,7 +258,7 @@ def test_release_probe_repeats_internal_prerelease_requirements_at_the_probe_roo
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core[all]==1.2.0"]
 
 [tool.uv.workspace]
@@ -274,7 +274,7 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["pydantic>=2,<3"]
 
 [project.optional-dependencies]
@@ -291,7 +291,7 @@ name = "agent_framework"
 [project]
 name = "agent-framework-hosting"
 version = "1.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core>=1,<2", "server-responses>=2.2.0b1,<3", "httpx>=0.28,<1"]
 
 [tool.flit.module]
@@ -369,7 +369,7 @@ def test_run_release_mode_dry_run_uses_selected_package_python_floor(tmp_path: P
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [tool.uv.workspace]
@@ -385,7 +385,7 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 all = []

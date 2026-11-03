@@ -39,14 +39,13 @@ from agent_framework import (
     ResponseStream,
     tool,
 )
+from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
+from agent_framework_hyperlight import _execute_code_tool as execute_code_module
+from agent_framework_hyperlight import _instructions as instructions_module
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pytest import fixture
-
-from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
-from agent_framework_hyperlight import _execute_code_tool as execute_code_module
-from agent_framework_hyperlight import _instructions as instructions_module
 
 
 def _hyperlight_integration_static_skip_reason() -> str | None:
@@ -1477,7 +1476,7 @@ async def test_execute_code_tool_preserves_result_when_post_cleanup_fails(
 
         recovered = await execute_code.invoke(arguments={"code": "fail"})
         assert not any(item.type == "data" for item in recovered)
-        assert any(item.type == "error" and item.error_details == "sandbox boom" for item in recovered)
+        assert any(item.type == "error" and item.error_details is None for item in recovered)
         assert len(_FakeSandbox.instances) == 2
         assert registry._entries == {}
     finally:
@@ -1540,13 +1539,15 @@ async def test_cleanup_failed_entry_disposes_directories_without_blocking_result
         _close_execute_code_registry(execute_code)
 
 
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
 async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    include_detailed_errors: bool,
 ) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
-    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, include_detailed_errors=include_detailed_errors)
     config = execute_code._build_run_config()
     registry = cast(Any, execute_code._registry)
     output_root = Path(registry._get_or_create_entry(config).output_dir.name)
@@ -1569,7 +1570,8 @@ async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     monkeypatch.setattr(execute_code_module, "_build_execution_contents", fail_build_contents)
 
     try:
-        with pytest.raises(RuntimeError, match="primary build failure"):
+        expected = "primary build failure" if include_detailed_errors else "Code execution failed."
+        with pytest.raises(RuntimeError, match=expected):
             await execute_code.invoke(arguments={"code": "create-output"})
         assert registry._entries == {}
     finally:
@@ -2438,22 +2440,29 @@ async def test_execute_code_tool_replaces_output_generation_after_empty_retry_wi
         second_result = await execute_code.invoke(arguments={"code": "fail"})
 
         assert not any(item.type == "data" for item in second_result)
-        assert any(item.type == "error" and item.error_details == "sandbox boom" for item in second_result)
+        assert any(item.type == "error" and item.error_details is None for item in second_result)
         assert len(_FakeSandbox.instances) == 2
     finally:
         release_cleanup.set()
         _close_execute_code_registry(execute_code)
 
 
-async def test_execute_code_tool_failure_returns_error_content(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_execute_code_tool_failure_returns_error_content(
+    monkeypatch: pytest.MonkeyPatch, include_detailed_errors: bool
+) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
 
-    execute_code = HyperlightExecuteCodeTool()
-    result = await execute_code.invoke(arguments={"code": "fail"})
+    execute_code = HyperlightExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    try:
+        result = await execute_code.invoke(arguments={"code": "fail"})
 
-    assert result[0].type == "error"
-    assert result[0].error_details == "sandbox boom"
+        assert result[0].type == "error"
+        assert result[0].error_details == ("sandbox boom" if include_detailed_errors else None)
+        assert ("sandbox boom" in json.dumps([item.to_dict() for item in result])) is include_detailed_errors
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_rejects_host_targets(
@@ -2829,7 +2838,7 @@ async def test_execute_code_tool_rejects_sparse_file_with_real_sandbox(tmp_path:
     errors = [item for item in contents if item.type == "error"]
     assert len(errors) == 1
     assert errors[0].message == "Execution error"
-    assert errors[0].error_details
+    assert errors[0].message == "Execution error"
 
 
 @pytest.mark.flaky
@@ -2926,10 +2935,6 @@ async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> No
 
 @pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
-@pytest.mark.skipif(
-    sys.platform == "win32" and sys.version_info < (3, 11),
-    reason="Hyperlight sandbox snapshot/restore crashes on Windows Python 3.10.",
-)
 async def test_sandbox_snapshot_restore_keeps_sandbox_functional(restored_sandbox) -> None:
     """Verify snapshot/restore cycle leaves the sandbox in a working state."""
     # Mutate the sandbox
@@ -3258,9 +3263,139 @@ async def test_make_sandbox_callback_propagates_exceptions() -> None:
         """Always fails."""
         raise RuntimeError("nope")
 
-    callback = execute_code_module._make_sandbox_callback(boom)
+    callback = execute_code_module._make_sandbox_callback(boom, include_detailed_errors=True)
     with pytest.raises(RuntimeError, match="nope"):
         callback(x=1)
+
+
+@pytest.mark.parametrize("failing_host_tool", [False, True], indirect=True)
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_sandbox_callback_redacts_errors_unless_explicitly_enabled(
+    failing_host_tool: FunctionTool, host_error_detail: str, include_detailed_errors: bool
+) -> None:
+    callback = execute_code_module._make_sandbox_callback(
+        failing_host_tool, include_detailed_errors=include_detailed_errors
+    )
+
+    with pytest.raises(ValueError if include_detailed_errors else RuntimeError) as error:
+        callback()
+
+    assert (host_error_detail in str(error.value)) is include_detailed_errors
+    if not include_detailed_errors:
+        assert str(error.value) == "Host tool execution failed."
+        assert error.value.__suppress_context__
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_error_policy_preserves_callback_cancellation(
+    cancelled_host_tool: FunctionTool, include_detailed_errors: bool
+) -> None:
+    callback = execute_code_module._make_sandbox_callback(
+        cancelled_host_tool, include_detailed_errors=include_detailed_errors
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        callback()
+
+
+@pytest.mark.parametrize(
+    "failure_stage", ["build", "register_tool", "allow_domain", "warmup", "snapshot", "restore", "run"]
+)
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_lifecycle_failures_obey_error_policy_and_retire_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_sandbox_factory: Callable[..., type[Any]],
+    host_error_detail: str,
+    failure_stage: str,
+    include_detailed_errors: bool,
+) -> None:
+    sandbox_cls = lifecycle_sandbox_factory(failure_stage)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: sandbox_cls)
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[lambda: "ok"], allowed_domains=["example.com"], include_detailed_errors=include_detailed_errors
+    )
+    registry = cast(Any, execute_code._registry)
+    try:
+        with pytest.raises(ValueError if include_detailed_errors else RuntimeError) as error:
+            await execute_code.invoke(arguments={"code": "print('ok')"})
+        assert (host_error_detail in str(error.value)) is include_detailed_errors
+        if not include_detailed_errors:
+            assert str(error.value) == "Code execution failed."
+        assert registry._entries == {}
+    finally:
+        _close_execute_code_registry(execute_code)
+    gc.collect()
+    owner_threads = {ident for _, ident in sandbox_cls.events}
+    assert len(owner_threads) == 1
+    assert threading.get_ident() not in owner_threads
+
+
+@pytest.mark.parametrize("signal_type", [asyncio.CancelledError, SystemExit, KeyboardInterrupt])
+@pytest.mark.parametrize("failure_stage", ["warmup", "restore", "run"])
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_lifecycle_error_policy_preserves_system_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_sandbox_factory: Callable[..., type[Any]],
+    host_error_detail: str,
+    signal_type: type[BaseException],
+    failure_stage: str,
+    include_detailed_errors: bool,
+) -> None:
+    sandbox_cls = lifecycle_sandbox_factory(failure_stage, signal_type)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: sandbox_cls)
+    execute_code = HyperlightExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    try:
+        with pytest.raises(signal_type, match=host_error_detail):
+            await execute_code.invoke(arguments={"code": "print('ok')"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+def test_error_policy_is_snapshotted_and_part_of_the_sandbox_cache_key(include_detailed_errors: bool) -> None:
+    registry = _FakeRuntime()
+    codeact = HyperlightExecuteCodeTool(include_detailed_errors=include_detailed_errors, _registry=registry)
+    provider = HyperlightCodeActProvider(include_detailed_errors=include_detailed_errors, _registry=registry)
+    opposite = HyperlightExecuteCodeTool(include_detailed_errors=not include_detailed_errors, _registry=registry)
+
+    assert codeact.create_run_tool().build_serializable_state()["include_detailed_errors"] is include_detailed_errors
+    assert (
+        provider._execute_code_tool.create_run_tool().build_serializable_state()["include_detailed_errors"]
+        is include_detailed_errors
+    )
+    assert codeact._build_run_config().cache_key() != opposite._build_run_config().cache_key()
+    assert set(codeact.parameters()["properties"]) == {"code"}
+
+
+@pytest.mark.parametrize("constructor", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_detailed_error_option_rejects_non_boolean_values(constructor: Any, value: Any) -> None:
+    with pytest.raises(TypeError, match="include_detailed_errors must be a bool"):
+        constructor(include_detailed_errors=value)
+
+
+@pytest.mark.integration
+@skip_if_hyperlight_integration_tests_disabled
+@pytest.mark.parametrize("failing_host_tool", [False, True], indirect=True)
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_host_error_policy_with_real_sandbox(
+    failing_host_tool: FunctionTool, host_error_detail: str, include_detailed_errors: bool
+) -> None:
+    _skip_if_hyperlight_integration_runtime_disabled()
+    execute_code = HyperlightExecuteCodeTool(tools=[failing_host_tool], include_detailed_errors=include_detailed_errors)
+    try:
+        result = await execute_code.invoke(
+            arguments={
+                "code": "try:\n    call_tool('failing_host_tool')\nexcept Exception as exc:\n    print(str(exc))"
+            },
+            skip_parsing=True,
+        )
+        serialized = json.dumps([content.to_dict() for content in result])
+        assert (host_error_detail in serialized) is include_detailed_errors
+        if not include_detailed_errors:
+            assert "Host tool execution failed." in serialized
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 class _OwnerThreadTrackedResult:
