@@ -27,6 +27,8 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 /// </remarks>
 public sealed class IsolationKeyScopedTaskStore : ITaskStore
 {
+    private static readonly AsyncLocal<string?> s_capturedIsolationKey = new();
+
     private readonly ITaskStore _innerStore;
     private readonly AgentIsolationKeyProvider? _keyProvider;
     private readonly bool _strict;
@@ -129,9 +131,15 @@ public sealed class IsolationKeyScopedTaskStore : ITaskStore
     /// </summary>
     private async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken)
     {
-        string? key = this._keyProvider != null
-                    ? await this._keyProvider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
-                    : null;
+        // Detached execution supplies the trusted request-time key through the async call flow,
+        // because ambient providers such as IHttpContextAccessor stop resolving once the request ends.
+        string? key = s_capturedIsolationKey.Value;
+        if (key is null)
+        {
+            key = this._keyProvider != null
+                ? await this._keyProvider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
+                : null;
+        }
 
         if (this._strict && key == null)
         {
@@ -139,6 +147,20 @@ public sealed class IsolationKeyScopedTaskStore : ITaskStore
         }
 
         return key;
+    }
+
+    /// <summary>
+    /// Gets the isolation key captured for the current asynchronous operation, if any.
+    /// </summary>
+    internal static string? CapturedIsolationKey => s_capturedIsolationKey.Value;
+
+    /// <summary>
+    /// Overrides ambient isolation lookup for the current asynchronous operation.
+    /// </summary>
+    internal static IDisposable UseCapturedIsolationKey(string isolationKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(isolationKey);
+        return new CapturedIsolationKeyScope(isolationKey);
     }
 
     /// <summary>
@@ -214,4 +236,25 @@ public sealed class IsolationKeyScopedTaskStore : ITaskStore
             StatusTimestampAfter = request.StatusTimestampAfter,
             IncludeArtifacts = request.IncludeArtifacts,
         };
+
+    private sealed class CapturedIsolationKeyScope : IDisposable
+    {
+        private readonly string? _previousIsolationKey;
+        private bool _disposed;
+
+        public CapturedIsolationKeyScope(string isolationKey)
+        {
+            this._previousIsolationKey = s_capturedIsolationKey.Value;
+            s_capturedIsolationKey.Value = isolationKey;
+        }
+
+        public void Dispose()
+        {
+            if (!this._disposed)
+            {
+                s_capturedIsolationKey.Value = this._previousIsolationKey;
+                this._disposed = true;
+            }
+        }
+    }
 }

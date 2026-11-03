@@ -48,22 +48,26 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <inheritdoc/>
     public Task ExecuteAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
+        // Execution can outlive the request that started it, and then IHttpContextAccessor can no longer
+        // resolve the caller. Bind the session store to the trusted key captured before execution detached.
+        AIHostAgent hostAgent = this._hostAgent.BindIsolationKey(IsolationKeyScopedTaskStore.CapturedIsolationKey);
+
         // Handle task updates
         if (context.IsContinuation)
         {
-            return this.HandleTaskUpdateAsync(context, eventQueue, cancellationToken);
+            return HandleTaskUpdateAsync(hostAgent, context, eventQueue, cancellationToken);
         }
 
         // Handle messages received via streaming endpoint
         if (context.StreamingResponse)
         {
-            return this.HandleNewMessageAsync(context, eventQueue, aggregateTaskUpdates: false, cancellationToken);
+            return this.HandleNewMessageAsync(hostAgent, context, eventQueue, aggregateTaskUpdates: false, cancellationToken);
         }
 
         // Handle new messages received via non-streaming endpoint
         // Aggregate task updates unless the caller requests an immediate response.
         bool aggregateTaskUpdates = context.Configuration?.ReturnImmediately is not true;
-        return this.HandleNewMessageAsync(context, eventQueue, aggregateTaskUpdates, cancellationToken);
+        return this.HandleNewMessageAsync(hostAgent, context, eventQueue, aggregateTaskUpdates, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -76,6 +80,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <summary>
     /// Runs the agent for a new message and emits the response events, shared by the streaming and non-streaming endpoints.
     /// </summary>
+    /// <param name="hostAgent">The hosted agent, bound to the caller's isolation key when one was captured.</param>
     /// <param name="context">The request context of the incoming message.</param>
     /// <param name="eventQueue">The queue the response events are written to.</param>
     /// <param name="aggregateTaskUpdates">
@@ -121,10 +126,10 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// </description></item>
     /// </list>
     /// </remarks>
-    private async Task HandleNewMessageAsync(RequestContext context, AgentEventQueue eventQueue, bool aggregateTaskUpdates, CancellationToken cancellationToken)
+    private async Task HandleNewMessageAsync(AIHostAgent hostAgent, RequestContext context, AgentEventQueue eventQueue, bool aggregateTaskUpdates, CancellationToken cancellationToken)
     {
         var contextId = context.ContextId ?? Guid.NewGuid().ToString("N");
-        var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
+        var session = await hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
 
         // AIAgent does not support resuming from arbitrary prior tasks.
         // Throw explicitly so the client gets a clear error rather than a response
@@ -142,7 +147,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         var options = CreateRunOptions(context);
 
-        var updates = this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
+        var updates = hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
 
         bool executionFailed = false;
         try
@@ -177,14 +182,14 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
         finally
         {
-            await this.SaveSessionAsync(contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
+            await SaveSessionAsync(hostAgent, contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
         }
     }
 
-    private async Task HandleTaskUpdateAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    private static async Task HandleTaskUpdateAsync(AIHostAgent hostAgent, RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
         var contextId = context.ContextId ?? Guid.NewGuid().ToString("N");
-        var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
+        var session = await hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
 
         List<ChatMessage> chatMessages = ExtractChatMessagesFromTaskHistory(context.Task);
 
@@ -194,7 +199,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         bool executionFailed = false;
         try
         {
-            response = await this._hostAgent.RunAsync(
+            response = await hostAgent.RunAsync(
                 chatMessages,
                 session: session,
                 options: options,
@@ -214,7 +219,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
         finally
         {
-            await this.SaveSessionAsync(contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
+            await SaveSessionAsync(hostAgent, contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
         }
 
         if (response.ContinuationToken is null)
@@ -237,11 +242,11 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
     }
 
-    private async Task SaveSessionAsync(string contextId, AgentSession session, bool suppressFailure)
+    private static async Task SaveSessionAsync(AIHostAgent hostAgent, string contextId, AgentSession session, bool suppressFailure)
     {
         try
         {
-            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+            await hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
         }
 #pragma warning disable CA1031, RCS1075 // Preserve the exception already propagating from agent execution.
         catch (Exception) when (suppressFailure)

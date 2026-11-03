@@ -216,11 +216,23 @@ public static class A2AServerServiceCollectionExtensions
             taskStore = new IsolationKeyScopedTaskStore(taskStore, isolationKeyProvider, strict: isolationKeyProvider != null);
         }
 
-        return new A2AServer(
+        if (isolationKeyProvider is null)
+        {
+            return new A2AServer(
+                agentHandler,
+                taskStore,
+                new ChannelEventNotifier(),
+                loggerFactory.CreateLogger<A2AServer>(),
+                options?.ServerOptions);
+        }
+
+        // Capture the caller's isolation key before execution can detach from the request.
+        return new IsolationKeyCapturingA2AServer(
             agentHandler,
             taskStore,
             new ChannelEventNotifier(),
             loggerFactory.CreateLogger<A2AServer>(),
+            isolationKeyProvider,
             options?.ServerOptions);
     }
 }
