@@ -1275,8 +1275,8 @@ class RawGeminiChatClient(
         # in so input/output are full totals, as in the other connectors and the GenAI semconv.
         tool_use_prompt_tokens = usage.tool_use_prompt_token_count
         thoughts_tokens = usage.thoughts_token_count
-        if (v := usage.prompt_token_count) is not None:
-            details["input_token_count"] = v + (tool_use_prompt_tokens or 0)
+        if (v := usage.prompt_token_count) is not None or tool_use_prompt_tokens is not None:
+            details["input_token_count"] = (v or 0) + (tool_use_prompt_tokens or 0)
         if (v := usage.candidates_token_count) is not None or thoughts_tokens is not None:
             details["output_token_count"] = (v or 0) + (thoughts_tokens or 0)
         if (v := usage.total_token_count) is not None:

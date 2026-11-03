@@ -755,7 +755,31 @@ async def test_get_response_output_token_count_includes_thinking_tokens() -> Non
     assert usage is not None
     assert usage["output_token_count"] == 980
     assert usage["reasoning_output_token_count"] == 900
-    assert usage["input_token_count"] + usage["output_token_count"] == usage["total_token_count"]
+    input_tokens = usage["input_token_count"]
+    output_tokens = usage["output_token_count"]
+    assert input_tokens is not None and output_tokens is not None
+    assert input_tokens + output_tokens == usage["total_token_count"]
+
+
+async def test_get_response_input_token_count_set_when_only_tool_use_prompt_tokens_reported() -> None:
+    """If prompt_token_count is missing but tool-use prompt tokens are present, input still counts them."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(text="Hi")],
+            prompt_tokens=None,
+            output_tokens=80,
+            total_tokens=430,
+            tool_use_prompt_tokens=350,
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    usage = response.usage_details
+    assert usage is not None
+    assert usage["input_token_count"] == 350
+    assert usage["output_token_count"] == 80
 
 
 async def test_get_response_input_token_count_includes_tool_use_prompt_tokens() -> None:
