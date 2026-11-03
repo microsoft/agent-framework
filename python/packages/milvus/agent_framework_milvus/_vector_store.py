@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Final, Generic, cast
 
@@ -132,6 +133,13 @@ def _create_client(
     # load_settings includes optional keys as ``None`` when unset, so ``or`` (not a dict default)
     # is needed to fall back to the default URI.
     client_kwargs: dict[str, Any] = {"uri": settings.get("uri") or DEFAULT_URI}
+    # pymilvus derives a connection alias from the uri/auth/db_name and shares any existing global
+    # connection registered under that alias (pymilvus.milvus_client._utils.create_connection). Two
+    # connector-owned clients pointing at the same server would then share one connection, so closing
+    # one store's client (connections.async_remove_connection) would break every other store still
+    # using it. Give each connector-created client a unique alias so it owns an independent connection;
+    # caller-supplied clients are untouched and keep managing their own alias.
+    client_kwargs["alias"] = f"agent-framework-milvus-{uuid.uuid4().hex}"
     if resolved_token is not None:
         client_kwargs["token"] = resolved_token.get_secret_value()
     if settings.get("user"):
