@@ -37,8 +37,8 @@ public sealed partial class AgentMcpSkillsTests
             options.MaxCachedPartitions = null;
         }
 
-        Assert.Equal(unlimited ? null : (int?)100, options.MaxCachedPartitions);
-        Assert.Equal(unlimited ? null : (long?)100, options.ToMemoryCacheOptions().SizeLimit);
+        Assert.Equal(unlimited ? null : 100, options.MaxCachedPartitions);
+        Assert.Equal(unlimited ? null : 100, options.ToMemoryCacheOptions().SizeLimit);
         using var source = new AgentMcpSkillsSource(client.Object, options, null, new ManualTimeProvider());
 
         // Act & Assert
