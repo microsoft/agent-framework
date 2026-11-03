@@ -36,6 +36,10 @@ The generic OpenAI clients support both OpenAI and Azure OpenAI routing. Precede
 explicit Azure inputs (`credential`, `azure_endpoint`, `api_version`) → OpenAI API key
 (`OPENAI_API_KEY`) → Azure environment fallback (`AZURE_OPENAI_*`).
 
+Request-model precedence is separate. An explicit `model=` argument wins. Otherwise an injected
+`AsyncAzureOpenAI` client's configured deployment wins over `AZURE_OPENAI_*` model variables.
+An injected `AsyncOpenAI` client has no deployment metadata, so OpenAI model variables still apply.
+
 ## Adapting the Chat Completions client to OpenAI-compatible endpoints
 
 `OpenAIChatCompletionClient` targets the OpenAI Chat Completions wire format and is intentionally
@@ -77,7 +81,9 @@ marked text is sent as ordinary input text.
 Responses citations remain `Content.annotations`, including annotation-only updates parsed from completed
 text parts and output messages. Streaming deduplication is request-local and keyed by item ID, content index,
 and annotation index, so separate references to the same URL remain distinct. `_parse_chunk_from_openai` retains
-the signature overridden by released Foundry clients.
+the signature overridden by released Foundry clients. When assistant history is serialized back to Responses,
+only content-coordinate annotation regions become output-text spans; source-coordinate regions remain framework
+metadata and must not be interpreted as generated-text offsets.
 
 ## Dependencies
 

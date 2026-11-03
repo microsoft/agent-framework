@@ -14,26 +14,32 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 internal static class PortableValueExtensions
 {
     public static FormulaValue ToFormula(this PortableValue value) =>
+        value.ToPortableObject() switch
+        {
+            Dictionary<string, PortableValue> recordValue => recordValue.ToRecord(),
+            IDictionary recordValue => recordValue.ToRecord(),
+            PortableValue[] tableValue => tableValue.ToTable(),
+            var nativeValue => nativeValue.ToFormula(),
+        };
+
+    public static object ToPortableObject(this PortableValue value) =>
         value.TypeId switch
         {
-            null => FormulaValue.NewBlank(),
-            _ when value.TypeId.IsMatch<UnassignedValue>() => FormulaValue.NewBlank(),
-            _ when value.IsType(out string? stringValue) => FormulaValue.New(stringValue),
-            _ when value.IsSystemType(out bool? boolValue) => FormulaValue.New(boolValue.Value),
-            _ when value.IsSystemType(out int? intValue) => FormulaValue.New(intValue.Value),
-            _ when value.IsSystemType(out long? longValue) => FormulaValue.New(longValue.Value),
-            _ when value.IsSystemType(out decimal? decimalValue) => FormulaValue.New(decimalValue.Value),
-            _ when value.IsSystemType(out float? floatValue) => FormulaValue.New(floatValue.Value),
-            _ when value.IsSystemType(out double? doubleValue) => FormulaValue.New(doubleValue.Value),
-            _ when value.IsParentType(out Dictionary<string, PortableValue>? recordValue) => recordValue.ToRecord(),
-            _ when value.IsParentType(out IDictionary? recordValue) => recordValue.ToRecord(),
-            _ when value.IsType(out PortableValue[]? tableValue) => tableValue.ToTable(),
-            _ when value.IsType(out ChatMessage? messageValue) => messageValue.ToRecord(),
-            _ when value.IsType(out DateTime dateValue) =>
-                dateValue.TimeOfDay == TimeSpan.Zero ?
-                    FormulaValue.NewDateOnly(dateValue.Date) :
-                    FormulaValue.New(dateValue),
-            _ when value.IsType(out TimeSpan timeValue) => FormulaValue.New(timeValue),
+            null => UnassignedValue.Instance,
+            _ when value.TypeId.IsMatch<UnassignedValue>() => UnassignedValue.Instance,
+            _ when value.IsType(out string? stringValue) => stringValue,
+            _ when value.IsSystemType(out bool? boolValue) => boolValue.Value,
+            _ when value.IsSystemType(out int? intValue) => intValue.Value,
+            _ when value.IsSystemType(out long? longValue) => longValue.Value,
+            _ when value.IsSystemType(out decimal? decimalValue) => decimalValue.Value,
+            _ when value.IsSystemType(out float? floatValue) => floatValue.Value,
+            _ when value.IsSystemType(out double? doubleValue) => doubleValue.Value,
+            _ when value.IsParentType(out Dictionary<string, PortableValue>? recordValue) => recordValue,
+            _ when value.IsParentType(out IDictionary? recordValue) => recordValue,
+            _ when value.IsType(out PortableValue[]? tableValue) => tableValue,
+            _ when value.IsType(out ChatMessage? messageValue) => messageValue,
+            _ when value.IsType(out DateTime dateValue) => dateValue,
+            _ when value.IsType(out TimeSpan timeValue) => timeValue,
             _ => throw new DeclarativeModelException($"Unsupported portable type: {value.TypeId.TypeName}"),
         };
 

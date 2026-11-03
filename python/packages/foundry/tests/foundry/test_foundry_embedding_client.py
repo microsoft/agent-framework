@@ -10,6 +10,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import Content, SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, get_user_agent
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from azure.core.credentials import AzureKeyCredential
 from azure.identity.aio import AzureCliCredential
 
@@ -265,6 +266,60 @@ class TestRawFoundryEmbeddingClient:
             extra_body={"custom": "value", "input_type": "document"},
         )
         assert [embedding.vector for embedding in result] == [[0.1], [0.3]]
+
+    async def test_project_client_base64_rejects_length_that_is_not_a_multiple_of_four(self) -> None:
+        """A truncated base64 payload must name the input, not escape as a bare struct.error."""
+        import base64
+        import struct
+
+        # One float plus a stray byte: 5 bytes, so no whole number of float32 values fits.
+        b64_str = base64.b64encode(struct.pack("<1f", 0.5) + b"\x00").decode()
+
+        item = MagicMock()
+        item.embedding = b64_str
+        item.index = 0
+        response = MagicMock()
+        response.data = [item]
+        response.model = "test-model"
+        response.usage = None
+
+        openai_client = MagicMock()
+        openai_client.base_url = "https://test.services.ai.azure.com/api/projects/test/openai/v1/"
+        openai_client.embeddings.create = AsyncMock(return_value=response)
+        openai_client.close = AsyncMock()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+
+        client = RawFoundryEmbeddingClient(model="text-embedding-3-small", project_client=project_client)
+
+        with pytest.raises(IntegrationInvalidResponseException, match="input index 0") as exc_info:
+            await client.get_embeddings(["hello"], options={"encoding_format": "base64"})
+
+        assert "5 bytes" in str(exc_info.value)
+
+    async def test_project_client_base64_rejects_undecodable_payload(self) -> None:
+        """A payload that cannot be decoded must name the input rather than raise binascii.Error."""
+        item = MagicMock()
+        item.embedding = "!!!not-base64!!!"
+        item.index = 0
+        response = MagicMock()
+        response.data = [item]
+        response.model = "test-model"
+        response.usage = None
+
+        openai_client = MagicMock()
+        openai_client.base_url = "https://test.services.ai.azure.com/api/projects/test/openai/v1/"
+        openai_client.embeddings.create = AsyncMock(return_value=response)
+        openai_client.close = AsyncMock()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+
+        client = RawFoundryEmbeddingClient(model="text-embedding-3-small", project_client=project_client)
+
+        with pytest.raises(IntegrationInvalidResponseException, match="input index 0") as exc_info:
+            await client.get_embeddings(["hello"], options={"encoding_format": "base64"})
+
+        assert exc_info.value.__cause__ is not None
 
     async def test_project_mode_rejects_images_before_sending_text(self) -> None:
         """Project OpenAI embedding deployments reject image inputs without partial requests."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
@@ -16,12 +17,14 @@ from typing import (
     runtime_checkable,
 )
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._types import ChatResponse, Content, Message
+from ._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY, ChatResponse, Content, Message
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._tools import ApprovalMode, FunctionTool
 
 GroupKind: TypeAlias = Literal["system", "user", "assistant_text", "tool_call"]
 GROUP_ANNOTATION_KEY = "_group"
@@ -41,6 +44,9 @@ EXCLUDE_REASON_KEY = "_exclude_reason"
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
 SUMMARY_OF_GROUP_IDS_KEY = "_summary_of_group_ids"
 SUMMARIZED_BY_SUMMARY_ID_KEY = "_summarized_by_summary_id"
+_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY = "_agent_compaction_trigger_consumed"
+_SKILL_UNLOAD_SELECTION_KEY = "_skill_unload_selection"
+_SKILL_CONTEXT_TOOL_NAMES: Final[frozenset[str]] = frozenset({"load_skill", "read_skill_resource"})
 
 
 logger = logging.getLogger("agent_framework")
@@ -52,6 +58,7 @@ _TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
     "code_interpreter_tool_call",
     "shell_tool_call",
     "image_generation_tool_call",
+    "search_tool_call",
 }
 
 
@@ -104,7 +111,12 @@ class TokenizerProtocol(Protocol):
 
 @runtime_checkable
 class CompactionStrategy(Protocol):
-    """Protocol for in-place message compaction strategies."""
+    """Protocol for in-place message compaction strategies.
+
+    Strategies that require local/client-managed message history should expose
+    ``requires_client_managed_history = True``. Wrappers and compositions must
+    propagate that optional capability from nested strategies.
+    """
 
     async def __call__(self, messages: list[Message]) -> bool:
         """Mutate message annotations and/or list contents in place.
@@ -1180,6 +1192,532 @@ def _count_included_tokens(messages: list[Message]) -> int:
     return included_token_count(messages)
 
 
+def _latest_group(messages: list[Message], *, include_excluded: bool) -> list[Message]:
+    grouped = _group_messages_by_id(messages)
+    for message in reversed(messages):
+        if not include_excluded and message.additional_properties.get(EXCLUDED_KEY, False):
+            continue
+        group_id = _group_id(message)
+        if group_id is not None:
+            return grouped.get(group_id, [])
+    return []
+
+
+def _latest_included_group(messages: list[Message]) -> list[Message]:
+    return _latest_group(messages, include_excluded=False)
+
+
+def _function_call_result_pairs(
+    messages: Sequence[Message],
+    *,
+    include_excluded: bool = False,
+) -> list[tuple[Content, Content]]:
+    candidate_messages = (
+        list(messages)
+        if include_excluded
+        else [message for message in messages if not message.additional_properties.get(EXCLUDED_KEY, False)]
+    )
+    open_calls_by_call_id: dict[str, deque[Content]] = {}
+    open_calls_by_occurrence_id: dict[tuple[str, str], deque[Content]] = {}
+    closed_call_identities: set[int] = set()
+    pairs: list[tuple[Content, Content]] = []
+
+    for message in candidate_messages:
+        for content in message.contents:
+            if content.type == "function_call" and content.call_id:
+                open_calls_by_call_id.setdefault(content.call_id, deque()).append(content)
+                if content.id:
+                    open_calls_by_occurrence_id.setdefault((content.id, content.call_id), deque()).append(content)
+                continue
+            if content.type != "function_result" or not content.call_id:
+                continue
+
+            matched_call: Content | None = None
+            if content.id is not None:
+                occurrence_queue = open_calls_by_occurrence_id.get((content.id, content.call_id))
+                while occurrence_queue and id(occurrence_queue[0]) in closed_call_identities:
+                    occurrence_queue.popleft()
+                if occurrence_queue:
+                    matched_call = occurrence_queue.popleft()
+            else:
+                call_queue = open_calls_by_call_id.get(content.call_id)
+                while call_queue and id(call_queue[0]) in closed_call_identities:
+                    call_queue.popleft()
+                if call_queue:
+                    matched_call = call_queue.popleft()
+            if matched_call is None:
+                continue
+
+            closed_call_identities.add(id(matched_call))
+            pairs.append((matched_call, content))
+
+    return pairs
+
+
+def _completed_function_call_pairs(
+    messages: Sequence[Message],
+    *,
+    tool_name: str,
+    include_consumed: bool = False,
+    include_excluded: bool = False,
+) -> list[tuple[Content, Content]]:
+    return [
+        (call, result)
+        for call, result in _function_call_result_pairs(messages, include_excluded=include_excluded)
+        if (
+            call.name == tool_name
+            and result.exception is None
+            and result.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is not True
+            and (include_consumed or call.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is not True)
+        )
+    ]
+
+
+def _completed_function_calls(
+    messages: Sequence[Message],
+    *,
+    tool_name: str,
+    include_consumed: bool = False,
+    include_excluded: bool = False,
+) -> list[Content]:
+    return [
+        call
+        for call, _ in _completed_function_call_pairs(
+            messages,
+            tool_name=tool_name,
+            include_consumed=include_consumed,
+            include_excluded=include_excluded,
+        )
+    ]
+
+
+def _requires_client_managed_history(strategy: object | None) -> bool:
+    return getattr(strategy, "requires_client_managed_history", False) is True
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
+class AgentTriggeredCompactionStrategy:
+    """Run an existing compaction strategy after an agent invokes a trigger tool.
+
+    The trigger tool must be registered explicitly on the agent alongside this
+    strategy. A completed trigger call in the latest included message group is
+    consumed once, then the wrapped strategy runs before the next model call.
+    Wrapped strategies may provide ``create_trigger_tool()`` to replace the
+    default ``compact_context`` tool with one specialized for their inputs.
+
+    The consumed marker is stored on the completed trigger call occurrence
+    rather than on this strategy instance, so one strategy can be shared safely
+    by concurrent runs and composed trigger tools do not suppress each other.
+
+    This strategy requires client-managed history (for example ``store=False``).
+    Chat clients reject it when service-side storage or a service-managed
+    conversation ID is active because local compaction cannot remove remote
+    conversation context.
+    """
+
+    DEFAULT_TOOL_NAME: Final[str] = "compact_context"
+    requires_client_managed_history = True
+
+    def __init__(
+        self,
+        strategy: CompactionStrategy,
+        *,
+        tool_name: str = DEFAULT_TOOL_NAME,
+        approval_mode: ApprovalMode = "never_require",
+        exclude_trigger: bool = False,
+    ) -> None:
+        """Create an agent-triggered wrapper around one compaction strategy.
+
+        Args:
+            strategy: Existing strategy to invoke after a completed trigger call.
+
+        Keyword Args:
+            tool_name: Name for the default trigger tool when the wrapped
+                strategy does not provide ``create_trigger_tool()``.
+            approval_mode: Approval mode for the generated default trigger tool.
+            exclude_trigger: Whether to exclude the completed trigger call/result
+                group before the next model call. Defaults to False so the model
+                can observe that compaction completed. A trigger group containing
+                unrelated tool calls is always retained atomically.
+        """
+        if not callable(strategy):
+            raise TypeError("strategy must be callable.")
+        if not tool_name.strip():
+            raise ValueError("tool_name must not be empty.")
+
+        trigger_tool_factory = getattr(strategy, "create_trigger_tool", None)
+        tool = (
+            trigger_tool_factory()
+            if callable(trigger_tool_factory)
+            else self._create_default_tool(tool_name, approval_mode)
+        )
+        from ._tools import FunctionTool
+
+        if not isinstance(tool, FunctionTool):
+            raise TypeError("create_trigger_tool() must return a FunctionTool.")
+        if not tool.name.strip():
+            raise ValueError("trigger tool name must not be empty.")
+
+        self.strategy = strategy
+        self.tool = tool
+        self.exclude_trigger = exclude_trigger
+
+    @property
+    def tokenizer(self) -> TokenizerProtocol | None:
+        """Return the wrapped strategy's tokenizer, when it exposes one."""
+        tokenizer = getattr(self.strategy, "tokenizer", None)
+        return tokenizer if isinstance(tokenizer, TokenizerProtocol) else None
+
+    @staticmethod
+    def _create_default_tool(tool_name: str, approval_mode: ApprovalMode) -> FunctionTool:
+        from ._tools import FunctionTool
+
+        def request_compaction(reason: str | None = None) -> str:
+            """Request configured context compaction before the next model call."""
+            message = "Compaction requested. The configured strategy will run before the next model call."
+            normalized_reason = reason.strip() if isinstance(reason, str) else ""
+            return f"{message} Reason: {normalized_reason}" if normalized_reason else message
+
+        return FunctionTool(
+            name=tool_name,
+            description=(
+                "Request that the configured context compaction strategy run before the next model call. "
+                "Call this tool by itself, after any other tool calls whose results should be eligible for compaction; "
+                "do not call it in parallel with other tools."
+            ),
+            func=request_compaction,
+            approval_mode=approval_mode,
+            input_model={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the agent is requesting compaction before the next model call.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        )
+
+    async def __call__(self, messages: list[Message]) -> bool:
+        """Run the wrapped strategy once for the latest completed trigger call."""
+        original_messages = list(messages)
+        annotate_message_groups(messages)
+        grouped = _group_messages_by_id(messages)
+        trigger_group = _latest_included_group(messages)
+        trigger_calls = _completed_function_calls(
+            trigger_group,
+            tool_name=self.tool.name,
+        )
+        if not trigger_calls:
+            return False
+
+        groups_to_hide: list[list[Message]] = [trigger_group]
+        trigger_group_ids = {id(message) for message in trigger_group}
+        for group in grouped.values():
+            if any(id(message) in trigger_group_ids for message in group):
+                continue
+            if not any(
+                content.type == "function_call"
+                and content.name == self.tool.name
+                and content.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is True
+                for message in group
+                if not message.additional_properties.get(EXCLUDED_KEY, False)
+                for content in message.contents
+            ):
+                continue
+            if self._is_trigger_only_group(group):
+                groups_to_hide.append(group)
+
+        hidden_messages = [message for group in groups_to_hide for message in group]
+        trigger_state = [
+            (
+                message,
+                EXCLUDED_KEY in message.additional_properties,
+                message.additional_properties.get(EXCLUDED_KEY),
+                EXCLUDE_REASON_KEY in message.additional_properties,
+                message.additional_properties.get(EXCLUDE_REASON_KEY),
+            )
+            for message in hidden_messages
+        ]
+        for message in hidden_messages:
+            set_excluded(message, excluded=True, reason="agent_compaction_trigger")
+
+        try:
+            changed = await self.strategy(messages)
+        except BaseException:
+            self._restore_hidden_messages(messages, original_messages, trigger_state)
+            raise
+
+        for trigger_call in trigger_calls:
+            trigger_call.additional_properties[_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY] = True
+
+        has_unrelated_tool_calls = not self._is_trigger_only_group(trigger_group, include_excluded=True)
+        trigger_message_ids = {id(message) for message in trigger_group}
+        has_other_included_context = any(
+            id(message) not in trigger_message_ids and not message.additional_properties.get(EXCLUDED_KEY, False)
+            for message in messages
+        )
+        trigger_changed = self.exclude_trigger and not has_unrelated_tool_calls and has_other_included_context
+        prior_trigger_state = [state for state in trigger_state if id(state[0]) not in trigger_message_ids]
+        self._restore_hidden_messages(messages, original_messages, prior_trigger_state)
+        if not trigger_changed:
+            current_trigger_state = [state for state in trigger_state if id(state[0]) in trigger_message_ids]
+            self._restore_hidden_messages(messages, original_messages, current_trigger_state)
+        return changed or trigger_changed
+
+    def _is_trigger_only_group(
+        self,
+        group: Sequence[Message],
+        *,
+        include_excluded: bool = False,
+    ) -> bool:
+        tool_calls = [
+            content
+            for message in group
+            if include_excluded or not message.additional_properties.get(EXCLUDED_KEY, False)
+            for content in message.contents
+            if content.type in _TOOL_CALL_CONTENT_TYPES
+        ]
+        return bool(tool_calls) and all(
+            content.type == "function_call" and content.name == self.tool.name for content in tool_calls
+        )
+
+    @staticmethod
+    def _restore_trigger_group(
+        trigger_state: Sequence[tuple[Message, bool, Any, bool, Any]],
+    ) -> None:
+        for message, had_excluded, excluded, had_reason, reason in trigger_state:
+            if had_excluded:
+                message.additional_properties[EXCLUDED_KEY] = excluded
+            else:
+                message.additional_properties.pop(EXCLUDED_KEY, None)
+            if had_reason:
+                message.additional_properties[EXCLUDE_REASON_KEY] = reason
+            else:
+                message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+    @classmethod
+    def _restore_hidden_messages(
+        cls,
+        messages: list[Message],
+        original_messages: Sequence[Message],
+        trigger_state: Sequence[tuple[Message, bool, Any, bool, Any]],
+    ) -> None:
+        restore_ids = {id(state[0]) for state in trigger_state}
+        present_ids = {id(message) for message in messages}
+        original_index_by_id = {id(message): index for index, message in enumerate(original_messages)}
+
+        for original_message in original_messages:
+            message_id = id(original_message)
+            if message_id not in restore_ids or message_id in present_ids:
+                continue
+            original_index = original_index_by_id[message_id]
+            next_anchor_id = next(
+                (
+                    id(candidate)
+                    for candidate in original_messages[original_index + 1 :]
+                    if id(candidate) in present_ids
+                ),
+                None,
+            )
+            if next_anchor_id is not None:
+                insert_index = next(
+                    index for index, candidate in enumerate(messages) if id(candidate) == next_anchor_id
+                )
+            else:
+                previous_anchor_id = next(
+                    (
+                        id(candidate)
+                        for candidate in reversed(original_messages[:original_index])
+                        if id(candidate) in present_ids
+                    ),
+                    None,
+                )
+                if previous_anchor_id is None:
+                    insert_index = len(messages)
+                else:
+                    insert_index = (
+                        next(index for index, candidate in enumerate(messages) if id(candidate) == previous_anchor_id)
+                        + 1
+                    )
+            messages.insert(insert_index, original_message)
+            present_ids.add(message_id)
+
+        cls._restore_trigger_group(trigger_state)
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
+class UnloadSkillsCompactionStrategy:
+    """Exclude loaded skill bodies and resources selected by an unload tool.
+
+    This strategy targets complete tool-call groups containing only
+    ``load_skill`` and ``read_skill_resource`` calls. The latest completed
+    ``unload_skill`` request selects one skill by name, or all skills when its
+    ``skill_name`` argument is omitted or blank. Skill identity comes from
+    successful load/resource result provenance, not the original model arguments.
+    Groups without that provenance are retained.
+
+    Use this as the wrapped strategy of :class:`AgentTriggeredCompactionStrategy`.
+    The wrapper obtains the specialized ``unload_skill`` tool through
+    :meth:`create_trigger_tool` and exposes that single tool to the caller.
+    """
+
+    DEFAULT_TOOL_NAME: Final[str] = "unload_skill"
+
+    def __init__(
+        self,
+        *,
+        tool_name: str = DEFAULT_TOOL_NAME,
+        approval_mode: ApprovalMode = "never_require",
+    ) -> None:
+        """Create a skill-unloading strategy and its trigger tool.
+
+        Keyword Args:
+            tool_name: Name of the tool that requests skill unloading.
+            approval_mode: Approval mode for the generated unload tool.
+        """
+        if not tool_name.strip():
+            raise ValueError("tool_name must not be empty.")
+        self.tool_name: str = tool_name
+        self.approval_mode: ApprovalMode = approval_mode
+
+    def create_trigger_tool(self) -> FunctionTool:
+        """Create the ``unload_skill`` trigger tool used by the wrapper."""
+        from ._tools import FunctionTool
+
+        def request_skill_unload(skill_name: str | Sequence[str] | None = None) -> list[Content]:
+            """Unload the full instructions and resources for selected skills."""
+            if skill_name is None:
+                requested_names: Sequence[str] = []
+            elif isinstance(skill_name, str):
+                requested_names = [skill_name]
+            elif isinstance(skill_name, Sequence) and not isinstance(skill_name, (bytes, bytearray)):
+                if any(not isinstance(name, str) for name in skill_name):
+                    raise TypeError("skill_name must contain only strings.")
+                requested_names = skill_name
+            else:
+                raise TypeError("skill_name must be a string, a sequence of strings, or None.")
+            normalized_names = [name.strip() for name in requested_names if name.strip()]
+            if normalized_names:
+                formatted_names = ", ".join(f"'{name}'" for name in normalized_names)
+                message = f"Skill(s) {formatted_names} will be unloaded before the next model call."
+            else:
+                message = "All loaded skills will be unloaded before the next model call."
+            return [
+                Content.from_text(
+                    message,
+                    additional_properties={_SKILL_UNLOAD_SELECTION_KEY: normalized_names},
+                )
+            ]
+
+        return FunctionTool(
+            name=self.tool_name,
+            description=(
+                "Unloads the full instructions and resources for one or more loaded skills. "
+                "Omit skill_name to unload all loaded skills. Call this tool by itself after the relevant skill work "
+                "is complete; do not call it in parallel with other tools."
+            ),
+            func=request_skill_unload,
+            approval_mode=self.approval_mode,
+            input_model={
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "description": (
+                            "The name of a skill to unload, a list of skill names to unload, "
+                            "or omit to unload all loaded skills."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        )
+
+    def _requested_skill_names(self, messages: list[Message]) -> set[str] | None:
+        requests = _completed_function_call_pairs(
+            _latest_group(messages, include_excluded=True),
+            tool_name=self.tool_name,
+            include_consumed=True,
+            include_excluded=True,
+        )
+        if not requests:
+            return set()
+
+        requested_names: set[str] = set()
+        for _, result in requests:
+            selections = [
+                item.additional_properties[_SKILL_UNLOAD_SELECTION_KEY]
+                for item in (result.items or [])
+                if item.type == "text" and _SKILL_UNLOAD_SELECTION_KEY in item.additional_properties
+            ]
+            if len(selections) != 1 or not isinstance(selections[0], list):
+                return set()
+            skill_names = cast("list[Any]", selections[0])
+            if any(not isinstance(skill_name, str) for skill_name in skill_names):
+                return set()
+            normalized_names = {skill_name.strip().casefold() for skill_name in skill_names if skill_name.strip()}
+            if not normalized_names:
+                return None
+            requested_names.update(normalized_names)
+        return requested_names
+
+    @staticmethod
+    def _skill_names_for_removable_group(group: Sequence[Message]) -> set[str] | None:
+        included_messages = [message for message in group if not message.additional_properties.get(EXCLUDED_KEY, False)]
+        tool_calls = [
+            content
+            for message in included_messages
+            for content in message.contents
+            if content.type in _TOOL_CALL_CONTENT_TYPES
+        ]
+        if not tool_calls or any(
+            call.type != "function_call" or call.name not in _SKILL_CONTEXT_TOOL_NAMES for call in tool_calls
+        ):
+            return None
+        calls = tool_calls
+
+        results_by_call_identity = {id(call): result for call, result in _function_call_result_pairs(included_messages)}
+        skill_names: set[str] = set()
+        for call in calls:
+            result = results_by_call_identity.get(id(call))
+            if (
+                result is None
+                or result.exception is not None
+                or result.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is True
+            ):
+                return None
+            skill_name = result.additional_properties.get(SKILL_CONTEXT_NAME_KEY)
+            if not isinstance(skill_name, str) or not skill_name.strip():
+                return None
+            skill_names.add(skill_name.strip().casefold())
+        return skill_names
+
+    async def __call__(self, messages: list[Message]) -> bool:
+        """Exclude matching loaded skill context groups."""
+        ordered_group_ids = annotate_message_groups(messages)
+        requested_skill_names = self._requested_skill_names(messages)
+        if requested_skill_names == set():
+            return False
+
+        grouped = _group_messages_by_id(messages)
+        changed = False
+        for group_id in ordered_group_ids:
+            group = grouped.get(group_id, [])
+            skill_names = self._skill_names_for_removable_group(group)
+            if skill_names is None:
+                continue
+            if requested_skill_names is not None and not skill_names.issubset(requested_skill_names):
+                continue
+            for message in group:
+                changed = set_excluded(message, excluded=True, reason="skill_unload") or changed
+        return changed
+
+
 class TruncationStrategy:
     """Oldest-first compaction using a single metric threshold.
 
@@ -1429,7 +1967,11 @@ class ToolResultCompactionStrategy:
                 for content in msg.contents:
                     if content.type == "function_call" and content.call_id and content.name:
                         call_id_to_name[content.call_id] = content.name
-                    elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
+                    elif (
+                        content.type in ("mcp_server_tool_call", "search_tool_call")
+                        and content.call_id
+                        and content.tool_name
+                    ):
                         call_id_to_name[content.call_id] = content.tool_name
 
             # Collect tool results with the tool name for context.
@@ -1445,6 +1987,11 @@ class ToolResultCompactionStrategy:
                         tool_results.append(label.strip())
                     elif content.type == "mcp_server_tool_result":
                         result_text = _tool_result_text(content.output)
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
+                        tool_results.append(label.strip())
+                    elif content.type == "search_tool_result":
+                        result_text = _tool_result_text(content.result if content.result is not None else content.items)
                         tool_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
@@ -1963,6 +2510,11 @@ class TokenBudgetComposedStrategy:
         self.strategies = list(strategies)
         self.early_stop = early_stop
 
+    @property
+    def requires_client_managed_history(self) -> bool:
+        """Return whether any nested strategy requires client-managed history."""
+        return any(_requires_client_managed_history(strategy) for strategy in self.strategies)
+
     async def __call__(self, messages: list[Message]) -> bool:
         annotate_message_groups(messages)
         annotate_token_counts(messages, tokenizer=self.tokenizer)
@@ -2369,6 +2921,7 @@ __all__ = [
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
     "SUMMARY_OF_MESSAGE_IDS_KEY",
+    "AgentTriggeredCompactionStrategy",
     "CharacterEstimatorTokenizer",
     "CompactionProvider",
     "CompactionStrategy",
@@ -2381,6 +2934,7 @@ __all__ = [
     "TokenizerProtocol",
     "ToolResultCompactionStrategy",
     "TruncationStrategy",
+    "UnloadSkillsCompactionStrategy",
     "annotate_message_groups",
     "annotate_token_counts",
     "append_compaction_message",

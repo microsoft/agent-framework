@@ -3,7 +3,7 @@
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-namespace Demo.ComputerUse;
+namespace Demo.ComputerUsePreview;
 
 /// <summary>
 /// Enum for tracking the state of the simulated web search flow.
@@ -40,7 +40,7 @@ internal static class ComputerUseUtil
         return screenshots;
     }
 
-    internal static async Task EnsureDeleteScreenshotAssetsAsync(IHostedFileClient fileClient, Dictionary<string, string> screenshots)
+    internal static async Task DeleteScreenshotAssetsAsync(IHostedFileClient fileClient, Dictionary<string, string> screenshots)
     {
         foreach (var (_, fileId) in screenshots)
         {

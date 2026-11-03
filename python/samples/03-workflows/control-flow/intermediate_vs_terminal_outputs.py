@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from typing import Never
 
 from agent_framework import (
     Message,
@@ -9,7 +10,6 @@ from agent_framework import (
     WorkflowExecutor,
     executor,
 )
-from typing_extensions import Never
 
 """
 Sample: Workflow Output vs Intermediate Output labeling

@@ -7,7 +7,7 @@ import datetime
 import json
 import logging
 import os
-from typing import Any, cast
+from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +22,7 @@ from agent_framework.exceptions import (
 from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from agent_framework_gemini import (
     GeminiChatClient,
@@ -74,6 +74,37 @@ def test_enterprise_integration_gate_accepts_either_mode(monkeypatch: pytest.Mon
     monkeypatch.setenv(mode, "true")
 
     assert _has_gemini_integration_credentials()
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("injected", [False, True])
+@pytest.mark.parametrize("fail_async_close", [False, True])
+async def test_gemini_client_context_ownership(client_type, injected: bool, fail_async_close: bool) -> None:
+    sdk_client = MagicMock()
+    sdk_client.aio.aclose = AsyncMock(side_effect=RuntimeError("close failed") if fail_async_close else None)
+    credential = MagicMock()
+    with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=sdk_client):
+        client = client_type(
+            model="test-model",
+            enterprise=True,
+            project="test-project",
+            location="us-central1",
+            credentials=credential,
+            client=sdk_client if injected else None,
+        )
+    if fail_async_close and not injected:
+        with pytest.raises(RuntimeError, match="close failed"):
+            async with client:
+                pass
+        sdk_client.aio.aclose.assert_awaited_once()
+        sdk_client.close.assert_called_once()
+    else:
+        async with client as entered:
+            assert entered is client
+        await client.close()
+        assert sdk_client.aio.aclose.await_count == (0 if injected else 1)
+        assert sdk_client.close.call_count == (0 if injected else 1)
+    credential.close.assert_not_called()
 
 
 @pytest.mark.integration
@@ -546,6 +577,38 @@ async def test_get_response_model_from_response() -> None:
     response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
     assert response.model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when the response carries no model_version."""
+    client, mock = _make_gemini_client()
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert response.model == "gemini-2.5-flash"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_get_response_reports_requested_model_on_both_paths(stream: bool) -> None:
+    """Without a model_version, both paths report the model requested in options, not the client default."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([raw]))
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(
+            messages=messages, options={"model": "gemini-2.5-pro"}, stream=True
+        ).get_final_response()
+    else:
+        response = await client.get_response(messages=messages, options={"model": "gemini-2.5-pro"})
+
+    assert response.model == "gemini-2.5-pro"
 
 
 async def test_get_response_streaming_model_from_chunk() -> None:
@@ -2573,8 +2636,8 @@ def test_get_web_search_tool_returns_google_search_tool() -> None:
 def test_get_web_search_tool_with_params() -> None:
     """Parameters are forwarded to types.GoogleSearch."""
     time_range = types.Interval(
-        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
-        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.timezone.utc),
+        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.UTC),
     )
     tool = GeminiChatClient.get_web_search_tool(
         search_types=types.SearchTypes(web_search=types.WebSearch()),

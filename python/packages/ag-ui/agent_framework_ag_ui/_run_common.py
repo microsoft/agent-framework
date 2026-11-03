@@ -618,6 +618,8 @@ def _offset_annotation_text_spans(annotations: list[dict[str, Any]], offset: int
     if offset == 0:
         return
     for annotation in annotations:
+        if annotation.get("annotated_regions_coordinate_space", "content") != "content":
+            continue
         regions = annotation.get("annotated_regions")
         if not isinstance(regions, list):
             continue

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import base64
 import os
 import uuid
@@ -34,6 +36,21 @@ from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework_ollama import OllamaChatClient
+
+
+@pytest.mark.parametrize("injected", [False, True])
+async def test_ollama_client_context_ownership(injected: bool) -> None:
+    sdk_client = AsyncClient(host="http://localhost:11434")
+    with patch("agent_framework_ollama._chat_client.AsyncClient", return_value=sdk_client):
+        client = OllamaChatClient(model="test-model", client=sdk_client if injected else None)
+    async with client as entered:
+        assert entered is client
+        assert not sdk_client._client.is_closed
+    await client.close()
+    assert sdk_client._client.is_closed is not injected
+    if injected:
+        await sdk_client._client.aclose()
+
 
 # region Service Setup
 
@@ -602,6 +619,126 @@ async def test_cmc_streaming_with_tool_call(
     assert chunks[2].contents[0].type == "text"
     text_result = chunks[2].contents[0]
     assert text_result.text == "test"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason="stop",
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "tool_calls"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_preserves_terminal_length(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason="length",
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "length"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_with_missing_terminal_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason=None,
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "tool_calls"
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)

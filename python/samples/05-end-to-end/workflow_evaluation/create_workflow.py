@@ -31,6 +31,7 @@ Agents:
 import asyncio
 import os
 from collections import defaultdict
+from typing import Never
 
 from _tools import (
     check_flight_availability,
@@ -61,7 +62,6 @@ from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
-from typing_extensions import Never
 
 load_dotenv()
 
