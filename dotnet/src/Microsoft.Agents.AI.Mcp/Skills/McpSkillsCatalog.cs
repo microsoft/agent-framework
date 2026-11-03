@@ -135,33 +135,6 @@ internal sealed partial class McpSkillsCatalog
     }
 
     /// <summary>
-    /// Treats missing or null scopes as public and rejects private responses without a cache partition key.
-    /// </summary>
-    /// <param name="scope">The response's declared cache scope.</param>
-    /// <param name="method">The MCP method producing the response.</param>
-    /// <returns>The validated scope, or public when the scope is missing or null.</returns>
-    /// <exception cref="InvalidOperationException">The response is private and this partition has no cache partition key.</exception>
-    public CacheScope ValidateAndNormalizeCacheScope(CacheScope? scope, string method)
-    {
-        // Treat missing or null scopes as public.
-        if (scope is null)
-        {
-            LogUnspecifiedCacheScope(this._logger, method);
-            scope = CacheScope.Public;
-        }
-
-        // Private responses require an isolation key to prevent reuse across authorization contexts.
-        if (scope == CacheScope.Private && !this._hasIsolationKey)
-        {
-            throw new InvalidOperationException(
-                $"The {method} response has a private cacheScope, but no cache partition key was provided. " +
-                $"Configure {nameof(AgentMcpSkillsSourceOptions)}.{nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector)} to return a nonempty authorization-context key.");
-        }
-
-        return scope.Value;
-    }
-
-    /// <summary>
     /// Fetches the complete list if it is missing or expired, or refreshes queued and expired skills in a fresh list.
     /// </summary>
     private async ValueTask<McpCacheEntry<IList<AgentSkill>>> RefreshCatalogAsync(McpCacheEntry<IList<AgentSkill>>? cached, CancellationToken cancellationToken)
@@ -308,7 +281,7 @@ internal sealed partial class McpSkillsCatalog
             throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
         }
 
-        result.CacheScope = this.ValidateAndNormalizeCacheScope(result.CacheScope, "skills/get");
+        result.CacheScope = ValidateAndNormalizeCacheScope(result.CacheScope, this._hasIsolationKey, this._logger, "skills/get");
 
         // Unlike listing responses, skills/get provides a TTL for this skill,
         // allowing it to expire and refresh independently of the catalog.
@@ -324,7 +297,7 @@ internal sealed partial class McpSkillsCatalog
 
         List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver);
+        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
     }
 
     /// <summary>
@@ -413,7 +386,7 @@ internal sealed partial class McpSkillsCatalog
                 throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
             }
 
-            result.CacheScope = this.ValidateAndNormalizeCacheScope(result.CacheScope, "skills/list");
+            result.CacheScope = ValidateAndNormalizeCacheScope(result.CacheScope, this._hasIsolationKey, this._logger, "skills/list");
 
             if (declaredScope is { } previousScope && previousScope != result.CacheScope)
             {
@@ -563,6 +536,27 @@ internal sealed partial class McpSkillsCatalog
     /// </summary>
     [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ResourceDigestRegex();
+
+    /// <summary>
+    /// Treats missing or null scopes as public and rejects private responses without a cache partition key.
+    /// </summary>
+    internal static CacheScope ValidateAndNormalizeCacheScope(CacheScope? scope, bool hasIsolationKey, ILogger logger, string method)
+    {
+        if (scope is null)
+        {
+            LogUnspecifiedCacheScope(logger, method);
+            scope = CacheScope.Public;
+        }
+
+        if (scope == CacheScope.Private && !hasIsolationKey)
+        {
+            throw new InvalidOperationException(
+                $"The {method} response has a private cacheScope, but no cache partition key was provided. " +
+                $"Configure {nameof(AgentMcpSkillsSourceOptions)}.{nameof(AgentMcpSkillsSourceOptions.CachePartitionKeySelector)} to return a nonempty authorization-context key.");
+        }
+
+        return scope.Value;
+    }
 
     /// <summary>
     /// Logs that a response has no <c>cacheScope</c> and is treated as public.

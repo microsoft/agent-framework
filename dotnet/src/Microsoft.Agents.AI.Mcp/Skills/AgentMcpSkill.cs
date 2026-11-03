@@ -52,6 +52,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     private readonly IReadOnlyList<McpSkillResourceEntry> _resources;
     private readonly long _maxResourceSizeBytes;
     private readonly McpSkillsCatalog _skillsCatalog;
+    private readonly bool _hasIsolationKey;
     private readonly TimeProvider _timeProvider;
     private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
     private readonly McpCache<string, ResourceContents> _resourceCache;
@@ -69,8 +70,9 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="timeProvider">Optional clock for resource expiration.</param>
     /// <param name="metadataLifetime">Optional lifetime for skill metadata. Defaults to no independent expiration; the catalog lifetime controls refreshes.</param>
     /// <param name="ttlResolver">Optional callback to override the server's resource TTLs.</param>
+    /// <param name="hasIsolationKey">Whether the skill belongs to a cache partition key.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> is not positive.</exception>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, McpSkillsCatalog catalog, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null)
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, McpSkillsCatalog catalog, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this.Uri = Throw.IfNullOrWhitespace(uri);
@@ -79,6 +81,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         this._resources = Throw.IfNull(resources);
         this._client = Throw.IfNull(client);
         this._skillsCatalog = Throw.IfNull(catalog);
+        this._hasIsolationKey = hasIsolationKey;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = ttlResolver;
         this._resourceCache = new(this._timeProvider, StringComparer.Ordinal);
@@ -197,7 +200,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         // Validation time consumes the TTL; network request time does not.
         long receivedTimestamp = this._timeProvider.GetTimestamp();
 
-        response.CacheScope = this._skillsCatalog.ValidateAndNormalizeCacheScope(response.CacheScope, "resources/read");
+        response.CacheScope = McpSkillsCatalog.ValidateAndNormalizeCacheScope(response.CacheScope, this._hasIsolationKey, this._logger, "resources/read");
 
         ResourceContents content = this.GetValidatedResourceContent(resource, response);
         if (!this.TryVerifyResourceIntegrity(resource, content, out string? mismatch))

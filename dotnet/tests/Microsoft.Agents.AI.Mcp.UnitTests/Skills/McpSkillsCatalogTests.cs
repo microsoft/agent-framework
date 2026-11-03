@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 /// <summary>
 /// Tests skill-list caching and refresh coordination.
 /// </summary>
-public sealed class McpSkillsCatalogTests
+public sealed partial class McpSkillsCatalogTests
 {
     [Fact]
     public void Constructor_NullClient_ThrowsArgumentNullException()
