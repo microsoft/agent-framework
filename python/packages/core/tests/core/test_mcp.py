@@ -6996,7 +6996,7 @@ async def test_load_tools_rejects_catalog_exceeding_page_limit() -> None:
                 tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})],
                 next_cursor="third",
             )
-        pytest.fail(f"Unexpected tools/list cursor: {cursor!r}")
+        raise AssertionError(f"Unexpected tools/list cursor: {cursor!r}")
 
     mock_session.list_tools = AsyncMock(side_effect=list_tools)
 
@@ -7287,7 +7287,7 @@ async def test_load_prompts_rejects_catalog_exceeding_page_limit() -> None:
             return types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second")
         if cursor == "second":
             return types.ListPromptsResult(prompts=[types.Prompt(name="second")], next_cursor="third")
-        pytest.fail(f"Unexpected prompts/list cursor: {cursor!r}")
+        raise AssertionError(f"Unexpected prompts/list cursor: {cursor!r}")
 
     mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
 
