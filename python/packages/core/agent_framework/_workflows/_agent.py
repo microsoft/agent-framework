@@ -111,7 +111,14 @@ class _StreamingRoleGate:
 
 
 class WorkflowAgent(BaseAgent):
-    """An `Agent` subclass that wraps a workflow and exposes it as an agent."""
+    """An `Agent` subclass that wraps a workflow and exposes it as an agent.
+
+    A ``WorkflowAgent`` wraps one stateful workflow. The ``session`` passed to :meth:`run` applies to the
+    wrapper only. It is not passed to the executors inside the workflow, and an ``AgentExecutor`` keeps its
+    own session for its whole lifetime. One instance must therefore not serve callers that need independent
+    state, and while one caller's request is pending, other runs of the same instance fail until it is
+    resolved. Create a new workflow and ``WorkflowAgent`` for each caller or conversation.
+    """
 
     # Class variable for the request info function name
     REQUEST_INFO_FUNCTION_NAME: ClassVar[str] = "request_info"
