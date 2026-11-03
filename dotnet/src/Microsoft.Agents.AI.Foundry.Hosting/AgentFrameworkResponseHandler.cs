@@ -231,7 +231,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 is { } workflowCheckpointRecovery)
         {
             string? checkpointId =
-                stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
+                stream.PersistedMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
                 && !string.IsNullOrWhiteSpace(persistedCheckpointId)
                     ? persistedCheckpointId
                     : null;
@@ -445,7 +445,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                                     // AgentServer persists its orchestrator-owned response snapshot.
                                     // Apply the updated internal metadata first, then request persistence.
                                     pendingEvents.Enqueue(checkpointStateEvent);
-                                    pendingEvents.Enqueue(stream.Checkpoint());
+                                    pendingEvents.Enqueue(stream.CreateCheckpointEvent());
                                 }
 
                                 continue;
@@ -686,7 +686,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 || session is null
                 || session.GetService<WorkflowSessionCheckpointRecovery>() is null
                 || agentSessionKey is null
-                || (stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
+                || (stream.PersistedMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
                     && string.Equals(lastCheckpointId, checkpoint.CheckpointId, StringComparison.Ordinal)))
             {
                 return null;
@@ -714,15 +714,19 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 return null;
             }
 
-            stream.InternalMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
+            stream.PersistedMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
             return stream.EmitInProgress();
         }
 
-        // Check whenever the agent is storing messages when it should not.
+        // A per-service-call history provider uses a local marker in ConversationId to keep
+        // function invocation working; only a real service conversation indicates stored output.
         bool CheckNotAllowedStoreUsage() =>
-            // For IChatClients implementations when the backend is set to not store (store = false) the returned responseMessage.ConversationId comes null.
-            // If for any reason this property is set it means that the storage setting was enabled when it shouldn't.
-            !allowStoredOutputEnabled && session is ChatClientAgentSession { ConversationId: not null };
+            !allowStoredOutputEnabled
+            && session is ChatClientAgentSession { ConversationId: not null } chatSession
+            && !string.Equals(
+                chatSession.ConversationId,
+                PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId,
+                StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -1034,7 +1038,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
+            : $"Agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
@@ -1083,7 +1087,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
+            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }

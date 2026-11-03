@@ -416,9 +416,7 @@ def _parse_inputs(  # pyright: ignore[reportUnusedFunction]
     if inputs is None:
         return []
 
-    from ._types import (
-        Content,
-    )
+    from ._types import Content
 
     parsed_inputs: list[Content] = []
     if not isinstance(inputs, list):
@@ -1363,8 +1361,8 @@ class FunctionTool(SerializationMixin):
         """Recursively convert a value to a JSON-dumpable form."""
         from ._types import Content
 
-        if isinstance(value, list):
-            list_value = cast(list[object], value)
+        if isinstance(value, (list, tuple)):
+            list_value = cast(list[object] | tuple[object, ...], value)
             return [FunctionTool._make_dumpable(item) for item in list_value]
         if isinstance(value, dict):
             dict_value = cast(dict[object, object], value)
@@ -1406,7 +1404,7 @@ class FunctionTool(SerializationMixin):
             return [Content.from_text(result)]
         if isinstance(result, Content):
             return [result]
-        if isinstance(result, list) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
+        if isinstance(result, (list, tuple)) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
             parsed_items: list[Content] = []
             for item in result:  # type: ignore[reportUnknownVariableType]
                 if isinstance(item, Content):
@@ -4449,9 +4447,7 @@ def _replace_approval_contents_with_results(
     Returns:
         The terminal contents produced while resolving the approval responses, in response order.
     """
-    from ._types import (
-        Content,
-    )
+    from ._types import APPROVAL_REJECTION_RESULT_KEY, Content
 
     result_groups_by_call_id: dict[str, deque[list[Content]]] = {}
     for result_group in approved_function_result_groups:
@@ -4578,7 +4574,10 @@ def _replace_approval_contents_with_results(
                             call_id=call_id,
                             id=occurrence.function_call.id if occurrence is not None else content.function_call.id,
                             result="Error: Tool call invocation was rejected by user.",
-                            additional_properties=content.function_call.additional_properties,
+                            additional_properties={
+                                **content.function_call.additional_properties,
+                                APPROVAL_REJECTION_RESULT_KEY: True,
+                            },
                         )
                     ]
                 if not replacements:

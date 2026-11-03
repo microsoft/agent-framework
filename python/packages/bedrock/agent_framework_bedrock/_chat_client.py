@@ -54,10 +54,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.bedrock")
 
@@ -326,7 +322,9 @@ class BedrockChatClient(
         region = settings.get("region") or session_region or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
-        if client:
+        self._owns_client = client is None
+        self._client_closed = False
+        if client is not None:
             self._bedrock_client = client
         else:
             session = boto3_session or self._create_session(settings)
@@ -343,6 +341,13 @@ class BedrockChatClient(
         )
         self.model = chat_model
         self.region = region
+
+    @override
+    async def close(self) -> None:
+        """Close the owned runtime connection without closing caller-owned sessions."""
+        if self._owns_client and not self._client_closed:
+            await asyncio.to_thread(self._bedrock_client.close)
+            self._client_closed = True
 
     @staticmethod
     def _create_session(settings: BedrockSettings) -> Boto3Session:
@@ -545,8 +550,11 @@ class BedrockChatClient(
                 )
             elif message.role == "tool":
                 content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
-                pending_tool_use_ids.clear()
                 if not content_blocks:
+                    continue
+                # Merge consecutive tool messages into a single user message
+                if conversation and conversation[-1]["role"] == "user":
+                    conversation[-1]["content"].extend(content_blocks)
                     continue
             else:
                 pending_tool_use_ids.clear()
@@ -567,7 +575,6 @@ class BedrockChatClient(
             ]
 
         aligned_blocks: list[dict[str, Any]] = []
-        pending = deque(pending_tool_use_ids)
         for block in content_blocks:
             if not isinstance(block, MutableMapping):
                 aligned_blocks.append(block)
@@ -576,18 +583,18 @@ class BedrockChatClient(
             if not tool_result:
                 aligned_blocks.append(block)
                 continue
-            if not pending:
+            if not pending_tool_use_ids:
                 logger.debug("Dropping extra tool result block due to missing pending tool uses: %s", block)
                 continue
             tool_use_id = tool_result.get("toolUseId")
             if tool_use_id:
                 try:
-                    pending.remove(tool_use_id)
+                    pending_tool_use_ids.remove(tool_use_id)
                 except ValueError:
                     logger.debug("Tool result references unknown toolUseId '%s'. Dropping block.", tool_use_id)
                     continue
             else:
-                tool_result["toolUseId"] = pending.popleft()
+                tool_result["toolUseId"] = pending_tool_use_ids.popleft()
             aligned_blocks.append(block)
 
         return aligned_blocks

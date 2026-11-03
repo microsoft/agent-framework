@@ -22,6 +22,24 @@ Monty-backed CodeAct integrations for Microsoft Agent Framework.
 > enforce authorization and destination restrictions inside host functions.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
 
+## Error diagnostics
+
+Host tool failures raise a generic `RuntimeError("Host tool execution failed.")`
+inside generated code by default. Execution error contents omit raw diagnostic
+details. This applies to both direct tool calls and `call_tool(...)`, including
+failures that generated code catches and prints or returns.
+
+Both `MontyCodeActProvider` and `MontyExecuteCodeTool` accept the host-side option
+`include_detailed_errors=True` to retain original host exception types/messages
+and execution diagnostics. Enable it only for a trusted channel: exception
+messages can contain credentials or other sensitive data. This option is not a
+parameter of `execute_code` and is independent of the outer chat client's error
+policy and sensitive-data logging. Run snapshots and serialized state retain it.
+
+Code that catches a specific host exception type, such as `ValueError`, must
+instead handle the generic `RuntimeError` in the default mode. Failure signaling
+and successful tool results are unchanged.
+
 ## Installation
 
 ```bash
@@ -195,12 +213,22 @@ codeact = MontyCodeActProvider(
   after each `execute_code` call and returned as `Content.from_data(...)`
   attachments (with a `path` annotation in `additional_properties`),
   mirroring Hyperlight's `/output` flow.
+- Capture is limited to **20 files and 20 MiB of raw file data per call across
+  all read-write mounts**, with a **5 MiB per-file limit**. Empty files count
+  toward the file limit. Files that do not fit the remaining byte budget are
+  skipped; later smaller files can still be captured. Exact fits are accepted.
+  Returned base64 data and Python objects add memory overhead beyond the raw
+  byte budget.
+- Files omitted by capture limits produce one text summary, not one warning
+  per file. Omission does not undo filesystem writes. These limits bound
+  attachment capture, not filesystem traversal, disk use, or all host memory.
 - `overlay` mounts buffer writes in memory (nothing leaks to the host and
   nothing is captured). `read-only` mounts reject writes.
 - **`resource_limits`** is forwarded straight to Monty's
   [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
   (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
-  `max_suspensions`).
+  `max_suspensions`). These interpreter limits do not independently bound
+  host-side post-execution attachment capture.
 
 ## DSL inside `execute_code`
 

@@ -287,51 +287,192 @@ class ApiCompatibilityTests(unittest.TestCase):
         )
         self.assertNotIn(str(current_source), warning)
 
-    def test_ignores_instance_values_but_reports_other_attribute_values(self) -> None:
+    def test_attribute_value_changes_are_not_breaking(self) -> None:
         self.write_status([("agent-framework-stable", "stable", "released")])
         self.write_module(
             "stable",
             "stable_api",
             {
                 "__init__.py": (
-                    "from enum import Enum\n\n"
                     'PUBLIC_VALUE = "old"\n\n'
                     "class PublicClass:\n"
                     "    class_value: int = 1\n\n"
                     "    instance_value: str\n\n"
                     "    def __init__(self):\n"
-                    '        self.instance_value = "old"\n\n'
-                    "class PublicEnum(Enum):\n"
-                    "    MEMBER = 1\n"
+                    '        self.instance_value = "old"\n'
                 )
             },
         )
         base_sha = self.commit()
         (self.repo / "python/packages/stable/stable_api/__init__.py").write_text(
-            "from enum import Enum\n\n"
             'PUBLIC_VALUE = "new"\n\n'
             "class PublicClass:\n"
             "    class_value: int = 2\n\n"
             "    instance_value: str\n\n"
             "    def __init__(self):\n"
-            '        self.instance_value = "new"\n\n'
-            "class PublicEnum(Enum):\n"
-            "    MEMBER = 2\n"
+            '        self.instance_value = "new"\n'
         )
 
         result = self.run_checker(base_sha)
 
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 0)
         warnings = [
             line for line in result.stdout.splitlines() if line.startswith("::warning ")
         ]
-        self.assertEqual(len(warnings), 3)
-        self.assertTrue(any("PUBLIC_VALUE" in warning for warning in warnings))
-        self.assertTrue(
-            any("PublicClass.class_value" in warning for warning in warnings)
+        self.assertEqual(warnings, [])
+        self.assertIn(
+            "- Published API breakages: 0", (self.repo / "summary.md").read_text()
         )
-        self.assertTrue(any("PublicEnum.MEMBER" in warning for warning in warnings))
-        self.assertFalse(any("instance_value" in warning for warning in warnings))
+
+    def test_public_enum_value_changes_are_breaking_and_acknowledgeable(self) -> None:
+        self.write_status([("agent-framework-stable", "stable", "released")])
+        for enum_base in ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"):
+            with self.subTest(enum_base=enum_base):
+                old_value, new_value = (
+                    ('"old"', '"new"') if enum_base == "StrEnum" else ("1", "2")
+                )
+                source = (
+                    f"from enum import {enum_base}\n\n"
+                    f"class PublicEnum({enum_base}):\n"
+                    f"    MEMBER = {old_value}\n"
+                )
+                module_path = self.write_module(
+                    "stable", "stable_api", {"__init__.py": source}
+                )
+                base_sha = self.commit()
+                (module_path / "__init__.py").write_text(
+                    source.replace(f"MEMBER = {old_value}", f"MEMBER = {new_value}")
+                )
+
+                result = self.run_checker(base_sha)
+                acknowledged_result = self.run_checker(base_sha, acknowledged=True)
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                warnings = [
+                    line
+                    for line in result.stdout.splitlines()
+                    if line.startswith("::warning ")
+                ]
+                self.assertEqual(len(warnings), 1, result.stdout)
+                self.assertIn("PublicEnum.MEMBER", warnings[0])
+                self.assertIn("file=python/packages/stable/stable_api/", warnings[0])
+                self.assertIn(
+                    "- Published API breakages: 1",
+                    (self.repo / "summary.md").read_text(),
+                )
+                self.assertEqual(
+                    acknowledged_result.returncode,
+                    0,
+                    acknowledged_result.stdout + acknowledged_result.stderr,
+                )
+
+    def test_reexported_indirect_enum_changes_are_reported_once(self) -> None:
+        self.write_status([("agent-framework-stable", "stable", "released")])
+        source = (
+            "import enum\n\n"
+            "class Base(str, enum.Enum): pass\n\n"
+            "class PublicEnum(Base):\n"
+            '    MEMBER = "old"\n\n'
+            "class HiddenEnum(enum.Enum):\n"
+            "    MEMBER = 1\n"
+        )
+        module_path = self.write_module(
+            "stable",
+            "stable_api",
+            {
+                "__init__.py": (
+                    "from ._api import PublicEnum, PublicEnum as OtherName\n"
+                    '__all__ = ["PublicEnum", "OtherName"]\n'
+                ),
+                "_api.py": source,
+            },
+        )
+        base_sha = self.commit()
+        (module_path / "_api.py").write_text(
+            source.replace('"old"', '"new"').replace("MEMBER = 1", "MEMBER = 2")
+        )
+
+        result = self.run_checker(base_sha)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        warnings = [
+            line for line in result.stdout.splitlines() if line.startswith("::warning ")
+        ]
+        self.assertEqual(len(warnings), 1, result.stdout)
+        self.assertIn("PublicEnum.MEMBER", warnings[0])
+
+    def test_enum_additions_and_non_member_attributes_are_not_breaking(self) -> None:
+        self.write_status([("agent-framework-stable", "stable", "released")])
+        source = (
+            "from enum import Enum, nonmember\n\n"
+            "class PublicEnum(Enum):\n"
+            "    MEMBER = 1\n"
+            '    metadata = nonmember("old")\n'
+            "    def __init__(self, value):\n"
+            '        self.description = "old"\n'
+        )
+        module_path = self.write_module("stable", "stable_api", {"__init__.py": source})
+        base_sha = self.commit()
+        (module_path / "__init__.py").write_text(
+            source.replace('"old"', '"new"').replace(
+                "MEMBER = 1", "MEMBER = 1\n    ADDED = 2"
+            )
+        )
+
+        result = self.run_checker(base_sha)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("::warning ", result.stdout)
+
+    def test_enum_changes_use_base_feature_stage_even_after_relocation(self) -> None:
+        self.write_status([("agent-framework-core", "core", "released")])
+        source = (
+            "from enum import Enum\n"
+            "from ._feature_stage import experimental, release_candidate\n\n"
+            '@experimental(feature_id="TEST")\n'
+            "class ExperimentalEnum(Enum):\n"
+            "    MEMBER = 1\n\n"
+            '@release_candidate(feature_id="TEST")\n'
+            "class ReleaseCandidateEnum(Enum):\n"
+            "    MEMBER = 1\n\n"
+            "class StableEnum(Enum):\n"
+            "    MEMBER = 1\n"
+        )
+        exports = (
+            "from ._api import ExperimentalEnum, ReleaseCandidateEnum, StableEnum\n"
+            '__all__ = ["ExperimentalEnum", "ReleaseCandidateEnum", "StableEnum"]\n'
+        )
+        module_path = self.write_module(
+            "core",
+            "agent_framework",
+            {
+                "__init__.py": exports,
+                "_api.py": source,
+                "_feature_stage.py": (
+                    "def experimental(*, feature_id):\n"
+                    "    return lambda obj: obj\n\n"
+                    "def release_candidate(*, feature_id):\n"
+                    "    return lambda obj: obj\n"
+                ),
+            },
+        )
+        base_sha = self.commit()
+        (module_path / "_api.py").unlink()
+        (module_path / "_new_api.py").write_text(
+            source.replace("MEMBER = 1", "MEMBER = 2").replace(
+                "class StableEnum", '@experimental(feature_id="TEST")\nclass StableEnum'
+            )
+        )
+        (module_path / "__init__.py").write_text(exports.replace("._api", "._new_api"))
+
+        result = self.run_checker(base_sha)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        warnings = [
+            line for line in result.stdout.splitlines() if line.startswith("::warning ")
+        ]
+        self.assertEqual(len(warnings), 1, result.stdout)
+        self.assertIn("StableEnum.MEMBER", warnings[0])
 
 
 if __name__ == "__main__":

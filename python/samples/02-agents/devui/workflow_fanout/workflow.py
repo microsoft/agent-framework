@@ -18,7 +18,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
+from typing import Literal, Never
 
 from agent_framework import (
     Executor,
@@ -27,7 +27,6 @@ from agent_framework import (
     handler,
 )
 from pydantic import BaseModel, Field
-from typing_extensions import Never
 
 
 class DataType(Enum):

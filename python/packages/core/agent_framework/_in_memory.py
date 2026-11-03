@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from typing import Any, ClassVar, Generic, cast
 from uuid import UUID, uuid4
 
@@ -18,8 +19,10 @@ from typing_extensions import TypeVar
 from ._feature_stage import ExperimentalFeature, experimental
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._vector_filters import (
+    _TEXT_VALUE_OPERATORS,  # pyright: ignore[reportPrivateUsage]
     Filter,
     FilterExpression,
+    FilterGroup,
     validate_filter,
 )
 from ._vectors import (
@@ -150,6 +153,210 @@ def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFun
     if not math.isfinite(score):
         raise ValueError(f"Distance function '{distance_function}' produced a non-finite score.")
     return score
+
+
+_DURATION_PATTERN = re.compile(
+    r"^(?P<sign>-)?P(?:(?P<days>[0-9]+(?:\.[0-9]+)?)D)?"
+    r"(?:T(?:(?P<hours>[0-9]+(?:\.[0-9]+)?)H)?(?:(?P<minutes>[0-9]+(?:\.[0-9]+)?)M)?"
+    r"(?:(?P<seconds>[0-9]+(?:\.[0-9]+)?)S)?)?$"
+)
+
+
+def _restore_datetime(value: str) -> datetime:
+    """Parse a timestamp the shared serializer wrote."""
+    if value.endswith("Z"):
+        value = f"{value[:-1]}+00:00"
+    restored = datetime.fromisoformat(value)
+    if restored.tzinfo is not None:
+        # Aware values compare by instant, and CPython only guarantees that
+        # when both sides name their time the same way: in a repeated DST
+        # hour a zone datetime is unequal to the fixed-offset form parsed
+        # back from the record even at the same instant.
+        return restored.astimezone(timezone.utc)
+    return restored
+
+
+def _restore_timedelta(value: str) -> timedelta:
+    """Parse the ISO 8601 duration the shared serializer wrote.
+
+    The components are summed as exact decimals of microseconds: the string
+    the serializer writes carries every microsecond, while a ``float`` of the
+    total seconds loses them on the largest durations (``timedelta.max`` even
+    rounds past the range the type supports). The arithmetic runs in an
+    isolated context with ample precision, so an application that lowers the
+    ambient Decimal precision cannot change what a duration filter matches.
+    """
+    match = _DURATION_PATTERN.match(value)
+    if match is None:
+        raise ValueError(f"Unsupported duration '{value}'.")
+    parts = match.groupdict()
+    with localcontext() as ctx:
+        ctx.prec = 40
+        microseconds = (
+            Decimal(parts["days"] or "0") * 86_400_000_000
+            + Decimal(parts["hours"] or "0") * 3_600_000_000
+            + Decimal(parts["minutes"] or "0") * 60_000_000
+            + Decimal(parts["seconds"] or "0") * 1_000_000
+        )
+        micros = int(microseconds.quantize(Decimal(1), rounding=ROUND_HALF_EVEN))
+    delta = timedelta(microseconds=micros)
+    return -delta if parts["sign"] else delta
+
+
+def _restore_time(value: str) -> time:
+    """Parse a time of day the shared serializer wrote."""
+    if value.endswith("Z"):
+        # The serializer writes a UTC time with a trailing "Z", which
+        # ``time.fromisoformat`` accepts only from Python 3.11.
+        value = f"{value[:-1]}+00:00"
+    return time.fromisoformat(value)
+
+
+_RESTORE_IN_MEMORY_VALUE_TYPES: dict[str, Callable[[str], Any]] = {
+    "datetime": _restore_datetime,
+    "date": date.fromisoformat,
+    "time": _restore_time,
+    "timedelta": _restore_timedelta,
+    "UUID": UUID,
+    "Decimal": Decimal,
+}
+_SERIALIZED_SCALAR_TYPE_NAMES = frozenset(_RESTORE_IN_MEMORY_VALUE_TYPES)
+_TEXT_STORED_TYPE_NAMES = _SERIALIZED_SCALAR_TYPE_NAMES - {"Decimal"}
+_COMPARISON_OPERATORS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte"})
+_SEQUENCE_OPERAND_OPERATORS = frozenset({"between", "in", "not_in"})
+_COLLECTION_OPERATORS = frozenset({"contains", "contains_any", "contains_all"})
+
+
+def _restore_in_memory_value(value: Any, type_tag: str | None) -> Any:
+    """Return a stored value in the type its field declares.
+
+    In-memory records are stored through the shared serializer, so a native
+    scalar such as a datetime is held as its serialized value. A filter
+    operand arrives native, so the stored value is restored before the
+    comparison and the comparison keeps the field's semantics.
+    """
+    if not isinstance(value, str) or type_tag is None:
+        return value
+    restore = _RESTORE_IN_MEMORY_VALUE_TYPES.get(type_tag)
+    if restore is None:
+        return value
+    try:
+        return restore(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _evaluate_in_memory_filter(
+    expression: FilterExpression,
+    record: Mapping[str, Any],
+    definition: VectorStoreCollectionDefinition,
+) -> bool:
+    """Evaluate a filter against the record as it is stored, one leaf at a time.
+
+    A comparison operator restores its own leaf's field to the type the field
+    declares, so the native operand compares in the field's semantics. Aware
+    datetimes are named in UTC on both sides of the comparison so an operand
+    in any zone matches the instant that was stored. The text operators stay
+    on the stored string, which lets one group mix a text operator and a
+    native comparison over the same field.
+    """
+    if isinstance(expression, FilterGroup):
+        values = (_evaluate_in_memory_filter(item, record, definition) for item in expression.filters)
+        match expression.operator:
+            case "and":
+                return all(values)
+            case "or":
+                return any(values)
+            case "not":
+                return not next(values)
+            case _:
+                raise ValueError(f"Unknown filter group operator '{expression.operator}'.")
+    field = definition.try_get_field(expression.field_name)
+    if (
+        field is None
+        or field.type_ not in _SERIALIZED_SCALAR_TYPE_NAMES
+        or expression.operator in _TEXT_VALUE_OPERATORS
+    ):
+        return _evaluate_filter(_normalized_in_memory_leaf(expression, field), record, definition)
+    restored = dict(record)
+    storage_name = field.storage_name or field.name
+    if storage_name in restored:
+        restored[storage_name] = _restore_in_memory_value(restored[storage_name], field.type_)
+    return _evaluate_filter(_normalized_in_memory_leaf(expression, field), restored, definition)
+
+
+def _normalized_key_operand(field: Any, operand: Any) -> Any:
+    """Return a UUID key operand in the field's native comparison form.
+
+    Scoped tools address UUID keys through their canonical string form
+    (``key_from_json``), so a canonical string operand normalizes to UUID for
+    the compatibility check and the comparison instead of being rejected by
+    the exact-type match. Anything else passes through unchanged.
+    """
+    if field.field_type == "key" and field.type_ == "UUID" and isinstance(operand, str):
+        try:
+            return UUID(operand)
+        except ValueError:
+            return operand
+    return operand
+
+
+def _normalized_key_leaf(expression: Filter, field: Any) -> Filter:
+    """Return the leaf with its UUID key operands normalized when present.
+
+    Text operators keep string operands unchanged: they compare against the
+    stored key exactly as the canonical string was written, and a normalized
+    UUID would make ``starts_with`` and friends raise.
+    """
+    if (
+        field is None
+        or field.field_type != "key"
+        or field.type_ != "UUID"
+        or expression.operator in _TEXT_VALUE_OPERATORS
+    ):
+        return expression
+    value = expression.value
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        items = cast("Sequence[Any]", value)
+        normalized: Any = [_normalized_key_operand(field, item) for item in items]
+    else:
+        normalized = _normalized_key_operand(field, value)
+    if normalized == value:
+        return expression
+    return Filter(expression.field_name, expression.operator, normalized)
+
+
+def _normalized_datetime_operand(field: Any, operand: Any) -> Any:
+    """Return aware datetime operands as the common instant in UTC.
+
+    CPython compares aware datetimes that carry different tzinfo objects per
+    wall clock, so in a repeated DST hour a zone datetime is unequal to the
+    fixed-offset form a record is restored to even at the same instant.
+    Naming UTC on both sides pins equality, ordering and membership to
+    instants. Naive datetimes and anything else pass through unchanged.
+    """
+    if field is None or field.type_ != "datetime":
+        return operand
+    if isinstance(operand, datetime):
+        return operand.astimezone(timezone.utc) if operand.tzinfo is not None else operand
+    if isinstance(operand, Sequence) and not isinstance(operand, (str, bytes, bytearray)):
+        items = cast("Sequence[Any]", operand)
+        return [_normalized_datetime_operand(field, item) for item in items]
+    return operand
+
+
+def _normalized_in_memory_leaf(expression: Filter, field: Any) -> Filter:
+    """Return the leaf with key and datetime operands in comparison form.
+
+    Key operands normalize so a canonical string compares against the UUID
+    that was stored, and aware datetime operands normalize to UTC so both
+    sides of the comparison name the same instant. Text operators keep their
+    operands verbatim: they address the stored string.
+    """
+    if field is None or field.type_ != "datetime" or expression.operator in _TEXT_VALUE_OPERATORS:
+        return _normalized_key_leaf(expression, field)
+    leaf = _normalized_key_leaf(expression, field)
+    return Filter(leaf.field_name, leaf.operator, _normalized_datetime_operand(field, leaf.value))
 
 
 def _validate_in_memory_filter_value(value: Any) -> None:
@@ -307,7 +514,8 @@ class InMemoryCollection(
         records = list(self._state.records.values())
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
-            records = [record for record in records if _evaluate_filter(filter, record, self.definition)]
+            _reject_incompatible_filter_operands(filter, self.definition)
+            records = [record for record in records if _evaluate_in_memory_filter(filter, record, self.definition)]
         if order_by:
             for field_name, ascending in reversed(tuple(order_by.items())):
                 if not isinstance(ascending, bool):
@@ -362,6 +570,7 @@ class InMemoryCollection(
         _validate_vector_dimensions(query_vector, vector_field)
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
+            _reject_incompatible_filter_operands(filter, self.definition)
 
         distance_function = vector_field.distance_function or "DEFAULT"
         if distance_function == "DEFAULT":
@@ -375,7 +584,7 @@ class InMemoryCollection(
         results: list[dict[str, Any]] = []
         key_storage_name = self.definition.key_field_storage_name
         for record in self._state.records.values():
-            if filter is not None and not _evaluate_filter(filter, record, self.definition):
+            if filter is not None and not _evaluate_in_memory_filter(filter, record, self.definition):
                 continue
             stored_vector = record.get(storage_name)
             if stored_vector is None:
@@ -432,6 +641,70 @@ def _validate_in_memory_filter(
         if "." in item.field_name:
             raise NotImplementedError("InMemoryCollection does not support nested filter field paths.")
         _validate_in_memory_filter_value(item.value)
+
+
+def _filter_operand_values(item: Filter) -> tuple[Any, ...]:
+    """Return the operands a filter compares against the field value.
+
+    The collection operators compare their operands element by element, so
+    their values count as operands too.
+    """
+    if item.operator in _COMPARISON_OPERATORS:
+        return (item.value,)
+    if item.operator in _SEQUENCE_OPERAND_OPERATORS or item.operator in _COLLECTION_OPERATORS:
+        value = item.value
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return tuple(cast(Sequence[Any], value))
+        return (value,)
+    return ()
+
+
+def _operand_matches_field_type(field_type: str, operand: Any) -> bool:
+    """Return True when the operand can be compared in the type the field declares.
+
+    A field stored as a native value compares exactly with Python's own numeric
+    equality and ordering, so numeric operands fit any of those fields; only
+    the types the serializer writes as text can never be compared against them.
+    An ``int`` operand also fits a ``Decimal`` field: the restore compares the
+    two exactly, in equality and in ordering.
+    """
+    if operand is None:
+        return True
+    operand_type = type(operand).__name__
+    if field_type in _SERIALIZED_SCALAR_TYPE_NAMES:
+        return operand_type == field_type or (field_type == "Decimal" and operand_type == "int")
+    return operand_type not in _TEXT_STORED_TYPE_NAMES
+
+
+def _reject_incompatible_filter_operands(
+    expression: FilterExpression,
+    definition: VectorStoreCollectionDefinition,
+) -> None:
+    """Reject an operand that cannot be compared in the type the field declares.
+
+    A record is stored through the shared serializer, so the scalar types it
+    writes as text are restored before the comparison. An operand of another
+    type cannot be compared in the field's own semantics, so it is rejected
+    instead of quietly matching no record. The text operators are exempt:
+    they compare the stored string itself, and their operand is already
+    required to be a string by the shared filter validation. A collection
+    field stores its elements as the serializer writes them, so an operand
+    element of a text-stored type can never match there and is rejected too.
+    """
+    for item in _walk_filters(expression):
+        field = definition.try_get_field(item.field_name)
+        if field is None or field.type_ is None:
+            continue
+        if item.operator in _TEXT_VALUE_OPERATORS:
+            continue
+        for operand in _filter_operand_values(item):
+            if _operand_matches_field_type(field.type_, _normalized_key_operand(field, operand)):
+                continue
+            raise TypeError(
+                f"InMemoryCollection cannot compare field '{item.field_name}' of type '{field.type_}' "
+                f"with a filter operand of type '{type(operand).__name__}'. The in-memory connector "
+                "compares native scalars in the type the field declares."
+            )
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)

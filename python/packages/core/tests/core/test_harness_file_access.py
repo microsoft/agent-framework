@@ -1510,7 +1510,7 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
 
 
 def test_link_probe_detects_windows_reparse_attribute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Python 3.10/3.11 Windows fallback should detect the reparse-point file attribute."""
+    """The Python 3.11 Windows fallback should detect the reparse-point file attribute."""
     path = tmp_path / "entry"
     path.write_text("content", encoding="utf-8")
     reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)

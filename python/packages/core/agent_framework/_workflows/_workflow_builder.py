@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-import sys
 import uuid
-from collections.abc import Callable, Sequence
-from typing import Any, ClassVar, Literal
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, ClassVar, Literal, Self
 
 from .._agents import SupportsAgentRun
 from .._telemetry import FeatureIndex, mark_feature_used
@@ -35,12 +34,6 @@ from ._workflow import (
     _coalesce_output_from_kwarg,  # pyright: ignore[reportPrivateUsage]
 )
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
-
-
 logger = logging.getLogger(__name__)
 
 _ALL_OUTPUTS: Literal["all"] = "all"
@@ -60,7 +53,7 @@ class WorkflowBuilder:
     Example:
         .. code-block:: python
 
-            from typing_extensions import Never
+            from typing import Never
             from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 
@@ -251,7 +244,7 @@ class WorkflowBuilder:
         Example:
             .. code-block:: python
 
-                from typing_extensions import Never
+                from typing import Never
                 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 
@@ -426,7 +419,7 @@ class WorkflowBuilder:
         self,
         source: Executor | SupportsAgentRun,
         targets: Sequence[Executor | SupportsAgentRun],
-        selection_func: Callable[[Any, list[str]], list[str]],
+        selection_func: Callable[[Any, list[str]], list[str] | Awaitable[list[str]]],
     ) -> Self:
         """Add an edge group that represents a multi-selection execution model.
 
@@ -532,7 +525,7 @@ class WorkflowBuilder:
         Example:
             .. code-block:: python
 
-                from typing_extensions import Never
+                from typing import Never
                 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 
@@ -580,7 +573,7 @@ class WorkflowBuilder:
         Example:
             .. code-block:: python
 
-                from typing_extensions import Never
+                from typing import Never
                 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 
@@ -744,7 +737,7 @@ class WorkflowBuilder:
         Example:
             .. code-block:: python
 
-                from typing_extensions import Never
+                from typing import Never
                 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 

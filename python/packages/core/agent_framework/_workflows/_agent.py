@@ -775,12 +775,28 @@ class WorkflowAgent(BaseAgent):
                             raw_representation=msg,
                         )
                     )
+                if not updates and data.usage_details is not None:
+                    # No message is shown to the caller, but the tokens were still spent. Without a
+                    # message_id or author_name this update joins the message in progress instead of
+                    # starting a new one.
+                    updates.append(
+                        AgentResponseUpdate(
+                            contents=[],
+                            role="assistant",
+                            response_id=data.response_id or response_id,
+                            created_at=data.created_at
+                            or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                        )
+                    )
                 if updates:
                     updates[-1].agent_id = data.agent_id
                     updates[-1].finish_reason = data.finish_reason
                     updates[-1].continuation_token = data.continuation_token
                     _copy_operation_state(cast(AgentResponse[Any], data), updates[-1])
                     updates[-1].additional_properties = dict(data.additional_properties)
+                    # Updates carry usage as content; without it the streamed response loses the token counts.
+                    if data.usage_details is not None:
+                        updates[-1].contents.append(Content.from_usage(data.usage_details))
                 return updates
             if isinstance(data, Message):
                 if data.role != "assistant" or _contains_internal_call_content(data.contents):

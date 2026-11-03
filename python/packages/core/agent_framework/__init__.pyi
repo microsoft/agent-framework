@@ -4,7 +4,11 @@ from typing import Final
 
 __version__: Final[str]
 
-from ._agent_hooks import create_agent_hooks_middleware, create_agent_hooks_middleware_from_emitter
+from ._agent_hooks import (
+    create_agent_hooks_middleware,
+    create_agent_hooks_middleware_from_declaration,
+    create_agent_hooks_middleware_from_emitter,
+)
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
 from ._clients import (
     BaseChatClient,
@@ -31,6 +35,7 @@ from ._compaction import (
     SUMMARIZED_BY_SUMMARY_ID_KEY,
     SUMMARY_OF_GROUP_IDS_KEY,
     SUMMARY_OF_MESSAGE_IDS_KEY,
+    AgentTriggeredCompactionStrategy,
     CharacterEstimatorTokenizer,
     CompactionProvider,
     CompactionStrategy,
@@ -42,6 +47,7 @@ from ._compaction import (
     TokenizerProtocol,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    UnloadSkillsCompactionStrategy,
     annotate_message_groups,
     apply_compaction,
     included_messages,
@@ -407,6 +413,7 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
+    "AgentTriggeredCompactionStrategy",
     "AggregatingSkillsSource",
     "Annotation",
     "BackgroundAgentsProvider",
@@ -600,6 +607,7 @@ __all__ = [
     "ToolTypes",
     "TruncationStrategy",
     "TypeCompatibilityError",
+    "UnloadSkillsCompactionStrategy",
     "UpdateT",
     "UsageDetails",
     "UserInputRequiredException",
@@ -637,6 +645,7 @@ __all__ = [
     "background_tasks_running_message",
     "chat_middleware",
     "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_declaration",
     "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
