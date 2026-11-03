@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace Microsoft.Agents.AI;
@@ -19,7 +21,7 @@ namespace Microsoft.Agents.AI;
 public sealed class AgentMcpSkillsSourceOptions
 {
     /// <summary>
-    /// Gets or sets a callback that returns a key identifying the current caller, such as a user or tenant ID.
+    /// Gets or sets an asynchronous callback that returns a key identifying the current caller, such as a user or tenant ID.
     /// The source keeps a separate skill cache for each key.
     /// </summary>
     /// <remarks>
@@ -38,13 +40,14 @@ public sealed class AgentMcpSkillsSourceOptions
     /// or if the server returns private responses, even for a single user.
     /// </para>
     /// <para>
-    /// The callback runs on every skill discovery call and must return a non-empty key that matches the credentials
+    /// The callback receives the source context and the discovery call's cancellation token.
+    /// It runs on every skill discovery call and must return a non-empty key that matches the credentials
     /// the MCP client sends. Use an opaque ID, not an access token. Do not share returned skills between callers.
     /// Call <see cref="AgentSkillsProviderBuilder.DisableCaching"/> so the provider calls this source, and therefore
     /// this callback, every time.
     /// </para>
     /// </remarks>
-    public Func<AgentSkillsSourceContext, string>? CacheIsolationKeySelector { get; set; }
+    public Func<AgentSkillsSourceContext, CancellationToken, ValueTask<string>>? CacheIsolationKeySelector { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum number of cache partitions to keep, one per key returned by

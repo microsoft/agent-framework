@@ -98,7 +98,7 @@ Set it whenever the server can return private responses, even if your app has on
 ```csharp
 var options = new AgentMcpSkillsSourceOptions
 {
-    CacheIsolationKeySelector = context => GetApplicationAuthorizationKey(context),
+    CacheIsolationKeySelector = (context, _) => new ValueTask<string>(GetApplicationAuthorizationKey(context)),
     MaxCachedPartitions = 1000,
     PartitionSlidingExpiration = TimeSpan.FromMinutes(30),
     PartitionAbsoluteExpiration = TimeSpan.FromHours(8),
@@ -120,6 +120,16 @@ check MCP response expiration.
 `GetApplicationAuthorizationKey` is your own helper, not a framework API. It should return a non-empty ID
 for the caller whose credentials the MCP client sends, for example a user or tenant ID.
 Use an opaque ID, not an access token.
+
+If resolving the key requires asynchronous work, the selector can await it and use the supplied
+cancellation token:
+
+```csharp
+options.CacheIsolationKeySelector = async (context, cancellationToken) =>
+    await ResolveAuthorizationKeyAsync(context, cancellationToken);
+```
+
+`ResolveAuthorizationKeyAsync` is an application helper, just like `GetApplicationAuthorizationKey`.
 
 The source only separates caches; it does not handle authentication. Your app is responsible for:
 

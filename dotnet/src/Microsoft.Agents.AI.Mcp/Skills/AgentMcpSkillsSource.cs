@@ -164,9 +164,10 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         }
 
         string? key = this._options?.CacheIsolationKeySelector is { } selector
-            ? Throw.IfNullOrWhitespace(selector(context))
+            ? Throw.IfNullOrWhitespace(await selector(context, cancellationToken).ConfigureAwait(false))
             : null;
 
+        cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(this._disposed, this);
 
         McpSkillsCatalog catalog = key is null
