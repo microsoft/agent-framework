@@ -143,16 +143,34 @@ def _topic_stem(topic: str, *, slug_override: str | None = None) -> str:
     return next(_topic_stem_candidates(topic, slug_override=slug_override))
 
 
+# Universal filename component budget: the longest candidate stem plus the
+# .md extension and one separator must stay within the common 255 byte limit,
+# so the readable slug is capped long before any probe touches the filesystem.
+_MAX_TOPIC_SLUG_BYTES: Final[int] = 255 - len(".md") - 1 - 64
+
+
+def _bounded_slug_part(slug: str) -> str:
+    """Cap the readable slug so every candidate filename stays storable."""
+    encoded = slug.encode("utf-8")
+    if len(encoded) <= _MAX_TOPIC_SLUG_BYTES:
+        return slug
+    return encoded[:_MAX_TOPIC_SLUG_BYTES].decode("utf-8", errors="ignore")
+
+
 def _topic_stem_candidates(topic: str, *, slug_override: str | None = None) -> Iterator[str]:
     """Yield the stems a topic may persist under, longest digest last.
 
     The 64-bit digest makes a collision between distinct topics unrealistic,
     and ``MemoryFileStore._writable_topic_path`` walks these candidates and
     verifies the occupant of an existing stem before reusing it, so even a
-    real digest collision cannot make one topic overwrite another.
+    real digest collision cannot make one topic overwrite another. The slug
+    part is capped so the longest candidate plus the .md extension stays
+    within the common filename component limit; probing an oversized name
+    would raise ENAMETOOLONG before a valid persisted or legacy stem is
+    reached, making long topics unreadable.
     """
     normalized = _normalize_topic(topic)
-    slug = _slugify_topic(slug_override if slug_override is not None else normalized)
+    slug = _bounded_slug_part(_slugify_topic(slug_override if slug_override is not None else normalized))
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     for digest_length in (16, 32, 64):
         yield f"{slug}-{digest[:digest_length]}"
@@ -847,6 +865,8 @@ class MemoryFileStore(MemoryStore):
         #    digest collision with another topic can never answer the lookup.
         for candidate in _topic_stem_candidates(topic):
             candidate_path = topics_dir / f"{candidate}.md"
+            if len(candidate.encode("utf-8")) + len(".md") > 255:
+                continue
             if not candidate_path.exists():
                 continue
             record = MemoryTopicRecord.from_markdown(candidate_path.read_text(encoding="utf-8"), fallback_topic=topic)
@@ -855,9 +875,13 @@ class MemoryFileStore(MemoryStore):
         # 2. An exact filename match: a legacy slug-only file from stores
         #    written before the digest suffix, or a caller passing a persisted
         #    stem such as an index entry slug.
-        exact_path = topics_dir / f"{_slugify_topic(topic)}.md"
-        if exact_path.exists():
-            return exact_path
+        legacy_name = _slugify_topic(topic)
+        if len(legacy_name.encode("utf-8")) + len(".md") > 255:
+            pass  # An overlong legacy name cannot exist on a limit bound filesystem.
+        else:
+            exact_path = topics_dir / f"{legacy_name}.md"
+            if exact_path.exists():
+                return exact_path
         # 3. Digest-suffixed stems sharing the slug. A prefix glob alone proves
         #    nothing (a missing topic must never read, merge into, or delete a
         #    longer unrelated slug), so every candidate is validated against
@@ -951,6 +975,8 @@ class MemoryFileStore(MemoryStore):
         normalized = _normalize_topic(record.topic)
         for candidate in _topic_stem_candidates(record.topic, slug_override=record.slug):
             candidate_path = topics_dir / f"{candidate}.md"
+            if len(candidate.encode("utf-8")) + len(".md") > 255:
+                continue
             if not candidate_path.exists():
                 return candidate_path
             existing = MemoryTopicRecord.from_markdown(

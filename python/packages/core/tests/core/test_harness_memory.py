@@ -1201,6 +1201,49 @@ def test_memory_explicit_slug_override_is_persisted_and_findable(tmp_path) -> No
         store.get_topic(session, source_id="src", topic="machine")
 
 
+def test_memory_reads_a_legacy_topic_file_with_a_long_slug(tmp_path) -> None:
+    """A legacy slug only filename near the component limit stays readable.
+
+    Lookup probes digest candidates first; without bounding, the longest
+    candidate for a long slug overshoots the filesystem component limit before
+    the legacy name is reached.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    legacy_slug = "a" * 240
+    topics_dir.mkdir(parents=True, exist_ok=True)
+    (topics_dir / f"{legacy_slug}.md").write_text(
+        f"# {legacy_slug}\n\nUpdated: t\nSessions: -\n\n## Summary\ns\n\n## Memories\n- legacy fact\n",
+        encoding="utf-8",
+    )
+
+    record = store.get_topic(session, source_id="src", topic=legacy_slug)
+    assert record.memories == ["legacy fact"]
+
+
+def test_memory_long_topic_writes_and_reloads_within_the_filename_limit(tmp_path) -> None:
+    """A topic whose slug overshoots the component limit still writes and reloads."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    long_topic = " ".join(["engineering"] * 48)
+    written = MemoryTopicRecord(topic=long_topic, summary="s", memories=["kept"], updated_at="t")
+    store.write_topic(session, written, source_id="src")
+
+    assert len(written.storage_stem.encode("utf-8")) + len(".md") <= 255
+    assert store.get_topic(session, source_id="src", topic=long_topic).memories == ["kept"]
+    # Index entries link the same bounded stem and resolve after a reload.
+    by_stem = store.get_topic(session, source_id="src", topic=written.storage_stem)
+    assert by_stem.memories == ["kept"]
+    entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=400)
+    for entry in entries:
+        assert (store._get_topics_directory(session, source_id="src") / f"{entry.slug}.md").exists()
+
+
 def test_memory_topic_is_reloadable_by_its_default_slug(tmp_path) -> None:
     """A normally written topic reloads by its default slug, which callers
     holding record.slug rely on."""
