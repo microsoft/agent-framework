@@ -37,12 +37,22 @@ internal sealed class LocalMcpAIFunction : DelegatingAIFunction
             ? this._contract
             : base.GetService(serviceType, serviceKey);
 
-    protected override ValueTask<object?> InvokeCoreAsync(
+    protected override async ValueTask<object?> InvokeCoreAsync(
         AIFunctionArguments arguments,
         CancellationToken cancellationToken)
     {
         LocalMcpInvocationTracker.Record(this._contract);
-        return base.InvokeCoreAsync(arguments, cancellationToken);
+        try
+        {
+            return await base.InvokeCoreAsync(arguments, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Cancellation produces no FunctionResultContent, so OutputConverter cannot consume
+            // the temporary invocation marker. Ordinary failures still need the marker for projection.
+            LocalMcpInvocationTracker.RemoveCurrent();
+            throw;
+        }
     }
 }
 
@@ -126,6 +136,13 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
 
             cancellationToken.ThrowIfCancellationRequested();
             throw; // fallback if the CT wasn't cancelled for some reason
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Cancellation produces no FunctionResultContent, so OutputConverter cannot consume
+            // the temporary invocation marker. Ordinary failures still need the marker for projection.
+            LocalMcpInvocationTracker.RemoveCurrent();
+            throw;
         }
     }
 }

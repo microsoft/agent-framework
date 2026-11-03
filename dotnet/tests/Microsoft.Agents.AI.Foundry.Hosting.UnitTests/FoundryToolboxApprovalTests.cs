@@ -246,6 +246,103 @@ public sealed class FoundryToolboxApprovalTests
     }
 
     [Fact]
+    public async Task MarkedLocalMcpExecution_Cancellation_RemovesInvocationMarkerAsync()
+    {
+        // Arrange
+        var toolStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        AIFunction tool = new ApprovalRequiredAIFunction(
+            AIFunctionFactory.Create(
+                async (CancellationToken cancellationToken) =>
+                {
+                    toolStarted.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return "unreachable";
+                },
+                name: "local_search")
+            .AsLocalMcpTool(serverLabel: "local-mcp"));
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(
+                ChatRole.Assistant,
+                [new FunctionCallContent("call_cancelled", tool.Name)])));
+        AIAgent agent = new ChatClientAgent(client.Object, new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions { Tools = [tool] },
+        })
+            .AsBuilder()
+            .UseToolApproval(new ToolApprovalAgentOptions
+            {
+                AutoApprovalRules = [_ => new ValueTask<bool>(true)]
+            })
+            .Build();
+        AgentSession session = await agent.CreateSessionAsync();
+        using var cancellation = new CancellationTokenSource();
+
+        // Act
+        Task<AgentResponse> execution = agent.RunAsync(
+            [new ChatMessage(ChatRole.User, "Search locally")],
+            session,
+            cancellationToken: cancellation.Token);
+        await toolStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await execution.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        // Assert
+        Assert.Null(LocalMcpInvocationMap.Consume(session.StateBag, "call_cancelled"));
+    }
+
+    [Fact]
+    public async Task ToolboxExecution_Cancellation_RemovesInvocationMarkerAsync()
+    {
+        // Arrange
+        await using var toolbox = await ToolboxServer.CreateAsync("""{"tool_configuration":{"require_approval":"always"}}""");
+        toolbox.BlockCalls = true;
+        await using var service = toolbox.CreateService();
+        await service.StartAsync(CancellationToken.None);
+        AIFunction tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single(service.Tools));
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(
+                ChatRole.Assistant,
+                [new FunctionCallContent(
+                    "call_cancelled",
+                    tool.Name,
+                    new Dictionary<string, object?> { ["city"] = "Amsterdam" })])));
+        AIAgent agent = new ChatClientAgent(client.Object, new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions { Tools = [tool] },
+        })
+            .AsBuilder()
+            .UseToolApproval(new ToolApprovalAgentOptions
+            {
+                AutoApprovalRules = [_ => new ValueTask<bool>(true)]
+            })
+            .Build();
+        AgentSession session = await agent.CreateSessionAsync();
+        using var cancellation = new CancellationTokenSource();
+
+        // Act
+        Task<AgentResponse> execution = agent.RunAsync(
+            [new ChatMessage(ChatRole.User, "Get the weather")],
+            session,
+            cancellationToken: cancellation.Token);
+        await toolbox.CallStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await execution.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        // Assert
+        Assert.Null(LocalMcpInvocationMap.Consume(session.StateBag, "call_cancelled"));
+    }
+
+    [Fact]
     public async Task ResponseHandler_ToolboxExecution_EmitsMcpCallContractAsync()
     {
         // Arrange
@@ -556,6 +653,9 @@ public sealed class FoundryToolboxApprovalTests
         internal JsonNode? LastArguments { get; private set; }
         internal JsonObject? ListError { get; set; }
         internal JsonObject? CallError { get; set; }
+        internal bool BlockCalls { get; set; }
+        internal TaskCompletionSource CallStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal static async Task<ToolboxServer> CreateAsync(string? metadata)
         {
@@ -613,6 +713,12 @@ public sealed class FoundryToolboxApprovalTests
                     case "tools/call":
                         server.InvocationCount++;
                         server.LastArguments = request["params"]!["arguments"]!.DeepClone();
+                        server.CallStarted.TrySetResult();
+                        if (server.BlockCalls)
+                        {
+                            await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
+                        }
+
                         if (server.CallError is { } callError)
                         {
                             await WriteErrorAsync(context, request["id"]!, callError);
