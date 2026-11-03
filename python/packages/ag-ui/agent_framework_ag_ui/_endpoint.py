@@ -194,7 +194,7 @@ def add_agent_framework_fastapi_endpoint(
             shared ``Workflow`` or ``WorkflowAgent`` that holds one serves only the first scope that runs it. A run in
             another scope ends with a ``WORKFLOW_SCOPE_CONFLICT`` ``RUN_ERROR`` before it reaches the model. Pass
             ``AgentFrameworkWorkflow(workflow_factory=...)`` with a factory that builds a new workflow, including new
-            ``AgentExecutor`` instances, for every call to serve several scopes.
+            ``AgentExecutor`` and ``AgentSession`` instances, for every call to serve several scopes.
         single_user: Explicitly declare that every caller of this endpoint belongs to one authorization principal.
             The endpoint receives one opaque scope that remains stable for that registration and separates equal route
             paths registered by other applications. Use an explicit resolver when scope continuity must survive process

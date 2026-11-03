@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import weakref
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from agent_framework import (
     AgentExecutor,
+    SupportsAgentRun,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -35,7 +37,7 @@ from workflow_scope_helpers import (  # pyrefly: ignore[missing-import] # pyrigh
 )
 
 from agent_framework_ag_ui import AgentFrameworkAgent, AgentFrameworkWorkflow
-from agent_framework_ag_ui._session_ownership import claim_agent_executors
+from agent_framework_ag_ui._session_ownership import claim_agent_executors, claim_workflow_agent
 
 SCOPE_MODES = ["authorization", "snapshot"]
 CONFLICT_CODE = "WORKFLOW_SCOPE_CONFLICT"
@@ -137,6 +139,89 @@ def test_workflow_agent_serves_only_the_first_authorization_scope(scope_mode: An
     _assert_scope_conflict(bob)
     assert len(client.calls) == 2
     assert not any("BOB_ONLY" in text for call in client.calls for _, text in call)
+
+
+@pytest.mark.parametrize("scope_mode", SCOPE_MODES)
+def test_a2ui_wrapped_workflow_agent_serves_only_the_first_authorization_scope(scope_mode: Any) -> None:
+    pytest.importorskip("ag_ui_a2ui_toolkit")
+    from agent_framework_ag_ui._a2ui import enable_a2ui
+
+    client = RecordingChatClient()
+    workflow_agent = build_workflow(build_agent(client)).as_agent()
+    runner = AgentFrameworkAgent(agent=cast(SupportsAgentRun, enable_a2ui(workflow_agent, object())))
+
+    with TestClient(build_app(runner, scope_mode)) as http:
+        alice = post_run(http, "alice", "thread-a", "ALICE_ONLY")
+        bob = post_run(http, "bob", "thread-b", "BOB_ONLY")
+
+    _assert_completed(alice)
+    _assert_scope_conflict(bob)
+    assert len(client.calls) == 1
+    assert not any("BOB_ONLY" in text for call in client.calls for _, text in call)
+
+
+@pytest.mark.parametrize("scope_mode", SCOPE_MODES)
+def test_factory_that_shares_one_agent_session_between_scopes_is_refused(scope_mode: Any) -> None:
+    client = RecordingChatClient()
+    agent = build_agent(client)
+    shared_session = agent.create_session()
+    runner = AgentFrameworkWorkflow(workflow_factory=lambda _thread_id: build_workflow(agent, session=shared_session))
+
+    with TestClient(build_app(runner, scope_mode)) as http:
+        alice = post_run(http, "alice", "thread-a", "ALICE_ONLY")
+        bob = post_run(http, "bob", "thread-b", "BOB_ONLY")
+
+    _assert_completed(alice)
+    _assert_scope_conflict(bob)
+    assert len(client.calls) == 1
+    assert not any("ALICE_ONLY" in text for call in client.calls[1:] for _, text in call)
+
+
+# endregion
+
+# region requests that start no workflow, and runs without a scope
+
+
+@pytest.mark.parametrize("scope_mode", SCOPE_MODES)
+@pytest.mark.parametrize("runner_kind", ["workflow", "workflow_agent"])
+def test_snapshot_replay_does_not_bind_the_executors(scope_mode: Any, runner_kind: str) -> None:
+    client = RecordingChatClient()
+    workflow = build_workflow(build_agent(client))
+    runner = workflow if runner_kind == "workflow" else workflow.as_agent()
+
+    with TestClient(build_app(runner, scope_mode, persist_snapshots=True)) as http:
+        # A read-only replay starts no workflow and reaches no model, so it does not decide who owns the executors.
+        replay = post_run(http, "alice", "thread-a")
+        bob = post_run(http, "bob", "thread-b", "BOB_FIRST")
+        alice = post_run(http, "alice", "thread-a", "ALICE_LATER")
+
+    assert event_types(replay) == ["RUN_STARTED", "RUN_FINISHED"]
+    _assert_completed(bob)
+    _assert_scope_conflict(alice)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("scope_mode", SCOPE_MODES)
+def test_workflow_run_without_a_scope_blocks_a_later_scoped_endpoint(scope_mode: Any) -> None:
+    client = RecordingChatClient()
+    runner = AgentFrameworkWorkflow(workflow=build_workflow(build_agent(client)))
+
+    async def run_without_scope() -> list[Any]:
+        request = {
+            "thread_id": "thread-local",
+            "run_id": "run-local",
+            "messages": [{"id": "message-local", "role": "user", "content": "LOCAL_ONLY"}],
+        }
+        return [event async for event in runner.run(request)]
+
+    local_events = asyncio.run(run_without_scope())
+
+    assert any(type(event).__name__ == "RunFinishedEvent" for event in local_events)
+    with TestClient(build_app(runner, scope_mode)) as http:
+        alice = post_run(http, "alice", "thread-a", "ALICE_ONLY")
+
+    _assert_scope_conflict(alice)
+    assert len(client.calls) == 1
 
 
 # endregion
@@ -247,8 +332,45 @@ def test_claim_binds_agent_executors_to_the_first_scope() -> None:
     assert claim_agent_executors(workflow, "scope-a")
     assert claim_agent_executors(workflow, "scope-a")
     assert not claim_agent_executors(workflow, "scope-b")
-    # Direct use without a scope has no principal to bind.
+
+
+def test_claim_binds_unscoped_runs_to_their_own_owner() -> None:
+    workflow = build_workflow(build_agent(RecordingChatClient()))
+
     assert claim_agent_executors(workflow, None)
+    assert claim_agent_executors(workflow, None)
+    assert not claim_agent_executors(workflow, "scope-a")
+
+
+def test_claim_refuses_an_unscoped_run_on_scoped_executors() -> None:
+    workflow = build_workflow(build_agent(RecordingChatClient()))
+
+    assert claim_agent_executors(workflow, "scope-a")
+    assert not claim_agent_executors(workflow, None)
+
+
+def test_claim_binds_the_session_of_every_agent_executor() -> None:
+    agent = build_agent(RecordingChatClient())
+    shared_session = agent.create_session()
+    first = build_workflow(agent, session=shared_session)
+    second = build_workflow(agent, session=shared_session)
+
+    assert claim_agent_executors(first, "scope-a")
+    # New executors that inject the session of a bound executor are refused for another scope.
+    assert not claim_agent_executors(second, "scope-b")
+    assert claim_agent_executors(second, "scope-a")
+
+
+def test_claim_allows_executors_of_one_workflow_to_share_a_session() -> None:
+    agent = build_agent(RecordingChatClient())
+    shared_session = agent.create_session()
+    writer = AgentExecutor(agent, id="writer", session=shared_session)
+    reviewer = AgentExecutor(agent, id="reviewer", session=shared_session)
+    workflow = WorkflowBuilder(start_executor=writer, output_from=[reviewer]).add_edge(writer, reviewer).build()
+
+    assert claim_agent_executors(workflow, "scope-a")
+    assert claim_agent_executors(workflow, "scope-a")
+    assert not claim_agent_executors(workflow, "scope-b")
 
 
 def test_claim_covers_agent_executors_inside_nested_workflows() -> None:
@@ -266,6 +388,26 @@ def test_claim_covers_workflows_behind_a_wrapped_workflow_agent() -> None:
 
     assert claim_agent_executors(outer, "scope-a")
     assert not claim_agent_executors(inner, "scope-b")
+
+
+def test_claim_workflow_agent_ignores_agents_that_run_no_workflow() -> None:
+    agent = build_agent(RecordingChatClient())
+
+    assert claim_workflow_agent(agent, "scope-a")
+    assert claim_workflow_agent(agent, "scope-b")
+    assert claim_workflow_agent(agent, None)
+
+
+def test_claim_workflow_agent_looks_through_a2ui_runners() -> None:
+    pytest.importorskip("ag_ui_a2ui_toolkit")
+    from agent_framework_ag_ui._a2ui import enable_a2ui
+
+    workflow = build_workflow(build_agent(RecordingChatClient()))
+    wrapped = enable_a2ui(enable_a2ui(workflow.as_agent(), object()), object())
+
+    assert claim_workflow_agent(wrapped, "scope-a")
+    assert not claim_agent_executors(workflow, "scope-b")
+    assert not claim_workflow_agent(wrapped, "scope-b")
 
 
 def test_claim_is_atomic_across_threads() -> None:

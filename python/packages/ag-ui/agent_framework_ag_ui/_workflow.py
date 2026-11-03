@@ -682,8 +682,8 @@ class AgentFrameworkWorkflow:
                 ``AgentExecutor`` instances serves only the first scope that runs it; a run in another scope ends
                 with a ``WORKFLOW_SCOPE_CONFLICT`` ``RUN_ERROR``.
             workflow_factory: Optional factory for thread-scoped workflow instances. Build a new workflow, including
-                new ``AgentExecutor`` instances, on every call. Each authorization scope and thread then keeps its own
-                executor sessions.
+                new ``AgentExecutor`` and ``AgentSession`` instances, on every call. Each authorization scope and
+                thread then keeps its own executor sessions.
             name: Optional workflow name.
             description: Optional workflow description.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
@@ -817,11 +817,6 @@ class AgentFrameworkWorkflow:
             )
             return
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
-        if not claim_agent_executors(workflow, snapshot_scope):
-            logger.error(SCOPE_CONFLICT_LOG_MESSAGE, self.name)
-            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-            yield RunErrorEvent(message=SCOPE_CONFLICT_MESSAGE, code=SCOPE_CONFLICT_CODE)
-            return
         checkpoint_storage = self.checkpoint_storage or _workflow_checkpoint_storage(workflow)
         owned_checkpoint_storage = (
             _OwnedWorkflowCheckpointStorage(
@@ -894,6 +889,13 @@ class AgentFrameworkWorkflow:
         ):
             async for event in snapshot_session.hydrate_events(run_id=run_id):
                 yield event
+            return
+
+        # A replay above starts no workflow, so only a run that reaches the executors decides who owns them.
+        if not claim_agent_executors(workflow, snapshot_scope):
+            logger.error(SCOPE_CONFLICT_LOG_MESSAGE, self.name)
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=SCOPE_CONFLICT_MESSAGE, code=SCOPE_CONFLICT_CODE)
             return
 
         # Seed follow-up turns so the workflow runs with the full persisted thread

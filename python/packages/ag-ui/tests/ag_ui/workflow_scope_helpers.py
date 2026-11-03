@@ -94,9 +94,12 @@ def build_agent(client: RecordingChatClient, *, standing_approvals: bool = False
     )
 
 
-def build_workflow(agent: Agent[Any]) -> Workflow:
-    """Build a new workflow around a new ``AgentExecutor``, which owns a new ``AgentSession``."""
-    executor = AgentExecutor(agent, id="worker")
+def build_workflow(agent: Agent[Any], *, session: AgentSession | None = None) -> Workflow:
+    """Build a new workflow around a new ``AgentExecutor``.
+
+    The executor owns a new ``AgentSession`` unless ``session`` injects an existing one.
+    """
+    executor = AgentExecutor(agent, id="worker", session=session)
     return WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
 
 

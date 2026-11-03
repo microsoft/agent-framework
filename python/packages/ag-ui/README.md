@@ -360,12 +360,14 @@ callers can reach the endpoint.
 
 An `AgentExecutor` owns one `AgentSession` for its whole lifetime. Conversation history, pending approval requests, and
 standing "always approve" rules live there, and the session is not tied to a caller. An endpoint therefore binds each
-`AgentExecutor` to the first authorization scope that runs it. A shared `Workflow` or `WorkflowAgent` that holds one
-serves only that scope. A run in another scope ends with a `WORKFLOW_SCOPE_CONFLICT` `RUN_ERROR` before it reaches the
-model. Pass `AgentFrameworkWorkflow(workflow_factory=...)` with a factory that builds a new workflow, including new
-`AgentExecutor` instances, for every call to serve several scopes. A factory that returns a workflow or executor it
-shares with another scope is refused the same way. Workflows without an `AgentExecutor` are not bound to a scope; their
-pending interrupts stay fenced to the scope and thread that raised them.
+`AgentExecutor`, and the session it holds, to the first authorization scope that runs it. A shared `Workflow` or
+`WorkflowAgent` that holds one serves only that scope. A run in another scope ends with a `WORKFLOW_SCOPE_CONFLICT`
+`RUN_ERROR` before it reaches the model. A run without a scope owns what it runs in the same way, so a workflow that ran
+locally is not handed to a scope later. A snapshot replay starts no workflow and does not take ownership. Pass
+`AgentFrameworkWorkflow(workflow_factory=...)` with a factory that builds a new workflow, including new `AgentExecutor`
+and `AgentSession` instances, for every call to serve several scopes. A factory that returns a workflow, an executor, or
+a session it shares with another scope is refused the same way. Workflows without an `AgentExecutor` are not bound to a
+scope; their pending interrupts stay fenced to the scope and thread that raised them.
 
 With `single_user=True`, or with a resolver that returns one constant scope, a shared workflow keeps one conversation
 state for every thread. Use `workflow_factory` when threads must stay independent.

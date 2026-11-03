@@ -3,9 +3,11 @@
 """Authorization-scope ownership of the agent sessions that a workflow holds.
 
 An ``AgentExecutor`` owns one ``AgentSession`` for its whole lifetime. Conversation history, pending approval
-requests, and standing approval rules live in that session, and the session is not tied to a caller. An executor
-that serves two authorization scopes would therefore expose the conversation and approval state of one scope to the
-other. AG-UI binds each executor to the first authorization scope that runs it and refuses every other scope.
+requests, and standing approval rules live in that session, and the session is not tied to a caller. An executor,
+or a session, that serves two authorization scopes would therefore expose the conversation and approval state of
+one scope to the other. AG-UI binds each executor, and the session it holds, to the first authorization scope that
+runs it and refuses every other scope. A run without a scope is an owner of its own, so a workflow that ran
+locally is not handed to an authorization scope later, and the reverse.
 """
 
 from __future__ import annotations
@@ -13,29 +15,52 @@ from __future__ import annotations
 import threading
 import weakref
 from collections.abc import Iterator
+from typing import Any, Final
 
-from agent_framework import AgentExecutor, Workflow, WorkflowAgent, WorkflowExecutor
+from agent_framework import AgentExecutor, AgentSession, Workflow, WorkflowAgent, WorkflowExecutor
 
 SCOPE_CONFLICT_CODE = "WORKFLOW_SCOPE_CONFLICT"
 SCOPE_CONFLICT_MESSAGE = "This workflow is bound to a different authorization scope."
 SCOPE_CONFLICT_LOG_MESSAGE = (
-    "Workflow %r holds AgentExecutor instances that already belong to another authorization scope. Each "
-    "AgentExecutor owns one AgentSession, so serving a second scope would expose the first scope's conversation "
-    "and approval state. Pass AgentFrameworkWorkflow(workflow_factory=...) with a factory that builds a new "
-    "Workflow, including new AgentExecutor instances, for every call, or register the endpoint with "
-    "single_user=True when every caller is the same principal."
+    "Workflow %r holds an AgentExecutor or AgentSession that already serves a different authorization scope, "
+    "or runs without a scope. An AgentSession keeps the conversation and approval state of one scope, so serving "
+    "another scope would expose that state. Pass AgentFrameworkWorkflow(workflow_factory=...) with a factory that "
+    "builds a new Workflow, including new AgentExecutor and AgentSession instances, for every call, or register "
+    "the endpoint with single_user=True when every caller is the same principal."
 )
 
-_EXECUTOR_SCOPES: weakref.WeakKeyDictionary[AgentExecutor, str] = weakref.WeakKeyDictionary()
+# The owner of runs that carry no authorization scope. It never equals a scope string.
+_UNSCOPED: Final = object()
+
+_OWNERS: weakref.WeakKeyDictionary[AgentExecutor | AgentSession, object] = weakref.WeakKeyDictionary()
 _CLAIM_LOCK = threading.Lock()
 
 
-def _agent_executors(workflow: Workflow, visited: set[int] | None = None) -> Iterator[AgentExecutor]:
+def _unwrap_a2ui_runners(agent: Any) -> Any:
+    """Return the agent inside the A2UI runners that wrap ``agent``."""
+    try:
+        from ._a2ui import A2UIAgent
+    except ImportError:
+        return agent
+    while isinstance(agent, A2UIAgent):
+        agent = agent.inner_agent
+    return agent
+
+
+def _workflow_behind(agent: Any) -> Workflow | None:
+    """Return the workflow that ``agent`` runs, looking through A2UI runners, or ``None``."""
+    unwrapped = _unwrap_a2ui_runners(agent)
+    return unwrapped.workflow if isinstance(unwrapped, WorkflowAgent) else None
+
+
+def _agent_executors(workflow: object, visited: set[int] | None = None) -> Iterator[AgentExecutor]:
     """Yield the ``AgentExecutor`` instances of ``workflow`` and of every workflow nested in it.
 
     Nested workflows are sub-workflows of ``WorkflowExecutor`` and the workflow behind a ``WorkflowAgent`` that an
-    ``AgentExecutor`` wraps.
+    ``AgentExecutor`` wraps. An object that is not a ``Workflow`` has no executors to inspect.
     """
+    if not isinstance(workflow, Workflow):
+        return
     visited = set() if visited is None else visited
     if id(workflow) in visited:
         return
@@ -44,30 +69,51 @@ def _agent_executors(workflow: Workflow, visited: set[int] | None = None) -> Ite
         nested: Workflow | None = None
         if isinstance(executor, AgentExecutor):
             yield executor
-            if isinstance(executor.agent, WorkflowAgent):
-                nested = executor.agent.workflow
+            nested = _workflow_behind(executor.agent)
         elif isinstance(executor, WorkflowExecutor):
             nested = executor.workflow
         if nested is not None:
             yield from _agent_executors(nested, visited)
 
 
+def _state_holders(workflow: Workflow) -> Iterator[AgentExecutor | AgentSession]:
+    """Yield what keeps conversation and approval state: each ``AgentExecutor`` and the session it holds.
+
+    Executors can share a session, for example to share one service-side conversation inside one workflow.
+    """
+    for executor in _agent_executors(workflow):
+        yield executor
+        session = getattr(executor, "_session", None)
+        if isinstance(session, AgentSession):
+            yield session
+
+
 def claim_agent_executors(workflow: Workflow, scope: str | None) -> bool:
-    """Bind every ``AgentExecutor`` of ``workflow`` to ``scope``.
+    """Bind every ``AgentExecutor`` of ``workflow``, and the session each one holds, to ``scope``.
 
     Args:
         workflow: The workflow that is about to run, including the workflows nested in it.
-        scope: The authorization scope of the run. ``None`` means the run has no scope, so nothing is bound.
+        scope: The authorization scope of the run. ``None`` stands for runs without a scope, which own what they
+            run just as a scope does.
 
     Returns:
-        ``False`` when an executor already belongs to a different scope. Nothing is bound in that case.
+        ``False`` when an executor or session already belongs to a different owner. Nothing is bound in that case.
     """
-    if scope is None:
-        return True
-    executors = list(_agent_executors(workflow))
+    owner: object = _UNSCOPED if scope is None else scope
+    holders = list(_state_holders(workflow))
     with _CLAIM_LOCK:
-        if any(_EXECUTOR_SCOPES.get(executor, scope) != scope for executor in executors):
+        if any(_OWNERS.get(holder, owner) != owner for holder in holders):
             return False
-        for executor in executors:
-            _EXECUTOR_SCOPES[executor] = scope
+        for holder in holders:
+            _OWNERS[holder] = owner
     return True
+
+
+def claim_workflow_agent(agent: Any, scope: str | None) -> bool:
+    """Bind the executors behind ``agent`` to ``scope`` when ``agent`` runs a workflow.
+
+    Looks through A2UI runners. An agent that does not run a workflow keeps its state in sessions that AG-UI
+    already scopes itself, so it needs no claim.
+    """
+    workflow = _workflow_behind(agent)
+    return workflow is None or claim_agent_executors(workflow, scope)
