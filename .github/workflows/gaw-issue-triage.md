@@ -1,4 +1,7 @@
 ---
+# Run order: prepare -> agent setup -> Markdown investigation -> evidence checks
+# -> threat detection -> publication checks -> evidence upload -> issue updates.
+# The prepare job is declared near the end of this header, but runs first.
 name: GAW Issue Triage
 run-name: "GAW Issue Triage #${{ inputs.issue_number || github.event.issue.number }}"
 description: Screen issue reports, route Features, and attempt local Bug reproduction without service credentials.
@@ -46,7 +49,14 @@ tools:
     min-integrity: none
   edit:
   bash: ["ls", "cat", "head", "tail", "find", "grep", "rg", "pwd", "mkdir", "git ls-files", "git log", "git show", "git status", "git diff", "git rev-parse", "python:*", "python3:*", "uv:*", "dotnet:*"]
+# Set up the agent after preparation approves the issue, before the prompt runs.
 steps:
+  # Keep a copy outside the agent's writable folders so it cannot change the checker.
+  - name: Preserve the trusted evidence checker
+    run: |
+      mkdir -p "$RUNNER_TEMP/gh-aw/triage-helpers"
+      cp .github/scripts/gaw-issue-triage-bundle.js "$RUNNER_TEMP/gh-aw/triage-helpers/bundle.js"
+  # Select earlier evidence only from a matching issue and trusted source run.
   - name: Find the latest bundle for this issue
     id: previous-triage
     if: needs.prepare.outputs.issue_type != 'Feature'
@@ -55,7 +65,7 @@ steps:
       ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
     with:
       script: |
-        const findPreviousTriageArtifact = require('./.github/scripts/gaw-issue-triage-artifacts.js');
+        const { findPreviousTriageArtifact } = require('./.github/scripts/gaw-issue-triage-artifacts.js');
         const previous = await findPreviousTriageArtifact({
           github, context, core, issueNumber: process.env.ISSUE_NUMBER,
         });
@@ -66,6 +76,7 @@ steps:
           fs.mkdirSync('/tmp/gh-aw/agent/previous-triage', { recursive: true });
           fs.writeFileSync('/tmp/gh-aw/agent/previous-triage/source.json', JSON.stringify(previous, null, 2));
         }
+  # Download only the selected bundle; no match means a normal fresh investigation.
   - name: Download the previous issue bundle
     if: needs.prepare.outputs.issue_type != 'Feature' && steps.previous-triage.outputs.artifact_id != ''
     uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -74,23 +85,60 @@ steps:
       run-id: ${{ steps.previous-triage.outputs.run_id }}
       github-token: ${{ github.token }}
       path: /tmp/gh-aw/agent/previous-triage/files
+  # Provide Python for local tests. Features skip test setup and reproduction.
   - name: Set up Python for local reproduction
     if: needs.prepare.outputs.issue_type != 'Feature'
     uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
     with:
       python-version: "3.13"
+  # Match the repository's package manager; project installs wait for the spam check.
   - name: Set up uv
     if: needs.prepare.outputs.issue_type != 'Feature'
     uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
     with:
       version-file: python/pyproject.toml
       enable-cache: false
+  # Match the SDK required by the checked-out .NET code.
   - name: Set up .NET for local reproduction
     if: needs.prepare.outputs.issue_type != 'Feature'
     uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
     with:
       global-json-file: dotnet/global.json
+# The agent now follows the Markdown prompt below. These steps run after it finishes.
+post-steps:
+  # Check saved files without executing them, then copy only bounded evidence
+  # into a folder the agent cannot change. A failed check prevents transfer.
+  - name: Check evidence before transfer
+    id: triage-bundle
+    if: always() && needs.prepare.outputs.issue_type != 'Feature'
+    uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+    env:
+      ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
+    with:
+      script: |
+        const path = require('node:path');
+        const stageBundle = require(path.join(process.env.RUNNER_TEMP, 'gh-aw/triage-helpers/bundle.js'));
+        const ready = stageBundle({
+          source: `/tmp/gh-aw/agent/triage/gaw-issue-triage-issue-${process.env.ISSUE_NUMBER}`,
+          destination: path.join(process.env.RUNNER_TEMP, 'gh-aw/triage-evidence'),
+          core,
+        });
+        core.setOutput('ready', String(ready));
+  # Pass the checked copy to the publishing job only after a successful investigation.
+  # Preview runs may create this temporary transfer, but not a final issue bundle.
+  - name: Transfer checked evidence
+    id: triage-transfer
+    if: success() && steps.triage-bundle.outputs.ready == 'true'
+    uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    with:
+      name: gaw-issue-triage-transfer
+      path: ${{ runner.temp }}/gh-aw/triage-evidence/
+      retention-days: 1
+      if-no-files-found: error
+      include-hidden-files: true
+# Publishing runs separately, after the agent and threat checks succeed.
 safe-outputs:
+  # Preview shows proposed issue changes instead of applying them.
   staged: ${{ github.event_name == 'workflow_dispatch' && inputs.preview }}
   report-failure-as-issue: false
   report-failed-jobs: false
@@ -103,38 +151,131 @@ safe-outputs:
   threat-detection:
     continue-on-error: false
     report-as-issue: false
+  # These trusted steps run before the built-in issue writers listed below.
+  steps:
+    # Load checks from the workflow's commit, never from the agent's changed checkout.
+    - name: Checkout trusted publication checks
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.workflow_sha }}
+        persist-credentials: false
+        sparse-checkout: .github/scripts
+    # Reject forbidden type changes and stop if a maintainer added a blocking label.
+    - name: Check issue requests and current stop labels
+      id: triage-policy
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
+        AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
+      with:
+        script: |
+          const { checkPublication } = require('./.github/scripts/gaw-issue-triage-publish.js');
+          await checkPublication({
+            github, context, core,
+            issueNumber: process.env.ISSUE_NUMBER,
+            outputPath: process.env.AGENT_OUTPUT,
+          });
+    # Look only in this run for its checked transfer; no evidence is a normal outcome.
+    # Skip this and the final upload in preview mode.
+    - name: Find this run's checked evidence
+      id: triage-transfer
+      if: steps.triage-policy.outputs.allowed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.preview)
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      with:
+        script: |
+          const { findTransferredTriageArtifact } = require('./.github/scripts/gaw-issue-triage-artifacts.js');
+          const id = await findTransferredTriageArtifact({ github, context, core });
+          if (id !== null) core.setOutput('artifact_id', String(id));
+    # Keep downloaded data separate from the trusted scripts that will inspect it.
+    - name: Download checked evidence
+      if: steps.triage-transfer.outputs.artifact_id != ''
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        artifact-ids: ${{ steps.triage-transfer.outputs.artifact_id }}
+        path: ${{ runner.temp }}/triage-download
+    # Verify the received files again and refresh labels immediately before uploading.
+    - name: Recheck evidence and stop labels
+      id: triage-evidence
+      if: steps.triage-transfer.outputs.artifact_id != ''
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
+        AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
+      with:
+        script: |
+          const path = require('node:path');
+          const stageBundle = require('./.github/scripts/gaw-issue-triage-bundle.js');
+          const { checkPublication } = require('./.github/scripts/gaw-issue-triage-publish.js');
+          const ready = stageBundle({
+            source: path.join(process.env.RUNNER_TEMP, 'triage-download'),
+            destination: path.join(process.env.RUNNER_TEMP, 'triage-final'),
+            core,
+          });
+          if (!ready) throw new Error('The transferred evidence bundle is empty.');
+          await checkPublication({
+            github, context, core,
+            issueNumber: process.env.ISSUE_NUMBER,
+            outputPath: process.env.AGENT_OUTPUT,
+          });
+    # Save the reusable issue bundle before this run adds any review-hold label itself.
+    - name: Publish issue evidence
+      if: steps.triage-evidence.outputs.allowed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.preview)
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}
+        path: ${{ runner.temp }}/triage-final/
+        retention-days: ${{ env.GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS || '7' }}
+        if-no-files-found: error
+        include-hidden-files: true
+    # Catch labels added while evidence was handled; blocked requests become a no-op.
+    - name: Recheck stop labels immediately before issue updates
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
+        AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
+      with:
+        script: |
+          const { checkPublication } = require('./.github/scripts/gaw-issue-triage-publish.js');
+          await checkPublication({
+            github, context, core,
+            issueNumber: process.env.ISSUE_NUMBER,
+            outputPath: process.env.AGENT_OUTPUT,
+          });
+  # After the checks above, apply only these permitted updates to the validated issue.
+  # Add approved finding and package labels, not arbitrary labels.
   add-labels:
     target: ${{ needs.prepare.outputs.issue_number }}
     allowed: [reproduced, requested-info, likely-fixed, needs-maintainer-triage, a2a, ag-ui, agents, chat-kit, compaction, declarative, devui, foundry, harness, hosting, lab, mcp, memory, middleware, observability, orchestration, security, skills, workflows]
     max: 1
     max-labels: 10
+  # Remove only the initial triage label, leaving other labels untouched.
   remove-labels:
     target: ${{ needs.prepare.outputs.issue_number }}
     allowed: [triage]
     issues: true
     pull-requests: false
     max: 1
+  # Add an approved package owner without clearing existing assignees.
   assign-to-user:
     target: ${{ needs.prepare.outputs.issue_number }}
     allowed: [eavanvalkenburg, westey-m, rogerbarreto, SergeyMenshykh, baywet, dargilco, jpalvarezl]
     max: 1
+  # Allow verified Feature reclassification; the trusted check also rejects clearing.
   set-issue-type:
     target: ${{ needs.prepare.outputs.issue_number }}
     allowed: [Feature]
     max: 1
+  # Limit field updates to the native Priority field, not a Projects-board field.
   set-issue-field:
     target: ${{ needs.prepare.outputs.issue_number }}
     allowed-fields: [Priority]
     max: 1
+  # Post at most one useful new comment, without editing or hiding earlier comments.
   add-comment:
     target: ${{ needs.prepare.outputs.issue_number }}
     max: 1
     hide-older-comments: false
-  upload-artifact:
-    max-uploads: 1
-    retention-days: 7
-    max-size-bytes: 10485760
-    allowed-paths: ["gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}/**"]
+# Preparation runs first and keeps App/team credentials out of the agent job.
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -148,6 +289,7 @@ jobs:
       issue_number: ${{ steps.issue.outputs.issue_number }}
       issue_type: ${{ steps.issue.outputs.issue_type }}
     steps:
+      # Load the trusted issue checks and the shared App-token action.
       - name: Checkout trusted issue checks
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -155,6 +297,8 @@ jobs:
           sparse-checkout: |
             .github/actions/github-app-token
             .github/scripts
+      # Read issue details and, for automatic runs, check the author's developer team.
+      # Manual runs still need the token for issue details, but bypass the team check.
       - name: Get team-membership token
         id: github-auth
         uses: ./.github/actions/github-app-token
@@ -171,6 +315,8 @@ jobs:
           issues-permission: read
           pull-requests-permission: read
           fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+      # Validate the number, reject PRs, apply stop labels, and check author eligibility.
+      # Export only the issue number/type and the decision, never the credentials.
       - name: Validate issue and author
         id: issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -188,6 +334,7 @@ jobs:
               issueNumber: process.env.ISSUE_NUMBER,
               teamSlug: process.env.TEAM_NAME,
             });
+  # The compiler supplies the agent job; add preparation and read-only GitHub access.
   agent:
     needs: [prepare]
     permissions:
@@ -196,8 +343,14 @@ jobs:
       issues: read
       pull-requests: read
       copilot-requests: write
+  # The compiler also supplies publishing and its threat-check dependency.
+  # Require a successful agent job too, including the evidence checks and transfer.
   safe_outputs:
     needs: [prepare]
+    if: needs.agent.result == 'success'
+    permissions:
+      actions: read
+      contents: read
 ---
 
 # Screen and triage one Microsoft Agent Framework issue
@@ -283,8 +436,8 @@ If no bundle exists, investigate normally.
 4. Capture each command and its actual output. For .NET commands, redirect output
    to a report file first and read that file instead of repeating an expensive run.
    Store reports, copied generated tests, and relevant output under
-   `$RUNNER_TEMP/gh-aw/safeoutputs/upload-artifacts/gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}/`.
-   This is the uploader's shared staging folder. Generated tests may live
+   `/tmp/gh-aw/agent/triage/gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}/`.
+   This is the evidence folder checked after investigation. Generated tests may live
    temporarily alongside
    existing tests when the runner needs that layout; copy them into the bundle.
 5. A missing dependency, unsupported OS/runtime, failed restore, authentication
@@ -342,16 +495,18 @@ failures remain visible in Actions; do not claim updates succeeded unless confir
 
 Upload a bundle when this run has useful new evidence or reviewed earlier files
 worth retaining, even without a newly confirmed reproduction. Do not upload
-bundles for Features or suspected spam. Save a current report stating this run's
+bundles for Features or suspected spam. Save a current `report.md` stating this run's
 finding, tested checkout revision, commands actually run, limitations, and which
 earlier files were retained or omitted and why. Retained evidence must keep its
 original source and must not imply a fresh reproduction. Keep the bundle within
-the size limit; do not silently drop important evidence to make it fit.
+10 MiB and 1,000-file limits, including retained history; do not silently drop
+important evidence to make it fit. Empty folders and path metadata are also bounded.
 
-Upload the bounded directory
-`gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}` from the shared
-staging folder with the safe-output artifact tool, passing that folder name as
-`path`. The artifact name is derived from the folder name. Use exactly this
+Save the bundle only in the issue-specific evidence folder above. Trusted steps
+check it before any evidence transfer; you do not have an artifact-upload tool.
+After successful investigation and threat checks, the publishing job saves it as
+`gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}`, unless this is
+a preview or current stop labels block publication. Use exactly this
 issue-specific folder; other issues must never share its bundle. Include a short
 report, commands/output, and generated tests if applicable. Never include a
 credential file, environment dump, dependency cache, or unrelated source tree.

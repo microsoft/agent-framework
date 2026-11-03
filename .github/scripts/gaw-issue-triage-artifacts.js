@@ -1,5 +1,28 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+// Search all repository runs for history, or just one run for a temporary transfer.
+// Both paths read every results page and ignore unrelated or expired artifacts.
+async function listMatchingArtifacts({ github, context, name, runId }) {
+  const endpoint = runId === undefined
+    ? github.rest.actions.listArtifactsForRepo
+    : github.rest.actions.listWorkflowRunArtifacts;
+  const scope = runId === undefined ? { name } : { run_id: runId };
+  const artifacts = await github.paginate(endpoint, {
+    ...context.repo, ...scope, per_page: 100,
+  });
+  return artifacts.filter(artifact => artifact.name === name && !artifact.expired);
+}
+
+// Invalid size metadata is an error; each caller applies its own download budget.
+function artifactSize(artifact) {
+  const size = artifact.size_in_bytes;
+  if (!Number.isSafeInteger(size) || size < 1) {
+    throw new Error(`Triage artifact ${artifact.id} has an invalid size.`);
+  }
+  return size;
+}
+
+// Before investigation, find the newest usable evidence from an earlier issue run.
 async function findPreviousTriageArtifact({ github, context, core, issueNumber }) {
   const number = String(issueNumber);
   if (!/^[1-9][0-9]*$/.test(number) || !Number.isSafeInteger(Number(number))) {
@@ -8,21 +31,18 @@ async function findPreviousTriageArtifact({ github, context, core, issueNumber }
 
   const name = `gaw-issue-triage-issue-${number}`;
   const { data: repository } = await github.rest.repos.get(context.repo);
-  const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-    ...context.repo,
-    name,
-    per_page: 100,
-  });
+  const artifacts = await listMatchingArtifacts({ github, context, name });
   artifacts.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
 
   // Artifact names alone cannot prove which issue or workflow produced the files.
   for (const artifact of artifacts) {
-    if (artifact.name !== name || artifact.expired ||
-        artifact.workflow_run?.repository_id !== repository.id ||
+    if (artifact.workflow_run?.repository_id !== repository.id ||
         artifact.workflow_run.id >= context.runId) {
       continue;
     }
 
+    // Earlier evidence must come from a successful default-branch run for this issue,
+    // not merely an artifact with a familiar name.
     const { data: run } = await github.rest.actions.getWorkflowRun({
       ...context.repo,
       run_id: artifact.workflow_run.id,
@@ -39,12 +59,13 @@ async function findPreviousTriageArtifact({ github, context, core, issueNumber }
       continue;
     }
 
-    // Allow ZIP overhead above the uploader's 10 MiB limit on original files.
-    if (!Number.isSafeInteger(artifact.size_in_bytes) ||
-        artifact.size_in_bytes < 1 || artifact.size_in_bytes > 11 * 1024 * 1024) {
-      throw new Error(`Triage artifact ${artifact.id} exceeds the download size limit or has an invalid size.`);
+    // ZIP metadata can exceed this budget even when the original files fit.
+    if (artifactSize(artifact) > 11 * 1024 * 1024) {
+      core.warning(`Ignoring artifact ${artifact.id}: it exceeds the 11 MiB download limit.`);
+      continue;
     }
     core.info(`Using ${name} from run ${run.id}, commit ${run.head_sha}.`);
+    // Supply exact download IDs and source details so old findings stay identifiable.
     return {
       repository: `${context.repo.owner}/${context.repo.repo}`,
       issue_number: Number(number),
@@ -52,7 +73,7 @@ async function findPreviousTriageArtifact({ github, context, core, issueNumber }
       artifact_id: artifact.id,
       run_id: run.id,
       run_url: run.html_url,
-      run_commit: run.head_sha,
+      run_commit: run.head_sha, // Workflow revision; the tested revision is in the report.
       created_at: artifact.created_at,
     };
   }
@@ -61,4 +82,23 @@ async function findPreviousTriageArtifact({ github, context, core, issueNumber }
   return null;
 }
 
-module.exports = findPreviousTriageArtifact;
+// During publishing, retrieve this run's checked files, not an earlier issue bundle.
+async function findTransferredTriageArtifact({ github, context, core }) {
+  if (!Number.isSafeInteger(context.runId) || context.runId < 1) {
+    throw new Error('The current workflow run ID must be a positive, safe integer.');
+  }
+  const [artifact] = await listMatchingArtifacts({
+    github, context, name: 'gaw-issue-triage-transfer', runId: context.runId,
+  });
+  if (!artifact) {
+    core.info('This run has no checked evidence to publish.');
+    return null;
+  }
+  // Bound the ZIP too, allowing space for the checked file/path metadata.
+  if (artifactSize(artifact) > 14 * 1024 * 1024) {
+    throw new Error('The transferred triage bundle has an excessive archive size.');
+  }
+  return artifact.id;
+}
+
+module.exports = { findPreviousTriageArtifact, findTransferredTriageArtifact };

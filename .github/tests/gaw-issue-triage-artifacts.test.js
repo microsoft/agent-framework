@@ -2,7 +2,10 @@
 
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const findPreviousTriageArtifact = require('../scripts/gaw-issue-triage-artifacts.js');
+const {
+  findPreviousTriageArtifact,
+  findTransferredTriageArtifact,
+} = require('../scripts/gaw-issue-triage-artifacts.js');
 
 function mocks() {
   const calls = [];
@@ -138,18 +141,63 @@ describe('Previous issue triage artifacts', () => {
     assert.equal(await findPreviousTriageArtifact(input), null);
   });
 
-  it('rejects oversized or invalid bundles instead of downloading them', async () => {
-    for (const size of [0, -1, 11 * 1024 * 1024 + 1, '100']) {
+  it('rejects invalid bundle metadata instead of downloading it', async () => {
+    for (const size of [0, -1, '100']) {
       const input = mocks();
       input.artifact.size_in_bytes = size;
       await assert.rejects(findPreviousTriageArtifact(input), /download size limit|invalid size/);
     }
   });
 
+  it('skips an oversized archive and falls back to an older bundle or no history', async () => {
+    const input = mocks();
+    input.artifacts.push({
+      ...input.artifact, id: 701, created_at: '2026-11-03T11:00:00Z',
+      size_in_bytes: 11 * 1024 * 1024 + 1,
+    });
+    assert.equal((await findPreviousTriageArtifact(input)).artifact_id, 700);
+    assert.match(input.warnings[0], /exceeds the 11 MiB/);
+    input.artifact.size_in_bytes = 12 * 1024 * 1024;
+    assert.equal(await findPreviousTriageArtifact(input), null);
+  });
+
+  it('finds only this run\'s checked transfer and rejects excessive archives and API errors', async () => {
+    const input = mocks();
+    input.github.rest.actions.listWorkflowRunArtifacts = () => {};
+    input.github.paginate = async (method, params) => {
+      assert.equal(method, input.github.rest.actions.listWorkflowRunArtifacts);
+      assert.equal(params.run_id, 1000);
+      return input.artifacts;
+    };
+    assert.equal(await findTransferredTriageArtifact(input), null);
+    input.artifact.name = 'gaw-issue-triage-transfer';
+    assert.equal(await findTransferredTriageArtifact(input), 700);
+    input.artifact.expired = true;
+    assert.equal(await findTransferredTriageArtifact(input), null);
+    input.artifact.expired = false;
+    for (const size of [0, -1, '100']) {
+      input.artifact.size_in_bytes = size;
+      await assert.rejects(findTransferredTriageArtifact(input), /invalid size/);
+    }
+    input.artifact.size_in_bytes = 14 * 1024 * 1024 + 1;
+    await assert.rejects(findTransferredTriageArtifact(input), /archive size/);
+    input.github.paginate = async () => { throw new Error('Access denied'); };
+    await assert.rejects(findTransferredTriageArtifact(input), /Access denied/);
+  });
+
   it('validates issue numbers before calling GitHub', async () => {
     for (const issueNumber of ['', '0', '-1', '042', '42\n', '42/../43', '9007199254740992']) {
       const input = { ...mocks(), issueNumber };
       await assert.rejects(findPreviousTriageArtifact(input), /positive, safe integer/);
+      assert.equal(input.calls.length, 0);
+    }
+  });
+
+  it('requires a current run for transfers instead of falling back to repository-wide lookup', async () => {
+    for (const runId of [undefined, 0, '1000']) {
+      const input = mocks();
+      input.context.runId = runId;
+      await assert.rejects(findTransferredTriageArtifact(input), /current workflow run ID/);
       assert.equal(input.calls.length, 0);
     }
   });

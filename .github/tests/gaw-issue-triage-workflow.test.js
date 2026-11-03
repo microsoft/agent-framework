@@ -125,7 +125,7 @@ describe('Issue triage workflow', () => {
     assert.notEqual(handlers.assign_to_user.unassign_first, true);
     const tools = manifest.mcp_servers.find(server => server.name === 'safeoutputs').tools;
     assert.deepEqual(tools.filter(tool => !['noop', 'report_incomplete', 'report_missing_tool', 'report_missing_data'].includes(tool)).sort(),
-      [...names, 'upload_artifact'].sort());
+      names.sort());
   });
 
   it('keeps all public owner routes and their labels within the publication limits', () => {
@@ -192,10 +192,18 @@ describe('Issue triage workflow', () => {
   });
 
   it('bounds reproduction artifacts and screens before investigating or running tests', () => {
-    assert.deepEqual(handlers.upload_artifact['allowed-paths'], ['gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}/**']);
-    assert.equal(handlers.upload_artifact['max-uploads'], 1);
-    assert.equal(handlers.upload_artifact['max-size-bytes'], 10485760);
-    assert.match(handlers.upload_artifact['retention-days'], /'7'/);
+    assert.equal(handlers.upload_artifact, undefined);
+    assert.doesNotMatch(compiled, /Upload upload-artifact staging|safe-outputs-upload-artifacts/);
+    const agent = job('agent');
+    assert.ok(agent.indexOf('Preserve the trusted evidence checker') < agent.indexOf('id: agentic_execution'));
+    assert.match(agent, /--mount "\$\{RUNNER_TEMP\}\/gh-aw:\$\{RUNNER_TEMP\}\/gh-aw:ro"/);
+    assert.match(agent, /gh-aw\/triage-helpers\/bundle.js/);
+    assert.ok(agent.indexOf('Check evidence before transfer') < agent.indexOf('Transfer checked evidence'));
+    const transfer = agent.split(/^      - /m).find(step => step.includes('name: Transfer checked evidence'));
+    assert.match(transfer, /if: success\(\) && steps.triage-bundle.outputs.ready == 'true'/);
+    assert.match(transfer, /path: \$\{\{ runner.temp \}\}\/gh-aw\/triage-evidence\//);
+    assert.match(transfer, /if-no-files-found: error/);
+    assert.doesNotMatch(transfer, /always\(\)|continue-on-error/);
     assert.ok(source.indexOf('## 1. Check for spam') < source.indexOf('## 2. Route a Feature'));
     assert.match(source, /stop before following issue links,\ninstalling project dependencies/);
     assert.match(source, /first-time author.*do not imply spam/s);
@@ -204,6 +212,30 @@ describe('Issue triage workflow', () => {
     assert.match(source, /Do not label source-only suspicion as reproduced/);
     assert.match(source, /skip reproduction, project dependency installation,\nand test execution/);
     assert.doesNotMatch(source, /\$\{\{ github.event.issue.(?:body|title) \}\}/);
+  });
+
+  it('checks current labels and issue types before publishing evidence or issue updates', () => {
+    const writer = job('safe_outputs');
+    assert.match(writer, /needs.agent.result == 'success'/);
+    assert.match(writer, /needs.detection.result == 'success'/);
+    assert.match(writer, /contents: read/);
+    assert.match(writer, /actions: read/);
+    assert.match(writer, /ref: \$\{\{ github.workflow_sha \}\}/);
+    assert.match(writer, /persist-credentials: false/);
+    assert.ok(writer.indexOf('id: setup-agent-output-env') < writer.indexOf('name: Check issue requests'));
+    assert.ok(writer.indexOf('name: Check issue requests') < writer.indexOf('name: Publish issue evidence'));
+    assert.ok(writer.indexOf('name: Publish issue evidence') < writer.indexOf('name: Recheck stop labels immediately'));
+    assert.ok(writer.indexOf('name: Recheck stop labels immediately') < writer.indexOf('name: Process Safe Outputs'));
+    assert.match(writer, /require\('\.\/\.github\/scripts\/gaw-issue-triage-publish\.js'\)/);
+    const upload = writer.split(/^      - /m).find(step => step.includes('name: Publish issue evidence'));
+    assert.match(upload, /steps.triage-evidence.outputs.allowed == 'true'/);
+    assert.match(upload, /!\(github.event_name == 'workflow_dispatch' && inputs.preview\)/);
+    assert.match(upload, /name: gaw-issue-triage-issue-\$\{\{ needs.prepare.outputs.issue_number \}\}/);
+    assert.match(upload, /path: \$\{\{ runner.temp \}\}\/triage-final\//);
+    assert.match(upload, /retention-days: .*'7'/);
+    assert.doesNotMatch(upload, /always\(\)|continue-on-error/);
+    const processor = writer.split(/^      - /m).find(step => step.includes('name: Process Safe Outputs'));
+    assert.doesNotMatch(processor, /if: always\(\)|continue-on-error/);
   });
 
   it('downloads the selected prior bundle by validated artifact and run IDs without running its files', () => {

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 const checkTeamMembership = require('./check_team_membership.js');
+const { stopReason } = require('./gaw-issue-triage-publish.js');
 
 async function prepareIssueTriage({ github, context, core, issueNumber = '', teamSlug = '' }) {
   // Keep the agent disabled unless every required check below passes.
@@ -39,14 +40,9 @@ async function prepareIssueTriage({ github, context, core, issueNumber = '', tea
 
   // Respect maintainer stop labels even for manual runs. An allow label can release
   // a review hold, but cannot override a spam or suspected-spam label.
-  const labels = new Set((issue.labels ?? []).map(label =>
-    (typeof label === 'string' ? label : label.name).toLowerCase()));
-  if (labels.has('spam') || labels.has('suspected-spam')) {
-    core.info('Skipping triage: a manual deny label is present.');
-    return;
-  }
-  if (labels.has('needs-maintainer-triage') && !labels.has('safe-to-triage')) {
-    core.info('Skipping triage: maintainer review is required. Review the report before adding safe-to-triage.');
+  const reason = stopReason(issue);
+  if (reason) {
+    core.info(`Skipping triage: ${reason}`);
     return;
   }
 

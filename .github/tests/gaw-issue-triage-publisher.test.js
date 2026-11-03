@@ -3,8 +3,10 @@
 const assert = require('node:assert/strict');
 const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { join, relative, resolve } = require('node:path');
+const { join, resolve } = require('node:path');
 const { beforeEach, describe, it } = require('node:test');
+const stageBundle = require('../scripts/gaw-issue-triage-bundle.js');
+const { validateRequests } = require('../scripts/gaw-issue-triage-publish.js');
 
 const runtime = process.env.GH_AW_TEST_RUNTIME;
 
@@ -128,69 +130,71 @@ describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_T
     assert.equal(requests.length, 1);
   });
 
-  async function checkArtifactUpload(confirmed) {
+  it('guards the pinned type publisher before any write, while preserving Feature updates', async () => {
+    const compiled = readFileSync(resolve(__dirname, '../workflows/gaw-issue-triage.lock.yml'), 'utf8');
+    const config = JSON.parse(JSON.parse(compiled.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: (.+)/)[1])).set_issue_type;
+    const { main: typePublisher } = require(resolve(runtime, 'set_issue_type.cjs'));
+    global.github.rest.issues.update = async request => { requests.push(request); return { data: {} }; };
+    global.github.rest.issues.get = async () => ({ data: { node_id: 'issue-42' } });
+    global.github.graphql = async (query, variables) => {
+      if (query.includes('query(')) {
+        return { repository: { issueTypes: { nodes: [{ id: 'feature-type', name: 'Feature' }] } } };
+      }
+      requests.push(variables);
+      return {};
+    };
+    const publish = async items => {
+      validateRequests({ items });
+      for (const item of items) {
+        const handler = item.type === 'add_comment' ? await main(configuredComment())
+          : await typePublisher({ ...config, target: '42' });
+        const result = await handler(item);
+        assert.equal(result.success, true, result.error);
+      }
+    };
+    for (const issue_type of ['', undefined, null, 'Bug']) {
+      await assert.rejects(publish([
+        { type: 'add_comment', body: comment() },
+        { type: 'set_issue_type', issue_type },
+      ]), /only set.*Feature/);
+      assert.equal(requests.length, 0);
+    }
+    await publish([{ type: 'set_issue_type', issue_type: 'Feature', issue_number: 999 }]);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].issueId, 'issue-42');
+    assert.equal(requests[0].issueType.issueTypeId, 'feature-type');
+  });
+
+  function checkArtifactUpload(confirmed) {
     const directory = mkdtempSync(join(tmpdir(), 'gaw-triage-upload-'));
-    const savedTemp = process.env.RUNNER_TEMP;
-    const savedResolver = process.env.GH_AW_ARTIFACT_RESOLVER_FILE;
-    process.env.RUNNER_TEMP = directory;
-    process.env.GH_AW_ARTIFACT_RESOLVER_FILE = join(directory, 'resolver.json');
-    const uploads = [];
-    global.__createArtifactClient = () => ({
-      uploadArtifact: async (...args) => {
-        uploads.push(args);
-        return { id: 700, size: 20 };
-      },
-    });
     try {
-      const staging = join(directory, 'gh-aw', 'safeoutputs', 'upload-artifacts');
+      const staging = join(directory, 'evidence');
       for (const issue of ['42', '43']) {
         mkdirSync(join(staging, `gaw-issue-triage-issue-${issue}`), { recursive: true });
-        writeFileSync(join(staging, `gaw-issue-triage-issue-${issue}`, 'report.txt'), 'Observed failure.');
+        writeFileSync(join(staging, `gaw-issue-triage-issue-${issue}`, 'report.md'), 'Observed failure.');
       }
       const bundle = join(staging, 'gaw-issue-triage-issue-42');
       const historical = { ...record, run_url: record.run_url.replace('/123', '/100'), commit: 'b'.repeat(40) };
       mkdirSync(join(bundle, 'history', '100'), { recursive: true });
       writeFileSync(join(bundle, 'history', '100', 'reproduction.json'), JSON.stringify(historical, null, 2));
-      writeFileSync(join(bundle, 'report.txt'), confirmed
+      writeFileSync(join(bundle, 'report.md'), confirmed
         ? 'Current run: reproduced. Retained earlier evidence from run 100.'
         : 'Current run: inconclusive. Retained earlier evidence from run 100; no new reproduction.');
       if (confirmed) writeFileSync(join(bundle, 'reproduction.json'), JSON.stringify(record, null, 2));
-      const compiled = readFileSync(resolve(__dirname, '../workflows/gaw-issue-triage.lock.yml'), 'utf8');
-      const config = JSON.parse(JSON.parse(compiled.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: (.+)/)[1])).upload_artifact;
-      const uploadModule = require.resolve(resolve(runtime, 'upload_artifact.cjs'));
-      delete require.cache[uploadModule];
-      const { main: upload } = require(uploadModule);
-      const handler = await upload({
-        ...config,
-        'allowed-paths': config['allowed-paths'].map(pattern => pattern.replace('${{ needs.prepare.outputs.issue_number }}', '42')),
-        'retention-days': 7,
-      });
-      assert.equal((await handler({ path: 'gaw-issue-triage-issue-43' })).success, false);
-      assert.equal(uploads.length, 0);
-      const result = await handler({ path: 'gaw-issue-triage-issue-42' });
-      assert.equal(result.success, true, result.error);
-      assert.equal(uploads.length, 1);
-      assert.equal(result.artifactName, 'gaw-issue-triage-issue-42');
-      assert.equal(uploads[0][0], 'gaw-issue-triage-issue-42');
-      const expected = ['report.txt', join('history', '100', 'reproduction.json')];
-      if (confirmed) expected.push('reproduction.json');
-      assert.deepEqual(uploads[0][1].map(file => relative(bundle, file)).sort(), expected.sort());
-      assert.deepEqual(JSON.parse(readFileSync(join(bundle, 'history', '100', 'reproduction.json'), 'utf8')), historical);
-      if (confirmed) assert.deepEqual(JSON.parse(readFileSync(join(bundle, 'reproduction.json'), 'utf8')), record);
-      assert.equal(resolve(uploads[0][2]), staging);
-      assert.equal(uploads[0][3].retentionDays, 7);
+      const transfer = join(directory, 'checked-transfer');
+      const final = join(directory, 'checked-final');
+      assert.equal(stageBundle({ source: bundle, destination: transfer, core: global.core }), true);
+      assert.equal(stageBundle({ source: transfer, destination: final, core: global.core }), true);
+      assert.deepEqual(JSON.parse(readFileSync(join(final, 'history', '100', 'reproduction.json'), 'utf8')), historical);
+      if (confirmed) assert.deepEqual(JSON.parse(readFileSync(join(final, 'reproduction.json'), 'utf8')), record);
+      assert.equal(readFileSync(join(final, 'report.md'), 'utf8'), readFileSync(join(bundle, 'report.md'), 'utf8'));
     } finally {
-      if (savedTemp === undefined) delete process.env.RUNNER_TEMP;
-      else process.env.RUNNER_TEMP = savedTemp;
-      if (savedResolver === undefined) delete process.env.GH_AW_ARTIFACT_RESOLVER_FILE;
-      else process.env.GH_AW_ARTIFACT_RESOLVER_FILE = savedResolver;
-      delete global.__createArtifactClient;
       rmSync(directory, { recursive: true, force: true });
     }
   }
 
   for (const confirmed of [true, false]) {
-    it(`uploads a ${confirmed ? 'newly reproduced' : 'retained-only'} bundle with its original historical record`,
+    it(`preserves a ${confirmed ? 'newly reproduced' : 'retained-only'} bundle through both evidence checks`,
       () => checkArtifactUpload(confirmed));
   }
 });

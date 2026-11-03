@@ -15,10 +15,14 @@ and skip authors in `DEVELOPER_TEAM`. This checks the issue author, not the
 person or App that triggered the event. Manual runs bypass the team/type check.
 The App token helper is used only in preparation, with read access.
 
-The labels `spam` and `suspected-spam` always stop a run.
+The labels `spam` and `suspected-spam` block triage.
 `needs-maintainer-triage` also stops it unless a maintainer has reviewed the
 report and added `safe-to-triage`. Manual dispatch alone does not bypass these
-labels. There is no label-triggered entry point.
+labels. These rules are checked before investigation and checked again before
+publishing evidence and immediately before issue updates. A label added during
+investigation therefore stops publication. The check cannot undo an API write
+already in progress; publishing is not an all-or-nothing transaction.
+There is no label-triggered entry point.
 
 The agent first checks whether the report is relevant or contains suspicious
 instructions. Suspected spam gets only `needs-maintainer-triage`, without a
@@ -43,7 +47,32 @@ Issue writes use separate, limited publishing steps. Every write is tied to
 the validated issue number, including manual dispatch. The agent has read-only
 GitHub access. Detection failures block publishing. Native Priority means the
 repository's issue field, not a Projects-board field. Access to that field still
-needs a real publication test.
+needs a real publication test. A trusted check rejects empty, missing, or
+non-Feature issue-type requests before any issue update; triage cannot clear
+the current type.
+
+## Flow at a glance
+
+```mermaid
+flowchart TD
+    Prepare["Validate issue and author"] --> Agent["Screen, then investigate or route"]
+    Previous["Earlier issue bundle, if available"] -.-> Agent
+    Agent --> Transfer["Check and save temporary evidence, if any"]
+    Transfer --> Threat["Threat checks on agent output"]
+    Threat --> Checks["Publishing job: check requests and current stop labels"]
+    Transfer -.->|Files passed between jobs| Checks
+    Checks --> Mode{"Preview?"}
+    Mode -->|Yes| Preview["Show proposed issue updates"]
+    Mode -->|No| Final["Save final issue bundle, if any"]
+    Final --> Updates["Recheck stop labels, then update issue"]
+    Final -.->|Later runs| Previous
+```
+
+Evidence is optional: runs without a bundle can still propose issue updates.
+Failed checks or blocking labels stop publication. The temporary bundle carries
+files between separate jobs; it is still an Actions artifact with the repository's
+visibility, normally retained for one day. Preview may create that temporary
+transfer, but does not publish issue updates or save a final reusable bundle.
 
 ## Running and testing
 
@@ -133,7 +162,8 @@ The tested checkout revision must be read from the earlier report; it can
 differ from the workflow run's commit. Features skip
 this download. If no eligible bundle remains, investigation starts without one.
 API/authentication/download errors fail visibly rather than pretending no
-bundle exists.
+bundle exists. Archives exceeding the 11 MiB download budget produce a warning
+and are skipped in favor of an older eligible bundle, or no history.
 
 The agent job now has Actions read permission for these setup steps, but no
 Actions write permission or Actions toolset. Downloaded files are not executed
@@ -157,18 +187,36 @@ is needed merely to retain files. Features and suspected spam do not upload
 bundles. A run that uploads nothing leaves the previous eligible bundle as the
 latest, until it expires.
 
-Generated tests, commands, and output go in the uploader's shared staging folder,
-`$RUNNER_TEMP/gh-aw/safeoutputs/upload-artifacts/gaw-issue-triage-issue-N/`,
-limited to one upload and 10 MiB. Pass `gaw-issue-triage-issue-N` as the upload
-path; its folder name becomes the artifact name. The requested
-retention is seven days; `GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS` can override it,
-and repository retention rules still apply. Standard workflow artifacts have
-their own platform defaults. Logs and artifacts follow the destination
-repository's visibility and retention rules.
+Generated tests, commands, and output go under
+`/tmp/gh-aw/agent/triage/gaw-issue-triage-issue-N/`, including a current
+`report.md`. Trusted code checks the folder before transferring anything:
+at most 10 MiB of file contents and 1,000 files, including retained history.
+Links, special files, and names containing backslashes or control characters
+are rejected. At most 2,000 files/folders together
+and 1 MiB of path names are allowed, preventing empty folders or very long
+paths from escaping the storage bounds.
+
+The agent has no artifact-upload tool. Its job copies checked files into a
+separate folder outside the agent's writable paths and uploads only that copy
+as `gaw-issue-triage-transfer`, with a one-day default retention. The checker
+itself is preserved outside writable paths before the agent starts. Missing
+evidence is normal; failed checks stop the transfer and publication visibly.
+
+After successful investigation and threat checks, the publishing job finds
+that transfer only in the current run. It allows up to 14 MiB compressed for
+file/path metadata, checks the extracted files again, and checks current stop
+labels before publishing one final issue-specific bundle. This happens before
+issue updates so a review-hold label requested by this run does not block its
+own evidence. Labels are checked again immediately before the issue updates.
+The final bundle's default retention is seven days. The repository variable
+`GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS` can override artifact retention, and
+repository retention rules still apply. Standard workflow artifacts have their
+own platform defaults. Logs and artifacts follow the destination repository's
+visibility and retention rules.
 Expired or deleted bundles cannot be downloaded. Runs from before the
 issue-specific naming and source-run checks were added are not selected.
-Preview can download earlier bundles, but the safe-output uploader only previews
-its own upload; it does not save a new reusable bundle.
+Preview can download earlier bundles and creates only the bounded temporary
+transfer, not a new reusable issue-specific bundle.
 
 Reruns may add one useful new comment rather than editing an earlier comment.
 Existing labels are preserved except for removing `triage` after completed
@@ -187,13 +235,14 @@ Use the reviewed compiler/runtime version, currently `github/gh-aw` v1.0.1:
 ```bash
 gh extension install github/gh-aw --pin v1.0.1
 gh aw compile gaw-issue-triage --strict --validate --actionlint --shellcheck --no-check-update
-node --test .github/tests/gaw-issue-triage-prepare.test.js .github/tests/gaw-issue-triage-artifacts.test.js .github/tests/test_check_team_membership.js .github/tests/gaw-issue-triage-workflow.test.js .github/tests/test_issue_plan_workflow.js .github/tests/test_set_missing_issue_type.js
+node --test .github/tests/gaw-issue-triage-prepare.test.js .github/tests/gaw-issue-triage-artifacts.test.js .github/tests/gaw-issue-triage-bundle.test.js .github/tests/gaw-issue-triage-publish.test.js .github/tests/test_check_team_membership.js .github/tests/gaw-issue-triage-workflow.test.js .github/tests/test_issue_plan_workflow.js .github/tests/test_set_missing_issue_type.js
 ```
 
 CI also loads the exact pinned publisher and runs
 `gaw-issue-triage-publisher.test.js` with mocked GitHub calls. Those checks exercise
 manual targeting, comment limits, preview, short comments without reproduction
-JSON, and current/historical JSON surviving in uploaded bundles. To run them
+JSON, the guarded Feature-only type update, and current/historical JSON surviving
+both evidence checks. To run them
 locally, set `GH_AW_TEST_RUNTIME` to the directory of scripts
 from that pinned setup action and include that test file. Without this setting
 the suite explicitly skips; it must not skip in CI. These tests are not a
