@@ -3118,16 +3118,24 @@ class ContinuationToken(TypedDict):
 # endregion
 
 
-def _validate_json_by_alias(model: Any, text: str) -> Any:
-    """Validate JSON against ``model`` using only field aliases, as in the schema sent to providers.
+def _validate_structured_json(model: Any, text: str) -> Any:
+    """Validate JSON against ``model``, preserving the model's own field-name validation settings.
 
-    The by_alias/by_name overrides need pydantic 2.11; earlier versions use the model's own settings.
+    Providers are asked for alias-keyed output (the model's JSON schema uses aliases), which a model
+    configured with ``validate_by_alias=False`` rejects. When the model's own validation fails, retry
+    with aliases only (needs pydantic 2.11) and re-raise the original error if that also fails.
     """
-    from pydantic import VERSION
+    from pydantic import VERSION, ValidationError
 
-    if tuple(int(part) for part in VERSION.split(".")[:2]) >= (2, 11):
-        return model.model_validate_json(text, by_alias=True, by_name=False)
-    return model.model_validate_json(text)
+    try:
+        return model.model_validate_json(text)
+    except ValidationError as exc:
+        if tuple(int(part) for part in VERSION.split(".")[:2]) < (2, 11):
+            raise
+        try:
+            return model.model_validate_json(text, by_alias=True, by_name=False)
+        except ValidationError:
+            raise exc from None
 
 
 def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
@@ -3139,7 +3147,7 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         from pydantic import BaseModel
 
         if issubclass(response_format, BaseModel):
-            return _validate_json_by_alias(response_format, text)
+            return _validate_structured_json(response_format, text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)

@@ -7922,3 +7922,32 @@ def test_agent_response_value_validates_by_alias_only() -> None:
 
     assert response.value is not None
     assert response.value.item_count == 3
+
+
+def test_agent_response_value_accepts_field_names_when_model_allows_it() -> None:
+    """A model configured to validate by field name keeps accepting name-keyed output."""
+    from pydantic import ConfigDict
+
+    class Named(BaseModel):
+        model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+        item_count: int = Field(alias="itemCount")
+
+    for text in ('{"item_count": 3}', '{"itemCount": 3}'):
+        response = AgentResponse(
+            messages=[Message(role="assistant", contents=[text])],
+            response_format=Named,
+        )
+        assert response.value is not None
+        assert response.value.item_count == 3
+
+
+def test_agent_response_value_raises_original_error_for_invalid_output() -> None:
+    class Strict(BaseModel):
+        count: int
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"count": "x"}'])],
+        response_format=Strict,
+    )
+    with pytest.raises(ValidationError):
+        _ = response.value
