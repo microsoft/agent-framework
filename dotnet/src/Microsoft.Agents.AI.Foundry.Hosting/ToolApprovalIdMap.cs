@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
@@ -205,7 +206,7 @@ internal static class ToolApprovalIdMap
         }
 
         string indexKey = DecisionIndexKey(callId, isMcpToolCall);
-        if (stateBag?.GetValue<Dictionary<string, string>>(DecisionIndexStateBagKey)
+        if (stateBag.GetValue<Dictionary<string, string>>(DecisionIndexStateBagKey)
                 ?.TryGetValue(indexKey, out string? wireId) is true
             && map.TryGetValue(wireId, out ApprovalEntry? indexedEntry)
             && IsMatchingMcpEntry(indexedEntry, callId, isMcpToolCall))
@@ -284,7 +285,9 @@ internal static class ToolApprovalIdMap
     private static Dictionary<string, ApprovalEntry> LoadMap(AgentSessionStateBag stateBag)
         => TryLoadMap(stateBag, out var map) ? map : new Dictionary<string, ApprovalEntry>(StringComparer.Ordinal);
 
-    private static bool TryLoadMap(AgentSessionStateBag? stateBag, out Dictionary<string, ApprovalEntry> map)
+    private static bool TryLoadMap(
+        [NotNullWhen(true)] AgentSessionStateBag? stateBag,
+        out Dictionary<string, ApprovalEntry> map)
     {
         if (stateBag is null)
         {
