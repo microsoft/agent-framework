@@ -182,6 +182,18 @@ To self-serve the `Search Index Data Reader` grant above, you need `User Access 
 need `Search Index Data Contributor`. These are typically granted once per onboarded engineer
 and reused for every new IT scenario that needs Search.
 
+### Toolbox MCP contract prerequisite (one time, out of band)
+
+The `mcp-toolbox` scenario assumes a Foundry **toolbox** named by `IT_TOOLBOX_NAME`
+(default `auth-paths-pat-toolbox`) exists in the target project. It must expose the GitHub MCP
+`get_me` tool without approval or user consent. The test invokes that tool and verifies the hosted
+Responses caller receives one `McpToolCallItem` with inline output, with no function-call items.
+
+The separate `mcp-hosted` scenario configures the public Microsoft Learn endpoint as an
+inference-hosted MCP server. It requires no out-of-band resource and verifies
+`microsoft_docs_search` uses the same caller contract without mixing local and hosted execution
+in one model request.
+
 ### OAuth consent toolbox prerequisite (one time, out of band)
 
 The `toolbox-oauth-consent` scenario assumes a Foundry **toolbox** named by `IT_TOOLBOX_NAME`
@@ -282,7 +294,8 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `DownstreamStoreHostedAgentFixture` | `downstream-store` | `it-downstream-store` | An ordinary Foundry `ChatClientAgent` that reports back which conversation its own run left behind on the service, so the test can assert the container does not keep a second copy of a turn the platform already recorded. |
 | `ToolCallingHostedAgentFixture` | `tool-calling` | `it-tool-calling` | Server side AIFunction invocation; arguments; multi turn referencing prior tool result. |
 | `ToolCallingApprovalHostedAgentFixture` | `tool-calling-approval` | `it-tool-calling-approval` | Approval requests raised, approved, denied. |
-| `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | MCP backed tool invocation against `https://learn.microsoft.com/api/mcp` (placeholder). |
+| `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | Foundry Toolbox execution through `auth-paths-pat-toolbox`; verifies the raw Responses caller receives one MCP call item with inline output rather than function-call items. |
+| `HostedMcpHostedAgentFixture` | `mcp-hosted` | `it-mcp-hosted` | Inference-hosted Microsoft Learn MCP; verifies native MCP call/result content reaches the raw Responses caller as one MCP call item with inline output. |
 | `ToolboxOAuthConsentHostedAgentFixture` | `toolbox-oauth-consent` | `it-toolbox-oauth-consent` | Per-user OAuth toolbox consent: pre-registers a consent-gated Foundry toolbox (`IT_TOOLBOX_NAME`), invokes the agent, asserts the consumer captures an `oauth_consent_request` consent link (and the container stays routable, no 424). Requires a consent-gated toolbox in the project (see prerequisite below). |
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
 | `MemoryHostedAgentFixture` | `memory` | `it-memory` | `FoundryMemoryProvider` (scoped via `HostedSessionContext`) running inside the hosted agent recalls user preferences across multiple turns; the memory store name is randomised per fixture (`IT_MEMORY_STORE_ID`). |

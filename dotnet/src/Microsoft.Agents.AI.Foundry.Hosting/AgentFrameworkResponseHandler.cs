@@ -274,7 +274,6 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             agentOptions?.ChatOptions?.RawRepresentationFactory,
             hostingOptions);
         chatOptions.Instructions = request.Instructions;
-
         // Inject Foundry Toolbox tools when the toolbox service is available. ResolveToolboxToolsAsync
         // describes the toolbox sources and returns the tools, the outstanding consents, or an error.
         if (this._toolboxService is not null)
@@ -317,6 +316,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
         }
 
+        IReadOnlyDictionary<string, LocalMcpExecutionContract> localMcpFunctions =
+            CreateLocalMcpFunctionContracts(agentOptions?.ChatOptions?.Tools, chatOptions.Tools);
         var options = new ChatClientAgentRunOptions(chatOptions);
 
         // We only use a volatile provider for the conversation history if the agent is a
@@ -376,6 +377,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
             session?.StateBag,
+            localMcpFunctions,
             cancellationToken: cancellationToken).GetAsyncEnumerator(cancellationToken);
         var pendingEvents = new Queue<ResponseStreamEvent>();
         try
@@ -841,6 +843,58 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         return markerConsents is { Count: > 0 }
             ? new(Tools: [], Consents: markerConsents, Error: null)
             : new(Tools: toolsToAdd, Consents: [], Error: null);
+    }
+
+    private static Dictionary<string, LocalMcpExecutionContract> CreateLocalMcpFunctionContracts(
+        params IEnumerable<AITool>?[] toolSets)
+    {
+        var contracts = new Dictionary<string, LocalMcpExecutionContract>(StringComparer.Ordinal);
+        var functions = new Dictionary<string, (AIFunction Function, LocalMcpExecutionContract? Contract)>(
+            StringComparer.Ordinal);
+        var observedTools = new HashSet<AITool>(ReferenceEqualityComparer.Instance);
+        foreach (var toolSet in toolSets)
+        {
+            if (toolSet is null)
+            {
+                continue;
+            }
+
+            foreach (var tool in toolSet)
+            {
+                if (!observedTools.Add(tool) || tool is not AIFunction function)
+                {
+                    continue;
+                }
+
+                LocalMcpExecutionContract? contract = function.GetService<LocalMcpExecutionContract>();
+                if (contract is not null)
+                {
+                    contract = contract with
+                    {
+                        RequiresApproval = function.GetService<ApprovalRequiredAIFunction>() is not null,
+                    };
+                }
+
+                if (functions.TryGetValue(function.Name, out var existing)
+                    && (existing.Contract is not null || contract is not null))
+                {
+                    throw new InvalidOperationException(
+                        $"Local MCP function name '{function.Name}' collides with another agent function.");
+                }
+
+                functions[function.Name] = (function, contract);
+            }
+        }
+
+        foreach (var (functionName, entry) in functions)
+        {
+            if (entry.Contract is not null)
+            {
+                contracts.Add(functionName, entry.Contract);
+            }
+        }
+
+        return contracts;
     }
 
     /// <summary>

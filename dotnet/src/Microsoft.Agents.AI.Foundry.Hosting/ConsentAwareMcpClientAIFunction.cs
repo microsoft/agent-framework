@@ -11,6 +11,33 @@ using ModelContextProtocol.Client;
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
+/// Describes how one locally executed function-shaped MCP tool is projected onto the caller-facing MCP contract.
+/// </summary>
+internal sealed record LocalMcpExecutionContract(
+    string ServerLabel,
+    string ToolName,
+    bool RequiresApproval);
+
+/// <summary>
+/// Adds caller-facing MCP execution metadata to an arbitrary locally executed function.
+/// </summary>
+internal sealed class LocalMcpAIFunction : DelegatingAIFunction
+{
+    private readonly LocalMcpExecutionContract _contract;
+
+    internal LocalMcpAIFunction(AIFunction innerFunction, string serverLabel, string toolName)
+        : base(innerFunction)
+    {
+        this._contract = new(serverLabel, toolName, innerFunction.GetService<ApprovalRequiredAIFunction>() is not null);
+    }
+
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceKey is null && serviceType == typeof(LocalMcpExecutionContract)
+            ? this._contract
+            : base.GetService(serviceType, serviceKey);
+}
+
+/// <summary>
 /// An <see cref="AIFunction"/> wrapper around <see cref="McpClientTool"/> that intercepts
 /// JSON-RPC error -32006 (OAuth consent required) from the Foundry Toolsets proxy and
 /// propagates it back to <see cref="AgentFrameworkResponseHandler"/> via
@@ -29,12 +56,13 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
 {
     private readonly McpClientTool _inner;
-    private readonly string _toolboxName;
+    private readonly LocalMcpExecutionContract _contract;
 
     internal ConsentAwareMcpClientAIFunction(McpClientTool inner, string toolboxName)
     {
         this._inner = inner;
-        this._toolboxName = toolboxName;
+        this.ToolboxName = toolboxName;
+        this._contract = new(toolboxName, inner.Name, RequiresApproval: false);
     }
 
     public override string Name => this._inner.Name;
@@ -46,6 +74,15 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
     public override JsonElement? ReturnJsonSchema => this._inner.ReturnJsonSchema;
 
     public override JsonSerializerOptions JsonSerializerOptions => this._inner.JsonSerializerOptions;
+
+    internal string ToolboxName { get; }
+
+    internal string ToolName => this._inner.Name;
+
+    public override object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceKey is null && serviceType == typeof(LocalMcpExecutionContract)
+            ? this._contract
+            : base.GetService(serviceType, serviceKey);
 
     protected override async ValueTask<object?> InvokeCoreAsync(
         AIFunctionArguments arguments,
@@ -72,7 +109,7 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
                     // handler rejects this consent response instead of falling back to the message.
                     _ => string.Empty,
                 };
-                state.Pending = new McpConsentInfo(this._toolboxName, this._inner.Name, consentUrl);
+                state.Pending = new McpConsentInfo(this.ToolboxName, this._inner.Name, consentUrl);
                 state.CancellationSource?.Cancel();
             }
 

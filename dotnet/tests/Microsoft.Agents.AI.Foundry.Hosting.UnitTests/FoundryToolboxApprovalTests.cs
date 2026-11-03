@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.AgentServer.Responses;
+using Azure.AI.AgentServer.Responses.Models;
 using Azure.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -13,6 +15,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
@@ -128,6 +131,10 @@ public sealed class FoundryToolboxApprovalTests
 
         // Assert
         Assert.Equal(requiresApproval, tool.GetService<ApprovalRequiredAIFunction>() is not null);
+        var toolboxFunction = Assert.IsType<ConsentAwareMcpClientAIFunction>(
+            tool.GetService<ConsentAwareMcpClientAIFunction>());
+        Assert.Equal("weather", toolboxFunction.ToolboxName);
+        Assert.Equal("get_weather", toolboxFunction.ToolName);
         Assert.Equal("get_weather", tool.Name);
         Assert.Equal("Gets the weather", tool.Description);
         Assert.True(tool.JsonSchema.GetProperty("properties").TryGetProperty("city", out _));
@@ -236,6 +243,217 @@ public sealed class FoundryToolboxApprovalTests
         {
             McpConsentContext.Current.Value = previous;
         }
+    }
+
+    [Fact]
+    public async Task ResponseHandler_ToolboxExecution_EmitsMcpCallContractAsync()
+    {
+        // Arrange
+        await using var toolbox = await ToolboxServer.CreateAsync(metadata: null);
+        await using var toolboxService = toolbox.CreateService();
+        await toolboxService.StartAsync(CancellationToken.None);
+        var callCount = 0;
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> _, ChatOptions? options, CancellationToken _) =>
+            {
+                var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single(options!.Tools!));
+                var response = ++callCount == 1
+                    ? new ChatResponse(new ChatMessage(
+                        ChatRole.Assistant,
+                        [new FunctionCallContent(
+                            "call_weather",
+                            tool.Name,
+                            new Dictionary<string, object?> { ["city"] = "Amsterdam" })]))
+                    : new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done"));
+                return ToUpdatesAsync(response);
+            });
+
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AIAgent>(new ChatClientAgent(client.Object));
+        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
+        var handler = new AgentFrameworkResponseHandler(
+            services.BuildServiceProvider(),
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            toolboxService);
+        var request = new CreateResponse { Model = "test" };
+        request.Input = BinaryData.FromObjectAsJson(new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_1",
+                status = "completed",
+                role = "user",
+                content = new[] { new { type = "input_text", text = "Get the weather" } }
+            }
+        });
+        var context = new Mock<ResponseContext>("resp_" + new string('8', 46)) { CallBase = true };
+        context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<OutputItem>());
+        context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var responseEvent in handler.CreateAsync(request, context.Object, CancellationToken.None))
+        {
+            events.Add(responseEvent);
+        }
+
+        // Assert
+        var mcpCall = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>(), e => e.Item is OutputItemMcpToolCall).Item);
+        Assert.Equal("weather", mcpCall.ServerLabel);
+        Assert.Equal("get_weather", mcpCall.Name);
+        Assert.Contains("Sunny", mcpCall.Output, StringComparison.Ordinal);
+        Assert.Equal(1, toolbox.InvocationCount);
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemDoneEvent>(),
+            e => e.Item is OutputItemFunctionToolCall or OutputItemFunctionToolCallOutput);
+    }
+
+    [Fact]
+    public async Task ResponseHandler_MarkedLocalMcpExecution_EmitsMcpCallContractAsync()
+    {
+        // Arrange
+        AIFunction localMcpTool = AIFunctionFactory
+            .Create(() => "local MCP result", name: "local_search")
+            .AsLocalMcpTool(serverLabel: "local-mcp");
+        var callCount = 0;
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => ToUpdatesAsync(++callCount == 1
+                ? new ChatResponse(new ChatMessage(
+                    ChatRole.Assistant,
+                    [new FunctionCallContent("call_local_mcp", "local_search")]))
+                : new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done"))));
+        var agent = new ChatClientAgent(client.Object, new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions { Tools = [localMcpTool] },
+        });
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AIAgent>(agent);
+        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
+        var handler = new AgentFrameworkResponseHandler(
+            services.BuildServiceProvider(),
+            NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var request = new CreateResponse { Model = "test" };
+        request.Input = BinaryData.FromObjectAsJson(new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_1",
+                status = "completed",
+                role = "user",
+                content = new[] { new { type = "input_text", text = "Search locally" } }
+            }
+        });
+        var context = new Mock<ResponseContext>("resp_" + new string('a', 46)) { CallBase = true };
+        context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<OutputItem>());
+        context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var responseEvent in handler.CreateAsync(request, context.Object, CancellationToken.None))
+        {
+            events.Add(responseEvent);
+        }
+
+        // Assert
+        var mcpCall = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>(), e => e.Item is OutputItemMcpToolCall).Item);
+        Assert.Equal("local-mcp", mcpCall.ServerLabel);
+        Assert.Equal("local_search", mcpCall.Name);
+        Assert.Equal("local MCP result", mcpCall.Output);
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemDoneEvent>(),
+            e => e.Item is OutputItemFunctionToolCall or OutputItemFunctionToolCallOutput);
+    }
+
+    [Fact]
+    public async Task ResponseHandler_ToolboxFunctionNameCollidesWithLocalFunction_RejectsRequestAsync()
+    {
+        // Arrange
+        await using var toolbox = await ToolboxServer.CreateAsync(metadata: null);
+        await using var toolboxService = toolbox.CreateService();
+        await toolboxService.StartAsync(CancellationToken.None);
+        var localInvocationCount = 0;
+        AIFunction localTool = AIFunctionFactory.Create(
+            () =>
+            {
+                localInvocationCount++;
+                return "local result";
+            },
+            name: "get_weather");
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ToUpdatesAsync(new ChatResponse(new ChatMessage(
+                ChatRole.Assistant,
+                [new FunctionCallContent("call_weather", "get_weather")]))));
+        var agent = new ChatClientAgent(client.Object, new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions { Tools = [localTool] },
+        });
+
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AIAgent>(agent);
+        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
+        var handler = new AgentFrameworkResponseHandler(
+            services.BuildServiceProvider(),
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            toolboxService);
+        var request = new CreateResponse { Model = "test" };
+        request.Input = BinaryData.FromObjectAsJson(new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_1",
+                status = "completed",
+                role = "user",
+                content = new[] { new { type = "input_text", text = "Get the weather" } }
+            }
+        });
+        var context = new Mock<ResponseContext>("resp_" + new string('9', 46)) { CallBase = true };
+        context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<OutputItem>());
+        context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
+
+        // Act
+        async Task InvokeAsync()
+        {
+            await foreach (var _ in handler.CreateAsync(request, context.Object, CancellationToken.None))
+            {
+            }
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(InvokeAsync);
+
+        // Assert
+        Assert.Contains("collides", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, localInvocationCount);
+        Assert.Equal(0, toolbox.InvocationCount);
+        client.Verify(c => c.GetStreamingResponseAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<ChatOptions>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static async Task<AgentResponse> RunAsync(

@@ -250,6 +250,100 @@ public class InputConverterTests
     }
 
     [Fact]
+    public void ConvertOutputItemsToMessages_LocalToolboxMcpCall_RestoresFunctionTranscript()
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        LocalMcpCallIdMap.Record(
+            stateBag,
+            "mcp_wire_1",
+            "call_inner_1",
+            "search",
+            "search",
+            "agent-tools");
+        var mcpCall = new OutputItemMcpToolCall(
+            "mcp_wire_1",
+            "agent-tools",
+            "search",
+            "{\"q\":\"weather\"}")
+        {
+            Output = "sunny",
+            Status = MCPToolCallStatus.Completed,
+        };
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([mcpCall], stateBag);
+
+        // Assert
+        Assert.Equal(2, messages.Count);
+        var functionCall = Assert.IsType<FunctionCallContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("call_inner_1", functionCall.CallId);
+        Assert.Equal("search", functionCall.Name);
+        Assert.Equal("weather", Assert.IsType<JsonElement>(functionCall.Arguments!["q"]).GetString());
+        var functionResult = Assert.IsType<FunctionResultContent>(Assert.Single(messages[1].Contents));
+        Assert.Equal("call_inner_1", functionResult.CallId);
+        Assert.Equal("sunny", functionResult.Result);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_ProviderMcpCall_RestoresMcpTranscript()
+    {
+        // Arrange
+        var mcpCall = new OutputItemMcpToolCall(
+            "mcp_wire_2",
+            "remote-server",
+            "search",
+            "{\"q\":\"weather\"}")
+        {
+            Output = "sunny",
+            Status = MCPToolCallStatus.Completed,
+        };
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([mcpCall]);
+
+        // Assert
+        Assert.Equal(2, messages.Count);
+        var call = Assert.IsType<McpServerToolCallContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("mcp_wire_2", call.CallId);
+        Assert.Equal("remote-server", call.ServerName);
+        Assert.Equal("search", call.Name);
+        var result = Assert.IsType<McpServerToolResultContent>(Assert.Single(messages[1].Contents));
+        Assert.Equal("mcp_wire_2", result.CallId);
+        Assert.Equal("sunny", Assert.IsType<MeaiTextContent>(Assert.Single(result.Outputs!)).Text);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_LocalToolboxMcpCall_MismatchedIdentityThrows()
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        LocalMcpCallIdMap.Record(
+            stateBag,
+            "mcp_wire_3",
+            "call_inner_3",
+            "search",
+            "search",
+            "agent-tools");
+        var mcpCall = new OutputItemMcpToolCall(
+            "mcp_wire_3",
+            "different-server",
+            "search",
+            "{}")
+        {
+            Output = "sunny",
+            Status = MCPToolCallStatus.Completed,
+        };
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => InputConverter.ConvertOutputItemsToMessages([mcpCall], stateBag));
+
+        // Assert
+        Assert.Contains("does not match", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ConvertInputToMessages_FunctionCallOutput_JsonStringPayload_Unwraps()
     {
         // Spec-compliant inbound payload — a JSON string literal — must be unwrapped so
@@ -896,6 +990,42 @@ public class InputConverterTests
         Assert.Equal("issue_refund", fcc.Name);
         Assert.NotNull(fcc.Arguments);
         Assert.Equal(123, ((JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
+        Assert.False(ToolApprovalIdMap.ResolveEntry(stateBag, wireId)!.Approved);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public void ConvertItemsToMessages_McpApprovalResponse_ReplayedDecisionThrows(
+        bool firstDecision,
+        bool replayedDecision)
+    {
+        // Arrange
+        const string AfRequestId = "ficc_call_replay";
+        string wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_replay",
+            "delete_resource",
+            "{\"target\":\"db\"}",
+            "agent-tools",
+            "delete_resource");
+        _ = InputConverter.ConvertItemsToMessages(
+            [new MCPApprovalResponse(approvalRequestId: wireId, approve: firstDecision)],
+            stateBag);
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            InputConverter.ConvertItemsToMessages(
+                [new MCPApprovalResponse(approvalRequestId: wireId, approve: replayedDecision)],
+                stateBag));
+
+        // Assert
+        Assert.Contains("already been decided", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

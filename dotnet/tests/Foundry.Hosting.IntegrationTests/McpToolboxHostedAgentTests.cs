@@ -1,15 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Foundry.Hosting.IntegrationTests.Fixtures;
-using Microsoft.Extensions.AI;
+using OpenAI.Responses;
+
+#pragma warning disable OPENAI001 // Experimental Responses API surfaces
 
 namespace Foundry.Hosting.IntegrationTests;
 
 /// <summary>
-/// Tests for an MCP backed toolbox: the hosted container connects to a public MCP server
-/// (the Microsoft Learn MCP endpoint) at startup and exposes its tools to the model.
+/// Tests that a container-local Foundry Toolbox execution uses the caller-facing MCP contract.
 /// </summary>
 [Trait("Category", "FoundryHostedAgents")]
 public sealed class McpToolboxHostedAgentTests(McpToolboxHostedAgentFixture fixture)
@@ -17,44 +20,30 @@ public sealed class McpToolboxHostedAgentTests(McpToolboxHostedAgentFixture fixt
 {
     private readonly McpToolboxHostedAgentFixture _fixture = fixture;
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
-    public async Task McpTool_IsInvokedSuccessfullyAsync()
+    [Fact]
+    public async Task ToolboxExecution_UsesMcpCallerContractAsync()
     {
         // Arrange
-        var agent = this._fixture.Agent;
+        ResponsesClient responses = this._fixture.AgentOpenAIClient.GetProjectResponsesClient();
+        CreateResponseOptions options = ProjectResponsesTestOptions.Create();
+        options.StoredOutputEnabled = false;
+        options.InputItems.Add(ResponseItem.CreateUserMessageItem(
+            "Call the GitHub get_me tool from the toolbox and report only the returned login."));
+        using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
 
         // Act
-        var response = await agent.RunAsync("Use the Microsoft Learn MCP tool to look up 'Microsoft Foundry'. Reply with one short paragraph.");
+        ResponseResult response = (await responses.CreateResponseAsync(options, timeout.Token)).Value;
 
         // Assert
-        Assert.False(string.IsNullOrWhiteSpace(response.Text));
-        Assert.True(response.Messages.Any(m => m.Contents.OfType<FunctionCallContent>().Any()),
-            "Expected at least one MCP tool invocation in the response messages.");
+        Assert.Equal(ResponseStatus.Completed, response.Status);
+        McpToolCallItem mcpCall = Assert.Single(response.OutputItems.OfType<McpToolCallItem>());
+        Assert.Equal(this._fixture.ToolboxName, mcpCall.ServerLabel);
+        Assert.EndsWith("___get_me", mcpCall.ToolName, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrWhiteSpace(mcpCall.ToolOutput));
+        Assert.Contains("rogerbarreto", mcpCall.ToolOutput, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(response.OutputItems, item =>
+            item is FunctionCallResponseItem or FunctionCallOutputResponseItem);
+        Assert.Contains("rogerbarreto", response.GetOutputText(), StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
-    public async Task McpTool_WithStructuredArguments_ReturnsValidResultAsync()
-    {
-        // Arrange
-        var agent = this._fixture.Agent;
-
-        // Act
-        var response = await agent.RunAsync("Use the MCP search tool with the query 'agent framework hosted agents'. Reply with at least one fact.");
-
-        // Assert
-        Assert.False(string.IsNullOrWhiteSpace(response.Text));
-    }
-
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
-    public async Task McpTool_ProducesUsableResponseAsync()
-    {
-        // Arrange
-        var agent = this._fixture.Agent;
-
-        // Act
-        var response = await agent.RunAsync("Tell me one thing about Microsoft Foundry that would only be in MS Learn docs.");
-
-        // Assert
-        Assert.False(string.IsNullOrWhiteSpace(response.Text));
-    }
 }

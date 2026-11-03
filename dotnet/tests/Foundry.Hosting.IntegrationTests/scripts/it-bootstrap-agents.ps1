@@ -46,6 +46,7 @@ $Scenarios = @(
     'tool-calling',
     'tool-calling-approval',
     'mcp-toolbox',
+    'mcp-hosted',
     'toolbox-oauth-consent',
     'custom-storage',
     'memory',
