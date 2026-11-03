@@ -395,7 +395,8 @@ class TestWorkflowAgent:
 
         request_function_call = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
 
-        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)  # ty: ignore[invalid-argument-type]
+        assert isinstance(request_function_call.arguments, dict)
+        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)
         assert deserialized_args.request_id == "request_123"
         assert deserialized_args.request_event.data is None
         assert deserialized_args.request_event.request_type is type(None)
