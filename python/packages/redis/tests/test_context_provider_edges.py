@@ -353,6 +353,68 @@ async def test_redis_search_combines_explicit_filter_expression(
     mock_index.query.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("message", "broken_shape", "escaped"),
+    [
+        ("Why ?", "| ?)", r"\?"),
+        ("ps aux | grep python", "| |)", r"\|"),
+        ("Is it A | B?", "| |)", r"\|"),
+        ("Run ` ls ` please", "| ` |", r"\`"),
+        ("| name | age |", "| |)", r"\|"),
+    ],
+)
+async def test_redis_search_escapes_query_syntax_in_user_text(
+    message: str,
+    broken_shape: str,
+    escaped: str,
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    """User prose reaches RediSearch as escaped terms, not as query syntax (#10002).
+
+    A bare `|`, `?` or backtick in a message previously turned the generated query
+    string into malformed grammar (`@content:(ps | aux | | | grep | python)`), and
+    the syntax error failed the whole agent run.
+    """
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+
+    with patch.object(provider, "_ensure_index", AsyncMock()):
+        await provider._redis_search(text=message)
+
+    query = mock_index.query.await_args.args[0]
+    query_string = query.query_string()
+    assert broken_shape not in query_string
+    assert escaped in query_string
+
+
+async def test_redis_search_escapes_text_for_hybrid_query(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    """The hybrid vector path gets the same escaped text."""
+    mock_vectorizer = MagicMock(spec=BaseVectorizer)
+    mock_vectorizer.dims = 128
+    mock_vectorizer.dtype = "float32"
+    mock_vectorizer.aembed = AsyncMock(return_value=[0.1] * 128)
+
+    provider = RedisContextProvider(
+        source_id="ctx",
+        user_id="u1",
+        redis_vectorizer=mock_vectorizer,
+        vector_field_name="embedding",
+    )
+
+    with (
+        patch.object(provider, "_ensure_index", AsyncMock()),
+        patch("agent_framework_redis._context_provider.AggregateHybridQuery") as hybrid_query,
+    ):
+        hybrid_query.return_value = MagicMock()
+        await provider._redis_search(text="ps aux | grep python")
+
+    assert hybrid_query.call_args.kwargs["text"] == r"ps aux \| grep python"
+    mock_index.query.assert_awaited_once()
+
+
 async def test_search_all_collects_paginated_batches(
     mock_index: AsyncMock,
     patch_index: MagicMock,  # noqa: ARG001
