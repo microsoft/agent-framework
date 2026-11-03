@@ -1624,7 +1624,11 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
         case "string":
             return isinstance(value, str)
         case "integer":
-            return isinstance(value, int) and not isinstance(value, bool)
+            # JSON Schema "integer" is a number without a fraction, so 3.0
+            # is valid (#9843). bool is not an integer here.
+            return (isinstance(value, int) and not isinstance(value, bool)) or (
+                isinstance(value, float) and value.is_integer()
+            )
         case "number":
             return (isinstance(value, int | float)) and not isinstance(value, bool)
         case "boolean":
@@ -1637,6 +1641,21 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
             return value is None
         case _:
             return True
+
+
+def _normalize_json_schema_value(value: Any, allowed_types: list[str]) -> Any:
+    """Coerce a value to the type the schema asked for, where JSON is looser.
+
+    JSON has a single number type, so a model sends ``3.0`` for a parameter the
+    schema declares as ``integer``. Accepting it is only half the fix: a tool that
+    runs ``range(count)`` or indexes with it still raises on a float. Whole-number
+    floats become ``int`` when ``integer`` is the only numeric type allowed. When
+    ``number`` is allowed too the value's own type is the answer, so nothing is
+    narrowed to fit a declaration that also permits fractions.
+    """
+    if isinstance(value, float) and value.is_integer() and "integer" in allowed_types and "number" not in allowed_types:
+        return int(value)
+    return value
 
 
 def _validate_arguments_against_schema(
@@ -1659,7 +1678,7 @@ def _validate_arguments_against_schema(
         if unexpected_fields:
             raise TypeError(f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}")
 
-    for field_name, field_value in parsed_arguments.items():
+    for field_name, field_value in list(parsed_arguments.items()):
         if not isinstance(properties.get(field_name), dict):
             continue
 
@@ -1674,6 +1693,7 @@ def _validate_arguments_against_schema(
                     f"Invalid type for '{field_name}' in '{tool_name}': "
                     f"expected {schema_type}, got {type(field_value).__name__}"
                 )
+            parsed_arguments[field_name] = _normalize_json_schema_value(field_value, [schema_type])
             continue
 
         if isinstance(schema_type, list):
@@ -1683,6 +1703,7 @@ def _validate_arguments_against_schema(
                     f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
                     f"{allowed_types}, got {type(field_value).__name__}"
                 )
+            parsed_arguments[field_name] = _normalize_json_schema_value(field_value, allowed_types)
 
     return parsed_arguments
 
