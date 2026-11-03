@@ -230,6 +230,11 @@ public sealed partial class ChatClientAgent : AIAgent
         FeatureUsage.MarkUsed((int)FeatureIndex.CoreAgent);
 #pragma warning restore MAAI001
 
+        // Collect the usage reported by sub-agents invoked during this run (including by context providers),
+        // so that it can be rolled up into this run's usage.
+        var subAgentUsage = new SubAgentUsageScope.UsageAccumulator();
+        SubAgentUsageScope.Current = subAgentUsage;
+
         (ChatClientAgentSession safeSession,
          ChatOptions? chatOptions,
          List<ChatMessage> inputMessagesForChatClient,
@@ -276,6 +281,13 @@ public sealed partial class ChatClientAgent : AIAgent
         // is unreliable (the caller may stop consuming the stream before the decorator can persist).
         await this.NotifyProvidersOfNewMessagesAtEndOfRunAsync(safeSession, inputMessagesForChatClient, chatResponse.Messages, chatOptions, cancellationToken, forceNotify: forceEndOfRunPersistence).ConfigureAwait(false);
 
+        // Roll up the usage of any sub-agents invoked during this run. The function-invoking client only reports the
+        // usage of the model calls it made itself, so this has to happen after it returns.
+        if (subAgentUsage.GetTotal() is { } subAgentTotal)
+        {
+            chatResponse.Usage = SubAgentUsageScope.Merge(chatResponse.Usage, subAgentTotal);
+        }
+
         return new AgentResponse(chatResponse)
         {
             AgentId = this.Id,
@@ -320,6 +332,12 @@ public sealed partial class ChatClientAgent : AIAgent
         FeatureUsage.MarkUsed((int)FeatureIndex.CoreAgent);
 #pragma warning restore MAAI001
 
+        // Collect the usage reported by sub-agents invoked during this run (including by context providers),
+        // so that it can be rolled up into this run's usage. The scope is re-established after each yield, since
+        // the code resumes in the caller's execution context.
+        var subAgentUsage = new SubAgentUsageScope.UsageAccumulator();
+        SubAgentUsageScope.Current = subAgentUsage;
+
         (ChatClientAgentSession safeSession,
          ChatOptions? chatOptions,
          List<ChatMessage> inputMessagesForChatClient,
@@ -361,6 +379,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // left suspended at `yield return`, never running their finally blocks, and any in-flight
         // FunctionResultContent / FunctionCallContent state would not be persisted before the next
         // turn, leaving the next request to the model with dangling tool calls.
+        ChatClientAgentContinuationToken? lastContinuationToken = null;
         try
         {
             bool hasUpdates;
@@ -384,10 +403,11 @@ public sealed partial class ChatClientAgent : AIAgent
 
                     responseUpdates.Add(update);
 
+                    lastContinuationToken = WrapContinuationToken(update.ContinuationToken, GetInputMessages(inputMessages, continuationToken), responseUpdates);
                     yield return new(update)
                     {
                         AgentId = this.Id,
-                        ContinuationToken = WrapContinuationToken(update.ContinuationToken, GetInputMessages(inputMessages, continuationToken), responseUpdates)
+                        ContinuationToken = lastContinuationToken
                     };
                 }
 
@@ -397,6 +417,9 @@ public sealed partial class ChatClientAgent : AIAgent
                     // The base class RunStreamingAsync restores the original context (potentially with
                     // null session) after each yield, so we must re-establish it for the decorator.
                     EnsureRunContextHasSession(safeSession);
+
+                    // Likewise, re-establish the sub-agent usage scope for any tools invoked while resuming.
+                    SubAgentUsageScope.Current = subAgentUsage;
                     hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -422,6 +445,21 @@ public sealed partial class ChatClientAgent : AIAgent
         finally
         {
             await responseUpdatesEnumerator.DisposeAsync().ConfigureAwait(false);
+        }
+
+        // Roll up the usage of any sub-agents invoked during this run as a final update carrying only usage, so that
+        // aggregating the stream (e.g. with ToAgentResponse) includes it. The function-invoking client only reports
+        // the usage of the model calls it made itself.
+        if (subAgentUsage.GetTotal() is { } subAgentTotal)
+        {
+            // No role, author name or message id is set, so that aggregation attaches it to the last message rather
+            // than starting a new one. The continuation token of the last update is preserved so that the final
+            // update still reflects whether the response can be resumed.
+            yield return new AgentResponseUpdate(role: null, contents: [SubAgentUsageScope.CreateSubAgentUsageContent(subAgentTotal)])
+            {
+                AgentId = this.Id,
+                ContinuationToken = lastContinuationToken,
+            };
         }
     }
 

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 
@@ -53,6 +54,24 @@ internal sealed class BackgroundAgentRuntimeState
     /// </remarks>
     [JsonIgnore]
     public Dictionary<int, CancellationTokenSource> TaskCancellations { get; } = [];
+
+    /// <summary>
+    /// Gets the in-flight runs that finished successfully and whose usage has already been charged to a parent run,
+    /// but that have not been finalized yet.
+    /// </summary>
+    /// <remarks>
+    /// Each run's usage is charged once, to whichever parent run first observes that it finished. A run is removed
+    /// from this set when it is finalized, so that it is never charged again.
+    /// </remarks>
+    [JsonIgnore]
+    public HashSet<Task<AgentResponse>> UsageChargedRuns { get; } = [];
+
+    /// <summary>
+    /// Gets the usage of runs that were finalized while no parent run was in progress (for example through
+    /// <see cref="BackgroundAgentsProvider.GetIncompleteTasks"/>), to be charged to the next parent run.
+    /// </summary>
+    [JsonIgnore]
+    public List<UsageDetails> UnchargedUsage { get; } = [];
 
     /// <summary>
     /// Gets or sets a value indicating whether this runtime has been released via

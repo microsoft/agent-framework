@@ -337,12 +337,19 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         /// inner agent's own response back to the caller unchanged.
         /// </summary>
         /// <remarks>
+        /// <para>
+        /// When the agent's usage includes usage rolled up from sub-agents, the wrapper reports the agent's own usage
+        /// only, since the sub-agents report their usage on their own spans. The caller still receives the original
+        /// response, including the rolled-up usage, through the raw representation.
+        /// </para>
+        /// <para>
         /// <see cref="AgentResponseExtensions.AsChatResponse"/> isn't used here because it returns the inner agent's
         /// <see cref="ChatResponse"/> directly whenever that is the response's raw representation. Round-tripping
         /// through that <see cref="ChatResponse"/> discards agent-level state such as
         /// <see cref="AgentResponse.ContinuationToken"/> and <see cref="AgentResponse.AgentId"/>, which for a
         /// <see cref="ChatClientAgent"/> means the caller receives the underlying provider's continuation token rather
         /// than the agent's own, and resuming with it fails.
+        /// </para>
         /// </remarks>
         private static ChatResponse ToChatResponse(AgentResponse response) =>
             new()
@@ -356,7 +363,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 Messages = response.Messages,
                 RawRepresentation = response,
                 ResponseId = response.ResponseId,
-                Usage = response.Usage,
+                Usage = SubAgentUsageScope.GetOwnUsage(response.Usage),
             };
 
         /// <summary>
@@ -364,14 +371,15 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         /// update as its <see cref="ChatResponseUpdate.RawRepresentation"/>, so
         /// <see cref="RunCoreStreamingAsync"/> can hand the inner agent's own update back to the
         /// caller unchanged. See <see cref="ToChatResponse"/> for why
-        /// <see cref="AgentResponseExtensions.AsChatResponseUpdate"/> isn't used.
+        /// <see cref="AgentResponseExtensions.AsChatResponseUpdate"/> isn't used. Usage rolled up from sub-agents is
+        /// excluded from the wrapper's contents, so that the span reports the agent's own usage only.
         /// </summary>
         private static ChatResponseUpdate ToChatResponseUpdate(AgentResponseUpdate update) =>
             new()
             {
                 AdditionalProperties = update.AdditionalProperties,
                 AuthorName = update.AuthorName,
-                Contents = update.Contents,
+                Contents = ExcludeSubAgentUsage(update.Contents),
                 ContinuationToken = update.ContinuationToken,
                 ConversationId = (update.RawRepresentation as ChatResponseUpdate)?.ConversationId,
                 CreatedAt = update.CreatedAt,
@@ -382,6 +390,36 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 ResponseId = update.ResponseId,
                 Role = update.Role,
             };
+
+        /// <summary>
+        /// Returns <paramref name="contents"/>, or, when it contains usage rolled up from sub-agents, a copy of it
+        /// without that usage.
+        /// </summary>
+        private static IList<AIContent> ExcludeSubAgentUsage(IList<AIContent> contents)
+        {
+            List<AIContent>? filtered = null;
+            for (int i = 0; i < contents.Count; i++)
+            {
+                AIContent content = contents[i];
+                if (SubAgentUsageScope.IsSubAgentUsageContent(content))
+                {
+                    if (filtered is null)
+                    {
+                        filtered = new(contents.Count - 1);
+                        for (int j = 0; j < i; j++)
+                        {
+                            filtered.Add(contents[j]);
+                        }
+                    }
+                }
+                else
+                {
+                    filtered?.Add(content);
+                }
+            }
+
+            return filtered ?? contents;
+        }
 
         public object? GetService(Type serviceType, object? serviceKey = null) =>
             // Delegate any inquiries made by the OpenTelemetryChatClient back to the parent agent.

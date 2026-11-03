@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -114,4 +115,70 @@ public sealed class LoopAgentOptions
     /// it fires multiple times, the most recent invocation carries the session the loop is currently using.
     /// </remarks>
     public Func<AgentSession, CancellationToken, ValueTask>? SessionCreatedCallback { get; set; }
+
+    /// <summary>Gets or sets the maximum total LLM token spend across all iterations, or <see langword="null"/> for unconstrained.</summary>
+    /// <remarks>
+    /// <para>
+    /// Counts the input and output tokens used by the inner agent. For each iteration, the loop reads
+    /// <c>TotalTokenCount</c> from the inner agent's <c>AgentResponse.Usage</c>, falling back to
+    /// <c>InputTokenCount + OutputTokenCount</c> when <c>TotalTokenCount</c> is absent. What is counted cannot be configured.
+    /// </para>
+    /// <para>
+    /// A <see cref="ChatClientAgent"/> includes in its <c>AgentResponse.Usage</c> the usage of the sub-agents it invokes
+    /// through <see cref="AIAgentExtensions.AsAIFunction"/> tools and through <see cref="BackgroundAgentsProvider"/>, so
+    /// those tokens count toward this budget. A background task's usage is counted once, in the run that first observes
+    /// that the task finished; tasks that finish after the last run, or are only finalized when the session is released,
+    /// are not counted. Also not counted: sub-agents that fail or are cancelled (they produce no response), agents that
+    /// custom tools invoke directly through <c>RunAsync</c>, sub-agent usage that another kind of inner agent does not
+    /// report in its response, and tokens spent by <see cref="LoopEvaluator"/> instances, including judge model calls made
+    /// by <see cref="AIJudgeLoopEvaluator"/>.
+    /// </para>
+    /// <para>
+    /// If the inner agent reports no token usage, the budget cannot be enforced, and the loop logs a warning (once per run).
+    /// When exceeded, the loop stamps <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "token_budget_exceeded"</c>
+    /// (non-streaming only) and returns the last response.
+    /// </para>
+    /// </remarks>
+    public long? MaxTokens
+    {
+        get;
+        set
+        {
+            if (value.HasValue)
+            {
+                _ = Throw.IfLessThanOrEqual(value.Value, 0, nameof(value));
+            }
+
+            field = value;
+        }
+    }
+
+    /// <summary>Gets or sets the maximum wall-clock duration for the entire loop run, or <see langword="null"/> for unconstrained.</summary>
+    /// <remarks>
+    /// <para>
+    /// The duration is checked between iterations: after each inner agent call (or stream) completes, and again after
+    /// the evaluators run. Once it is exceeded, the loop does not start another iteration and returns the last response,
+    /// stamping <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "time_budget_exceeded"</c> (non-streaming only).
+    /// This bounds the number of slow iterations a run can start, which token budgets cannot detect.
+    /// </para>
+    /// <para>
+    /// This is not a hard deadline: it does not interrupt an in-flight inner agent call, stream, or evaluator, so a run can
+    /// exceed the duration by as long as that work takes. Callers that need a hard deadline should pass a
+    /// <see cref="CancellationToken"/> that cancels after a timeout (for example via
+    /// <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>).
+    /// </para>
+    /// </remarks>
+    public TimeSpan? MaxDuration
+    {
+        get;
+        set
+        {
+            if (value.HasValue && value.Value <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "MaxDuration must be a positive duration.");
+            }
+
+            field = value;
+        }
+    }
 }

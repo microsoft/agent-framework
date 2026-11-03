@@ -40,6 +40,13 @@ namespace Microsoft.Agents.AI;
 /// abandoned work does not continue to invoke models and tools in the background.
 /// </para>
 /// <para>
+/// The <see cref="AgentResponse.Usage"/> of each successful background run is added once to the usage of the parent
+/// agent run that first observes that it finished: either when the parent run starts, or when one of the tools
+/// above finalizes the task. Usage of runs that finish after the last parent run, or that are only finalized while
+/// the session is released, is not added to any parent run, and nor is the usage of failed or cancelled runs, which
+/// produce no response.
+/// </para>
+/// <para>
 /// <strong>Security considerations:</strong> The agents passed to the constructor are delegated
 /// arbitrary work by the parent agent — the parent sends them text input (which may include content
 /// derived from the parent's own untrusted context) and receives back whatever text they produce. A
@@ -147,6 +154,11 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
 
         BackgroundAgentState state = this._sessionState.GetOrInitializeState(context.Session);
         BackgroundAgentRuntimeState runtimeState = this._runtimeSessionState.GetOrInitializeState(context.Session);
+
+        lock (runtimeState.SyncRoot)
+        {
+            ChargeUsageOfFinishedRuns(runtimeState);
+        }
 
         return new ValueTask<AIContext>(new AIContext
         {
@@ -327,7 +339,8 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                         continue;
                     }
 
-                    FinalizeTask(tracked, kvp.Value, runtimeState);
+                    // Usage of runs that are only finalized during release is not charged to any parent run.
+                    FinalizeTask(tracked, kvp.Value, runtimeState, chargeUsage: false);
 
                     if (kvp.Value.IsCanceled && pendingTaskIds.Contains(kvp.Key))
                     {
@@ -343,6 +356,8 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
 
                 runtimeState.InFlightTasks.Clear();
                 runtimeState.BackgroundTaskSessions.Clear();
+                runtimeState.UsageChargedRuns.Clear();
+                runtimeState.UnchargedUsage.Clear();
 
                 // Anything still running was abandoned (for example after the timeout elapsed).
                 foreach (BackgroundTaskInfo task in state.Tasks)
@@ -518,13 +533,73 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     }
 
     /// <summary>
+    /// Charges the usage of background runs that have finished successfully, but have not been charged yet, to the
+    /// parent agent run in progress, if any.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each background run's usage is charged once, to whichever parent run first observes that it finished, either
+    /// here (when the parent run starts) or when the run is finalized by one of the tools. Runs that finish after the
+    /// last parent run, or that are only finalized while the session is released, are not charged to any parent run.
+    /// </para>
+    /// <para>Callers must hold <see cref="BackgroundAgentRuntimeState.SyncRoot"/>.</para>
+    /// </remarks>
+    private static void ChargeUsageOfFinishedRuns(BackgroundAgentRuntimeState runtimeState)
+    {
+        if (SubAgentUsageScope.Current is not { } parentUsage)
+        {
+            return;
+        }
+
+        foreach (UsageDetails usage in runtimeState.UnchargedUsage)
+        {
+            parentUsage.Add(usage);
+        }
+
+        runtimeState.UnchargedUsage.Clear();
+
+        foreach (Task<AgentResponse> run in runtimeState.InFlightTasks.Values)
+        {
+            if (run.Status == TaskStatus.RanToCompletion && runtimeState.UsageChargedRuns.Add(run))
+            {
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits — task is already completed
+                parentUsage.Add(run.Result.Usage);
+#pragma warning restore VSTHRD002
+            }
+        }
+    }
+
+    /// <summary>
     /// Finalizes a task by extracting results from the completed Task and updating the BackgroundTaskInfo.
     /// </summary>
+    /// <param name="taskInfo">The task to finalize.</param>
+    /// <param name="completedTask">The completed run of the task.</param>
+    /// <param name="runtimeState">The runtime state of the session.</param>
+    /// <param name="chargeUsage">
+    /// Whether the usage of a successful run that has not been charged yet should be charged to the parent agent run
+    /// in progress, or, when there is none, to the next parent run that starts.
+    /// </param>
     /// <remarks>Callers must hold <see cref="BackgroundAgentRuntimeState.SyncRoot"/>.</remarks>
-    private static void FinalizeTask(BackgroundTaskInfo taskInfo, Task<AgentResponse> completedTask, BackgroundAgentRuntimeState runtimeState)
+    private static void FinalizeTask(BackgroundTaskInfo taskInfo, Task<AgentResponse> completedTask, BackgroundAgentRuntimeState runtimeState, bool chargeUsage = true)
     {
+        bool usageAlreadyCharged = runtimeState.UsageChargedRuns.Remove(completedTask);
+
         if (completedTask.Status == TaskStatus.RanToCompletion)
         {
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits — task is already completed
+            if (chargeUsage && !usageAlreadyCharged && completedTask.Result.Usage is { } usage)
+#pragma warning restore VSTHRD002
+            {
+                if (SubAgentUsageScope.Current is { } parentUsage)
+                {
+                    parentUsage.Add(usage);
+                }
+                else
+                {
+                    runtimeState.UnchargedUsage.Add(usage);
+                }
+            }
+
             taskInfo.Status = BackgroundTaskStatus.Completed;
 #pragma warning disable VSTHRD002 // Avoid problematic synchronous waits — task is already completed
             taskInfo.ResultText = completedTask.Result.Text;
@@ -598,7 +673,15 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
             // this isolation, the background agent's RunAsync would overwrite the outer (calling)
             // agent's CurrentRunContext, corrupting all subsequent tool invocations in the
             // same FICC batch.
-            runtimeState.InFlightTasks[taskId] = Task.Run(() => agent.RunAsync(input, subSession, cancellationToken: cts.Token), cts.Token);
+            // The background run's usage is charged to a parent run when it is observed to have finished (see
+            // ChargeUsageOfFinishedRuns), so the calling run's sub-agent usage scope is cleared for it.
+            runtimeState.InFlightTasks[taskId] = Task.Run(
+                () =>
+                {
+                    SubAgentUsageScope.Current = null;
+                    return agent.RunAsync(input, subSession, cancellationToken: cts.Token);
+                },
+                cts.Token);
             return true;
         }
     }

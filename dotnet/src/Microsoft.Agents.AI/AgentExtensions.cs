@@ -65,6 +65,12 @@ public static partial class AIAgentExtensions
     /// in multiple conversations or in requests where the parallel function calls may result in concurrent usage of the session,
     /// as that could lead to undefined and unpredictable behavior.
     /// </para>
+    /// <para>
+    /// When the resulting function is invoked during the run of a <see cref="ChatClientAgent"/>, the
+    /// <see cref="AgentResponse.Usage"/> reported by <paramref name="agent"/> is added to the usage reported by that run,
+    /// so that the calling agent's usage includes the tokens consumed by the agents it invokes. If <paramref name="agent"/>
+    /// fails or is cancelled, it produces no response and its usage is not counted.
+    /// </para>
     /// </remarks>
     public static AIFunction AsAIFunction(this AIAgent agent, AIFunctionFactoryOptions? options = null, AgentSession? session = null)
     {
@@ -80,7 +86,18 @@ public static partial class AIAgentExtensions
                 ? new AgentRunOptions { AdditionalProperties = dict }
                 : null;
 
+            // Capture the calling agent's run, if any, so the sub-agent's usage can be rolled up into it. The scope is
+            // then cleared for the sub-agent's own run, so that only the usage the sub-agent reports in its response is
+            // counted, exactly once, at this call boundary. A sub-agent that is a ChatClientAgent establishes its own
+            // scope, so the usage it reports already includes that of its own sub-agents.
+            SubAgentUsageScope.UsageAccumulator? parentUsage = SubAgentUsageScope.Current;
+            SubAgentUsageScope.Current = null;
+
             var response = await agent.RunAsync(query, session: session, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            // Failed or cancelled sub-agent runs produce no response, so their usage is not counted.
+            parentUsage?.Add(response.Usage);
+
             return response.Text;
         }
 
