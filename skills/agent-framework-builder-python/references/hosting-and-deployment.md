@@ -28,6 +28,8 @@ into application code.
 
 For MCP agent tools, `AgentMCPTool.call_tool(...)` validates the generated input schema before execution or
 session-store access. Applications using `mcp_to_run(...)` directly must validate their own schema before conversion.
+Keep schemas in trusted application configuration. Regex validation is synchronous and has no execution timeout;
+choose patterns with predictable matching time for untrusted values and property names.
 
 Read the selected host's public docstrings and maintained sample for constructor options, parsers, history modes,
 storage providers, and protocol details.

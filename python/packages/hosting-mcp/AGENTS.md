@@ -30,6 +30,11 @@ server. Applications call `await adapter.list_tools()` and
 `await adapter.call_tool(...)` from native MCP handlers. Direct
 `mcp_to_run(...)` conversion does not perform schema validation.
 
+Parameter schemas are trusted application configuration. Validation is
+synchronous and has no execution timeout; applications must choose regex
+patterns with predictable matching time for caller-controlled values and
+property names. Schema enforcement does not provide execution isolation.
+
 `WorkflowMCPTool` owns only the schema derived from the start executor. It
 requires exactly one input type. Workflow factories and continuation policy
 remain application-owned. Pending external-input requests raise because the

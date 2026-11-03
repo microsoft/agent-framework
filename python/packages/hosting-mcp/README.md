@@ -113,6 +113,18 @@ access. Invalid arguments raise `MCPError` with `INVALID_PARAMS`. Valid exposed
 chat options still override the agent's defaults. The adapter's
 `mcp_to_run(...)` method remains a conversion helper, not a schema validator.
 
+Treat `parameters` and `chat_option_parameters` as trusted application
+configuration, not client-supplied schemas. Validation runs synchronously on
+the server event loop and has no execution timeout. JSON Schema `pattern` and
+`patternProperties` use Python's backtracking regular-expression engine.
+Unsafe configured patterns can let caller-controlled values or property names
+stall unrelated requests. Choose and test patterns with predictable matching
+time for untrusted inputs; request-size limits alone do not make a
+backtracking pattern safe. Applications requiring a hard validation deadline
+must use an execution boundary that can be terminated, such as a separate
+process. An asyncio timeout or worker thread cannot interrupt a running
+standard-library regex match.
+
 For a workflow exposed as one MCP tool, use `WorkflowMCPTool`:
 
 ```python
