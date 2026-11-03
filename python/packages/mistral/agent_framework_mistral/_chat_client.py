@@ -154,6 +154,8 @@ class MistralSettings(TypedDict, total=False):
         api_key: Mistral API key. Resolved from ``MISTRAL_API_KEY``.
         chat_model: Chat model name. Resolved from ``MISTRAL_CHAT_MODEL``.
         server_url: Optional server URL override. Resolved from ``MISTRAL_SERVER_URL``.
+            Ignored when a Mistral SDK client is injected; the injected client's own
+            endpoint is reported instead.
     """
 
     api_key: SecretString | None
@@ -389,20 +391,23 @@ class RawMistralChatClient(
             required_fields=[] if client is not None or http_client is not None else ["api_key"],
             api_key=api_key,
             chat_model=model,
-            server_url=server_url,
+            server_url=None if client is not None else server_url,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
         self.model = mistral_settings.get("chat_model")
-        self.server_url = mistral_settings.get("server_url")
         self._owns_client = not isinstance(client, Mistral)
         self._client_closed = False
+        # Settings are only consulted for a client this wrapper creates; an
+        # injected SDK client has its own endpoint and requires no key.
+        self.server_url = mistral_settings.get("server_url")
 
         if isinstance(client, Mistral):
+            # The injected SDK client owns the endpoint: requests go to it, so
+            # metadata must report its URL, not an ambient MISTRAL_SERVER_URL.
+            self.server_url = client.sdk_configuration.get_server_details()[0]
             self.client = client
-            if self.server_url is None:
-                self.server_url = client.sdk_configuration.get_server_details()[0]
         else:
             client_kwargs: dict[str, Any] = {"timeout_ms": _DEFAULT_TIMEOUT_MS}
             if resolved_api_key := mistral_settings.get("api_key"):
