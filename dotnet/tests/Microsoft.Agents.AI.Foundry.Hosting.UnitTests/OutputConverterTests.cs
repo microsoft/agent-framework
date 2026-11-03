@@ -960,6 +960,7 @@ public class OutputConverterTests
                 stream,
                 stateBag))
             {
+                // Intentionally empty: enumerate all updates to trigger duplicate-result validation.
             }
         }
 
@@ -1003,6 +1004,57 @@ public class OutputConverterTests
         // Assert
         Assert.DoesNotContain(events, e => e is ResponseOutputItemAddedEvent or ResponseOutputItemDoneEvent);
         Assert.IsType<ResponseCompletedEvent>(Assert.Single(events));
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ReusedCallId_UsesLatestDecidedApprovalAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        string oldWireId = "mcpr_" + "4".PadLeft(50, '0');
+        ToolApprovalIdMap.Record(
+            stateBag,
+            oldWireId,
+            "ficc_old",
+            "call_reused",
+            "old_search",
+            "{}",
+            "old-server",
+            "old_search");
+        ToolApprovalIdMap.RecordDecision(stateBag, oldWireId, approved: false);
+
+        string currentWireId = "mcpr_" + "5".PadLeft(50, '0');
+        ToolApprovalIdMap.Record(
+            stateBag,
+            currentWireId,
+            "ficc_current",
+            "call_reused",
+            "current_search",
+            """{"q":"weather"}""",
+            "current-server",
+            "current_search");
+        ToolApprovalIdMap.RecordDecision(stateBag, currentWireId, approved: true);
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync([new AgentResponseUpdate
+            {
+                Contents = [new FunctionResultContent("call_reused", "sunny")]
+            }]),
+            stream,
+            stateBag))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal("current-server", done.ServerLabel);
+        Assert.Equal("current_search", done.Name);
+        Assert.Equal("sunny", done.Output);
     }
 
     // K-05: An FCC with an empty CallId is dropped without disturbing in-flight text.

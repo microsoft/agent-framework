@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,6 +36,14 @@ internal sealed class LocalMcpAIFunction : DelegatingAIFunction
         serviceKey is null && serviceType == typeof(LocalMcpExecutionContract)
             ? this._contract
             : base.GetService(serviceType, serviceKey);
+
+    protected override ValueTask<object?> InvokeCoreAsync(
+        AIFunctionArguments arguments,
+        CancellationToken cancellationToken)
+    {
+        LocalMcpInvocationTracker.Record(this._contract);
+        return base.InvokeCoreAsync(arguments, cancellationToken);
+    }
 }
 
 /// <summary>
@@ -88,12 +97,14 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
         AIFunctionArguments arguments,
         CancellationToken cancellationToken)
     {
+        LocalMcpInvocationTracker.Record(this._contract);
         try
         {
             return await this._inner.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false);
         }
         catch (McpProtocolException ex) when ((int)ex.ErrorCode == -32006)
         {
+            LocalMcpInvocationTracker.RemoveCurrent();
             var state = McpConsentContext.Current.Value;
             if (state is not null)
             {
@@ -115,6 +126,42 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
 
             cancellationToken.ThrowIfCancellationRequested();
             throw; // fallback if the CT wasn't cancelled for some reason
+        }
+    }
+}
+
+internal static class LocalMcpInvocationTracker
+{
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call arguments dictionary.")]
+    public static void Record(LocalMcpExecutionContract contract)
+    {
+        FunctionCallContent? call = FunctionInvokingChatClient.CurrentContext?.CallContent;
+        AgentSessionStateBag? stateBag = AIAgent.CurrentRunContext?.Session?.StateBag;
+        if (call?.CallId is not { Length: > 0 } callId || stateBag is null)
+        {
+            return;
+        }
+
+        string arguments = call.Arguments is not null
+            ? JsonSerializer.Serialize(call.Arguments)
+            : "{}";
+        LocalMcpInvocationMap.Record(
+            stateBag,
+            callId,
+            call.Name,
+            contract.ToolName,
+            contract.ServerLabel,
+            arguments);
+    }
+
+    public static void RemoveCurrent()
+    {
+        FunctionCallContent? call = FunctionInvokingChatClient.CurrentContext?.CallContent;
+        AgentSessionStateBag? stateBag = AIAgent.CurrentRunContext?.Session?.StateBag;
+        if (call?.CallId is { Length: > 0 } callId)
+        {
+            _ = LocalMcpInvocationMap.Consume(stateBag, callId);
         }
     }
 }

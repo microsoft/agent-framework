@@ -383,6 +383,79 @@ public sealed class FoundryToolboxApprovalTests
     }
 
     [Fact]
+    public async Task ResponseHandler_AutoApprovedLocalMcpExecution_EmitsMcpCallContractAsync()
+    {
+        // Arrange
+        AIFunction localMcpTool = new ApprovalRequiredAIFunction(
+            AIFunctionFactory
+                .Create(() => "auto-approved MCP result", name: "local_search")
+                .AsLocalMcpTool(serverLabel: "local-mcp", toolName: "remote_search"));
+        var callCount = 0;
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => ToUpdatesAsync(++callCount == 1
+                ? new ChatResponse(new ChatMessage(
+                    ChatRole.Assistant,
+                    [new FunctionCallContent("call_auto_mcp", "local_search")]))
+                : new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done"))));
+        AIAgent agent = new ChatClientAgent(client.Object, new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions { Tools = [localMcpTool] },
+        })
+            .AsBuilder()
+            .UseToolApproval(new ToolApprovalAgentOptions
+            {
+                AutoApprovalRules = [context => new ValueTask<bool>(
+                    context.FunctionCallContent.Name == "local_search")]
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton(agent);
+        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
+        var handler = new AgentFrameworkResponseHandler(
+            services.BuildServiceProvider(),
+            NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var request = new CreateResponse { Model = "test" };
+        request.Input = BinaryData.FromObjectAsJson(new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_1",
+                status = "completed",
+                role = "user",
+                content = new[] { new { type = "input_text", text = "Search locally" } }
+            }
+        });
+        var context = new Mock<ResponseContext>("resp_" + new string('b', 46)) { CallBase = true };
+        context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<OutputItem>());
+        context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var responseEvent in handler.CreateAsync(request, context.Object, CancellationToken.None))
+        {
+            events.Add(responseEvent);
+        }
+
+        // Assert
+        var mcpCall = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>(), e => e.Item is OutputItemMcpToolCall).Item);
+        Assert.Equal("local-mcp", mcpCall.ServerLabel);
+        Assert.Equal("remote_search", mcpCall.Name);
+        Assert.Equal("auto-approved MCP result", mcpCall.Output);
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemDoneEvent>(),
+            e => e.Item is OutputItemFunctionToolCall or OutputItemFunctionToolCallOutput);
+    }
+
+    [Fact]
     public async Task ResponseHandler_ToolboxFunctionNameCollidesWithLocalFunction_RejectsRequestAsync()
     {
         // Arrange
@@ -441,6 +514,7 @@ public sealed class FoundryToolboxApprovalTests
         {
             await foreach (var _ in handler.CreateAsync(request, context.Object, CancellationToken.None))
             {
+                // Intentionally empty: enumerate the stream to trigger handler validation.
             }
         }
 

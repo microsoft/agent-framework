@@ -313,6 +313,70 @@ public class InputConverterTests
         Assert.Equal("sunny", Assert.IsType<MeaiTextContent>(Assert.Single(result.Outputs!)).Text);
     }
 
+    [Theory]
+    [InlineData(MCPToolCallStatus.Failed)]
+    [InlineData(MCPToolCallStatus.Incomplete)]
+    public void ConvertOutputItemsToMessages_LocalMcpNonSuccess_PreservesFailure(
+        MCPToolCallStatus status)
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        LocalMcpCallIdMap.Record(
+            stateBag,
+            "mcp_wire_failure",
+            "call_failure",
+            "local_search",
+            "search",
+            "local-mcp");
+        var mcpCall = new OutputItemMcpToolCall(
+            "mcp_wire_failure",
+            "local-mcp",
+            "search",
+            "{}")
+        {
+            Output = "partial output",
+            Status = status,
+        };
+        mcpCall.Error["message"] = BinaryData.FromObjectAsJson("tool failed");
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([mcpCall], stateBag);
+
+        // Assert
+        FunctionResultContent result = Assert.IsType<FunctionResultContent>(
+            Assert.Single(messages[1].Contents));
+        Assert.NotNull(result.Exception);
+        Assert.Contains("tool failed", result.Exception!.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(MCPToolCallStatus.Failed)]
+    [InlineData(MCPToolCallStatus.Incomplete)]
+    public void ConvertOutputItemsToMessages_NativeMcpNonSuccess_PreservesFailure(
+        MCPToolCallStatus status)
+    {
+        // Arrange
+        var mcpCall = new OutputItemMcpToolCall(
+            "mcp_native_failure",
+            "remote-server",
+            "search",
+            "{}")
+        {
+            Output = "partial output",
+            Status = status,
+        };
+        mcpCall.Error["message"] = BinaryData.FromObjectAsJson("tool failed");
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([mcpCall]);
+
+        // Assert
+        McpServerToolResultContent result = Assert.IsType<McpServerToolResultContent>(
+            Assert.Single(messages[1].Contents));
+        ErrorContent error = Assert.IsType<ErrorContent>(Assert.Single(result.Outputs!));
+        Assert.Contains("tool failed", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ConvertOutputItemsToMessages_LocalToolboxMcpCall_MismatchedIdentityThrows()
     {
@@ -1060,6 +1124,38 @@ public class InputConverterTests
     }
 
     [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_CustomPublicName_RestoresLocalFunctionName()
+    {
+        // Arrange
+        const string AfRequestId = "ficc_call_local_search";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_local_search",
+            "local_search",
+            """{"query":"weather"}""",
+            "local-mcp",
+            "remote_search");
+        var item = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "local-mcp",
+            name: "remote_search",
+            arguments: """{"query":"weather"}""");
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([item], stateBag);
+
+        // Assert
+        var approval = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        var functionCall = Assert.IsType<FunctionCallContent>(approval.ToolCall);
+        Assert.Equal("local_search", functionCall.Name);
+        Assert.Equal("call_local_search", functionCall.CallId);
+    }
+
+    [Fact]
     public void ConvertOutputItemsToMessages_McpApprovalRequest_ResolvesAfRequestFromStateBag()
     {
         const string AfRequestId = "ficc_call_history";
@@ -1177,6 +1273,48 @@ public class InputConverterTests
         var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
         Assert.Equal("call_history", fcc.CallId);
         Assert.Equal("delete_file", fcc.Name);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_RejectedLocalMcpApproval_RestoresSyntheticResult()
+    {
+        // Arrange
+        const string AfRequestId = "ficc_call_rejected";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_rejected",
+            "local_delete",
+            """{"path":"/tmp/x"}""",
+            "local-mcp",
+            "delete");
+        ToolApprovalIdMap.RecordDecision(stateBag, wireId, approved: false);
+        OutputItem[] items =
+        [
+            new OutputItemMcpApprovalRequest(
+                id: wireId,
+                serverLabel: "local-mcp",
+                name: "delete",
+                arguments: """{"path":"/tmp/x"}"""),
+            new OutputItemMcpApprovalResponseResource(
+                id: "ar_rejected",
+                approvalRequestId: wireId,
+                approve: false),
+        ];
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages(items, stateBag);
+
+        // Assert
+        FunctionResultContent result = Assert.Single(
+            messages.SelectMany(message => message.Contents).OfType<FunctionResultContent>());
+        Assert.Equal("call_rejected", result.CallId);
+        Assert.Equal(
+            "Tool call invocation was rejected by the approver and must not be retried.",
+            result.Result);
     }
 
     [Fact]

@@ -2,6 +2,7 @@
 
 using System;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Foundry.Hosting.IntegrationTests.Fixtures;
@@ -40,10 +41,22 @@ public sealed class McpToolboxHostedAgentTests(McpToolboxHostedAgentFixture fixt
         Assert.Equal(this._fixture.ToolboxName, mcpCall.ServerLabel);
         Assert.EndsWith("___get_me", mcpCall.ToolName, StringComparison.Ordinal);
         Assert.False(string.IsNullOrWhiteSpace(mcpCall.ToolOutput));
-        Assert.Contains("rogerbarreto", mcpCall.ToolOutput, StringComparison.OrdinalIgnoreCase);
+        string login = GetGitHubLogin(mcpCall.ToolOutput);
         Assert.DoesNotContain(response.OutputItems, item =>
             item is FunctionCallResponseItem or FunctionCallOutputResponseItem);
-        Assert.Contains("rogerbarreto", response.GetOutputText(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(login, response.GetOutputText(), StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string GetGitHubLogin(string toolOutput)
+    {
+        using JsonDocument document = JsonDocument.Parse(toolOutput);
+        if (document.RootElement.TryGetProperty("structuredContent", out JsonElement structuredContent)
+            && structuredContent.TryGetProperty("login", out JsonElement login)
+            && login.GetString() is { Length: > 0 } value)
+        {
+            return value;
+        }
+
+        throw new InvalidOperationException("The get_me MCP result did not contain structuredContent.login.");
+    }
 }

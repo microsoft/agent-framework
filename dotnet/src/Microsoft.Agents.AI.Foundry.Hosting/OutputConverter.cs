@@ -614,9 +614,37 @@ internal static class OutputConverter
                                 yield return mcpBuilder.EmitArgumentsDone(arguments);
                             }
                         }
+                        if (pendingMcpCall is null
+                            && LocalMcpInvocationMap.Consume(stateBag, functionResult.CallId) is { } invocation)
+                        {
+                            var contract = new LocalMcpExecutionContract(
+                                invocation.ServerLabel,
+                                invocation.ToolName,
+                                RequiresApproval: true);
+                            var mcpBuilder = stream.AddOutputItemMcpCall(
+                                invocation.ServerLabel,
+                                invocation.ToolName);
+                            LocalMcpCallIdMap.Record(
+                                stateBag,
+                                mcpBuilder.ItemId,
+                                functionResult.CallId,
+                                invocation.FunctionName,
+                                invocation.ToolName,
+                                invocation.ServerLabel);
+                            pendingMcpCall = new PendingMcpCall(
+                                mcpBuilder,
+                                contract,
+                                invocation.Arguments);
+
+                            yield return mcpBuilder.EmitAdded();
+                            yield return mcpBuilder.EmitInProgress();
+                            yield return mcpBuilder.EmitArgumentsDelta(invocation.Arguments);
+                            yield return mcpBuilder.EmitArgumentsDone(invocation.Arguments);
+                        }
 
                         if (pendingMcpCall is not null)
                         {
+                            _ = LocalMcpInvocationMap.Consume(stateBag, functionResult.CallId);
                             string output = ConvertFunctionResultToText(functionResult.Result);
                             bool failed = functionResult.Exception is not null;
                             yield return failed

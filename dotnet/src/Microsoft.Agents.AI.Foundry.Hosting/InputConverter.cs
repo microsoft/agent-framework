@@ -38,9 +38,35 @@ internal static class InputConverter
             {
                 messages.Add(message);
             }
+
         }
 
         return messages;
+    }
+
+    private static void AppendRejectedMcpApprovalResult(
+        List<ChatMessage> messages,
+        string approvalRequestId,
+        AgentSessionStateBag? stateBag)
+    {
+        const string RejectionResult =
+            "Tool call invocation was rejected by the approver and must not be retried.";
+        if (ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId) is not
+            {
+                Approved: false,
+                McpServerLabel: not null
+            } entry)
+        {
+            return;
+        }
+
+        AIContent result = entry.IsMcpToolCall
+            ? new McpServerToolResultContent(entry.CallId)
+            {
+                Outputs = [new ErrorContent(RejectionResult)]
+            }
+            : new FunctionResultContent(entry.CallId, RejectionResult);
+        messages.Add(new ChatMessage(ChatRole.Tool, [result]));
     }
 
     /// <summary>
@@ -60,6 +86,7 @@ internal static class InputConverter
             {
                 messages.Add(message);
             }
+
         }
 
         return messages;
@@ -87,6 +114,11 @@ internal static class InputConverter
             if (message is not null)
             {
                 messages.Add(message);
+            }
+
+            if (item is OutputItemMcpApprovalResponseResource { Approve: false } approvalResponse)
+            {
+                AppendRejectedMcpApprovalResult(messages, approvalResponse.ApprovalRequestId, stateBag);
             }
         }
 
@@ -337,8 +369,9 @@ internal static class InputConverter
         AgentSessionStateBag? stateBag)
     {
         var entry = ToolApprovalIdMap.ResolveEntry(stateBag, id);
+        string? publicToolName = entry?.McpToolName ?? entry?.Name;
         if (entry is not { AfRequestId: string requestId }
-            || entry.Name != name
+            || !string.Equals(publicToolName, name, StringComparison.Ordinal)
             || entry.Arguments != arguments
             || (entry.McpServerLabel is not null
                 && !string.Equals(entry.McpServerLabel, serverLabel, StringComparison.Ordinal)))
@@ -407,6 +440,7 @@ internal static class InputConverter
         bool hasTerminalResult = mcpCall.Status is MCPToolCallStatus.Completed
             or MCPToolCallStatus.Failed
             or MCPToolCallStatus.Incomplete;
+        string? failureMessage = GetMcpFailureMessage(mcpCall);
 
         if (LocalMcpCallIdMap.ResolveEntry(stateBag, mcpCall.Id) is { } localMcpEntry)
         {
@@ -422,9 +456,15 @@ internal static class InputConverter
                 [new FunctionCallContent(localMcpEntry.CallId, localMcpEntry.FunctionName, arguments)]));
             if (hasTerminalResult)
             {
+                var result = new FunctionResultContent(localMcpEntry.CallId, mcpCall.Output);
+                if (failureMessage is not null)
+                {
+                    result.Exception = new InvalidOperationException(failureMessage);
+                }
+
                 messages.Add(new ChatMessage(
                     ChatRole.Tool,
-                    [new FunctionResultContent(localMcpEntry.CallId, mcpCall.Output)]));
+                    [result]));
             }
 
             return;
@@ -446,7 +486,8 @@ internal static class InputConverter
                 nativeMcpEntry.ServerLabel,
                 arguments,
                 mcpCall.Output,
-                hasTerminalResult);
+                hasTerminalResult,
+                failureMessage);
             return;
         }
 
@@ -457,7 +498,8 @@ internal static class InputConverter
             mcpCall.ServerLabel,
             arguments,
             mcpCall.Output,
-            hasTerminalResult);
+            hasTerminalResult,
+            failureMessage);
     }
 
     private static void AppendNativeMcpMessages(
@@ -467,7 +509,8 @@ internal static class InputConverter
         string serverLabel,
         IDictionary<string, object?>? arguments,
         string output,
-        bool hasTerminalResult)
+        bool hasTerminalResult,
+        string? failureMessage)
     {
         messages.Add(new ChatMessage(
             ChatRole.Assistant,
@@ -477,13 +520,43 @@ internal static class InputConverter
             }]));
         if (hasTerminalResult)
         {
+            AIContent result = failureMessage is null
+                ? new MeaiTextContent(output)
+                : new ErrorContent(failureMessage);
             messages.Add(new ChatMessage(
                 ChatRole.Tool,
                 [new McpServerToolResultContent(callId)
                 {
-                    Outputs = [new MeaiTextContent(output)],
+                    Outputs = [result],
                 }]));
         }
+    }
+
+    private static string? GetMcpFailureMessage(OutputItemMcpToolCall mcpCall)
+    {
+        if (mcpCall.Status is not (MCPToolCallStatus.Failed or MCPToolCallStatus.Incomplete))
+        {
+            return null;
+        }
+
+        if (mcpCall.Error.TryGetValue("message", out BinaryData? errorData))
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(errorData);
+                if (document.RootElement.ValueKind == JsonValueKind.String
+                    && document.RootElement.GetString() is { Length: > 0 } message)
+                {
+                    return message;
+                }
+            }
+            catch (JsonException)
+            {
+                // Fall through to the status-based message for malformed provider errors.
+            }
+        }
+
+        return $"MCP tool call ended with status '{mcpCall.Status}'.";
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from SDK input.")]
