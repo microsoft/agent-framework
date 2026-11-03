@@ -46,6 +46,11 @@ application owns authorization, durable snapshots, scaling, and rendering policy
 
 ## Code execution
 
+Monty and Hyperlight redact host tool exception diagnostics by default. Enable
+`include_detailed_errors=True` only for a trusted channel. This host-side setting
+is separate from the outer chat client's error policy and sensitive-data logging;
+outer redaction cannot repair a diagnostic already caught and returned by generated code.
+
 For Monty, distinguish interpreter `resource_limits` from host-side attachment capture. Capture has per-call
 file-count and raw-byte limits shared across read-write mounts. Omitted attachments do not undo filesystem writes.
 Check the [Monty file-mount and resource-limit guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/monty/README.md#file-mounts-and-resource-limits)

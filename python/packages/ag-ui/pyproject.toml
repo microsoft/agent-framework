@@ -5,7 +5,7 @@ description = "AG-UI protocol integration for Agent Framework"
 readme = "README.md"
 license-files = ["LICENSE"]
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"

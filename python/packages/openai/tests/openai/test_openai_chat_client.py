@@ -9,7 +9,6 @@ import inspect
 import json
 import os
 import pickle
-import sys
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
@@ -10266,8 +10265,7 @@ def test_streaming_error_exception_round_trip_preserves_state(round_trip: Callab
     cause = exc_info.value.__cause__
     assert isinstance(cause, RuntimeError)
     cause.__dict__["trace_id"] = "trace-123"
-    if sys.version_info >= (3, 11):
-        cause.add_note("provider stream failed")
+    cause.add_note("provider stream failed")
 
     error = exc_info.value if wrapped else cause
     restored = round_trip(error)
@@ -10281,8 +10279,7 @@ def test_streaming_error_exception_round_trip_preserves_state(round_trip: Callab
     assert getattr(restored_cause, "param", None) == error_event.param
     assert getattr(restored_cause, "event", None) == error_event
     assert restored_cause.__dict__["trace_id"] == "trace-123"
-    if sys.version_info >= (3, 11):
-        assert restored_cause.__notes__ == ["provider stream failed"]
+    assert restored_cause.__notes__ == ["provider stream failed"]
 
 
 async def test_resumed_stream_error_clears_continuation_token() -> None:

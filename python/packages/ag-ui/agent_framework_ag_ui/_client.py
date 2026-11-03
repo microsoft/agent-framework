@@ -12,7 +12,7 @@ import uuid
 import warnings
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Generic, Self, TypedDict, cast
 
 import httpx
 from agent_framework import (
@@ -44,10 +44,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import Self, TypedDict  # pragma: no cover
-else:
-    from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework._middleware import ChatAndFunctionMiddlewareTypes

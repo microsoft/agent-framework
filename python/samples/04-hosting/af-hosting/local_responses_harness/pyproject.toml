@@ -2,7 +2,7 @@
 name = "agent-framework-hosting-sample-local-responses-harness"
 version = "0.0.1"
 description = "Local Responses hosting sample that serves a harness agent behind native FastAPI routes."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "agent-framework-foundry",
     "agent-framework-hosting",

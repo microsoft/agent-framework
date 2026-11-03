@@ -10,7 +10,7 @@ import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, NoReturn, cast
+from typing import Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 import httpx
 from agent_framework import (
@@ -68,10 +68,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.mistral")
 

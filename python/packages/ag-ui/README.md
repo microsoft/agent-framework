@@ -9,7 +9,6 @@ pip install agent-framework-ag-ui
 ```
 
 The base package and optional A2UI integration support Python 3.11–3.15.
-Python 3.10 installation remains permitted, but compatibility is not guaranteed.
 
 Install the optional A2UI integration with:
 
