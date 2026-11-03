@@ -6335,7 +6335,6 @@ async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_excep
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_transport_creation_propagates():
     """Test that genuine task cancellation (task.cancelling() > 0) propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6353,7 +6352,6 @@ async def test_connect_genuine_cancellation_during_transport_creation_propagates
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_initialize_propagates():
     """Test that genuine task cancellation during SDK negotiation propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6377,7 +6375,6 @@ async def test_connect_genuine_cancellation_during_initialize_propagates():
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_session_creation_propagates():
     """Test that genuine task cancellation during SDK client entry propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6438,7 +6435,6 @@ def test_should_propagate_cancelled_error_returns_false_when_no_current_task():
         assert _should_propagate_cancelled_error(asyncio.CancelledError()) is False
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 def test_should_propagate_cancelled_error_returns_true_when_task_is_cancelling():
     mock_task = Mock()
     mock_task.cancelling.return_value = 1
@@ -6446,7 +6442,6 @@ def test_should_propagate_cancelled_error_returns_true_when_task_is_cancelling()
         assert _should_propagate_cancelled_error(asyncio.CancelledError()) is True
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 def test_should_propagate_cancelled_error_returns_false_when_task_not_cancelling():
     mock_task = Mock()
     mock_task.cancelling.return_value = 0
@@ -6477,16 +6472,9 @@ def test_describe_error_keeps_plain_exception_message():
     assert _describe_error(RuntimeError("boom")) == "boom"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 def test_describe_error_unwraps_single_member_exception_group():
-    import builtins
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
-
     real = RuntimeError("401 Client Error: Unauthorized")
-    group = exception_group_type("unhandled errors in a TaskGroup", [real])
+    group = ExceptionGroup("unhandled errors in a TaskGroup", [real])
     assert _describe_error(group) == "401 Client Error: Unauthorized"
 
 
@@ -6524,22 +6512,13 @@ async def test_connect_cancelled_error_unmasks_inner_auth_failure():
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
     """SDK entry raises a bare cancellation and cleanup reveals the actual HTTP failure."""
-    import builtins
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
-
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
     tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
 
-    cleanup_group = exception_group_type(
-        "unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")]
-    )
+    cleanup_group = ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")])
 
     sdk_client = _mock_sdk_client()
     sdk_client.__aenter__.side_effect = asyncio.CancelledError("Cancelled via cancel scope")
@@ -7907,12 +7886,7 @@ async def test_mcp_tool_safe_close_handles_cancelled_error():
 
 async def test_mcp_tool_safe_close_handles_cleanup_exception_group():
     """Cleanup task groups should not hide the original connect failure."""
-    import builtins
     from contextlib import AsyncExitStack
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -7922,7 +7896,7 @@ async def test_mcp_tool_safe_close_handles_cleanup_exception_group():
     )
 
     mock_exit_stack = AsyncMock(spec=AsyncExitStack)
-    mock_exit_stack.aclose = AsyncMock(side_effect=exception_group_type("cleanup failed", [RuntimeError("reader")]))
+    mock_exit_stack.aclose = AsyncMock(side_effect=ExceptionGroup("cleanup failed", [RuntimeError("reader")]))
     tool._exit_stack = mock_exit_stack
 
     await tool._safe_close_exit_stack()

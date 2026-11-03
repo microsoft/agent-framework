@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Never, TypeVar
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     FunctionExecutor,

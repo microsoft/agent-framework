@@ -137,7 +137,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
 
         // Act
-        var result = await server.GetTaskAsync(new GetTaskRequest { Id = TaskId });
+        var result = await server.GetTaskAsync(new GetTaskRequest { Id = TaskId }, requestContext: null);
 
         // Assert - the inner store received the scoped task ID
         mockTaskStore.Verify(s => s.GetTaskAsync($"{IsolationKey}::{TaskId}", It.IsAny<CancellationToken>()), Times.Once);
@@ -178,7 +178,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
 
         // Act
-        var result = await server.GetTaskAsync(new GetTaskRequest { Id = TaskId });
+        var result = await server.GetTaskAsync(new GetTaskRequest { Id = TaskId }, requestContext: null);
 
         // Assert - only single scoping occurred (not alice::alice::task-1)
         mockInnerStore.Verify(s => s.GetTaskAsync($"{IsolationKey}::{TaskId}", It.IsAny<CancellationToken>()), Times.Once);
@@ -314,12 +314,12 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         // Act
         var streamingException = await Assert.ThrowsAsync<A2AException>(async () =>
         {
-            await foreach (var _ in server.SendStreamingMessageAsync(CreateTestSendMessageRequest(), cts.Token))
+            await foreach (var _ in server.SendStreamingMessageAsync(CreateTestSendMessageRequest(), requestContext: null, cts.Token))
             {
                 Assert.Fail("A server with streaming disabled must not return stream events.");
             }
         });
-        var inputException = await Assert.ThrowsAsync<A2AException>(() => server.SendMessageAsync(imageRequest, cts.Token));
+        var inputException = await Assert.ThrowsAsync<A2AException>(() => server.SendMessageAsync(imageRequest, requestContext: null, cts.Token));
 
         // Assert
         Assert.Equal(A2AErrorCode.UnsupportedOperation, streamingException.ErrorCode);
@@ -350,9 +350,9 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
         // Act
-        var textResponse = await textOnlyServer.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+        var textResponse = await textOnlyServer.SendMessageAsync(CreateTestSendMessageRequest(), requestContext: null, cts.Token);
         var imageResponses = new List<StreamResponse>();
-        await foreach (var response in defaultServer.SendStreamingMessageAsync(imageRequest, cts.Token))
+        await foreach (var response in defaultServer.SendStreamingMessageAsync(imageRequest, requestContext: null, cts.Token))
         {
             imageResponses.Add(response);
         }
@@ -480,7 +480,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), requestContext: null, cts.Token);
 
         // Assert - the custom handler was invoked, not the default A2AAgentHandler
         mockHandler.Verify(
@@ -529,7 +529,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), requestContext: null, cts.Token);
 
         // Assert - the custom session store was used, not InMemoryAgentSessionStore
         mockSessionStore.Verify(
@@ -560,7 +560,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), requestContext: null, cts.Token);
 
         // Assert - request was processed successfully with default noop session store
         Assert.NotNull(response);
@@ -601,7 +601,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        SendMessageResponse response = await server.SendMessageAsync(request, cts.Token);
+        SendMessageResponse response = await server.SendMessageAsync(request, requestContext: null, cts.Token);
 
         // Assert
         Assert.Equal(SendMessageResponseCase.Task, response.PayloadCase);
@@ -634,7 +634,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        SendMessageResponse response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+        SendMessageResponse response = await server.SendMessageAsync(CreateTestSendMessageRequest(), requestContext: null, cts.Token);
 
         // Assert
         Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
