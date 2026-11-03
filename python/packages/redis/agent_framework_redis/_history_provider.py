@@ -95,16 +95,17 @@ class RedisHistoryProvider(HistoryProvider):
         Args:
             source_id: Unique identifier for this provider instance.
             redis_url: Redis connection URL (e.g., "redis://localhost:6379").
-                Mutually exclusive with credential_provider and redis_client.
+                Ignored when redis_client is supplied.
             credential_provider: Redis credential provider for Azure AD authentication.
-                Requires host parameter. Mutually exclusive with redis_url and redis_client.
+                Requires host parameter. Ignored when redis_client is supplied.
             host: Redis host name. Required when using credential_provider.
             port: Redis port number. Defaults to 6380 (Azure Redis SSL port).
             ssl: Enable SSL/TLS connection. Defaults to True.
             username: Redis username.
             redis_client: Borrowed standalone async Redis client configured with
-                ``decode_responses=True``. The caller owns its lifetime. Mutually exclusive
-                with redis_url and credential_provider.
+                ``decode_responses=True``. The caller owns its lifetime and takes
+                precedence over redis_url, credential_provider, and connection
+                defaults, mirroring the Redis vector-store constructors.
             key_prefix: Base prefix for Redis keys. Scoped mode appends independently encoded
                 tenant, application, agent, provider source, and session segments.
                 Defaults to 'chat_messages'.
@@ -130,8 +131,8 @@ class RedisHistoryProvider(HistoryProvider):
         Raises:
             TypeError: If redis_client is not a standalone async Redis client.
             ValueError: If no Redis connection source is provided.
-            ValueError: If more than one Redis connection source is provided.
-            ValueError: If credential_provider is used without host parameter.
+            ValueError: If more than one non-client Redis connection source is provided.
+            ValueError: If credential_provider is used without host parameter and no client is provided.
             ValueError: If redis_client does not use decoded string responses.
             ValueError: If max_messages is negative.
             ValueError: If key_format or its scoped identifiers are invalid.
@@ -148,9 +149,9 @@ class RedisHistoryProvider(HistoryProvider):
         connection_sources = sum(source is not None for source in (redis_client, redis_url, credential_provider))
         if connection_sources == 0:
             raise ValueError("Either redis_client, redis_url, or credential_provider must be provided")
-        if connection_sources > 1:
+        if connection_sources > 1 and redis_client is None:
             raise ValueError("redis_client, redis_url, and credential_provider are mutually exclusive")
-        if credential_provider is not None and host is None:
+        if credential_provider is not None and host is None and redis_client is None:
             raise ValueError("host is required when using credential_provider")
         if redis_client is not None:
             if not isinstance(redis_client, redis.Redis):

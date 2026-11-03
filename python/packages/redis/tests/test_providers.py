@@ -417,19 +417,31 @@ class TestRedisHistoryProviderInit:
         "connection_kwargs",
         [
             {"redis_url": "redis://localhost:6379"},
-            {"credential_provider": MagicMock(), "host": "myhost"},
+            {"credential_provider": None, "host": "myhost"},
         ],
     )
-    def test_borrowed_client_rejects_other_connection_sources(self, connection_kwargs: dict[str, Any]):
+    def test_borrowed_client_takes_precedence_over_other_connection_sources(self, connection_kwargs: dict[str, Any]):
+        """An injected client wins; URL / credential settings are never validated (#9966).
+
+        The vector-store constructors already behave this way: a working
+        caller-owned client must not be rejected because a stray URL or
+        credential provider came along with it.
+        """
+        kwargs = dict(connection_kwargs)
+        if kwargs.get("credential_provider") is None:
+            kwargs["credential_provider"] = MagicMock()
+
         borrowed = Redis(decode_responses=True)
 
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            RedisHistoryProvider(
-                "mem",
-                redis_client=borrowed,
-                application_id="test-app",
-                **connection_kwargs,
-            )
+        provider = RedisHistoryProvider(
+            "mem",
+            redis_client=borrowed,
+            application_id="test-app",
+            **kwargs,
+        )
+
+        assert provider._redis_client is borrowed
+        assert provider._owns_client is False
 
     def test_borrowed_client_must_be_async_redis(self):
         with pytest.raises(TypeError, match=r"redis\.asyncio\.Redis"):
