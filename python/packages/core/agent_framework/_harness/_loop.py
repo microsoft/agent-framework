@@ -23,6 +23,12 @@ going. It serves two common patterns through a single configurable class:
    response into ``JudgeVerdict``. The loop continues while the answer is "no". This is a convenience
    wrapper that builds an async ``should_continue`` predicate, so it is a special case of (1).
 
+When ``max_iterations`` fires the loop stamps ``additional_properties["loop_exit_reason"] =
+"iteration_cap_reached"`` on the response; the judge (via :meth:`AgentLoopMiddleware.with_judge`)
+stamps ``"completed"`` when it decides the request was answered. Callers read the exit reason
+directly from ``response.additional_properties["loop_exit_reason"]``. A custom ``should_continue``
+callback may also stamp that key itself before returning ``False``.
+
 In every case, the input for the next iteration is controlled by the ``next_message`` callable.
 """
 
@@ -131,6 +137,10 @@ DEFAULT_MAX_ITERATIONS = 10
 DEFAULT_JUDGE_MAX_ITERATIONS = 5
 
 
+# Key used in AgentResponse.additional_properties to surface the loop exit reason.
+LOOP_EXIT_REASON_KEY: str = "loop_exit_reason"
+
+
 # A callable invoked between iterations. It always receives the loop keyword arguments
 # (``iteration``, ``last_result``, ``messages``, ``original_messages``, ``session``, ``agent``,
 # ``progress``, ``feedback``). Callers declare only the keywords they need plus ``**kwargs`` to
@@ -210,6 +220,8 @@ def _build_judge_condition(
                 answered = False if JUDGE_VERDICT_MORE in text else JUDGE_VERDICT_DONE in text
                 reasoning = response.text.strip()
         # Continue looping while the request is not yet answered, surfacing the reasoning as feedback.
+        if answered:
+            last_result.additional_properties.setdefault(LOOP_EXIT_REASON_KEY, "completed")
         return (not answered), (reasoning or None)
 
     def _next_message(*, feedback: str | None = None, **kwargs: Any) -> AgentRunInputs:
@@ -538,6 +550,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         snapshot: dict[str, Any] | None,
     ) -> None:
         iteration = 0
+        cap_fired = False
         work_iterations = 0
         progress: list[str] = []
         # Aggregated transcript across iterations: each iteration's response messages plus the
@@ -586,6 +599,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                 # Decide whether to stop and capture any feedback from should_continue first, so the
                 # feedback is available to both the progress and next-message callables this iteration.
                 stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
+                if stop and self.max_iterations is not None and work_iterations >= self.max_iterations:
+                    cap_fired = True
                 loop_kwargs = self._build_loop_kwargs(
                     context=context,
                     iteration=iteration,
@@ -619,6 +634,9 @@ class AgentLoopMiddleware(AgentMiddleware):
         finally:
             context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
+        if cap_fired:
+            final_result.additional_properties[LOOP_EXIT_REASON_KEY] = "iteration_cap_reached"
+
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
             context.result.additional_properties = additional_properties
@@ -641,6 +659,7 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         async def _generator() -> Any:
             iteration = 0
+            cap_fired = False
             work_iterations = 0
             progress: list[str] = []
             stamped_options = dict(context.options) if context.options is not None else {}
@@ -690,6 +709,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                     # Decide whether to stop and capture any feedback from should_continue first, so the
                     # feedback is available to both the progress and next-message callables this iteration.
                     stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
+                    if stop and self.max_iterations is not None and work_iterations >= self.max_iterations:
+                        cap_fired = True
                     loop_kwargs = self._build_loop_kwargs(
                         context=context,
                         iteration=iteration,
@@ -725,6 +746,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                         yield self._message_to_update(message)
             finally:
                 context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
+                if cap_fired and holder["final"] is not None:
+                    holder["final"].additional_properties[LOOP_EXIT_REASON_KEY] = "iteration_cap_reached"
                 await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:

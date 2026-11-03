@@ -41,6 +41,7 @@ from agent_framework._harness._loop import (
     DEFAULT_JUDGE_MAX_ITERATIONS,
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_NEXT_MESSAGE,
+    LOOP_EXIT_REASON_KEY,
     AgentLoopMiddleware,
 )
 
@@ -1772,3 +1773,130 @@ async def test_concurrent_same_agent_run_during_stream_pause_is_not_suppressed()
 
     # once for the loop boundary, once for the concurrent run's own boundary
     assert turn_scoped.after_calls == 2
+
+
+# --- Framework stop-reason tests ---
+
+
+async def test_loop_sets_iteration_cap_reason_in_additional_properties() -> None:
+    client = RecordingChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(lambda **_: True, max_iterations=2)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "iteration_cap_reached"
+
+
+async def test_loop_sets_iteration_cap_reason_streaming() -> None:
+    client = RecordingChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(lambda **_: True, max_iterations=2)])
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "iteration_cap_reached"
+
+
+class StaleExitReasonChatClient(RecordingChatClient):
+    """Stamps a stale ``loop_exit_reason`` on every response, emulating an inner provider or nested loop."""
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool = False,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        inner = super()._inner_get_response(messages=messages, stream=stream, options=options, **kwargs)
+        if isinstance(inner, ResponseStream):
+
+            async def _gen() -> AsyncIterable[ChatResponseUpdate]:
+                async for update in inner:
+                    update.additional_properties = {LOOP_EXIT_REASON_KEY: "stale_reason"}
+                    yield update
+
+            return ResponseStream(_gen(), finalizer=ChatResponse.from_updates)
+
+        async def _get() -> ChatResponse:
+            response = await inner
+            response.additional_properties = {LOOP_EXIT_REASON_KEY: "stale_reason"}
+            return response
+
+        return _get()
+
+
+async def test_loop_cap_overwrites_pre_existing_exit_reason() -> None:
+    client = StaleExitReasonChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(lambda **_: True, max_iterations=2)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "iteration_cap_reached"
+
+
+async def test_loop_cap_overwrites_pre_existing_exit_reason_streaming() -> None:
+    client = StaleExitReasonChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(lambda **_: True, max_iterations=2)])
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "iteration_cap_reached"
+
+
+async def test_judge_sets_completed_in_additional_properties() -> None:
+    """Judge marks the response as completed when the task is answered."""
+    agent_client = RecordingChatClient(texts=["The task is fully complete."])
+    judge_client = RecordingChatClient(texts=['{"answered": true, "reasoning": "done"}'], honor_response_format=True)
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    response = await agent.run("do the task")
+
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "completed"
+
+
+async def test_judge_sets_completed_in_additional_properties_streaming() -> None:
+    agent_client = RecordingChatClient(texts=["The task is fully complete."])
+    judge_client = RecordingChatClient(texts=['{"answered": true, "reasoning": "done"}'], honor_response_format=True)
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    stream = agent.run("do the task", stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "completed"
+
+
+async def test_judge_sets_completed_only_once_answered() -> None:
+    """Judge does not stamp completed until the task is actually answered."""
+    agent_client = RecordingChatClient(texts=["Still working...", "Now done."])
+    judge_client = RecordingChatClient(
+        texts=['{"answered": false, "reasoning": "needs more"}', '{"answered": true, "reasoning": "done"}'],
+        honor_response_format=True,
+    )
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    response = await agent.run("do the task")
+
+    assert agent_client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "completed"
+
+
+async def test_judge_does_not_set_completed_when_cap_fires() -> None:
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(texts=['{"answered": false}'] * 2, honor_response_format=True)
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client, max_iterations=2)])
+
+    response = await agent.run("do the task")
+
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "iteration_cap_reached"
