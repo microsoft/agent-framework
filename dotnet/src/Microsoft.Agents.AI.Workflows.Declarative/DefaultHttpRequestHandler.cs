@@ -209,18 +209,16 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 
         bool allowAutoRedirect;
         bool useCookies;
-        if (handler.GetType() == typeof(HttpClientHandler))
+        if (handler is HttpClientHandler httpClientHandler)
         {
-            HttpClientHandler transport = (HttpClientHandler)handler;
-            allowAutoRedirect = transport.AllowAutoRedirect;
-            useCookies = transport.UseCookies;
+            allowAutoRedirect = httpClientHandler.AllowAutoRedirect;
+            useCookies = httpClientHandler.UseCookies;
         }
 #if NET
-        else if (handler.GetType() == typeof(SocketsHttpHandler))
+        else if (handler is SocketsHttpHandler socketsHttpHandler)
         {
-            SocketsHttpHandler transport = (SocketsHttpHandler)handler;
-            allowAutoRedirect = transport.AllowAutoRedirect;
-            useCookies = transport.UseCookies;
+            allowAutoRedirect = socketsHttpHandler.AllowAutoRedirect;
+            useCookies = socketsHttpHandler.UseCookies;
         }
 #endif
         else
