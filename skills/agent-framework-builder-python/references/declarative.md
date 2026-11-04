@@ -35,6 +35,10 @@ maturity. Check current package status and public docstrings before making compa
   The same origin recovery applies to ordinary Core `ctx.request_info()` pauses before invoking a child.
   Queued replies participate in response and cancellation preflight. Wrapped child replies are also validated
   before live dispatch; do not combine different parent origins in one message or cancellation batch.
+- Pending requests from older checkpoints without a workflow session scope are rejected by default, including
+  questions and function approvals. To migrate them, construct `WorkflowFactory(migrate_legacy_request_scopes=True)`,
+  resume each legacy request separately with its original framework request ID, and checkpoint the migrated
+  continuation. Each request receives a stable isolated scope; migration does not recover the old MCP session.
 
 ## Validation
 

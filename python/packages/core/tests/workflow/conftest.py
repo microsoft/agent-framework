@@ -133,8 +133,8 @@ def selected_reply_workflow() -> Callable[
 
 
 @pytest.fixture
-def waiting_reply_workflow() -> Callable[[bool, bool], tuple[Workflow, Workflow, list[str]]]:
-    def build(targeted: bool, preceding_reply: bool) -> tuple[Workflow, Workflow, list[str]]:
+def waiting_reply_workflow() -> Callable[[bool, bool, bool], tuple[Workflow, Workflow, list[str]]]:
+    def build(targeted: bool, preceding_reply: bool, filtered: bool) -> tuple[Workflow, Workflow, list[str]]:
         started = asyncio.Event()
         released = asyncio.Event()
         completed: list[str] = []
@@ -184,7 +184,11 @@ def waiting_reply_workflow() -> Callable[[bool, bool], tuple[Workflow, Workflow,
         coordinator = Coordinator(id="coordinator")
         parent = (
             WorkflowBuilder(start_executor=coordinator)
-            .add_edge(coordinator, ReplyWaiter(id="waiter") if targeted else Waiter(id="waiter"))
+            .add_edge(
+                coordinator,
+                ReplyWaiter(id="waiter") if targeted or filtered else Waiter(id="waiter"),
+                condition=(lambda message: not isinstance(message, SubWorkflowResponseMessage)) if filtered else None,
+            )
             .add_edge(coordinator, wrapper)
             .add_edge(wrapper, coordinator)
             .build()

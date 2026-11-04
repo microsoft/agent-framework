@@ -43,8 +43,10 @@ between stages, final output, intermediate output, session ownership, and approv
 - Tool approval and workflow human input are different suspension mechanisms.
 - Workflow streams include framework events in addition to application output.
 - Wrapped child replies evaluate routing after preceding handlers and checkpoint restoration, then validate the
-  selected children before delivery. A later rejection does not roll back earlier execution or restored state;
-  recover a partially executed failed run from a known-good checkpoint rather than retrying its remaining queue.
+  selected children before delivery. Ordinary consumers on separate edges do not participate in that validation
+  barrier; per-edge message ordering still applies. A later rejection does not roll back earlier execution or
+  restored state; recover a partially executed failed run from a known-good checkpoint rather than retrying its
+  remaining queue.
 - Accepted reply scopes persist across supersteps and in-flight checkpoint replay until messages drain. A later
   response-only run may resume a different originating scope.
 

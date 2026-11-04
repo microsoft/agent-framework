@@ -218,12 +218,15 @@ class RunnerImpl:
           a source by specifying the target, the messages will be delivered to the specified targets
           in the order they were sent. This is because all messages go through the same edge runner instance
           which preserves message order.
-        - Wrapped replies wait for preceding messages only on compatible edge runners, then select and
-          validate all targets before delivery. Unrelated edge runners remain concurrent.
+        - Wrapped replies wait for preceding messages only on compatible child-workflow edge runners, then
+          select and validate all child targets before delivery. Ordinary consumers remain concurrent.
         """
-        from ._workflow_executor import SubWorkflowResponseMessage
+        from ._workflow_executor import SubWorkflowResponseMessage, WorkflowExecutor
 
         scopes = get_response_scopes(self._state)
+        child_ids = {
+            executor_id for executor_id, executor in self._executors.items() if isinstance(executor, WorkflowExecutor)
+        }
         next_message: dict[str, int] = {}
 
         async def _deliver_messages(source_executor_id: str, source_messages: list[WorkflowMessage]) -> None:
@@ -243,7 +246,7 @@ class RunnerImpl:
                     selections[index] = {
                         runner: asyncio.get_running_loop().create_future()
                         for runner in associated_edge_runners
-                        if runner._has_compatible_target(message)  # pyright: ignore[reportPrivateUsage]
+                        if runner._has_compatible_target(message, child_ids)  # pyright: ignore[reportPrivateUsage]
                     }
                     validated[index] = asyncio.Event()
 
@@ -264,7 +267,7 @@ class RunnerImpl:
                 targets: set[str] = set()
                 for selection in selections[index].values():
                     _, target_ids = await selection
-                    targets.update(target_ids)
+                    targets.update(child_ids.intersection(target_ids))
                 message = source_messages[index]
                 if self._wrapped_response_validator is not None:
                     await self._wrapped_response_validator(

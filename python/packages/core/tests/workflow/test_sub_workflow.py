@@ -560,13 +560,32 @@ async def test_wrapped_reply_routing_observes_earlier_same_edge_handler(
 async def test_wrapped_reply_does_not_wait_for_unrelated_outgoing_handler(
     waiting_reply_workflow, targeted: bool, preceding_reply: bool
 ) -> None:
-    parent, child, completed = waiting_reply_workflow(targeted, preceding_reply)
+    parent, child, completed = waiting_reply_workflow(targeted, preceding_reply, False)
     await parent.run("start")
 
     result = await asyncio.wait_for(parent.run(True), timeout=2.0)
 
     assert result.get_outputs() == ["start"]
     assert completed == (["wait", "reply"] if preceding_reply else ["wait"])
+    assert not await child._runner_context.get_pending_request_info_events()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_wrapped_reply_does_not_wait_for_condition_filtered_consumer(
+    waiting_reply_workflow, streaming: bool
+) -> None:
+    parent, child, completed = waiting_reply_workflow(False, False, True)
+    await parent.run("start")
+
+    async with asyncio.timeout(2.0):
+        if streaming:
+            events = [event async for event in parent.run(True, stream=True)]
+            outputs = [event.data for event in events if event.type == "output"]
+        else:
+            outputs = (await parent.run(True)).get_outputs()
+
+    assert outputs == ["start"]
+    assert completed == ["wait"]
     assert not await child._runner_context.get_pending_request_info_events()
 
 

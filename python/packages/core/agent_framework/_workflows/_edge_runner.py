@@ -109,10 +109,12 @@ class EdgeRunner(ABC):
         """Determine delivery targets without executing or buffering the message."""
         raise NotImplementedError
 
-    def _has_compatible_target(self, message: WorkflowMessage) -> bool:
-        """Check target and handler compatibility without evaluating routing predicates."""
+    def _has_compatible_target(self, message: WorkflowMessage, target_ids: set[str]) -> bool:
+        """Check candidate target compatibility without evaluating routing predicates."""
         return any(
-            (not message.target_id or message.target_id == edge.target_id) and self._can_handle(edge.target_id, message)
+            edge.target_id in target_ids
+            and (not message.target_id or message.target_id == edge.target_id)
+            and self._can_handle(edge.target_id, message)
             for edge in self._edge_group.edges
         )
 
@@ -408,7 +410,7 @@ class FanInEdgeRunner(EdgeRunner):
         # Fan-in delivers an aggregate rather than the wrapped reply itself.
         return False, []
 
-    def _has_compatible_target(self, message: WorkflowMessage) -> bool:
+    def _has_compatible_target(self, message: WorkflowMessage, target_ids: set[str]) -> bool:
         return False
 
     async def _send_selected_message(
