@@ -233,6 +233,26 @@ public class AsyncRequestBrokerTests
     }
 
     /// <summary>
+    /// Verify that a short real timeout elapses promptly and a late response is still accepted as settled.
+    /// </summary>
+    [Fact]
+    public async Task RequestAsync_ShortTimeout_TimesOutPromptlyAsync()
+    {
+        // Arrange
+        var broker = new AsyncRequestBroker<int>();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => broker.RequestAsync("req-1", TimeSpan.FromMilliseconds(50)));
+        stopwatch.Stop();
+
+        // Assert
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"Timeout took {stopwatch.Elapsed}.");
+        Assert.Equal(0, broker.PendingCount);
+        Assert.True(broker.Resolve("req-1", 1));
+    }
+
+    /// <summary>
     /// Verify that resolving before cancellation wins and the later cancellation has no effect.
     /// </summary>
     [Fact]
@@ -291,6 +311,35 @@ public class AsyncRequestBrokerTests
 
     #endregion
 
+    #region PendingCount Tests
+
+    /// <summary>
+    /// Verify that PendingCount tracks active requests as they are registered and settled.
+    /// </summary>
+    [Fact]
+    public async Task PendingCount_ReflectsActiveRequestsAsync()
+    {
+        // Arrange
+        var broker = new AsyncRequestBroker<int>();
+        Assert.Equal(0, broker.PendingCount);
+
+        // Act & Assert
+        var first = broker.RequestAsync("req-1");
+        Assert.Equal(1, broker.PendingCount);
+        var second = broker.RequestAsync("req-2");
+        Assert.Equal(2, broker.PendingCount);
+
+        Assert.True(broker.Resolve("req-1", 1));
+        Assert.Equal(1, broker.PendingCount);
+        Assert.True(broker.Reject("req-2", new InvalidOperationException()));
+        Assert.Equal(0, broker.PendingCount);
+
+        Assert.Equal(1, await first);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => second);
+    }
+
+    #endregion
+
     #region Settled Queue Eviction Tests
 
     /// <summary>
@@ -328,6 +377,40 @@ public class AsyncRequestBrokerTests
     #endregion
 
     #region Concurrency Tests
+
+    /// <summary>
+    /// Verify that racing Resolve and Reject for the same ID delivers exactly one outcome and leaves no pending entry.
+    /// </summary>
+    [Fact]
+    public async Task ConcurrentResolveAndReject_ExactlyOneDeliveredAsync()
+    {
+        // Arrange
+        const int Count = 200;
+        var broker = new AsyncRequestBroker<int>(settledQueueSize: Count);
+        var requests = Enumerable.Range(0, Count).Select(i => broker.RequestAsync($"req-{i}")).ToArray();
+
+        // Act
+        await Task.WhenAll(Enumerable.Range(0, Count).SelectMany(i => new[]
+        {
+            Task.Run(() => broker.Resolve($"req-{i}", i)),
+            Task.Run(() => broker.Reject($"req-{i}", new InvalidOperationException("rejected"))),
+        }));
+
+        // Assert
+        Assert.Equal(0, broker.PendingCount);
+        for (int i = 0; i < Count; i++)
+        {
+            Assert.True(requests[i].IsCompleted);
+            if (requests[i].IsFaulted)
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() => requests[i]);
+            }
+            else
+            {
+                Assert.Equal(i, await requests[i]);
+            }
+        }
+    }
 
     /// <summary>
     /// Verify invariants under concurrent resolve, reject, cancellation, and duplicate registration:
