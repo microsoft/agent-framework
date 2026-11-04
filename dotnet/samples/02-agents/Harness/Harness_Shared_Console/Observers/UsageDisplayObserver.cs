@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Runtime.CompilerServices;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -12,6 +13,7 @@ public sealed class UsageDisplayObserver : ConsoleObserver
 {
     private readonly int? _maxContextWindowTokens;
     private readonly int? _maxOutputTokens;
+    private readonly ConditionalWeakTable<AgentSession, UsageDetails> _sessionUsage = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="UsageDisplayObserver"/> class.
@@ -31,7 +33,17 @@ public sealed class UsageDisplayObserver : ConsoleObserver
         {
             if (usage.Details is not null)
             {
-                ux.SetUsageText(this.FormatUsageBreakdown(usage.Details));
+                UsageDetails total = this._sessionUsage.GetOrCreateValue(session);
+                lock (total)
+                {
+                    total.Add(new UsageDetails
+                    {
+                        TotalTokenCount = usage.Details.TotalTokenCount
+                            ?? (usage.Details.InputTokenCount + usage.Details.OutputTokenCount),
+                    });
+                    ux.SetUsageText(this.FormatUsageBreakdown(usage.Details)
+                        + $" | session: {FormatTokenCount(total.TotalTokenCount, null)} tokens");
+                }
             }
             else
             {
