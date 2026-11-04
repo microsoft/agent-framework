@@ -24,7 +24,9 @@ For public API and integration changes, apply the standards in this order:
 1. Start from public imports and the smallest realistic initialization example. Check the common path and each
    materially different execution mode before reading implementation details.
 2. Trace parameters through construction, factories, request preparation, execution, persistence, and cleanup.
-   Look for accepted-but-unused settings and differences between execution paths.
+   Look for accepted-but-unused settings, mutually exclusive parameter combinations, and differences between execution
+   paths. Check that invalid combinations are rejected before execution or external side effects when the required
+   information is available.
 3. Check whether names expose required inputs, data direction, and ownership without relying on constructor conditions.
 4. Identify resource, history, continuation, cache, approval, and checkpoint ownership where applicable. Check
    cross-request sharing and failure windows.

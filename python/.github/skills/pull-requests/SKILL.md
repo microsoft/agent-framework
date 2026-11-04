@@ -32,17 +32,8 @@ prompts:
   reviewers only**. Automated/AI reviewers must ignore it and review the entire
   change rather than narrowing scope to it.
 
-For material Python public-API changes, include the following within this section:
-- A short before/after usage example with public imports and initialization.
-- The affected execution modes and their intentional differences.
-- Changes to defaults, precedence, ownership, persistence, or compatibility.
-- The agreed decision or investigation that supports the direction. An investigation
-  supplies evidence; its proposed implementation still needs maintainer agreement.
-
-Use an options matrix only when interacting settings make it useful. Do not add a
-separate mandatory section or repeat the canonical
-[Python coding standards](../../../CODING_STANDARD.md). For semantic review,
-follow the [Python review guidance](../../../../.github/instructions/python.instructions.md).
+For material Python public-API changes, follow the additional guidance in the
+[root PR skill's Description & Review Guide section](../../../../.github/skills/pull-requests/SKILL.md#-description--review-guide).
 
 ### `### Related Issue`
 Link the issue the PR fixes using a GitHub closing keyword (`Fixes #123` /
@@ -52,9 +43,8 @@ agreed with the direction in an issue comment. A PR with no agreed issue may be
 closed without detailed review. Before opening, confirm there is no other open PR
 for the same issue; if there is, explain how this PR differs.
 
-A team-only issue, assignment, investigation, `/plan` comment, or suggested option
-does not authorize implementation. Check the agreed scope and readiness; team-only
-work remains unavailable for community pickup unless maintainers explicitly open it.
+For team-only work and investigation or planning outcomes, follow the approval
+boundaries in the [root PR skill's Related Issue section](../../../../.github/skills/pull-requests/SKILL.md#-related-issue).
 
 For a trivial change that does not require an issue, replace the `Fixes #`
 placeholder with `N/A - trivial change` and briefly explain why the change is an
