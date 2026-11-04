@@ -280,7 +280,12 @@ class RedisHistoryProvider(HistoryProvider):
                     raise ValueError(f"Expected a JSON object, got {type(payload).__name__}")
                 messages.append(Message.from_dict(payload))
             except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
-                logger.warning("Skipping malformed Redis history entry: %s", exc)
+                # Log the exception class, not its message: ``Message.from_dict``
+                # embeds the payload's ``type`` value in mismatch errors, so logging
+                # ``str(exc)`` could copy untrusted history data into application logs.
+                logger.warning(
+                    "Skipping malformed Redis history entry (%s)", type(exc).__name__
+                )
         return messages
 
     async def save_messages(
