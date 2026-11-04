@@ -16,6 +16,88 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 public sealed partial class AgentMcpSkillsTests
 {
+    [Fact]
+    public async Task GetSkillsAsync_RefreshedFrontmatter_PreservesSeparateAdvertisedSnapshotsAsync()
+    {
+        // Arrange
+        const string OriginalContent = """
+            ---
+            name: unit-converter
+            description: Convert units.
+            license: MIT
+            metadata: {owner: First}
+            future-field: {nested: 42}
+            ---
+            Instructions.
+            """;
+        const string RefreshedContent = """
+            ---
+            name: unit-converter
+            description: Convert units.
+            license: Apache-2.0
+            metadata: {owner: Second}
+            future-field: {nested: 84}
+            new-field: null
+            ---
+            Updated instructions.
+            """;
+        var clock = new ManualTimeProvider();
+        JsonObject listedEntry = Entry(content: OriginalContent);
+        listedEntry["frontmatter"]!["license"] = "MIT";
+        listedEntry["frontmatter"]!["metadata"] = new JsonObject { ["owner"] = "First" };
+        listedEntry["frontmatter"]!["future-field"] = new JsonObject { ["nested"] = 42 };
+        JsonObject refreshedEntry = Entry(content: RefreshedContent);
+        refreshedEntry["frontmatter"]!["license"] = "Apache-2.0";
+        refreshedEntry["frontmatter"]!["metadata"] = new JsonObject { ["owner"] = "Second" };
+        refreshedEntry["frontmatter"]!["future-field"] = new JsonObject { ["nested"] = 84 };
+        refreshedEntry["frontmatter"]!["new-field"] = null;
+        List<string> methods = [];
+        int reads = 0;
+        var client = CreateTtlClient((request, _) =>
+        {
+            methods.Add(request.Method);
+            return Task.FromResult(request.Method switch
+            {
+                "skills/list" => TtlListResult(60000, listedEntry),
+                "resources/read" => ResourceReadResult(SkillUri, 1000, ++reads switch
+                {
+                    1 => SkillContent + "\nChanged.",
+                    2 => OriginalContent,
+                    _ => RefreshedContent,
+                }),
+                "skills/get" => GetSkillResult(refreshedEntry, 60000),
+                _ => throw new InvalidOperationException(request.Method),
+            });
+        });
+        var catalog = new McpSkillsCatalog(client.Object, timeProvider: clock);
+        var original = Assert.IsType<AgentMcpSkill>(Assert.Single(await catalog.GetSkillsAsync(CancellationToken.None)));
+
+        // Act
+        listedEntry["frontmatter"]!["license"] = "Changed after discovery";
+        listedEntry["frontmatter"]!["future-field"]!["nested"] = -1;
+        original.Frontmatter.License = "Changed public metadata";
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await original.GetContentAsync());
+        var refreshed = Assert.IsType<AgentMcpSkill>(Assert.Single(await catalog.GetSkillsAsync(CancellationToken.None)));
+        string originalContent = await original.GetContentAsync();
+        string refreshedContent = await refreshed.GetContentAsync();
+
+        // Assert
+        Assert.NotSame(original, refreshed);
+        Assert.NotNull(original.Frontmatter.Metadata);
+        Assert.NotNull(refreshed.Frontmatter.Metadata);
+        Assert.NotSame(original.Frontmatter.Metadata, refreshed.Frontmatter.Metadata);
+        Assert.Equal("First", Assert.IsType<JsonElement>(original.Frontmatter.Metadata["owner"]).GetString());
+        Assert.Equal("Second", Assert.IsType<JsonElement>(refreshed.Frontmatter.Metadata["owner"]).GetString());
+        Assert.False(original.Frontmatter.Metadata.ContainsKey("OriginalJson"));
+        Assert.False(refreshed.Frontmatter.Metadata.ContainsKey("OriginalJson"));
+        Assert.Equal(OriginalContent, originalContent);
+        Assert.Equal(RefreshedContent, refreshedContent);
+        Assert.Equal("unit-converter", refreshed.Frontmatter.Name);
+        Assert.Equal("Convert units.", refreshed.Frontmatter.Description);
+        Assert.Equal("Apache-2.0", refreshed.Frontmatter.License);
+        Assert.Equal(["skills/list", "resources/read", "skills/get", "resources/read", "resources/read"], methods);
+    }
+
     [Theory]
     [InlineData(1000L, 1000L, false)]
     [InlineData(60000L, 50000L, true)]
@@ -834,6 +916,8 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData("type", typeof(InvalidOperationException))]
     [InlineData("uri", typeof(InvalidOperationException))]
     [InlineData("frontmatter", typeof(InvalidOperationException))]
+    [InlineData("compatibility", typeof(InvalidOperationException))]
+    [InlineData("compatibility-type", typeof(JsonException))]
     [InlineData("digest", typeof(InvalidOperationException))]
     [InlineData("size", typeof(InvalidOperationException))]
     [InlineData("incomplete", typeof(InvalidOperationException))]
@@ -871,6 +955,8 @@ public sealed partial class AgentMcpSkillsTests
                     case "type": result["resultType"] = "input_required"; break;
                     case "uri": result["skill"] = Entry("skill://other/unit-converter/"); break;
                     case "frontmatter": result["skill"]!["frontmatter"]!["name"] = "invalid_name"; break;
+                    case "compatibility": result["skill"]!["frontmatter"]!["compatibility"] = new string('a', 501); break;
+                    case "compatibility-type": result["skill"]!["frontmatter"]!["compatibility"] = true; break;
                     case "digest": result["skill"]!["resources"]![0]!["digest"] = "invalid"; break;
                     case "size": result["skill"]!["resources"]![0]!["size"] = 2_000_000; break;
                     case "incomplete": result["skill"]!["resources"] = new JsonArray(); break;

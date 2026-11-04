@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI;
@@ -53,8 +55,9 @@ internal sealed class McpSkillEntry
     public required string Uri { get; init; }
 
     /// <summary>
-    /// Gets the skill's name and description.
+    /// Gets the skill's advertised frontmatter.
     /// </summary>
+    [JsonConverter(typeof(McpSkillFrontmatterConverter))]
     public required McpSkillFrontmatter Frontmatter { get; init; }
 
     /// <summary>
@@ -64,7 +67,7 @@ internal sealed class McpSkillEntry
 }
 
 /// <summary>
-/// The name and description of a skill returned by <c>skills/list</c>.
+/// The frontmatter advertised by <c>skills/list</c> or <c>skills/get</c>.
 /// </summary>
 internal sealed class McpSkillFrontmatter
 {
@@ -77,6 +80,27 @@ internal sealed class McpSkillFrontmatter
     /// Gets the skill's description.
     /// </summary>
     public required string Description { get; init; }
+
+    /// <summary>
+    /// Gets an optional license name or reference.
+    /// </summary>
+    public string? License { get; init; }
+
+    /// <summary>
+    /// Gets optional compatibility information, validated during discovery.
+    /// </summary>
+    public string? Compatibility { get; init; }
+
+    /// <summary>
+    /// Gets optional custom metadata.
+    /// </summary>
+    public AdditionalPropertiesDictionary? Metadata { get; init; }
+
+    /// <summary>
+    /// Gets or sets the complete JSON snapshot captured when deserializing a skill entry.
+    /// </summary>
+    [JsonIgnore]
+    internal JsonElement OriginalJson { get; set; }
 }
 
 /// <summary>
