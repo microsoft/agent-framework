@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// An <see cref="DelegatingHandler"/> that:
 /// <list type="bullet">
-///   <item>Acquires a fresh Azure bearer token (scope: <c>https://ai.azure.com/.default</c>) for requests to the configured toolbox origin, per <c>tools-integration-spec.md</c> §4.</item>
+///   <item>Acquires a fresh Azure bearer token with the configured scope for requests to the configured toolbox origin, per <c>tools-integration-spec.md</c> §4.</item>
 ///   <item>Injects the mandatory <c>Foundry-Features: Toolboxes=V1Preview</c> header on that origin per spec §2, merging any additional flags from <c>FOUNDRY_AGENT_TOOLSET_FEATURES</c>.</item>
 ///   <item>Propagates W3C trace context (<c>traceparent</c>, <c>tracestate</c>, <c>baggage</c>) from <see cref="Activity.Current"/> per spec §6.3.</item>
 ///   <item>Retries on HTTP 429, 500, 502, and 503 with exponential back-off (max 3 attempts, per spec §7).</item>
@@ -25,25 +25,23 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 {
     private const int MaxRetries = 3;
 
-    // Per tools-integration-spec.md §4, the container authenticates to the Foundry Toolbox
-    // proxy with a bearer token whose audience is https://ai.azure.com.
-    private static readonly TokenRequestContext s_tokenContext =
-        new(["https://ai.azure.com/.default"]);
-
     // Per tools-integration-spec.md §2, every proxy request MUST include the
     // Foundry-Features: Toolboxes=V1Preview opt-in header while the service is in preview.
     private const string MandatoryFeatureFlag = "Toolboxes=V1Preview";
 
     private readonly TokenCredential _credential;
+    private readonly TokenRequestContext _tokenContext;
     private readonly string? _additionalFeaturesHeaderValue;
     private readonly Uri _pinnedEndpoint;
 
     internal FoundryToolboxBearerTokenHandler(
         TokenCredential credential,
+        string tokenScope,
         string? additionalFeaturesHeaderValue,
         Uri pinnedEndpoint)
     {
         _ = Throw.IfNull(credential);
+        _ = Throw.IfNullOrWhitespace(tokenScope);
         _ = Throw.IfNull(pinnedEndpoint);
         if (!pinnedEndpoint.IsAbsoluteUri)
         {
@@ -51,6 +49,7 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
         }
 
         this._credential = credential;
+        this._tokenContext = new([tokenScope]);
         this._additionalFeaturesHeaderValue = additionalFeaturesHeaderValue;
         this._pinnedEndpoint = pinnedEndpoint;
     }
@@ -68,7 +67,7 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
         }
 
         var token = await this._credential
-            .GetTokenAsync(s_tokenContext, cancellationToken)
+            .GetTokenAsync(this._tokenContext, cancellationToken)
             .ConfigureAwait(false);
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);

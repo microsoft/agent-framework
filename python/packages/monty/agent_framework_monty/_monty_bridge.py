@@ -239,7 +239,12 @@ class InlineCodeBridge:
             "type_check_stubs": self.type_stubs,
         }
         if self._resource_limits:
-            checkout_kwargs["limits"] = self._resource_limits
+            limits = dict(self._resource_limits)
+            if "max_duration_secs" in limits:
+                if "max_feed_duration_secs" in limits:
+                    raise ValueError("Specify only one of max_duration_secs and max_feed_duration_secs.")
+                limits["max_feed_duration_secs"] = limits.pop("max_duration_secs")
+            checkout_kwargs["limits"] = limits
 
         feed_kwargs: dict[str, Any] = {"print_callback": printer}
         if self._mounts:

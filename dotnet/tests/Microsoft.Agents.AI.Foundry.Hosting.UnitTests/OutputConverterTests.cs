@@ -443,6 +443,110 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallNonAsciiArguments_PreservesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            Contents = [new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" })]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.Equal("""{"location":"Ереван"}""", done.Arguments);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallHtmlSensitiveArguments_EscapesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            Contents = [new FunctionCallContent("call_1", "search", new Dictionary<string, object?> { ["query"] = "<tag>&" })]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.Equal("""{"query":"\u003Ctag\u003E\u0026"}""", done.Arguments);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalRequestNonAsciiArguments_PreservesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var functionCall = new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" });
+        var update = new AgentResponseUpdate { Contents = [new ToolApprovalRequestContent("af_request_1", functionCall)] };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream, new AgentSessionStateBag()))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var item = Assert.IsType<OutputItemMcpApprovalRequest>(added.Item);
+        Assert.Equal("""{"location":"Ереван"}""", item.Arguments);
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_NonAsciiObject_PreservesCharacters()
+    {
+        // Arrange
+        var result = new { city = "Ереван" };
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(result);
+
+        // Assert
+        Assert.Equal("""{"city":"Ереван"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_JsonElementWithEscapedUnicode_DecodesCharacters()
+    {
+        // Arrange
+        using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse("""{"city":"\u0415"}""");
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(document.RootElement);
+
+        // Assert
+        Assert.Equal("""{"city":"Е"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_JsonDocumentWithEscapedUnicode_DecodesCharacters()
+    {
+        // Arrange
+        using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse("""{"city":"\u0415"}""");
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(document);
+
+        // Assert
+        Assert.Equal("""{"city":"Е"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
     // G-04
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_DoesNotEmitWireItemAsync()
@@ -777,7 +881,7 @@ public class OutputConverterTests
                 [
                     new McpServerToolCallContent("mcp_call_1", "search", "remote-server")
                     {
-                        Arguments = new Dictionary<string, object?> { ["q"] = "weather" },
+                        Arguments = new Dictionary<string, object?> { ["q"] = "Ереван" },
                     }
                 ]
             },
@@ -810,7 +914,7 @@ public class OutputConverterTests
             Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
         Assert.Equal("remote-server", done.ServerLabel);
         Assert.Equal("search", done.Name);
-        Assert.Equal("{\"q\":\"weather\"}", done.Arguments);
+        Assert.Equal("""{"q":"Ереван"}""", done.Arguments);
         Assert.Equal("sunny", done.Output);
         Assert.DoesNotContain(
             events.OfType<ResponseOutputItemAddedEvent>(),
@@ -1851,7 +1955,7 @@ public class OutputConverterTests
         var stateBag = new AgentSessionStateBag();
         var toolCall = new McpServerToolCallContent("mcp_call_approval", "delete_resource", "remote-server")
         {
-            Arguments = new Dictionary<string, object?> { ["target"] = "db" },
+            Arguments = new Dictionary<string, object?> { ["target"] = "Ереван" },
         };
         var update = new AgentResponseUpdate
         {
@@ -1873,6 +1977,7 @@ public class OutputConverterTests
             Assert.Single(events.OfType<ResponseOutputItemAddedEvent>()).Item);
         Assert.Equal("remote-server", item.ServerLabel);
         Assert.Equal("delete_resource", item.Name);
+        Assert.Equal("""{"target":"Ереван"}""", item.Arguments);
 
         var messages = InputConverter.ConvertItemsToMessages(
             [new MCPApprovalResponse(item.Id, approve: true)],

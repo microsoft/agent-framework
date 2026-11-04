@@ -7,7 +7,9 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
@@ -46,6 +48,9 @@ internal abstract record OutputConverterItem
 /// </summary>
 internal static class OutputConverter
 {
+    // Keep non-ASCII characters as-is while continuing to escape HTML-sensitive characters.
+    private static readonly JsonSerializerOptions s_jsonOptions = new() { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) };
+
     private sealed class PendingMcpCall(
         OutputItemMcpCallBuilder builder,
         LocalMcpExecutionContract contract,
@@ -230,7 +235,7 @@ internal static class OutputConverter
                         previousMessageId = null;
 
                         var arguments = functionCall.Arguments is not null
-                            ? JsonSerializer.Serialize(functionCall.Arguments)
+                            ? JsonSerializer.Serialize(functionCall.Arguments, s_jsonOptions)
                             : "{}";
 
                         if (localMcpFunctions?.TryGetValue(functionCall.Name, out var localMcpFunction) is true)
@@ -301,7 +306,7 @@ internal static class OutputConverter
 
                         string serverLabel = mcpCall.ServerName ?? "mcp";
                         string arguments = mcpCall.Arguments is not null
-                            ? JsonSerializer.Serialize(mcpCall.Arguments)
+                            ? JsonSerializer.Serialize(mcpCall.Arguments, s_jsonOptions)
                             : "{}";
                         var contract = new LocalMcpExecutionContract(
                             serverLabel,
@@ -437,7 +442,7 @@ internal static class OutputConverter
                         var wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
 
                         var approvalArguments = approvalFunctionCall.Arguments is not null
-                            ? JsonSerializer.Serialize(approvalFunctionCall.Arguments)
+                            ? JsonSerializer.Serialize(approvalFunctionCall.Arguments, s_jsonOptions)
                             : "{}";
                         LocalMcpExecutionContract? localMcpFunction = null;
                         _ = localMcpFunctions?.TryGetValue(approvalFunctionCall.Name, out localMcpFunction);
@@ -480,7 +485,7 @@ internal static class OutputConverter
                         string wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
                         string serverLabel = approvalMcpCall.ServerName ?? "mcp";
                         string arguments = approvalMcpCall.Arguments is not null
-                            ? JsonSerializer.Serialize(approvalMcpCall.Arguments)
+                            ? JsonSerializer.Serialize(approvalMcpCall.Arguments, s_jsonOptions)
                             : "{}";
                         ToolApprovalIdMap.Record(
                             stateBag,
@@ -1194,11 +1199,11 @@ internal static class OutputConverter
             string s => s,
             JsonElement je => je.ValueKind == JsonValueKind.String
                 ? (je.GetString() ?? string.Empty)
-                : je.GetRawText(),
+                : JsonSerializer.Serialize(je, s_jsonOptions),
             JsonDocument jd => jd.RootElement.ValueKind == JsonValueKind.String
                 ? (jd.RootElement.GetString() ?? string.Empty)
-                : jd.RootElement.GetRawText(),
-            _ => JsonSerializer.Serialize(result),
+                : JsonSerializer.Serialize(jd.RootElement, s_jsonOptions),
+            _ => JsonSerializer.Serialize(result, s_jsonOptions),
         };
     }
 
