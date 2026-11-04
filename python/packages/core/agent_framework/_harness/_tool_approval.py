@@ -394,6 +394,11 @@ class ToolApprovalMiddleware(AgentMiddleware):
         upgraded agent may use an improved version of a tool for which the old
         approval is still appropriate. The developer must decide whether each
         standing approval should carry over to the changed tool.
+
+        The rules are not tied to a caller either. Callers that share a session
+        share its standing approvals, for example when one ``AgentExecutor``
+        serves several callers. Give each caller its own session, or its own
+        workflow and executors.
     """
 
     def __init__(

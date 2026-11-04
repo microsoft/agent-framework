@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_framework._settings import SecretString
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
 from google import genai
 from google.auth.credentials import Credentials
@@ -21,6 +21,34 @@ class GoogleGeminiSettings(TypedDict, total=False):
     genai_use_vertexai: bool | None
     cloud_project: str | None
     cloud_location: str | None
+
+
+class _GoogleGeminiModelSettings(TypedDict, total=False):
+    """The only connector settings an injected ``genai.Client`` still needs."""
+
+    model: str | None
+    embedding_model: str | None
+
+
+def load_gemini_settings(*, client: genai.Client | None, **kwargs: Any) -> GoogleGeminiSettings:
+    """Load ``GOOGLE_*`` settings, skipping auth, mode, project, and location for an injected client.
+
+    For an injected client, explicit mode arguments are kept (environment mode is not read) so they
+    remain the fallback when the SDK client does not expose its mode.
+    """
+    if client is None:
+        return load_settings(GoogleGeminiSettings, env_prefix="GOOGLE_", **kwargs)
+    settings: GoogleGeminiSettings = load_settings(_GoogleGeminiModelSettings, env_prefix="GOOGLE_", **kwargs)  # type: ignore[assignment]
+    for key in ("genai_use_enterprise", "genai_use_vertexai"):
+        if (value := kwargs.get(key)) is not None:
+            # Match the override type check an owned client gets from load_settings.
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Invalid type for setting '{key}' from explicit override: "
+                    f"expected bool, got {type(value).__name__}."
+                )
+            settings[key] = value
+    return settings
 
 
 _GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
