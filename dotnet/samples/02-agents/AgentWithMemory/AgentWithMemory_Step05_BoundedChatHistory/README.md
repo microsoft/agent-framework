@@ -12,7 +12,7 @@ This sample demonstrates how to create a custom `ChatHistoryProvider` that keeps
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure OpenAI resource with:
+- A Microsoft Foundry project with:
   - A chat deployment (e.g., `gpt-5.4-mini`)
   - An embedding deployment (e.g., `text-embedding-3-large`)
 
@@ -22,9 +22,9 @@ Set the following environment variables:
 
 | Variable | Description | Default |
 |---|---|---|
-| `AZURE_OPENAI_ENDPOINT` | Your Azure OpenAI endpoint URL | *(required)* |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Chat model deployment name | `gpt-5.4-mini` |
-| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` | Embedding model deployment name | `text-embedding-3-large` |
+| `FOUNDRY_PROJECT_ENDPOINT` | Your Microsoft Foundry project endpoint | *(required)* |
+| `FOUNDRY_MODEL` | Chat model deployment name | `gpt-5.4-mini` |
+| `FOUNDRY_EMBEDDING_MODEL` | Embedding model deployment name | `text-embedding-3-large` |
 
 ## Running the Sample
 

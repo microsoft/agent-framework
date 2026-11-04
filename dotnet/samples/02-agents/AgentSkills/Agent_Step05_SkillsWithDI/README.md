@@ -36,7 +36,7 @@ Both skills resolve the same `ConversionService` from the DI container. When pro
 ## Prerequisites
 
 - .NET 10
-- An Azure OpenAI deployment
+- A Microsoft Foundry project with a deployed model
 
 ## Configuration
 
@@ -44,8 +44,8 @@ Set the following environment variables:
 
 | Variable | Description |
 |---|---|
-| `AZURE_OPENAI_ENDPOINT` | Your Azure OpenAI endpoint URL |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Model deployment name (defaults to `gpt-5.4-mini`) |
+| `FOUNDRY_PROJECT_ENDPOINT` | Your Microsoft Foundry project endpoint |
+| `FOUNDRY_MODEL` | Model deployment name (defaults to `gpt-5.4-mini`) |
 
 ## Running the Sample
 
