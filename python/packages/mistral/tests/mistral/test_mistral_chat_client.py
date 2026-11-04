@@ -1450,3 +1450,25 @@ async def test_mistral_chat_integration_agent_with_tool() -> None:
         assert "pineapple" in result.text.lower()
     finally:
         await client.close()
+
+
+@pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
+def test_injected_sdk_client_reads_only_the_model_setting(
+    client_type: type[RawMistralChatClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client owns its credentials and endpoint, so only the model is read from settings."""
+    monkeypatch.setenv("MISTRAL_CHAT_MODEL", "mistral-env-model")
+    loaded: list[type] = []
+    real_load_settings = chat_client_module.load_settings
+
+    def spy(settings_type: type, **kwargs: Any) -> Any:
+        loaded.append(settings_type)
+        return real_load_settings(settings_type, **kwargs)
+
+    monkeypatch.setattr(chat_client_module, "load_settings", spy)
+
+    client = client_type(client=Mistral(api_key="test-key"))
+
+    assert client.model == "mistral-env-model"
+    assert loaded == [chat_client_module.MistralChatModelSettings]

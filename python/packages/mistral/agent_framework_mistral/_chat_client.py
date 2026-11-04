@@ -165,6 +165,16 @@ class MistralSettings(TypedDict, total=False):
     server_url: str | None
 
 
+class MistralChatModelSettings(TypedDict, total=False):
+    """Mistral AI chat model setting, read alone when a Mistral SDK client is injected.
+
+    Fields:
+        chat_model: Chat model name. Resolved from ``MISTRAL_CHAT_MODEL``.
+    """
+
+    chat_model: str | None
+
+
 # endregion
 
 _MISTRAL_API_BASE_URL = "https://api.mistral.ai"
@@ -387,16 +397,26 @@ class RawMistralChatClient(
         if client is not None and http_client is not None:
             raise ValueError("Provide either 'client' or 'http_client', not both.")
 
-        mistral_settings = load_settings(
-            MistralSettings,
-            env_prefix="MISTRAL_",
-            required_fields=[] if client is not None or http_client is not None else ["api_key"],
-            api_key=api_key,
-            chat_model=model,
-            server_url=server_url,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
+        if isinstance(client, Mistral):
+            # The injected SDK client owns its credentials and endpoint, so only the model is resolved.
+            mistral_settings: MistralSettings = load_settings(  # type: ignore[assignment]
+                MistralChatModelSettings,
+                env_prefix="MISTRAL_",
+                chat_model=model,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        else:
+            mistral_settings = load_settings(
+                MistralSettings,
+                env_prefix="MISTRAL_",
+                required_fields=[] if http_client is not None else ["api_key"],
+                api_key=api_key,
+                chat_model=model,
+                server_url=server_url,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
 
         self.model = mistral_settings.get("chat_model")
         self.server_url = mistral_settings.get("server_url")

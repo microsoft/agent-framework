@@ -18,6 +18,7 @@ from agent_framework.exceptions import (
 )
 from mistralai.client import Mistral
 
+import agent_framework_mistral._embedding_client as embedding_client_module
 from agent_framework_mistral import MistralEmbeddingClient, MistralEmbeddingOptions
 from agent_framework_mistral._http_client import (  # pyright: ignore[reportPrivateUsage]
     AsyncClientUsingConfiguredTimeout,
@@ -432,3 +433,23 @@ async def test_mistral_embedding_integration() -> None:
         assert result.usage["input_token_count"] > 0
     finally:
         await client.close()
+
+
+def test_mistral_embedding_injected_sdk_client_reads_only_the_model_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client owns its credentials and endpoint, so only the model is read from settings."""
+    monkeypatch.setenv("MISTRAL_EMBEDDING_MODEL", "mistral-env-embed")
+    loaded: list[type] = []
+    real_load_settings = embedding_client_module.load_settings
+
+    def spy(settings_type: type, **kwargs: Any) -> Any:
+        loaded.append(settings_type)
+        return real_load_settings(settings_type, **kwargs)
+
+    monkeypatch.setattr(embedding_client_module, "load_settings", spy)
+
+    client = MistralEmbeddingClient(client=Mistral(api_key="test-key"))
+
+    assert client.model == "mistral-env-embed"
+    assert loaded == [embedding_client_module.MistralEmbeddingModelSettings]

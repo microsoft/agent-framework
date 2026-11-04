@@ -83,6 +83,16 @@ class MistralEmbeddingSettings(TypedDict, total=False):
     server_url: str | None
 
 
+class MistralEmbeddingModelSettings(TypedDict, total=False):
+    """Mistral AI embedding model setting, read alone when a Mistral SDK client is injected.
+
+    Fields:
+        embedding_model: Embedding model name. Resolved from ``MISTRAL_EMBEDDING_MODEL``.
+    """
+
+    embedding_model: str | None
+
+
 class RawMistralEmbeddingClient(
     BaseEmbeddingClient[str, list[float], MistralEmbeddingOptionsT],
     Generic[MistralEmbeddingOptionsT],
@@ -138,18 +148,27 @@ class RawMistralEmbeddingClient(
         if client is not None and http_client is not None:
             raise ValueError("Provide either 'client' or 'http_client', not both.")
 
-        injected = client is not None or http_client is not None
-        required_fields = ["embedding_model"] if injected else ["embedding_model", "api_key"]
-        mistral_settings = load_settings(
-            MistralEmbeddingSettings,
-            env_prefix="MISTRAL_",
-            required_fields=required_fields,
-            api_key=api_key,
-            embedding_model=model,
-            server_url=server_url,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
+        if isinstance(client, Mistral):
+            # The injected SDK client owns its credentials and endpoint, so only the model is resolved.
+            mistral_settings: MistralEmbeddingSettings = load_settings(  # type: ignore[assignment]
+                MistralEmbeddingModelSettings,
+                env_prefix="MISTRAL_",
+                required_fields=["embedding_model"],
+                embedding_model=model,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        else:
+            mistral_settings = load_settings(
+                MistralEmbeddingSettings,
+                env_prefix="MISTRAL_",
+                required_fields=["embedding_model"] if http_client is not None else ["embedding_model", "api_key"],
+                api_key=api_key,
+                embedding_model=model,
+                server_url=server_url,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
 
         self.model: str = mistral_settings["embedding_model"]  # type: ignore[assignment]
         self.server_url = mistral_settings.get("server_url")
