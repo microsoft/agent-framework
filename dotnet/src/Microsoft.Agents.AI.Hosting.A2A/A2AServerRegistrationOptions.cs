@@ -13,14 +13,6 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 public sealed class A2AServerRegistrationOptions
 {
     /// <summary>
-    /// Gets or sets the agent run mode that controls how the agent responds to A2A requests.
-    /// </summary>
-    /// <remarks>
-    /// When <see langword="null"/>, defaults to <see cref="AgentRunMode.ReturnMessage"/>.
-    /// </remarks>
-    public AgentRunMode? AgentRunMode { get; set; }
-
-    /// <summary>
     /// Gets or sets the A2A server options used to configure the underlying <see cref="A2AServer"/>.
     /// </summary>
     /// <remarks>

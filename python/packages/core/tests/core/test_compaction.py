@@ -19,6 +19,7 @@ from agent_framework import (
     SUMMARIZED_BY_SUMMARY_ID_KEY,
     SUMMARY_OF_GROUP_IDS_KEY,
     SUMMARY_OF_MESSAGE_IDS_KEY,
+    AgentTriggeredCompactionStrategy,
     CharacterEstimatorTokenizer,
     ChatResponse,
     CompactionProvider,
@@ -31,24 +32,41 @@ from agent_framework import (
     TokenBudgetComposedStrategy,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    UnloadSkillsCompactionStrategy,
     annotate_message_groups,
     apply_compaction,
     included_messages,
     included_token_count,
 )
 from agent_framework._compaction import (
+    _SKILL_UNLOAD_SELECTION_KEY,
+    _completed_function_calls,
     _format_summary_message,
+    _function_call_result_pairs,
     _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
     extend_compaction_messages,
 )
+from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
+from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY
 
 
 def _assistant_function_call(call_id: str) -> Message:
     return Message(
         role="assistant",
         contents=[Content.from_function_call(call_id=call_id, name="tool", arguments='{"value":"x"}')],
+    )
+
+
+def _assistant_named_function_call(
+    call_id: str,
+    name: str,
+    arguments: dict[str, Any] | None = None,
+) -> Message:
+    return Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id=call_id, name=name, arguments=arguments or {})],
     )
 
 
@@ -109,6 +127,36 @@ def _tool_result(call_id: str, result: str, message_id: str | None = None) -> Me
         role="tool",
         contents=[Content.from_function_result(call_id=call_id, result=result)],
         message_id=message_id,
+    )
+
+
+def _skill_unload_result(call_id: str, skill_names: list[str]) -> Message:
+    return Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id=call_id,
+                result=[
+                    Content.from_text(
+                        "Skills will be unloaded before the next model call.",
+                        additional_properties={_SKILL_UNLOAD_SELECTION_KEY: skill_names},
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def _skill_context_result(call_id: str, skill_name: str, result: str) -> Message:
+    return Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id=call_id,
+                result=result,
+                additional_properties={SKILL_CONTEXT_NAME_KEY: skill_name},
+            )
+        ],
     )
 
 
@@ -846,6 +894,720 @@ def test_truncation_strategy_validates_token_targets() -> None:
         assert "compact_to must be less than or equal to max_n" in str(exc)
     else:
         raise AssertionError("Expected ValueError when compact_to is greater than max_n.")
+
+
+class _RecordingCompactionStrategy:
+    def __init__(self, *, changed: bool = True) -> None:
+        self.call_count = 0
+        self.changed = changed
+
+    async def __call__(self, messages: list[Message]) -> bool:
+        self.call_count += 1
+        return self.changed
+
+
+def test_agent_triggered_compaction_apis_are_experimental() -> None:
+    feature_id = ExperimentalFeature.AGENT_TRIGGERED_COMPACTION.value
+    for api in (AgentTriggeredCompactionStrategy, UnloadSkillsCompactionStrategy):
+        assert getattr(api, "__feature_stage__", None) == "experimental"
+        assert getattr(api, "__feature_id__", None) == feature_id
+        assert ".. warning:: Experimental" in (api.__doc__ or "")
+
+    _WARNED_FEATURES.discard((ExperimentalWarning, feature_id))
+    with pytest.warns(ExperimentalWarning, match=feature_id):
+        AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+
+
+async def test_agent_triggered_compaction_runs_only_after_completed_trigger() -> None:
+    inner = _RecordingCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(inner)
+    messages = [
+        Message(role="user", contents=["plan"]),
+        _assistant_named_function_call("compact-1", strategy.tool.name, {"reason": "planning complete"}),
+    ]
+
+    assert await strategy(messages) is False
+    assert inner.call_count == 0
+
+    messages.append(_tool_result("compact-1", "Compaction requested."))
+
+    assert await strategy(messages) is True
+    assert inner.call_count == 1
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is not True
+    assert await strategy(messages) is False
+    assert inner.call_count == 1
+
+
+async def test_agent_triggered_compaction_consumes_request_when_inner_strategy_is_noop() -> None:
+    inner = _RecordingCompactionStrategy(changed=False)
+    strategy = AgentTriggeredCompactionStrategy(inner)
+    messages = [
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        _tool_result("compact-1", "Compaction requested."),
+    ]
+
+    assert await strategy(messages) is False
+    assert await strategy(messages) is False
+    assert inner.call_count == 1
+
+
+async def test_agent_triggered_compaction_can_exclude_trigger_group() -> None:
+    inner = _RecordingCompactionStrategy(changed=False)
+    strategy = AgentTriggeredCompactionStrategy(inner, exclude_trigger=True)
+    messages = [
+        Message(role="user", contents=["keep working"]),
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        _tool_result("compact-1", "Compaction requested."),
+    ]
+
+    assert await strategy(messages) is True
+    assert messages[0].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is True
+
+
+async def test_agent_trigger_does_not_count_toward_tool_group_retention() -> None:
+    strategy = AgentTriggeredCompactionStrategy(SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=1))
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("work-1", "work_tool"),
+        _tool_result("work-1", "work result"),
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        _tool_result("compact-1", "Compaction requested."),
+    ]
+
+    assert await strategy(messages) is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+@pytest.mark.parametrize("trigger_position", [0, 1, 2])
+@pytest.mark.parametrize("exclude_trigger", [False, True])
+async def test_agent_trigger_in_mixed_tool_batch_is_position_independent_and_retained(
+    trigger_position: int,
+    exclude_trigger: bool,
+) -> None:
+    strategy = AgentTriggeredCompactionStrategy(
+        SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0),
+        exclude_trigger=exclude_trigger,
+    )
+    batch_calls = [
+        Content.from_function_call(call_id="work-a", name="work_a", arguments={}),
+        Content.from_function_call(call_id="work-b", name="work_b", arguments={}),
+    ]
+    batch_calls.insert(
+        trigger_position,
+        Content.from_function_call(call_id="compact-1", name=strategy.tool.name, arguments={}),
+    )
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("old-work", "old_work"),
+        _tool_result("old-work", "old result"),
+        Message(role="assistant", contents=batch_calls),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id=call.call_id or "", result=f"{call.name} result")
+                for call in batch_calls
+            ],
+        ),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[3].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
+
+
+async def test_agent_trigger_in_mixed_search_batch_is_retained() -> None:
+    strategy = AgentTriggeredCompactionStrategy(
+        SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0),
+        exclude_trigger=True,
+    )
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("old-work", "old_work"),
+        _tool_result("old-work", "old result"),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="compact-1", name=strategy.tool.name, arguments={}),
+                Content.from_search_tool_call(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    arguments={"query": "latest"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="compact-1", result="Compaction requested."),
+                Content.from_search_tool_result(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    result="search result",
+                ),
+            ],
+        ),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[3].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
+
+
+async def test_list_mutating_strategy_restores_mixed_trigger_batch_only() -> None:
+    class ProjectIncludedMessagesStrategy:
+        async def __call__(self, messages: list[Message]) -> bool:
+            messages[:] = included_messages(messages)
+            return True
+
+    strategy = AgentTriggeredCompactionStrategy(
+        ProjectIncludedMessagesStrategy(),
+        exclude_trigger=True,
+    )
+    removed_by_inner = Message(
+        role="assistant",
+        contents=["already excluded"],
+        additional_properties={EXCLUDED_KEY: True},
+    )
+    mixed_call_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="work-1", name="work_tool", arguments={}),
+            Content.from_function_call(call_id="compact-1", name=strategy.tool.name, arguments={}),
+        ],
+    )
+    mixed_result_message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="work-1", result="work result"),
+            Content.from_function_result(call_id="compact-1", result="Compaction requested."),
+        ],
+    )
+    user_message = Message(role="user", contents=["work"])
+    messages = [
+        removed_by_inner,
+        user_message,
+        mixed_call_message,
+        mixed_result_message,
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert messages == [user_message, mixed_call_message, mixed_result_message]
+    assert removed_by_inner not in messages
+    assert mixed_call_message.additional_properties.get(EXCLUDED_KEY) is not True
+    assert mixed_result_message.additional_properties.get(EXCLUDED_KEY) is not True
+
+
+async def test_successive_triggers_do_not_consume_tool_group_retention() -> None:
+    strategy = AgentTriggeredCompactionStrategy(SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=2))
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("work-1", "work_tool"),
+        _tool_result("work-1", "work result 1"),
+        _assistant_named_function_call("work-2", "work_tool"),
+        _tool_result("work-2", "work result 2"),
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        _tool_result("compact-1", "Compaction requested."),
+    ]
+
+    assert await strategy(messages) is False
+
+    messages.extend([
+        _assistant_named_function_call("work-3", "work_tool"),
+        _tool_result("work-3", "work result 3"),
+        _assistant_named_function_call("compact-2", strategy.tool.name),
+        _tool_result("compact-2", "Compaction requested."),
+    ])
+
+    assert await strategy(messages) is True
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[3].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[5].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[6].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[7].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[8].additional_properties.get(EXCLUDED_KEY) is not True
+
+
+async def test_agent_triggered_compaction_restores_request_when_inner_strategy_fails() -> None:
+    class _FailingStrategy:
+        async def __call__(self, messages: list[Message]) -> bool:
+            raise RuntimeError("compaction failed")
+
+    strategy = AgentTriggeredCompactionStrategy(_FailingStrategy())
+    trigger_message = _assistant_named_function_call("compact-1", strategy.tool.name)
+    messages = [trigger_message, _tool_result("compact-1", "Compaction requested.")]
+
+    with pytest.raises(RuntimeError, match="compaction failed"):
+        await strategy(messages)
+
+    assert "_agent_compaction_trigger_consumed" not in trigger_message.contents[0].additional_properties
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+async def test_composed_trigger_tools_each_execute_once(reverse_order: bool) -> None:
+    first_inner = _RecordingCompactionStrategy(changed=False)
+    second_inner = _RecordingCompactionStrategy(changed=False)
+    first = AgentTriggeredCompactionStrategy(first_inner, tool_name="compact_first")
+    second = AgentTriggeredCompactionStrategy(second_inner, tool_name="compact_second")
+    messages = [
+        Message(role="user", contents=["work"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="first", name=first.tool.name, arguments={}),
+                Content.from_function_call(call_id="second", name=second.tool.name, arguments={}),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="first", result="First compaction requested."),
+                Content.from_function_result(call_id="second", result="Second compaction requested."),
+            ],
+        ),
+    ]
+    strategies = [second, first] if reverse_order else [first, second]
+
+    assert await strategies[0](messages) is False
+    assert await strategies[1](messages) is False
+    assert first_inner.call_count == 1
+    assert second_inner.call_count == 1
+    assert await first(messages) is False
+    assert await second(messages) is False
+    assert first_inner.call_count == 1
+    assert second_inner.call_count == 1
+
+
+async def test_agent_triggered_compaction_ignores_trigger_outside_latest_group() -> None:
+    inner = _RecordingCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(inner)
+    messages = [
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        _tool_result("compact-1", "Compaction requested."),
+        Message(role="assistant", contents=["continued"]),
+    ]
+
+    assert await strategy(messages) is False
+    assert inner.call_count == 0
+
+
+async def test_agent_triggered_compaction_uses_terminal_result_for_nonadjacent_group_recency() -> None:
+    inner = _RecordingCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(inner)
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        Message(role="assistant", contents=["intervening context"]),
+        _tool_result("compact-1", "Compaction requested."),
+    ]
+
+    assert await strategy(messages) is True
+    assert inner.call_count == 1
+
+
+async def test_agent_triggered_compaction_ignores_rejected_approval_result() -> None:
+    inner = _RecordingCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(inner)
+    rejection_result = Content.from_function_result(
+        call_id="compact-1",
+        result="Error: Tool call invocation was rejected by user.",
+        additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+    )
+    messages = [
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        Message(role="tool", contents=[rejection_result]),
+    ]
+
+    assert await strategy(messages) is False
+    assert inner.call_count == 0
+
+
+def test_completed_function_calls_correlates_reused_call_id_by_occurrence() -> None:
+    rejected_call = Content.from_function_call(
+        id="occ-rejected",
+        call_id="shared",
+        name="compact_context",
+        arguments={"reason": "rejected"},
+    )
+    approved_call = Content.from_function_call(
+        id="occ-approved",
+        call_id="shared",
+        name="compact_context",
+        arguments={"reason": "approved"},
+    )
+    unresolved_call = Content.from_function_call(
+        id="occ-unresolved",
+        call_id="shared",
+        name="compact_context",
+        arguments={"reason": "unresolved"},
+    )
+    messages = [
+        Message(role="assistant", contents=[rejected_call, approved_call, unresolved_call]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    id="occ-rejected",
+                    call_id="shared",
+                    result="Error: Tool call invocation was rejected by user.",
+                    additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+                ),
+                Content.from_function_result(
+                    id="occ-approved",
+                    call_id="shared",
+                    result="Compaction requested.",
+                ),
+            ],
+        ),
+    ]
+
+    completed = _completed_function_calls(messages, tool_name="compact_context")
+
+    assert completed == [approved_call]
+
+
+def test_completed_function_calls_uses_fifo_for_idless_reused_call_id() -> None:
+    first_call = Content.from_function_call(call_id="shared", name="compact_context", arguments={})
+    second_call = Content.from_function_call(call_id="shared", name="compact_context", arguments={})
+    messages = [
+        Message(role="assistant", contents=[first_call, second_call]),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="shared", result="Compaction requested.")],
+        ),
+    ]
+
+    completed = _completed_function_calls(messages, tool_name="compact_context")
+
+    assert completed == [first_call]
+
+
+def test_function_call_result_pairs_scales_linearly_for_idless_reused_call_id() -> None:
+    calls = [
+        Content.from_function_call(call_id="shared", name="compact_context", arguments={"index": index})
+        for index in range(500)
+    ]
+    results = [Content.from_function_result(call_id="shared", result=f"result-{index}") for index in range(500)]
+    messages = [
+        Message(role="assistant", contents=calls),
+        Message(role="tool", contents=results),
+    ]
+
+    pairs = _function_call_result_pairs(messages)
+
+    assert pairs == list(zip(calls, results))
+
+
+def test_agent_triggered_compaction_tool_describes_reason_parameter() -> None:
+    strategy = AgentTriggeredCompactionStrategy(_RecordingCompactionStrategy())
+
+    reason_schema = strategy.tool.parameters()["properties"]["reason"]
+
+    assert reason_schema["description"] == "Why the agent is requesting compaction before the next model call."
+    assert "Call this tool by itself" in strategy.tool.description
+    assert "do not call it in parallel" in strategy.tool.description
+
+
+async def test_unload_skills_compaction_removes_named_skill_only() -> None:
+    skill_strategy = UnloadSkillsCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(skill_strategy)
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
+        _assistant_named_function_call("load-excel", "load_skill", {"skill_name": "excel"}),
+        _skill_context_result("load-excel", "excel", "excel instructions"),
+        _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
+        _skill_unload_result("unload-pdf", ["pdf"]),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert messages[1].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[2].additional_properties.get(EXCLUDED_KEY) is True
+    assert messages[3].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[4].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[5].additional_properties.get(EXCLUDED_KEY) is not True
+    assert messages[6].additional_properties.get(EXCLUDED_KEY) is not True
+
+
+async def test_unload_skills_compaction_removes_multiple_named_skills() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
+        _assistant_named_function_call("load-excel", "load_skill", {"skill_name": "excel"}),
+        _skill_context_result("load-excel", "excel", "excel instructions"),
+        _assistant_named_function_call("load-word", "load_skill", {"skill_name": "word"}),
+        _skill_context_result("load-word", "word", "word instructions"),
+        _assistant_named_function_call(
+            "unload-selected",
+            strategy.tool.name,
+            {"skill_name": ["pdf", "excel"]},
+        ),
+        _skill_unload_result("unload-selected", ["pdf", "excel"]),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is True for message in messages[:4])
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages[4:6])
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages[6:])
+
+
+def test_unload_skills_tool_describes_skill_name_parameter() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+
+    skill_name_schema = strategy.tool.parameters()["properties"]["skill_name"]
+
+    assert skill_name_schema["description"] == (
+        "The name of a skill to unload, a list of skill names to unload, or omit to unload all loaded skills."
+    )
+    assert "Call this tool by itself" in strategy.tool.description
+    assert "do not call it in parallel" in strategy.tool.description
+
+
+@pytest.mark.parametrize(
+    "skill_name",
+    [123, [123], ["pdf", 123], b"pdf"],
+)
+async def test_unload_skills_tool_rejects_malformed_skill_names(skill_name: Any) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+
+    with pytest.raises(TypeError, match="skill_name"):
+        await strategy.tool.invoke(arguments={"skill_name": skill_name})
+
+
+async def test_unload_skills_compaction_empty_name_removes_all_skill_context() -> None:
+    skill_strategy = UnloadSkillsCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(skill_strategy)
+    messages = [
+        _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
+        _assistant_named_function_call(
+            "resource-excel",
+            "read_skill_resource",
+            {"skill_name": "excel", "resource_name": "reference"},
+        ),
+        _skill_context_result("resource-excel", "excel", "excel reference"),
+        _assistant_named_function_call("unload-all", strategy.tool.name, {"skill_name": "   "}),
+        _skill_unload_result("unload-all", []),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is True for message in messages[:4])
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages[4:])
+
+
+async def test_unload_skills_compaction_preserves_script_results_and_mixed_groups() -> None:
+    skill_strategy = UnloadSkillsCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(skill_strategy)
+    mixed_call = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="load-pdf",
+                name="load_skill",
+                arguments={"skill_name": "pdf"},
+            ),
+            Content.from_function_call(
+                call_id="search",
+                name="search",
+                arguments={"query": "pdf"},
+            ),
+        ],
+    )
+    messages = [
+        mixed_call,
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
+                ),
+                Content.from_function_result(call_id="search", result="search result"),
+            ],
+        ),
+        _assistant_named_function_call(
+            "run-pdf",
+            "run_skill_script",
+            {"skill_name": "pdf", "script_name": "convert"},
+        ),
+        _tool_result("run-pdf", "converted.pdf"),
+        _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
+        _skill_unload_result("unload-pdf", ["pdf"]),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_unload_skills_compaction_preserves_group_with_hosted_tool_call() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-pdf",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                ),
+                Content.from_shell_tool_call(call_id="shell-1", commands=["echo hi"]),
+            ],
+        ),
+        _skill_context_result("load-pdf", "pdf", "pdf instructions"),
+        _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
+        _skill_unload_result("unload-pdf", ["pdf"]),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_unload_skills_compaction_preserves_group_with_search_tool_call() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-pdf",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                ),
+                Content.from_search_tool_call(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    arguments={"query": "pdf"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
+                ),
+                Content.from_search_tool_result(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    result="search result",
+                ),
+            ],
+        ),
+        _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
+        _skill_unload_result("unload-pdf", ["pdf"]),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_unload_skills_compaction_preserves_reused_id_group_with_unresolved_call() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    id="load-pdf",
+                    call_id="shared",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                ),
+                Content.from_function_call(
+                    id="load-excel",
+                    call_id="shared",
+                    name="load_skill",
+                    arguments={"skill_name": "excel"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    id="load-pdf",
+                    call_id="shared",
+                    result="pdf instructions",
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: "pdf"},
+                )
+            ],
+        ),
+        _assistant_named_function_call("unload-all", strategy.tool.name),
+        _skill_unload_result("unload-all", []),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+@pytest.mark.parametrize(
+    ("properties", "exception"),
+    [
+        ({}, None),
+        ({SKILL_CONTEXT_NAME_KEY: ""}, None),
+        ({SKILL_CONTEXT_NAME_KEY: 123}, None),
+        ({SKILL_CONTEXT_NAME_KEY: "pdf"}, "Load failed."),
+        ({SKILL_CONTEXT_NAME_KEY: "pdf", APPROVAL_REJECTION_RESULT_KEY: True}, None),
+    ],
+)
+async def test_unload_skills_preserves_groups_without_successful_provenance(
+    properties: dict[str, Any],
+    exception: str | None,
+) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("load-pdf", "load_skill", {"skill_name": "pdf"}),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="load-pdf",
+                    result="pdf instructions",
+                    exception=exception,
+                    additional_properties=properties,
+                )
+            ],
+        ),
+        _assistant_named_function_call("unload-all", strategy.tool.name),
+        _skill_unload_result("unload-all", []),
+    ]
+
+    assert await strategy(messages) is False
+    assert included_messages(messages) == messages
 
 
 async def test_selective_tool_call_strategy_excludes_older_tool_groups() -> None:
@@ -1671,6 +2433,42 @@ async def test_apply_compaction_logs_changed_context_without_content(caplog: Any
 
 
 # --- ToolResultCompactionStrategy tests ---
+
+
+async def test_tool_result_compaction_preserves_hosted_search_result() -> None:
+    messages = [
+        Message(role="user", contents=["find docs"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_search_tool_call(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    arguments={"query": "agent framework"},
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_search_tool_result(
+                    call_id="search-1",
+                    tool_name="web_search",
+                    result="Found the Agent Framework documentation.",
+                )
+            ],
+        ),
+        Message(role="assistant", contents=["done"]),
+    ]
+    annotate_message_groups(messages)
+
+    changed = await ToolResultCompactionStrategy(keep_last_tool_call_groups=0)(messages)
+
+    assert changed is True
+    summaries = [message.text or "" for message in messages if (message.text or "").startswith("[Tool results:")]
+    assert len(summaries) == 1
+    assert "web_search: Found the Agent Framework documentation." in summaries[0]
+    assert "no results" not in summaries[0]
 
 
 async def test_tool_result_compaction_collapses_old_groups_into_summary() -> None:

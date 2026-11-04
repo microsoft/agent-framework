@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from typing import Never
 
 from agent_framework import (
     Executor,
@@ -11,7 +12,6 @@ from agent_framework import (
 from agent_framework.observability import configure_otel_providers, get_tracer
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
-from typing_extensions import Never
 
 """
 This sample shows the telemetry collected when running an Agent Framework workflow.

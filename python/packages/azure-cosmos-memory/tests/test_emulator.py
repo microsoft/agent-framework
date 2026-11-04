@@ -27,11 +27,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-# The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
-# leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
-pytest.importorskip("azure.cosmos.agent_memory")
-
 from agent_framework import Message  # noqa: E402
 from agent_framework._sessions import AgentSession, SessionContext  # noqa: E402
 from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient  # noqa: E402

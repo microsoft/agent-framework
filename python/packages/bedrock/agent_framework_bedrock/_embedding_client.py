@@ -84,10 +84,10 @@ class RawBedrockEmbeddingClient(
     Keyword Args:
         model: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
             Can also be set via environment variable BEDROCK_EMBEDDING_MODEL.
-        region: AWS region. Will try to load from BEDROCK_REGION env var,
-            if not set, the region of ``boto3_session`` is used, or without a session
-            the regular Boto3 configuration/loading applies (which may include other
-            env vars, config files, or instance metadata). Falls back to us-east-1.
+        region: AWS region. If not set, the region of ``boto3_session`` is used, then the
+            BEDROCK_REGION env var. Without a session the regular Boto3 configuration/loading
+            applies (which may include other env vars, config files, or instance metadata).
+            Falls back to us-east-1. A supplied ``client`` keeps its own region.
         access_key: AWS access key for manual credential injection.
         secret_key: AWS secret key paired with access_key.
         session_token: AWS session token for temporary credentials.
@@ -128,18 +128,21 @@ class RawBedrockEmbeddingClient(
 
         if client:
             self._bedrock_client = client
+            client_region = getattr(getattr(client, "meta", None), "region_name", None)
+            if isinstance(client_region, str):
+                resolved_region = client_region
         else:
             if not boto3_session:
                 session_kwargs: dict[str, Any] = {}
-                if region := settings.get("region"):
-                    session_kwargs["region_name"] = region
+                if settings_region := settings.get("region"):
+                    session_kwargs["region_name"] = settings_region
                 if (access_key := settings.get("access_key")) and (secret_key := settings.get("secret_key")):
                     session_kwargs["aws_access_key_id"] = access_key.get_secret_value()
                     session_kwargs["aws_secret_access_key"] = secret_key.get_secret_value()
                 if session_token := settings.get("session_token"):
                     session_kwargs["aws_session_token"] = session_token.get_secret_value()
                 boto3_session = Boto3Session(**session_kwargs)
-            resolved_region = settings.get("region") or boto3_session.region_name or DEFAULT_REGION
+            resolved_region = region or boto3_session.region_name or settings.get("region") or DEFAULT_REGION
             self._bedrock_client = boto3_session.client(
                 "bedrock-runtime",
                 region_name=resolved_region,
@@ -240,9 +243,9 @@ class BedrockEmbeddingClient(
     Keyword Args:
         model: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
             Can also be set via environment variable BEDROCK_EMBEDDING_MODEL.
-        region: AWS region. Can also be set via environment variable BEDROCK_REGION.
-            If not set, the region of ``boto3_session`` is used, or without a session
-            the regular Boto3 configuration. Defaults to "us-east-1".
+        region: AWS region. If not set, the region of ``boto3_session`` is used, then the
+            environment variable BEDROCK_REGION, or without a session the regular Boto3
+            configuration. Defaults to "us-east-1". A supplied ``client`` keeps its own region.
         access_key: AWS access key for manual credential injection.
         secret_key: AWS secret key paired with access_key.
         session_token: AWS session token for temporary credentials.

@@ -9,12 +9,11 @@ import tracemalloc
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 from unittest.mock import patch
 
 import msgspec
 import pytest
-from typing_extensions import Self
 
 from agent_framework import (
     AgentContext,

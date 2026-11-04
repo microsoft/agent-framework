@@ -11,8 +11,9 @@ The states the value type encodes:
 
 from __future__ import annotations
 
+from typing import Never
+
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     Message,

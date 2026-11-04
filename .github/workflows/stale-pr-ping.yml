@@ -1,4 +1,4 @@
-name: Stale issue and PR ping
+name: Stale pull request lifecycle
 
 on:
   schedule:
@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       days_threshold:
-        description: 'Days of silence before pinging the author'
+        description: 'Days of inactivity for both warning and closing periods'
         required: false
         default: '4'
       dry_run:
-        description: 'Log what would be pinged without taking action'
+        description: 'Log pull request warnings and closures without taking action'
         required: false
         default: 'false'
         type: choice
@@ -23,8 +23,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ping_stale:
-    name: "Ping stale issues and PRs"
+  manage_stale:
+    name: "Manage stale pull requests"
     runs-on: ubuntu-latest
     environment: github-app-auth
     permissions:
@@ -50,17 +50,16 @@ jobs:
           repository: ${{ github.repository }}
           fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
 
       - name: Install dependencies
         run: pip install PyGithub==2.6.0
 
-      - name: Run stale issue/PR ping
-        run: python .github/scripts/stale_issue_pr_ping.py
+      - name: Run stale pull request lifecycle
+        run: python .github/scripts/stale_pr_ping.py
         env:
           GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
-          TEAM_SLUG: ${{ secrets.DEVELOPER_TEAM }}
           DAYS_THRESHOLD: ${{ github.event.inputs.days_threshold || '4' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}

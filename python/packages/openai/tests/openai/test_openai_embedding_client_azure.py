@@ -34,12 +34,7 @@ def _with_azure_openai_debug() -> Any:
                 api_version = os.getenv("AZURE_OPENAI_API_VERSION", "<unset>")
                 endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
                 debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
-                if hasattr(exc, "add_note"):
-                    cast(Any, exc).add_note(debug_message)
-                elif exc.args:
-                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
-                else:
-                    exc.args = (debug_message,)
+                exc.add_note(debug_message)
                 raise
 
         return wrapper
