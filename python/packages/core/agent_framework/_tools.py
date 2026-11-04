@@ -1153,6 +1153,9 @@ class FunctionTool(SerializationMixin):
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
         """
+        if context is not None:
+            # Bind before validation so failed invocations cannot retain an earlier call ID.
+            context._call_id = tool_call_id  # pyright: ignore[reportPrivateUsage]
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
@@ -1196,10 +1199,9 @@ class FunctionTool(SerializationMixin):
                 arguments=validated_arguments,
                 kwargs=runtime_kwargs,
             )
+            effective_context._call_id = tool_call_id  # pyright: ignore[reportPrivateUsage]
         if effective_context is not None:
             effective_context.function = self
-            # Invocation owns this read-only public value, including clearing a reused context.
-            effective_context._call_id = tool_call_id  # pyright: ignore[reportPrivateUsage]
             effective_context.arguments = validated_arguments
             effective_context.kwargs = dict(runtime_kwargs)
 

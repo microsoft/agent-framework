@@ -21,7 +21,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
-from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._middleware import FunctionInvocationContext, MiddlewareFailure
 from agent_framework._tools import (
     _auto_invoke_function,
     _format_tool_parameters,
@@ -1641,6 +1641,63 @@ async def test_invoke_clears_call_id_when_reusing_context_without_an_id() -> Non
     await lookup.invoke(context=context)
 
     assert observed_call_ids == ["first-call", None]
+
+
+@pytest.mark.parametrize("tool_call_id", [None, "second-call"])
+@pytest.mark.parametrize(
+    ("arguments", "invocation_kwargs", "error_message"),
+    [
+        ({"item": "invalid"}, {}, "Invalid arguments"),
+        ({"item": 1}, {"unexpected": True}, "Unexpected keyword argument"),
+    ],
+)
+async def test_invoke_updates_call_id_before_argument_validation(
+    tool_call_id: str | None,
+    arguments: dict[str, Any],
+    invocation_kwargs: dict[str, Any],
+    error_message: str,
+) -> None:
+    """Rejected arguments must not leave an earlier call ID on a reused context."""
+    executed_items: list[int] = []
+
+    @tool(approval_mode="never_require")
+    def lookup(item: int) -> str:
+        executed_items.append(item)
+        return "found"
+
+    context = FunctionInvocationContext(function=lookup, arguments={"item": 1})
+    await lookup.invoke(context=context, tool_call_id="first-call")
+    assert context.call_id == "first-call"
+
+    with pytest.raises(TypeError, match=error_message):
+        await lookup.invoke(arguments=arguments, context=context, tool_call_id=tool_call_id, **invocation_kwargs)
+
+    assert context.call_id == tool_call_id
+    assert executed_items == [1]
+
+
+@pytest.mark.parametrize("tool_call_id", [None, "second-call"])
+async def test_invoke_updates_call_id_before_security_validation(tool_call_id: str | None) -> None:
+    """Security rejection must preserve the failed invocation's ID without executing it."""
+    executed_items: list[int] = []
+
+    @tool(approval_mode="never_require")
+    def lookup(item: int) -> str:
+        executed_items.append(item)
+        return "found"
+
+    context = FunctionInvocationContext(function=lookup, arguments={"item": 1})
+    context.metadata[tools_module._SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = tools_module._argument_authority_token(
+        {"item": 1}, boundary="security policy"
+    )
+    await lookup.invoke(context=context, tool_call_id="first-call")
+    assert context.call_id == "first-call"
+
+    with pytest.raises(MiddlewareFailure, match="Function arguments changed after security middleware"):
+        await lookup.invoke(arguments={"item": 2}, context=context, tool_call_id=tool_call_id)
+
+    assert context.call_id == tool_call_id
+    assert executed_items == [1]
 
 
 async def test_ai_function_with_explicit_invocation_context():
