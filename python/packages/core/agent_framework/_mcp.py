@@ -1241,8 +1241,8 @@ class MCPTool:
         self.tool_result_content = tool_result_content
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
-        self._max_discovery_pages = max_discovery_pages
-        self._max_discovery_items = max_discovery_items
+        self.max_discovery_pages = max_discovery_pages
+        self.max_discovery_items = max_discovery_items
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
@@ -3012,9 +3012,9 @@ class MCPTool:
         def stage_prompt_page(prompt_list: types.ListPromptsResult) -> None:
             nonlocal items_loaded
             items_loaded += len(prompt_list.prompts)
-            if self._max_discovery_items is not None and items_loaded > self._max_discovery_items:
+            if self.max_discovery_items is not None and items_loaded > self.max_discovery_items:
                 raise _mcp_tool_execution_exception(
-                    f"MCP prompt discovery exceeded max_discovery_items={self._max_discovery_items}; "
+                    f"MCP prompt discovery exceeded max_discovery_items={self.max_discovery_items}; "
                     f"the server returned {items_loaded} prompts. Increase max_discovery_items, "
                     "or set it to None only for a trusted MCP server."
                 )
@@ -3076,9 +3076,9 @@ class MCPTool:
         cursor = prompt_list.next_cursor
 
         while cursor is not None:
-            if self._max_discovery_pages is not None and pages_loaded >= self._max_discovery_pages:
+            if self.max_discovery_pages is not None and pages_loaded >= self.max_discovery_pages:
                 raise _mcp_tool_execution_exception(
-                    f"MCP prompt discovery exceeded max_discovery_pages={self._max_discovery_pages}; "
+                    f"MCP prompt discovery exceeded max_discovery_pages={self.max_discovery_pages}; "
                     f"the server returned a continuation cursor after page {pages_loaded}. "
                     "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
                 )
@@ -3218,9 +3218,9 @@ class MCPTool:
         def stage_tool_page(tool_list: types.ListToolsResult) -> None:
             nonlocal items_loaded
             items_loaded += len(tool_list.tools)
-            if self._max_discovery_items is not None and items_loaded > self._max_discovery_items:
+            if self.max_discovery_items is not None and items_loaded > self.max_discovery_items:
                 raise _mcp_tool_execution_exception(
-                    f"MCP tool discovery exceeded max_discovery_items={self._max_discovery_items}; "
+                    f"MCP tool discovery exceeded max_discovery_items={self.max_discovery_items}; "
                     f"the server returned {items_loaded} tools. Increase max_discovery_items, "
                     "or set it to None only for a trusted MCP server."
                 )
@@ -3314,9 +3314,9 @@ class MCPTool:
         cursor = tool_list.next_cursor
 
         while cursor is not None:
-            if self._max_discovery_pages is not None and pages_loaded >= self._max_discovery_pages:
+            if self.max_discovery_pages is not None and pages_loaded >= self.max_discovery_pages:
                 raise _mcp_tool_execution_exception(
-                    f"MCP tool discovery exceeded max_discovery_pages={self._max_discovery_pages}; "
+                    f"MCP tool discovery exceeded max_discovery_pages={self.max_discovery_pages}; "
                     f"the server returned a continuation cursor after page {pages_loaded}. "
                     "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
                 )
@@ -3936,9 +3936,9 @@ class MCPStdioTool(MCPTool):
                 ``function_invocation_kwargs`` - for example through ``env`` - for servers whose
                 process you do not control.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
-            max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch.
                 ``None`` disables the limit.
-            max_discovery_items: Maximum number of tools or prompts accepted across all discovery pages.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch.
                 Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
                 each page and do not bound the encoded response size; connect only to servers trusted to return
                 reasonably sized responses and configure transport-specific size limits where available.
@@ -4275,9 +4275,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 still allows a different value per request), or configure a custom
                 ``http_client``.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
-            max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch.
                 ``None`` disables the limit.
-            max_discovery_items: Maximum number of tools or prompts accepted across all discovery pages.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch.
                 Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
                 each page and do not bound the encoded response size; connect only to servers trusted to return
                 reasonably sized responses and configure transport-specific size limits where available.
@@ -4864,9 +4864,9 @@ class MCPWebsocketTool(MCPTool):
                 transport has no header hook, so source credentials outside
                 ``function_invocation_kwargs`` for servers you do not control.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
-            max_discovery_pages: Maximum number of pages accepted while discovering tools or prompts.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch.
                 ``None`` disables the limit.
-            max_discovery_items: Maximum number of tools or prompts accepted across all discovery pages.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch.
                 Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
                 each page and do not bound the encoded response size; connect only to servers trusted to return
                 reasonably sized responses and configure transport-specific size limits where available.

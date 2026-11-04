@@ -328,8 +328,8 @@ def test_mcp_transport_subclasses_default_discovery_page_limit() -> None:
             MCPWebsocketTool(name="websocket", url="wss://example.com/mcp"),  # ty: ignore[deprecated]
         ]
 
-    assert all(tool._max_discovery_pages == 100 for tool in tools)
-    assert all(tool._max_discovery_items == 1_000 for tool in tools)
+    assert all(tool.max_discovery_pages == 100 for tool in tools)
+    assert all(tool.max_discovery_items == 1_000 for tool in tools)
 
 
 def test_mcp_transport_subclasses_forward_discovery_page_limit() -> None:
@@ -351,8 +351,8 @@ def test_mcp_transport_subclasses_forward_discovery_page_limit() -> None:
             ),
         ]
 
-    assert [tool._max_discovery_pages for tool in tools] == [101, 102, 103]
-    assert [tool._max_discovery_items for tool in tools] == [1_001, 1_002, 1_003]
+    assert [tool.max_discovery_pages for tool in tools] == [101, 102, 103]
+    assert [tool.max_discovery_items for tool in tools] == [1_001, 1_002, 1_003]
 
 
 @pytest.mark.parametrize("max_discovery_pages", [0, -1])
