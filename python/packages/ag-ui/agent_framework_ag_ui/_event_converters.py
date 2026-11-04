@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from typing import Any, cast
+from collections.abc import Callable, Sequence
+from copy import copy
+from typing import Any, TypeVar, cast
 
 from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
     Annotation,
     ChatResponse,
     ChatResponseUpdate,
@@ -16,13 +19,28 @@ from agent_framework import (
     Message,
 )
 
+AGUIUpdateT = TypeVar("AGUIUpdateT", ChatResponseUpdate, AgentResponseUpdate)
+AGUIResponseT = TypeVar("AGUIResponseT", bound=ChatResponse[Any] | AgentResponse[Any])
+
 logger = logging.getLogger(__name__)
 
 
-def _annotation_batch_from_update(update: ChatResponseUpdate) -> tuple[str, list[Annotation]] | None:
+def _annotation_batch_from_update(
+    update: ChatResponseUpdate | AgentResponseUpdate,
+) -> tuple[str, list[Annotation]] | None:
     """Extract a message-linked annotation batch produced by this converter."""
     custom_event = (update.additional_properties or {}).get("ag_ui_custom_event")
     if not isinstance(custom_event, dict) or custom_event.get("name") != "annotations" or not update.message_id:
+        return None
+    # Buffered middleware can copy this response-level event metadata onto a rebuilt message.
+    # Only the original annotation-only update should be excluded from message aggregation.
+    value = custom_event.get("value")
+    if not isinstance(value, dict) or value.get("messageId") != update.message_id:
+        return None
+    if any(
+        content.type != "text" or content.text or content.additional_properties or content.merge_mode == "replace"
+        for content in update.contents
+    ):
         return None
     annotations = [
         annotation for content in update.contents if content.type == "text" for annotation in content.annotations or []
@@ -30,28 +48,63 @@ def _annotation_batch_from_update(update: ChatResponseUpdate) -> tuple[str, list
     return update.message_id, annotations
 
 
-def _finalize_agui_response(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-    """Aggregate AG-UI updates while attaching annotation events by message ID."""
+def _finalize_agui_response(
+    updates: Sequence[ChatResponseUpdate], *, response_format: Any | None = None
+) -> ChatResponse[Any]:
+    """Aggregate chat updates while attaching annotation events by message ID."""
+    return _finalize_agui_updates(
+        updates, lambda items: ChatResponse.from_updates(items, output_format_type=response_format)
+    )
+
+
+def _finalize_agui_updates(
+    updates: Sequence[AGUIUpdateT], aggregate: Callable[[Sequence[AGUIUpdateT]], AGUIResponseT]
+) -> AGUIResponseT:
+    """Attach citations while preserving the response type and original update metadata."""
     annotation_batches: list[tuple[str, list[Annotation]]] = []
-    aggregatable_updates: list[ChatResponseUpdate] = []
+    aggregatable_updates: list[AGUIUpdateT] = []
+    run_id: str | None = None
+    scope = 0
+    local_tool_result_pending = False
+    scoped_message_ids: dict[tuple[int, str], str] = {}
+    original_message_ids: dict[str, str] = {}
     for update in updates:
+        # A local result separates model turns even if middleware removes run markers.
+        # Server-side AG-UI tool results have no local occurrence id and stay in the run.
+        if update.role == "tool" and any(
+            content.type == "function_result" and content.id for content in update.contents
+        ):
+            local_tool_result_pending = True
+        elif local_tool_result_pending and update.message_id:
+            scope += 1
+            run_id = None
+            local_tool_result_pending = False
+        update_run_id = (update.additional_properties or {}).get("run_id")
+        if isinstance(update_run_id, str):
+            if run_id is not None and update_run_id != run_id:
+                scope += 1
+                local_tool_result_pending = False
+            # The first observed id names the existing scope; it may arrive after text.
+            run_id = update_run_id
         annotation_batch = _annotation_batch_from_update(update)
+        if update.message_id:
+            # A later model turn can reuse a protocol ID. Scope aggregation copies only.
+            key = (scope, update.message_id)
+            scoped_id = scoped_message_ids.setdefault(key, str(len(scoped_message_ids)))
+            original_message_ids[scoped_id] = update.message_id
+            update = copy(update)
+            update.message_id = scoped_id
         if annotation_batch is None:
             aggregatable_updates.append(update)
         else:
-            annotation_batches.append(annotation_batch)
+            annotation_batches.append((cast("str", update.message_id), annotation_batch[1]))
+            # Keep response-level fields from the event without changing any message.
+            metadata_update = copy(update)
+            metadata_update.contents = []
+            metadata_update.message_id = metadata_update.role = metadata_update.author_name = None
+            aggregatable_updates.append(metadata_update)
 
-    response = ChatResponse.from_updates(aggregatable_updates)
-
-    # Annotation events are excluded from message aggregation, but their response metadata
-    # and raw representations retain their original stream ordering.
-    response.additional_properties.clear()
-    for update in updates:
-        if update.additional_properties:
-            response.additional_properties.update(update.additional_properties)
-    if updates:
-        response.raw_representation = [update.raw_representation for update in updates]
-        response.continuation_token = updates[-1].continuation_token
+    response = aggregate(aggregatable_updates)
 
     for message_id, batch_annotations in annotation_batches:
         if not batch_annotations:
@@ -72,6 +125,9 @@ def _finalize_agui_response(updates: Sequence[ChatResponseUpdate]) -> ChatRespon
         else:
             text_content.annotations = [*(text_content.annotations or []), *batch_annotations]
 
+    for message in response.messages:
+        if message.message_id is not None and message.message_id in original_message_ids:
+            message.message_id = original_message_ids[message.message_id]
     return response
 
 
