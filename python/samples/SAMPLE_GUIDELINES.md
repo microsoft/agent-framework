@@ -27,7 +27,7 @@ When samples depend on external packages not included in the dev environment (e.
 # Copyright (c) Microsoft. All rights reserved.
 
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "some-external-package",
 # ]

@@ -1,13 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import copy
-import sys
-from typing import Any, TypeVar, cast
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
+from typing import Any, Self, TypeVar, cast
 
 ModelT = TypeVar("ModelT", bound="DictConvertible")
 

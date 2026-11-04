@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any
+from typing import Any, Never
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     Executor,

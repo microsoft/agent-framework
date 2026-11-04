@@ -370,18 +370,18 @@ class WorkflowViz:
         def collect(workflow: Workflow, ns: tuple[str, ...] = ()) -> None:
             prefix = f"{self._sanitize_mermaid_id(ns[-1])}__" if ns else ""
             for executor_id, executor in workflow.executors.items():
-                candidates[("executor", *ns, executor_id)] = prefix + self._sanitize_mermaid_id(executor_id)
+                candidates["executor", *ns, executor_id] = prefix + self._sanitize_mermaid_id(executor_id)
                 if isinstance(executor, WorkflowExecutor) and executor.workflow:
                     if ns:
-                        candidates[("subgraph", *ns, executor_id)] = self._sanitize_mermaid_id(executor_id)
+                        candidates["subgraph", *ns, executor_id] = self._sanitize_mermaid_id(executor_id)
                     collect(executor.workflow, (*ns, executor_id))
             for edge, is_internal in self._iter_normal_edges(workflow, include_internal_executors):
                 source_kind = "internal" if is_internal else "executor"
-                candidates[(source_kind, *ns, edge.source_id)] = prefix + self._sanitize_mermaid_id(edge.source_id)
-                candidates[("executor", *ns, edge.target_id)] = prefix + self._sanitize_mermaid_id(edge.target_id)
+                candidates[source_kind, *ns, edge.source_id] = prefix + self._sanitize_mermaid_id(edge.source_id)
+                candidates["executor", *ns, edge.target_id] = prefix + self._sanitize_mermaid_id(edge.target_id)
             for dot_node_id, _, target in self._compute_fan_in_descriptors(workflow):
                 digest = dot_node_id.split("::")[-1]
-                candidates[("fan-in", *ns, dot_node_id)] = (
+                candidates["fan-in", *ns, dot_node_id] = (
                     f"fan_in__{prefix}{self._sanitize_mermaid_id(f'{target}__{digest}')}"
                 )
 
@@ -413,7 +413,7 @@ class WorkflowViz:
         include_internal_executors: bool = False,
     ) -> None:
         def map_id(x: str) -> str:
-            return node_ids[("executor", *ns, x)]
+            return node_ids["executor", *ns, x]
 
         # Nodes
         start_executor_id = workflow.start_executor_id
@@ -427,7 +427,7 @@ class WorkflowViz:
         fan_in_nodes_dot = self._compute_fan_in_descriptors(workflow)
         fan_in_nodes: list[tuple[str, list[str], str]] = []
         for dot_node_id, sources, target in fan_in_nodes_dot:
-            fan_node_id = node_ids[("fan-in", *ns, dot_node_id)]
+            fan_node_id = node_ids["fan-in", *ns, dot_node_id]
             fan_in_nodes.append((fan_node_id, sources, target))
 
         for fan_node_id, _, _ in fan_in_nodes:
@@ -443,7 +443,7 @@ class WorkflowViz:
         # Normal edges
         for edge, is_internal in self._iter_normal_edges(workflow, include_internal_executors):
             source_kind = "internal" if is_internal else "executor"
-            s = node_ids[(source_kind, *ns, edge.source_id)]
+            s = node_ids[source_kind, *ns, edge.source_id]
             t = map_id(edge.target_id)
             if getattr(edge, "_condition", None) is not None:
                 lines.append(f"{indent}{s} -. conditional .-> {t};")
@@ -466,7 +466,7 @@ class WorkflowViz:
 
         for exec_id, exec_obj in workflow.executors.items():
             if isinstance(exec_obj, WorkflowExecutor) and hasattr(exec_obj, "workflow") and exec_obj.workflow:
-                sg_id = node_ids[("subgraph", *ns, exec_id)] if ns else node_ids["executor", exec_id]
+                sg_id = node_ids["subgraph", *ns, exec_id] if ns else node_ids["executor", exec_id]
                 lines.append(f"{indent}subgraph {sg_id}")
                 # Render nested workflow within this subgraph using namespacing
                 self._emit_workflow_mermaid(

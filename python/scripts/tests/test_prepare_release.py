@@ -22,7 +22,7 @@ def _git(path: Path, *args: str) -> str:
 def _project(path: Path, name: str, version: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "pyproject.toml").write_text(
-        f'[project]\nname = "{name}"\nversion = "{version}"\nrequires-python = ">=3.10"\n'
+        f'[project]\nname = "{name}"\nversion = "{version}"\nrequires-python = ">=3.11"\n'
     )
 
 
@@ -128,8 +128,8 @@ def test_core_bump_requires_root_version_increase_even_if_pin_is_updated(workspa
     root = workspace / "pyproject.toml"
     root.write_text(
         root.read_text().replace(
-            'requires-python = ">=3.10"',
-            ('requires-python = ">=3.10"\ndependencies = ["agent-framework-core[all]==1.24.0"]'),
+            'requires-python = ">=3.11"',
+            ('requires-python = ">=3.11"\ndependencies = ["agent-framework-core[all]==1.24.0"]'),
         )
     )
     with pytest.raises(ValueError, match="requires a version increase for agent-framework"):
