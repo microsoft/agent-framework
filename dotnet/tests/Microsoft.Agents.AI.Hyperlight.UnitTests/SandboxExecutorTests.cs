@@ -68,6 +68,9 @@ public sealed class SandboxExecutorTests
     public async Task ExecuteAsync_CancellationDuringGuestExecutionReleasesLockAsync()
     {
         // Arrange
+        Assert.SkipUnless(
+            string.Equals(Environment.GetEnvironmentVariable("HYPERLIGHT_RUN_GUEST_TESTS"), "true", StringComparison.OrdinalIgnoreCase),
+            "Requires explicit Hyperlight KVM guest-test configuration.");
         using var cancellation = new CancellationTokenSource();
         var cancelRun = AIFunctionFactory.Create(() =>
         {
@@ -87,7 +90,102 @@ public sealed class SandboxExecutorTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => executor.ExecuteAsync(snapshot, "call_tool('cancel_run', {});", cancellation.Token));
 
-        var recovered = await executor.ExecuteAsync(snapshot, "console.log('recovered');", CancellationToken.None);
+        using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var recovered = await executor.ExecuteAsync(snapshot, "console.log('recovered');", recoveryCancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        using var recoveredJson = JsonDocument.Parse(recovered);
+        Assert.True(
+            recoveredJson.RootElement.GetProperty("success").GetBoolean(),
+            recoveredJson.RootElement.GetProperty("stderr").GetString());
+        Assert.Contains("recovered", recoveredJson.RootElement.GetProperty("stdout").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DefaultTimeoutInterruptsGuestAndAllowsReuseAsync()
+    {
+        // Arrange
+        Assert.SkipUnless(
+            string.Equals(Environment.GetEnvironmentVariable("HYPERLIGHT_RUN_GUEST_TESTS"), "true", StringComparison.OrdinalIgnoreCase),
+            "Requires explicit Hyperlight KVM guest-test configuration.");
+        var snapshot = new SandboxExecutor.RunSnapshot(
+            [], [], [], new HyperlightCodeActProviderOptions { IncludeDetailedErrors = true });
+        using var executor = new SandboxExecutor();
+        var warmup = await executor.ExecuteAsync(snapshot, "console.log('ready');", CancellationToken.None);
+        using var warmupJson = JsonDocument.Parse(warmup);
+        Assert.True(
+            warmupJson.RootElement.GetProperty("success").GetBoolean(),
+            warmupJson.RootElement.GetProperty("stderr").GetString());
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+
+        // Act
+        var result = await executor.ExecuteAsync(snapshot, """
+            const end = Date.now() + 32000;
+            while (Date.now() < end) {}
+            console.log('finished');
+            """, CancellationToken.None);
+
+        // Assert
+        using var json = JsonDocument.Parse(result);
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("Code execution exceeded its time limit.", json.RootElement.GetProperty("stderr").GetString());
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(31), "The default execution timeout was not enforced.");
+        using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var recovered = await executor.ExecuteAsync(snapshot, "console.log('recovered');", recoveryCancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        using var recoveredJson = JsonDocument.Parse(recovered);
+        Assert.True(
+            recoveredJson.RootElement.GetProperty("success").GetBoolean(),
+            recoveredJson.RootElement.GetProperty("stderr").GetString());
+        Assert.Contains("recovered", recoveredJson.RootElement.GetProperty("stdout").GetString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_ConfiguredTimeoutUsesSnapshotAndAllowsReuseAsync(bool useWasm)
+    {
+        // Arrange
+        Assert.SkipUnless(
+            string.Equals(Environment.GetEnvironmentVariable("HYPERLIGHT_RUN_GUEST_TESTS"), "true", StringComparison.OrdinalIgnoreCase),
+            "Requires explicit Hyperlight KVM guest-test configuration.");
+        var options = useWasm
+            ? HyperlightCodeActProviderOptions.CreateForWasm(
+                Assert.IsType<string>(Environment.GetEnvironmentVariable("HYPERLIGHT_PYTHON_GUEST_PATH")))
+            : new HyperlightCodeActProviderOptions();
+        using var executor = new SandboxExecutor();
+        var warmSnapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        var warmup = await executor.ExecuteAsync(warmSnapshot, useWasm ? "print('ready')" : "console.log('ready');", CancellationToken.None);
+        using var warmupJson = JsonDocument.Parse(warmup);
+        Assert.True(
+            warmupJson.RootElement.GetProperty("success").GetBoolean(),
+            warmupJson.RootElement.GetProperty("stderr").GetString());
+        options.ExecutionTimeoutSeconds = 1;
+        var limitedSnapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        options.ExecutionTimeoutSeconds = 30;
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+
+        // Act
+        var result = await executor.ExecuteAsync(limitedSnapshot, useWasm ? """
+            import time
+            end = time.monotonic() + 5
+            while time.monotonic() < end:
+                pass
+            print('finished')
+            """ : """
+            const end = Date.now() + 5000;
+            while (Date.now() < end) {}
+            console.log('finished');
+            """, CancellationToken.None);
+
+        // Assert
+        using var json = JsonDocument.Parse(result);
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("Code execution exceeded its time limit.", json.RootElement.GetProperty("stderr").GetString());
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2), "The captured execution timeout was not enforced.");
+        using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var recovered = await executor.ExecuteAsync(
+            warmSnapshot, useWasm ? "print('recovered')" : "console.log('recovered');", recoveryCancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(10));
         using var recoveredJson = JsonDocument.Parse(recovered);
         Assert.True(
             recoveredJson.RootElement.GetProperty("success").GetBoolean(),
