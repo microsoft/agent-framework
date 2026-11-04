@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -454,6 +455,28 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.EvaluateExpression(
             NumberExpression.Expression("31.1 + 2.2"),
             expectedValue: 33.3);
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    public void NumberExpressionGetValueFormulaUsesInvariantCulture(string cultureName)
+    {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo(cultureName);
+            this.EvaluateExpression(
+                NumberExpression.Expression("Max(1, 2)"),
+                expectedValue: 2);
+            this.EvaluateExpression(
+                NumberExpression.Expression("31.1 + 2.2"),
+                expectedValue: 33.3);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
+    }
 
     #endregion
 

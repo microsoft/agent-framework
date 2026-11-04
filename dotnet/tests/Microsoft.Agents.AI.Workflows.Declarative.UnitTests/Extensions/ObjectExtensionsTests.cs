@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 
@@ -83,6 +84,25 @@ public sealed class ObjectExtensionsTests
         DateTime now = DateTime.Now;
         VerifyConversion($"{now:o}", typeof(DateTime), now);
         VerifyConversion($"{now.TimeOfDay:c}", typeof(TimeSpan), now.TimeOfDay);
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    public void ConvertNumberFromStringUsesInvariantCulture(string cultureName)
+    {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo(cultureName);
+            VerifyConversion("3.14", typeof(double), 3.14D);
+            VerifyConversion("3.14", typeof(decimal), 3.14M);
+            VerifyConversion(3.14D, typeof(string), "3.14");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
     }
 
     [Fact]
