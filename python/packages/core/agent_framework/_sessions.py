@@ -1089,6 +1089,23 @@ class HistoryProvider(ContextProvider):
             return context.get_messages(sources=self.store_context_from)
         return context.get_messages(exclude_sources={self.source_id})
 
+    def _get_messages_to_store(self, context: SessionContext, session: AgentSession) -> list[Message]:
+        """Return the exact framework-owned messages this provider will persist."""
+        messages_to_store: list[Message] = []
+        messages_to_store.extend(self._get_context_messages_to_store(context))
+        if self.store_inputs:
+            messages_to_store.extend(context.input_messages)
+        if self.store_outputs and context.response and context.response.messages:
+            output_messages = context.response.messages
+            if (
+                self.load_messages
+                and self.store_inputs
+                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
+            ):
+                output_messages = _without_deferred_workflow_function_results(output_messages)
+            messages_to_store.extend(output_messages)
+        return messages_to_store
+
     async def before_run(
         self,
         *,
@@ -1110,19 +1127,7 @@ class HistoryProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Store messages based on configuration."""
-        messages_to_store: list[Message] = []
-        messages_to_store.extend(self._get_context_messages_to_store(context))
-        if self.store_inputs:
-            messages_to_store.extend(context.input_messages)
-        if self.store_outputs and context.response and context.response.messages:
-            output_messages = context.response.messages
-            if (
-                self.load_messages
-                and self.store_inputs
-                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
-            ):
-                output_messages = _without_deferred_workflow_function_results(output_messages)
-            messages_to_store.extend(output_messages)
+        messages_to_store = self._get_messages_to_store(context, session)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
@@ -1602,6 +1607,10 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         session: AgentSession,
         providers: Sequence[HistoryProvider],
         service_stores_history: bool = False,
+        after_persist_callbacks: Sequence[
+            Callable[[Mapping[str, Sequence[Message]]], Awaitable[None]]
+        ]
+        | None = None,
     ) -> None:
         """Initialize the middleware.
 
@@ -1614,11 +1623,14 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 untouched, persisting each service call without driving the function loop with a
                 local sentinel. When False, the middleware loads providers and uses a local
                 sentinel conversation id so the function loop runs without service-side storage.
+            after_persist_callbacks: Run-local callbacks notified with the exact
+                framework-owned history prefixes after persistence.
         """
         self._agent = agent
         self._session = session
         self._providers = list(providers)
         self._service_stores_history = service_stores_history
+        self._after_persist_callbacks = list(after_persist_callbacks or ())
         self._merged_provider_tool_names: set[str] = set()
         self._merged_provider_instructions: set[str] = set()
 
@@ -1657,6 +1669,13 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             response,
             suppress_response_id=True,
         )
+        covered_history_by_source: dict[str, list[Message]] = {}
+        for provider in self._providers:
+            if provider.load_messages and type(provider).after_run is HistoryProvider.after_run:
+                covered_history_by_source[provider.source_id] = [
+                    *service_call_context.context_messages.get(provider.source_id, ()),
+                    *provider._get_messages_to_store(service_call_context, self._session),  # pyright: ignore[reportPrivateUsage]
+                ]
         for provider in reversed(self._providers):
             await provider.after_run(
                 agent=self._agent,
@@ -1664,6 +1683,8 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 context=service_call_context,
                 state=self._session.state.setdefault(provider.source_id, {}),
             )
+        for callback in self._after_persist_callbacks:
+            await callback(covered_history_by_source)
 
     def _strip_local_conversation_id(self, context: ChatContext) -> None:
         """Remove the local sentinel before the leaf chat client is invoked."""

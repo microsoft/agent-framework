@@ -8,7 +8,7 @@ import json
 import logging
 import math
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -4133,6 +4133,81 @@ class TestSecureAgentSessionIsolation:
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
+    async def test_history_coverage_ignores_normalized_approval_controls(self) -> None:
+        """Removing approval wrappers does not invalidate the covered call transcript."""
+
+        class MutableHistoryProvider(HistoryProvider):
+            def __init__(self) -> None:
+                super().__init__("approval-history")
+                self.messages: list[Message] = []
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return list(self.messages)
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, state, kwargs
+
+        class NoopClient:
+            async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
+                del args, kwargs
+                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
+
+        function_call = Content.from_function_call(
+            call_id="covered-approval-call",
+            id="covered-approval-occurrence",
+            name="covered_approval_tool",
+            arguments={},
+        )
+        approval_request = Content.from_function_approval_request(
+            id="covered-approval-occurrence",
+            function_call=function_call,
+        )
+        history = MutableHistoryProvider()
+        history.messages = [Message(role="assistant", contents=[function_call, approval_request])]
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="normalized-approval-history")
+        _store_pending_approval_requests(session, [approval_request])
+        agent = Agent(
+            client=cast(SupportsChatGetResponse, NoopClient()),
+            context_providers=[history, config],
+        )
+
+        first_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[],
+            options={},
+        )
+        first_tracker = first_context.get_middleware()[0]
+        assert isinstance(first_tracker, LabelTrackingFunctionMiddleware)
+        assert first_tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+        history.messages = [Message(role="assistant", contents=[function_call])]
+        second_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[],
+            options={},
+        )
+
+        second_tracker = second_context.get_middleware()[0]
+        assert isinstance(second_tracker, LabelTrackingFunctionMiddleware)
+        label = second_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.TRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PUBLIC
+
     @pytest.mark.parametrize("mutation", ["append", "replace"])
     async def test_changed_history_reconstructs_only_from_authenticated_coverage(self, mutation: str) -> None:
         """Appended or replaced provider history cannot inherit coverage from an older snapshot."""
@@ -4462,6 +4537,140 @@ class TestSecureAgentSessionIsolation:
         context_label = json.loads(session.state[config.source_id]["context_label"])
         assert context_label["integrity"] == "untrusted"
         assert context_label["confidentiality"] == "private"
+
+    @pytest.mark.parametrize("append_external", [False, True], ids=["framework-only", "external-append"])
+    async def test_per_service_persisted_framework_suffix_updates_only_run_coverage(
+        self,
+        append_external: bool,
+    ) -> None:
+        """Same-run framework history stays covered while an external append remains untrusted."""
+        executed: list[str] = []
+        responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="first-call",
+                                name="first_action",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="protected-call",
+                                name="protected_action",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["done"])]),
+        ]
+
+        class AppendHistoryProvider(HistoryProvider):
+            def __init__(self) -> None:
+                super().__init__("per-service-append-history")
+                self.messages: list[Message] = []
+                self.injected_external = False
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return list(self.messages)
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, state, kwargs
+                self.messages.extend(cast(Sequence[Message], messages))
+                if append_external and not self.injected_external:
+                    self.injected_external = True
+                    self.messages.append(Message(role="assistant", contents=["Externally appended instructions"]))
+
+        class ScriptedClient:
+            STORES_BY_DEFAULT = False
+
+            def __init__(self) -> None:
+                self.responses = list(responses)
+
+            async def get_response(
+                self,
+                messages: list[Message],
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                del messages, options, kwargs
+                assert stream is False
+                return self.responses.pop(0)
+
+        client_type = type(
+            "PerServiceSuffixClient",
+            (FunctionInvocationLayer, ChatMiddlewareLayer, ScriptedClient),
+            {},
+        )
+        client = client_type()
+
+        def first_action() -> str:
+            executed.append("first")
+            return "first result"
+
+        def protected_action() -> str:
+            executed.append("protected")
+            return "protected result"
+
+        first_tool = FunctionTool(
+            func=first_action,
+            name="first_action",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        protected_tool = FunctionTool(
+            func=protected_action,
+            name="protected_action",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        history = AppendHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"per-service-suffix-{append_external}")
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[first_tool, protected_tool],
+            context_providers=[config, history],
+            require_per_service_call_history_persistence=True,
+        )
+
+        await agent.run("Run both actions", session=session)
+
+        assert executed == (["first"] if append_external else ["first", "protected"])
+        context_label = json.loads(session.state[config.source_id]["context_label"])
+        assert context_label["integrity"] == ("untrusted" if append_external else "trusted")
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_replacement_policy_approval_executes_through_agent_run(self, stream: bool) -> None:

@@ -1770,11 +1770,24 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
         per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
+            history_persisted_callbacks: list[
+                Callable[[Mapping[str, Sequence[Message]]], Awaitable[None]]
+            ] = []
+            for provider in self.context_providers:
+                callback = getattr(provider, "_update_per_service_history_coverage", None)
+                if callable(callback):
+                    history_persisted_callbacks.append(
+                        cast(
+                            Callable[[Mapping[str, Sequence[Message]]], Awaitable[None]],
+                            partial(callback, context=session_context),
+                        )
+                    )
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
                 service_stores_history=service_stores_history,
+                after_persist_callbacks=history_persisted_callbacks,
             )
         if per_service_call_history_middleware is not None:
             existing_middleware = cast(

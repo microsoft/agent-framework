@@ -1565,23 +1565,8 @@ def _message_coverage_digest(message: Message, *, exclude_approval_controls: boo
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _message_coverage_digests(
-    messages: Sequence[Message],
-    *,
-    exclude_approval_controls: bool = False,
-) -> list[str] | None:
-    """Return canonical digests for a replay sequence, or None when any item is unsafe."""
-    digests: list[str] = []
-    for message in messages:
-        digest = _message_coverage_digest(message, exclude_approval_controls=exclude_approval_controls)
-        if digest is None:
-            return None
-        digests.append(digest)
-    return digests
-
-
-def _input_replay_projection(messages: Sequence[Message]) -> tuple[list[int], list[str]] | None:
-    """Return original indices and digests for non-control transcript messages."""
+def _control_free_replay_projection(messages: Sequence[Message]) -> tuple[list[int], list[str]] | None:
+    """Return original indices and digests for non-control replay messages."""
     indices: list[int] = []
     digests: list[str] = []
     for index, message in enumerate(messages):
@@ -1596,6 +1581,15 @@ def _input_replay_projection(messages: Sequence[Message]) -> tuple[list[int], li
         indices.append(index)
         digests.append(digest)
     return indices, digests
+
+
+def _message_has_explicit_replay_label(message: Message) -> bool:
+    """Return whether a covered message carries an explicit restrictive label."""
+    if isinstance(message, LabeledMessage):
+        return True
+    if isinstance(message.additional_properties.get("security_label"), Mapping):
+        return True
+    return any(isinstance(content.additional_properties.get("security_label"), Mapping) for content in message.contents)
 
 
 def _history_coverage_record(digests: Sequence[str]) -> dict[str, Any]:
@@ -4636,8 +4630,9 @@ class SecureAgentConfig(ContextProvider):
         """Return bounded durable coverage for the current provider histories."""
         coverage: dict[str, Any] = {}
         for source_id in sorted(history_source_ids):
-            digests = _message_coverage_digests(history_messages.get(source_id, ()))
-            if digests is not None and len(coverage) < _MAX_HISTORY_COVERAGE_SOURCES:
+            projection = _control_free_replay_projection(history_messages.get(source_id, ()))
+            if projection is not None and len(coverage) < _MAX_HISTORY_COVERAGE_SOURCES:
+                _, digests = projection
                 coverage[source_id] = _history_coverage_record(digests)
         return coverage
 
@@ -4651,6 +4646,17 @@ class SecureAgentConfig(ContextProvider):
         state[_STATE_HISTORY_RECONSTRUCTION_COVERAGE] = _encode_durable_state(
             SecureAgentConfig._history_coverage_for_message_map(history_messages, history_source_ids),
             path="history reconstruction coverage",
+        )
+
+    async def _update_per_service_history_coverage(
+        self,
+        history_messages: Mapping[str, Sequence[Message]],
+        *,
+        context: SessionContext,
+    ) -> None:
+        """Extend only run-local coverage with framework-owned persisted messages."""
+        self._history_fold_guard(context).update(
+            self._history_coverage_for_message_map(history_messages, set(history_messages))
         )
 
     @staticmethod
@@ -4670,7 +4676,7 @@ class SecureAgentConfig(ContextProvider):
             coverage = _decode_durable_state(raw_coverage, path="input replay coverage")
         except ValueError:
             return set()
-        projection = _input_replay_projection(messages)
+        projection = _control_free_replay_projection(messages)
         if projection is None:
             return set()
         indices, digests = projection
@@ -4683,7 +4689,7 @@ class SecureAgentConfig(ContextProvider):
         messages: Sequence[Message],
     ) -> None:
         """Persist bounded coverage for the completed run's replayable transcript."""
-        projection = _input_replay_projection(messages)
+        projection = _control_free_replay_projection(messages)
         if projection is None:
             state.pop(_STATE_INPUT_REPLAY_COVERAGE, None)
             return
@@ -4729,27 +4735,36 @@ class SecureAgentConfig(ContextProvider):
                 scope=scope,
                 approval_authority=approval_authority,
             )
-            digests = _message_coverage_digests(messages)
-            covered_prefix = 0
-            if digests is not None:
+            projection = _control_free_replay_projection(messages)
+            covered_indices: set[int] = set()
+            if projection is not None:
+                indices, digests = projection
                 covered_prefix = max(
                     _covered_history_prefix(persisted_coverage.get(source_id), digests),
                     _covered_history_prefix(history_fold_guard.get(source_id), digests),
                 )
+                covered_indices = set(indices[:covered_prefix])
                 current_record = _history_coverage_record(digests)
                 history_fold_guard[source_id] = current_record
             else:
                 history_fold_guard.pop(source_id, None)
-            history_labels.extend(
-                _replayed_message_label(
-                    message,
-                    reconstruct_unstamped=True,
-                    scope=scope,
-                    approval_authority=approval_authority,
-                    bound_approval_call_keys=bound_call_keys,
+            for index, message in enumerate(messages):
+                is_covered = index in covered_indices
+                if is_covered and not any(
+                    content.type in {"function_approval_request", "function_approval_response"}
+                    for content in message.contents
+                ) and not _message_has_explicit_replay_label(message):
+                    continue
+                history_labels.append(
+                    _replayed_message_label(
+                        message,
+                        reconstruct_unstamped=True,
+                        scope=scope,
+                        approval_authority=approval_authority,
+                        bound_approval_call_keys=bound_call_keys,
+                        covered_replay=is_covered,
+                    )
                 )
-                for message in messages[covered_prefix:]
-            )
         if history_labels:
             scope.context_label = combine_labels(scope.context_label, *history_labels)
         if commit_coverage:
