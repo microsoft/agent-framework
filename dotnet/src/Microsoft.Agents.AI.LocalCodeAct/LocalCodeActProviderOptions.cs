@@ -32,6 +32,17 @@ public sealed class LocalCodeActProviderOptions
     public LocalCodeActApprovalMode ApprovalMode { get; set; } = LocalCodeActApprovalMode.NeverRequire;
 
     /// <summary>
+    /// Gets or sets whether host exception details are exposed to generated code.
+    /// Defaults to <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// Detailed errors include exception types, stack traces, and inner exceptions.
+    /// Enable only for a trusted channel: diagnostics can contain sensitive host data.
+    /// This is independent of the outer chat client's error policy and sensitive-data logging.
+    /// </remarks>
+    public bool IncludeDetailedErrors { get; set; }
+
+    /// <summary>
     /// Gets or sets the initial set of file mounts exposed to generated code.
     /// </summary>
     public IEnumerable<FileMount>? FileMounts { get; set; }

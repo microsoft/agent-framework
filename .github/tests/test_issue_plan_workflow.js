@@ -89,7 +89,7 @@ describe('Issue planning workflow', () => {
     assert.deepEqual(config.add_comment, { hide_older_comments: false, max: 1, target: 'triggering' });
     const safeTools = manifest.mcp_servers.find(server => server.name === 'safeoutputs').tools;
     assert.deepEqual(
-      safeTools.filter(tool => !['missing_data', 'missing_tool', 'noop'].includes(tool)),
+      safeTools.filter(tool => !['report_missing_data', 'report_missing_tool', 'noop'].includes(tool)),
       ['add_comment', 'report_incomplete'],
     );
     assert.match(source, /status-comment: false/);
@@ -114,8 +114,8 @@ describe('Issue planning workflow', () => {
   it('does not create repository issues for workflow failures or system reports', () => {
     assert.match(source, /report-failure-as-issue: false/);
     assert.match(source, /report-failed-jobs: false/);
-    assert.match(source, /missing-tool:\n    create-issue: false/);
-    assert.match(source, /missing-data:\n    create-issue: false/);
+    assert.match(source, /report-missing-tool:\n    create-issue: false/);
+    assert.match(source, /report-missing-data:\n    create-issue: false/);
     assert.match(source, /report-incomplete:\n    create-issue: false/);
     assert.match(job('conclusion'), /GH_AW_MISSING_TOOL_CREATE_ISSUE: "false"/);
     assert.match(job('conclusion'), /GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "false"/);
