@@ -828,11 +828,26 @@ class TestConstruction:
         with pytest.raises(ValueError):
             DefaultMCPToolHandler(cache_max_size=-3)
 
+    def test_invalid_discovery_limit_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_discovery_pages must be positive or None"):
+            DefaultMCPToolHandler(max_discovery_pages=0)
+        with pytest.raises(ValueError, match="max_discovery_items must be positive or None"):
+            DefaultMCPToolHandler(max_discovery_items=-1)
+
 
 # ---------- Tool kwargs ----------------------------------------------------
 
 
 class TestToolKwargs:
+    @pytest.mark.asyncio
+    async def test_discovery_limits_passed_to_tool(self) -> None:
+        handler = DefaultMCPToolHandler(max_discovery_pages=12, max_discovery_items=345)
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+
+        assert FakeTool.instances[0].kwargs["max_discovery_pages"] == 12
+        assert FakeTool.instances[0].kwargs["max_discovery_items"] == 345
+
     @pytest.mark.asyncio
     async def test_load_prompts_false_passed_to_tool(self) -> None:
         handler = DefaultMCPToolHandler()
