@@ -678,6 +678,8 @@ class FunctionTool(SerializationMixin):
         "_schema_supplied",
         "_invoke_sync_on_event_loop",
     }
+    # A tool that ``BaseAgent.as_tool()`` made keeps pointing at its agent when copied, as its function does.
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation", "_wrapped_agent"}
 
     def __init__(
         self,

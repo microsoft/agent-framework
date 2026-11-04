@@ -188,7 +188,16 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     {
         // Arrange
         string workflowPath = GetWorkflowPath(workflowFileName);
-        DefaultMcpToolHandler mcpToolProvider = new();
+        ServiceCollection services = new();
+        services.AddHttpClient("workflow-mcp")
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                UseCookies = false,
+                AllowAutoRedirect = false,
+                CheckCertificateRevocationList = true
+            });
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultMcpToolHandler mcpToolProvider = new(serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp");
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(
             externalConversation: false,
             mcpToolProvider: mcpToolProvider);
@@ -230,9 +239,6 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         {
             AssertResultContains(workflowEvents, expectedResultContains);
         }
-
-        // Cleanup
-        await mcpToolProvider.DisposeAsync().ConfigureAwait(false);
     }
 
     /// <summary>
