@@ -28,7 +28,7 @@ public sealed partial class AgentMcpSkillTests
     private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
 
     [Fact]
-    public void Constructor_Metadata_PreservesOriginalJson()
+    public void Constructor_PreservesProvidedFrontmatter()
     {
         // Arrange
         const string Json = """
@@ -41,24 +41,22 @@ public sealed partial class AgentMcpSkillTests
             }
             """;
         using JsonDocument document = JsonDocument.Parse(Json);
-        JsonElement snapshot = document.RootElement.Clone();
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.")
         {
             License = "MIT",
-            Metadata = new() { ["OriginalJson"] = snapshot },
+            Metadata = new() { ["Owner"] = "Example" },
         };
 
         // Act
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [], Moq.Mock.Of<McpClient>());
+        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, [], Moq.Mock.Of<McpClient>());
         document.Dispose();
         frontmatter.License = "Apache-2.0";
         frontmatter.Metadata["Owner"] = "Changed";
 
         // Assert
         Assert.NotNull(skill.Frontmatter.Metadata);
-        JsonElement originalJson = Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["OriginalJson"]);
-        Assert.Equal(snapshot, originalJson);
-        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(Json), JsonNode.Parse(originalJson.GetRawText())));
+        Assert.Equal("Changed", skill.Frontmatter.Metadata["Owner"]);
+        Assert.False(skill.Frontmatter.Metadata.ContainsKey("OriginalJson"));
         Assert.Same(frontmatter, skill.Frontmatter);
         Assert.Equal("Apache-2.0", skill.Frontmatter.License);
     }
@@ -72,7 +70,7 @@ public sealed partial class AgentMcpSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client);
+        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, [Resource(SkillUri, SkillContent)], client);
 
         // Assert
         Assert.Same(frontmatter, skill.Frontmatter);
@@ -91,7 +89,7 @@ public sealed partial class AgentMcpSkillTests
             : null;
 
         // Act
-        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
             [Resource(SkillUri, SkillContent)], client, metadataLifetime: lifetime);
 
         // Assert
@@ -110,7 +108,7 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Nested instructions."));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
         [
             Resource(NestedUri, "Nested instructions."),
             Resource(SkillUri, SkillContent),
@@ -144,7 +142,7 @@ public sealed partial class AgentMcpSkillTests
         McpSkillResourceEntry[] resources = includeNestedInstructions
             ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
             : [];
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, resources, client);
+        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, resources, client);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
@@ -502,7 +500,7 @@ public sealed partial class AgentMcpSkillTests
         const string Content = "---\nname: unit-converter\ndescription: Convert units.\nlicense: Apache-2.0\ncompatibility: Any runtime\nallowed-tools: read\nmetadata:\n  author: Example\n---\nInstructions.";
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        var frontmatter = CreateFrontmatter("""
+        JsonElement frontmatterJson = CreateAdvertisedFrontmatter("""
             {
               "name": "unit-converter",
               "description": "Convert units.",
@@ -512,8 +510,9 @@ public sealed partial class AgentMcpSkillTests
               "metadata": { "author": "Example" }
             }
             """);
+        var frontmatter = CreateFrontmatter();
         frontmatter.License = "MIT";
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client);
+        var skill = new AgentMcpSkill(frontmatter, frontmatterJson, SkillUri, [Resource(SkillUri, Content)], client);
 
         // Act
         string verified = await skill.GetContentAsync();
@@ -524,24 +523,78 @@ public sealed partial class AgentMcpSkillTests
         Assert.Equal("MIT", skill.Frontmatter.License);
         Assert.Null(skill.Frontmatter.Compatibility);
         Assert.Null(skill.Frontmatter.AllowedTools);
-        Assert.NotNull(skill.Frontmatter.Metadata);
-        Assert.Equal("Apache-2.0", Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["OriginalJson"]).GetProperty("license").GetString());
+        Assert.Null(skill.Frontmatter.Metadata);
+    }
+
+    [Theory]
+    [InlineData("clear", true)]
+    [InlineData("clear", false)]
+    [InlineData("remove", true)]
+    [InlineData("remove", false)]
+    [InlineData("replace", true)]
+    [InlineData("replace", false)]
+    [InlineData("null", true)]
+    [InlineData("null", false)]
+    [InlineData("overwrite", true)]
+    [InlineData("overwrite", false)]
+    public async Task GetContentAsync_MetadataMutation_UsesConstructionSnapshotAsync(string mutation, bool matchesAdvertised)
+    {
+        // Arrange
+        string content = matchesAdvertised ? SkillContent : SkillContent.Replace("Convert units.", "Changed.");
+        await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, content)));
+        await using var client = await server.CreateClientAsync();
+        using JsonDocument document = JsonDocument.Parse("""{"name":"unit-converter","description":"Convert units."}""");
+        var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.")
+        {
+            Metadata = new() { ["Owner"] = "Example" },
+        };
+        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, [Resource(SkillUri, content)], client);
+        document.Dispose();
+
+        // Act
+        switch (mutation)
+        {
+            case "clear":
+                frontmatter.Metadata.Clear();
+                break;
+            case "remove":
+                frontmatter.Metadata.Remove("Owner");
+                break;
+            case "replace":
+                frontmatter.Metadata = new();
+                break;
+            case "null":
+                frontmatter.Metadata = null;
+                break;
+            case "overwrite":
+                frontmatter.Metadata["OriginalJson"] = JsonSerializer.Deserialize<JsonElement>(
+                    """{"name":"unit-converter","description":"Changed."}""");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation));
+        }
+
+        // Assert
+        if (matchesAdvertised)
+        {
+            Assert.Equal(content, await skill.GetContentAsync());
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+            Assert.Contains("JSON pointer '/description'", exception.Message);
+        }
     }
 
     [Theory]
     [InlineData(null)]
-    [InlineData("not JSON")]
     [InlineData("null")]
     [InlineData("[]")]
     public async Task GetContentAsync_MissingOrInvalidSnapshot_ThrowsWithoutCachingAsync(string? json)
     {
         // Arrange
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.");
-        if (json is not null)
-        {
-            object snapshot = json == "not JSON" ? json : JsonSerializer.Deserialize<JsonElement>(json);
-            frontmatter.Metadata = new() { ["OriginalJson"] = snapshot };
-        }
+        JsonElement snapshot = json is null ? default : JsonSerializer.Deserialize<JsonElement>(json);
 
         int reads = 0;
         await using var server = CreateServer((uri, _) =>
@@ -550,7 +603,7 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, SkillContent));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client);
+        var skill = new AgentMcpSkill(frontmatter, snapshot, SkillUri, [Resource(SkillUri, SkillContent)], client);
 
         // Act & Assert
         for (int i = 0; i < 2; i++)
@@ -986,7 +1039,7 @@ public sealed partial class AgentMcpSkillTests
 
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri, [instructions], client);
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri, [instructions], client);
 
         // Act & Assert
         if (useCharacterCount)
@@ -1246,7 +1299,7 @@ public sealed partial class AgentMcpSkillTests
         string content = SkillContent,
         long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes,
         TimeProvider? timeProvider = null) =>
-        new(CreateFrontmatter(), root + "SKILL.md",
+        new(CreateFrontmatter(), CreateAdvertisedFrontmatter(), root + "SKILL.md",
         [
             Resource(root + "SKILL.md", content),
             .. resources ??
@@ -1258,16 +1311,18 @@ public sealed partial class AgentMcpSkillTests
         ], client, maxResourceSizeBytes: maxResourceSizeBytes, timeProvider: timeProvider);
 
     /// <summary>
-    /// Creates discovery metadata with a complete advertised JSON snapshot.
+    /// Creates discovery metadata.
     /// </summary>
-    private static AgentSkillFrontmatter CreateFrontmatter(
+    private static AgentSkillFrontmatter CreateFrontmatter() => new("unit-converter", "Convert units.");
+
+    /// <summary>
+    /// Creates a complete advertised JSON snapshot.
+    /// </summary>
+    private static JsonElement CreateAdvertisedFrontmatter(
         string json = """{"name":"unit-converter","description":"Convert units."}""")
     {
         using JsonDocument document = JsonDocument.Parse(json);
-        return new AgentSkillFrontmatter("unit-converter", "Convert units.")
-        {
-            Metadata = new() { ["OriginalJson"] = document.RootElement.Clone() },
-        };
+        return document.RootElement.Clone();
     }
 
     /// <summary>

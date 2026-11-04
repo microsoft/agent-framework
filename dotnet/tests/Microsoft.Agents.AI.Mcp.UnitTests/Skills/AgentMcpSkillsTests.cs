@@ -66,10 +66,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Equal("unit-converter", skill.Frontmatter.Name);
         Assert.Equal("Convert units.", skill.Frontmatter.Description);
         Assert.Equal("MIT", skill.Frontmatter.License);
-        Assert.NotNull(skill.Frontmatter.Metadata);
-        JsonElement originalJson = Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["OriginalJson"]);
-        Assert.Equal("MIT", originalJson.GetProperty("license").GetString());
-        Assert.Equal(42, originalJson.GetProperty("future-field").GetProperty("nested").GetInt32());
+        Assert.Null(skill.Frontmatter.Metadata);
         var request = Assert.Single(requests)!;
         Assert.Null(request["cursor"]);
         Assert.Equal(client.NegotiatedProtocolVersion, request["_meta"]![MetaKeys.ProtocolVersion]!.GetValue<string>());

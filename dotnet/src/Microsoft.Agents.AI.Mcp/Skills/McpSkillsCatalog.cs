@@ -9,7 +9,6 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
@@ -252,7 +251,7 @@ internal sealed partial class McpSkillsCatalog
 
         List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-        return new AgentMcpSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
+        return new AgentMcpSkill(frontmatter, entry.Frontmatter.OriginalJson, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
     }
 
     /// <summary>
@@ -414,14 +413,11 @@ internal sealed partial class McpSkillsCatalog
             throw new InvalidOperationException($"Skill URI '{entry.Uri}' must end with its frontmatter name followed by /SKILL.md.");
         }
 
-        AdditionalPropertiesDictionary metadata = entry.Frontmatter.Metadata is { } advertisedMetadata ? advertisedMetadata : [];
-        metadata[nameof(McpSkillFrontmatter.OriginalJson)] = entry.Frontmatter.OriginalJson;
-
         // Project the fields used to advertise the skill.
         return new AgentSkillFrontmatter(entry.Frontmatter.Name, entry.Frontmatter.Description)
         {
             License = entry.Frontmatter.License,
-            Metadata = metadata,
+            Metadata = entry.Frontmatter.Metadata,
         };
     }
 

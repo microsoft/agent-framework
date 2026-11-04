@@ -53,6 +53,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     private readonly ILogger _logger;
     private readonly string _skillRootUri;
     private readonly IReadOnlyList<McpSkillResourceEntry> _resources;
+    private readonly JsonElement _frontmatterJson;
     private readonly long _maxResourceSizeBytes;
     private readonly bool _hasIsolationKey;
     private readonly TimeProvider _timeProvider;
@@ -64,6 +65,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// Initializes a new instance of the <see cref="AgentMcpSkill"/> class.
     /// </summary>
     /// <param name="frontmatter">The skill's frontmatter.</param>
+    /// <param name="frontmatterJson">The server's complete frontmatter JSON, cloned from its source document.</param>
     /// <param name="uri">The resource URI of the skill's <c>SKILL.md</c>.</param>
     /// <param name="resources">The allowed resource URIs and their expected sizes and content hashes, including <c>SKILL.md</c>.</param>
     /// <param name="client">The MCP client used to fetch <c>SKILL.md</c> and supporting resources.</param>
@@ -74,7 +76,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="ttlResolver">Optional callback to override the server's resource TTLs.</param>
     /// <param name="hasIsolationKey">Whether the skill belongs to a cache partition key.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> is not positive.</exception>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false)
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, JsonElement frontmatterJson, string uri, IReadOnlyList<McpSkillResourceEntry> resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this.Uri = Throw.IfNullOrWhitespace(uri);
@@ -89,6 +91,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         this._logger = logger ?? NullLogger.Instance;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResourceSizeBytes);
         this._maxResourceSizeBytes = maxResourceSizeBytes;
+
+        this._frontmatterJson = frontmatterJson;
     }
 
     /// <inheritdoc/>
@@ -356,14 +360,12 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' contains invalid frontmatter.", exception);
         }
 
-        if (this.Frontmatter.Metadata is null
-            || !this.Frontmatter.Metadata.TryGetValue(nameof(McpSkillFrontmatter.OriginalJson), out object? snapshot)
-            || snapshot is not JsonElement { ValueKind: JsonValueKind.Object } advertised)
+        if (this._frontmatterJson.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException($"Skill '{this.Uri}' has no advertised frontmatter JSON snapshot.");
         }
 
-        if (!JsonElementComparer.DeepEquals(advertised, frontmatter, out string? mismatch))
+        if (!JsonElementComparer.DeepEquals(this._frontmatterJson, frontmatter, out string? mismatch))
         {
             throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' has frontmatter that differs from the advertised metadata at JSON pointer '{mismatch}'.");
         }

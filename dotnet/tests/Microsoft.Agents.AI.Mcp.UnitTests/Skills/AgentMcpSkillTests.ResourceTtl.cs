@@ -186,7 +186,7 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(result);
         });
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
             [Resource(SkillUri, Content)], client, timeProvider: clock, ttlResolver: ttl =>
             {
                 clock.Advance(TimeSpan.FromMilliseconds(processingMilliseconds));
@@ -232,7 +232,7 @@ public sealed partial class AgentMcpSkillTests
             return Task.FromResult(ResourceResponse(uri, Content));
         });
         bool cancelAfterValidation = !cached;
-        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
             [Resource(SkillUri, Content)], client.Object, timeProvider: clock, ttlResolver: ttl =>
             {
                 if (cancelAfterValidation)
@@ -359,7 +359,7 @@ public sealed partial class AgentMcpSkillTests
         await using var client = await server.CreateClientAsync();
         var logger = new Mock<ILogger>();
         logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
-        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
             [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
             client, logger.Object, timeProvider: clock);
         await ReadSnapshotAsync(skill, instructions);
@@ -517,7 +517,7 @@ public sealed partial class AgentMcpSkillTests
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
             .Callback(cts.Cancel);
-        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
             [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
             client.Object, logger.Object, timeProvider: clock);
         if (cached)

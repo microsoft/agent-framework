@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 public sealed partial class AgentMcpSkillsTests
 {
     [Fact]
-    public async Task GetSkillsAsync_Metadata_ProjectsDictionaryValuesAndProtectsSnapshotAsync()
+    public async Task GetSkillsAsync_Metadata_ProjectsOnlyAdvertisedDictionaryValuesAsync()
     {
         // Arrange
         JsonObject entry = Entry();
@@ -23,7 +23,7 @@ public sealed partial class AgentMcpSkillsTests
               "enabled": true,
               "empty": null,
               "nested": { "items": [1, "two"] },
-              "originaljson": "Must not replace the snapshot"
+              "originaljson": "Server-provided value"
             }
             """);
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
@@ -43,9 +43,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.True(Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["enabled"]).GetBoolean());
         Assert.Null(skill.Frontmatter.Metadata["empty"]);
         Assert.Equal("two", Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["nested"]).GetProperty("items")[1].GetString());
-        JsonElement snapshot = Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["OriginalJson"]);
-        Assert.Equal("Example", snapshot.GetProperty("metadata").GetProperty("Owner").GetString());
-        Assert.Equal("Other", snapshot.GetProperty("metadata").GetProperty("owner").GetString());
+        Assert.Equal("Server-provided value", Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["originaljson"]).GetString());
     }
 
     [Theory]
@@ -71,23 +69,25 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData(null)]
     [InlineData(0)]
     [InlineData(500)]
-    public async Task GetSkillsAsync_ValidCompatibility_PreservesAdvertisedValueAsync(int? length)
+    public async Task GetSkillsAsync_ValidCompatibility_VerifiesAdvertisedValueAsync(int? length)
     {
         // Arrange
         string? compatibility = length is { } count ? new string('a', count) : null;
-        JsonObject entry = Entry();
+        string content = $"---\nname: unit-converter\ndescription: Convert units.\ncompatibility: {JsonSerializer.Serialize(compatibility)}\n---\nInstructions.";
+        JsonObject entry = Entry(content: content);
         entry["frontmatter"]!["compatibility"] = compatibility;
-        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)),
+            (uri, _) => ValueTask.FromResult(Text(uri, content)));
         await using var client = await server.CreateClientAsync();
         using var source = new AgentMcpSkillsSource(client);
 
         // Act
         var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        string loaded = await skill.GetContentAsync();
 
         // Assert
-        Assert.NotNull(skill.Frontmatter.Metadata);
-        JsonElement snapshot = Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["OriginalJson"]);
-        Assert.Equal(compatibility, snapshot.GetProperty("compatibility").GetString());
+        Assert.Equal(content, loaded);
+        Assert.Null(skill.Frontmatter.Metadata);
         Assert.Null(skill.Frontmatter.Compatibility);
     }
 
@@ -203,7 +203,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Null(skill.Frontmatter.AllowedTools);
         Assert.NotNull(skill.Frontmatter.Metadata);
         Assert.Equal("Example", Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["Owner"]).GetString());
-        Assert.Equal("MIT", Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["OriginalJson"]).GetProperty("license").GetString());
+        Assert.False(skill.Frontmatter.Metadata.ContainsKey("OriginalJson"));
     }
 
     [Theory]
