@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,7 +18,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 internal sealed record LocalMcpExecutionContract(
     string ServerLabel,
     string ToolName,
-    bool RequiresApproval);
+    bool RequiresApproval,
+    bool DeferProjectionUntilResult = false);
 
 /// <summary>
 /// Adds caller-facing MCP execution metadata to an arbitrary locally executed function.
@@ -65,11 +67,12 @@ internal sealed class LocalMcpAIFunction : DelegatingAIFunction
 /// <remarks>
 /// <para>
 /// When the proxy returns -32006, the consent URL is stored in <see cref="McpConsentContext.Current"/>
-/// and the per-request <see cref="RequestConsentState.CancellationSource"/> is cancelled. This causes
-/// <see cref="FunctionInvokingChatClient"/> to stop the tool loop (it guards
-/// exceptions with <c>when (!ct.IsCancellationRequested)</c>) and surfaces an
-/// <see cref="OperationCanceledException"/> to the handler. The handler then emits the
-/// <c>oauth_consent_request</c> output item and marks the response as <c>incomplete</c>.
+/// and the current invocation records an explicit consent-required result. When the downstream
+/// inference service keeps its own history, the function loop performs one final no-tools request
+/// so that result batch is stored there. Otherwise it terminates before that unnecessary request.
+/// The handler then emits the <c>oauth_consent_request</c> output item and marks the response as
+/// <c>incomplete</c>.
+/// Outside a function-invoking loop, cancellation signals the handoff to the handler.
 /// </para>
 /// </remarks>
 internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
@@ -81,7 +84,11 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
     {
         this._inner = inner;
         this.ToolboxName = toolboxName;
-        this._contract = new(toolboxName, inner.Name, RequiresApproval: false);
+        this._contract = new(
+            toolboxName,
+            inner.Name,
+            RequiresApproval: false,
+            DeferProjectionUntilResult: true);
     }
 
     public override string Name => this._inner.Name;
@@ -130,7 +137,24 @@ internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
                     // handler rejects this consent response instead of falling back to the message.
                     _ => string.Empty,
                 };
-                state.Pending = new McpConsentInfo(this.ToolboxName, this._inner.Name, consentUrl);
+                state.AddPendingConsent(new McpConsentInfo(this.ToolboxName, this._inner.Name, consentUrl));
+                if (FunctionInvokingChatClient.CurrentContext is { } invocation)
+                {
+                    if (state.ReconcileDownstreamHistory)
+                    {
+                        // Keep the current function batch running so every call receives a result,
+                        // then prohibit another tool batch while FICC sends those results to the
+                        // downstream service-managed conversation.
+                        invocation.Options!.ToolMode = ChatToolMode.None;
+                        return McpConsentResults.ConsentRequired;
+                    }
+
+                    // AgentServer owns the only history in this mode. Stop before an unnecessary
+                    // follow-up model request; the response handler pairs any skipped calls below.
+                    invocation.Terminate = true;
+                    return McpConsentResults.ConsentRequired;
+                }
+
                 state.CancellationSource?.Cancel();
             }
 
@@ -180,5 +204,51 @@ internal static class LocalMcpInvocationTracker
         {
             _ = LocalMcpInvocationMap.Consume(stateBag, callId);
         }
+    }
+}
+
+/// <summary>
+/// Installs a request-aware FICC invoker that prevents later functions from executing after OAuth consent is required.
+/// </summary>
+internal static class ConsentBlockingFunctionInvoker
+{
+    private static readonly ConditionalWeakTable<FunctionInvokingChatClient, object> s_installedClients = new();
+
+    /// <summary>
+    /// Installs the consent gate once on a shared FICC instance while preserving any caller-provided invoker.
+    /// </summary>
+    internal static void EnsureInstalled(FunctionInvokingChatClient client)
+    {
+        lock (s_installedClients)
+        {
+            if (s_installedClients.TryGetValue(client, out _))
+            {
+                return;
+            }
+
+            var innerInvoker = client.FunctionInvoker;
+            client.FunctionInvoker = (context, cancellationToken) =>
+                InvokeAsync(innerInvoker, context, cancellationToken);
+            s_installedClients.Add(client, new object());
+        }
+    }
+
+    private static ValueTask<object?> InvokeAsync(
+        Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>? innerInvoker,
+        FunctionInvocationContext context,
+        CancellationToken cancellationToken)
+    {
+        if (McpConsentContext.Current.Value is
+            {
+                ReconcileDownstreamHistory: true,
+                HasPendingConsents: true,
+            } state)
+        {
+            return new ValueTask<object?>(state.InterruptedToolResult);
+        }
+
+        return innerInvoker is not null
+            ? innerInvoker(context, cancellationToken)
+            : context.Function.InvokeAsync(context.Arguments, cancellationToken);
     }
 }

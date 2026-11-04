@@ -2,6 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using HyperlightSandbox.Api;
 using Microsoft.Agents.AI.Hyperlight.Internal;
 using Microsoft.Extensions.AI;
@@ -10,6 +13,57 @@ namespace Microsoft.Agents.AI.Hyperlight.UnitTests;
 
 public sealed class SandboxExecutorTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_InitializationFailureObeysPolicyAndReleasesLockAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        const string Detail = "synthetic-backend-diagnostic";
+        var options = new HyperlightCodeActProviderOptions
+        {
+            HeapSize = Detail,
+            IncludeDetailedErrors = includeDetailedErrors,
+        };
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        using var executor = new SandboxExecutor();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var first = await executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token);
+        var second = await executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token);
+
+        // Assert
+        foreach (var result in new[] { first, second })
+        {
+            using var json = JsonDocument.Parse(result);
+            Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(-1, json.RootElement.GetProperty("exit_code").GetInt32());
+            var error = json.RootElement.GetProperty("stderr").GetString()!;
+            Assert.Equal(includeDetailedErrors, error.Contains(Detail, StringComparison.Ordinal));
+            Assert.Equal(includeDetailedErrors, error.Contains("   at ", StringComparison.Ordinal));
+            Assert.Equal(includeDetailedErrors, error.Contains(nameof(SandboxExecutor.ExecuteAsync), StringComparison.Ordinal));
+            if (!includeDetailedErrors)
+            {
+                Assert.Equal("Code execution failed.", error);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PreservesCancellationAsync()
+    {
+        // Arrange
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], new HyperlightCodeActProviderOptions());
+        using var executor = new SandboxExecutor();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token));
+    }
+
     [Fact]
     public void Fingerprint_DifferentToolSets_DifferentFingerprints()
     {
@@ -254,12 +308,15 @@ public sealed class SandboxExecutorTests
             [], [], [], hostInputDirectory: null, heapSize: "20Mi");
         var differentStack = SandboxExecutor.RunSnapshot.ComputeFingerprint(
             [], [], [], hostInputDirectory: null, stackSize: "10Mi");
+        var detailedErrors = SandboxExecutor.RunSnapshot.ComputeFingerprint(
+            [], [], [], hostInputDirectory: null, includeDetailedErrors: true);
 
         // Assert
         Assert.NotEqual(baseline, differentBackend);
         Assert.NotEqual(baseline, differentModule);
         Assert.NotEqual(baseline, differentHeap);
         Assert.NotEqual(baseline, differentStack);
+        Assert.NotEqual(baseline, detailedErrors);
     }
 
     [Fact]
@@ -285,6 +342,7 @@ public sealed class SandboxExecutorTests
             HeapSize = "10Mi",
             StackSize = "5Mi",
             HostInputDirectory = "/host/input",
+            IncludeDetailedErrors = true,
         };
 
         // Act
@@ -296,6 +354,7 @@ public sealed class SandboxExecutorTests
         options.HeapSize = "20Mi";
         options.StackSize = "10Mi";
         options.HostInputDirectory = "/host/other";
+        options.IncludeDetailedErrors = false;
 
         // Assert
         Assert.Single(snapshot.Tools);
@@ -305,6 +364,7 @@ public sealed class SandboxExecutorTests
         Assert.Equal("10Mi", snapshot.HeapSize);
         Assert.Equal("5Mi", snapshot.StackSize);
         Assert.Equal("/host/input", snapshot.HostInputDirectory);
+        Assert.True(snapshot.IncludeDetailedErrors);
     }
 
     [Fact]

@@ -35,6 +35,25 @@ Both surfaces support:
   the meantime.
 * A Hyperlight Python guest module when using `SandboxBackend.Wasm`.
 
+## Error diagnostics
+
+Host tool failures return a generic JSON error by default. Host execution
+exceptions returned by the executor also use a generic message.
+`HyperlightCodeActProviderOptions.IncludeDetailedErrors` defaults to `false`
+for both the provider and standalone function. Set it to `true` only for a
+trusted channel: full exception details, including stack traces and inner
+exceptions, can contain sensitive data. Argument-validation errors keep their
+safe messages by default and include stack traces only with this opt-in.
+
+This option is independent of the outer `FunctionInvokingChatClient` error policy
+and sensitive-data logging. Outer error handling cannot redact diagnostics that
+generated code has already caught and included in normal output. Run snapshots
+capture the policy, and sandbox configuration fingerprints include it so cached
+callbacks cannot retain a different disclosure policy.
+The same boundary covers initialization, warm-up, snapshot restore, and execution
+failures. Ordinary failures dispose and clear failed sandbox state before returning
+an error; cancellation still propagates.
+
 ## Network access and guest packages
 
 `HyperlightCodeActProviderOptions.AllowedDomains` controls outbound requests

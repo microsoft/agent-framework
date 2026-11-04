@@ -3073,31 +3073,44 @@ def test_start_workflow_span_does_not_attach_as_current(span_exporter: InMemoryS
     assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemorySpanExporter) -> None:
-    """An ambient conversation id is applied only within its workflow execution scope."""
+@pytest.mark.parametrize("workflow_name", [None, "", "customer_support_pipeline"])
+@pytest.mark.parametrize("unattached", [False, True])
+def test_workflow_span_uses_scoped_conversation_id(
+    span_exporter: InMemorySpanExporter, workflow_name: str | None, unattached: bool
+) -> None:
+    """Named and unnamed workflow spans retain scoped conversation ids with either span factory."""
     from agent_framework.observability import (
         OtelAttr,
         _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
         create_workflow_span,
+        start_workflow_span,
     )
 
+    span_factory = start_workflow_span if unattached else create_workflow_span
+    attributes: dict[str, str | int] = {OtelAttr.WORKFLOW_NAME: workflow_name} if workflow_name is not None else {}
     span_exporter.clear()  # type: ignore[attr-defined]
     with _use_telemetry_conversation_id("application-thread"):
-        with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN):
+        with span_factory(OtelAttr.WORKFLOW_RUN_SPAN, attributes=attributes):
             pass
-        with create_workflow_span(
+        with span_factory(
             OtelAttr.WORKFLOW_RUN_SPAN,
-            attributes={OtelAttr.CONVERSATION_ID: "explicit-thread"},
+            attributes={**attributes, OtelAttr.CONVERSATION_ID: "explicit-thread"},
         ):
             pass
-        with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN):
+        with span_factory(OtelAttr.MESSAGE_SEND_SPAN, attributes=attributes):
             pass
-    with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN):
+    with span_factory(OtelAttr.WORKFLOW_RUN_SPAN, attributes=attributes):
         pass
 
     spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
-    workflow_spans = [span for span in spans if span.name == OtelAttr.WORKFLOW_RUN_SPAN]
+    workflow_spans = [
+        span
+        for span in spans
+        if span.attributes is not None and span.attributes.get(OtelAttr.OPERATION) == "invoke_workflow"
+    ]
     assert len(workflow_spans) == 3
+    expected_name = f"invoke_workflow {workflow_name}" if workflow_name else "invoke_workflow"
+    assert all(span.name == expected_name for span in workflow_spans)
     ambient_attributes = workflow_spans[0].attributes
     explicit_attributes = workflow_spans[1].attributes
     unscoped_attributes = workflow_spans[2].attributes
@@ -3111,6 +3124,9 @@ def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemor
     message_send_attributes = message_send_span.attributes
     assert message_send_attributes is not None
     assert OtelAttr.CONVERSATION_ID not in message_send_attributes
+    assert OtelAttr.OPERATION not in message_send_attributes
+    assert OtelAttr.CONVERSATION_ID not in attributes
+    assert OtelAttr.OPERATION not in attributes
 
 
 def test_create_processing_span(span_exporter):
