@@ -68,6 +68,7 @@ Agent Framework owns:
 
 - transport and Client construction, Client entry, and resource cleanup for framework-created connections;
 - the lifecycle-owner task, locks, connection publication, reset coordination, and cancellation cleanup;
+- the default request read timeout for framework-created Clients, with an explicit `None` opt-out;
 - configurable page/item bounds for Agent Framework-driven tool and prompt catalog discovery;
 - request-scoped HTTP header identity and reconnects caused by identity changes;
 - tool argument filtering and trusted request metadata merging;

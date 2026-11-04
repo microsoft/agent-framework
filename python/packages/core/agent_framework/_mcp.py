@@ -1172,7 +1172,7 @@ class MCPTool:
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         client: SupportsChatGetResponse | None = None,
         sampling_approval_callback: SamplingApprovalCallback | None = None,
         sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
@@ -3804,7 +3804,7 @@ class MCPStdioTool(MCPTool):
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -3860,7 +3860,8 @@ class MCPStdioTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
+                ``None`` disables the timeout. Caller-owned clients retain their own timeout policy.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``command`` and ``session``. ``request_timeout``, ``args``, ``env``, ``encoding``, and
@@ -3956,7 +3957,10 @@ class MCPStdioTool(MCPTool):
             conflicting_options = [
                 option
                 for option, is_configured in (
-                    ("request_timeout", request_timeout is not None),
+                    (
+                        "request_timeout",
+                        request_timeout not in (None, _MCP_DEFAULT_READ_TIMEOUT_SECONDS),
+                    ),
                     ("args", args is not None),
                     ("env", env is not None),
                     ("encoding", encoding is not None),
@@ -4071,7 +4075,7 @@ class MCPStreamableHTTPTool(MCPTool):
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -4130,7 +4134,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
+                ``None`` disables the timeout. Caller-owned clients retain their own timeout policy.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``url`` and ``session``. ``request_timeout``, ``terminate_on_close``, ``http_client``,
@@ -4295,7 +4300,10 @@ class MCPStreamableHTTPTool(MCPTool):
             conflicting_options = [
                 option
                 for option, is_configured in (
-                    ("request_timeout", request_timeout is not None),
+                    (
+                        "request_timeout",
+                        request_timeout not in (None, _MCP_DEFAULT_READ_TIMEOUT_SECONDS),
+                    ),
                     ("terminate_on_close", terminate_on_close is not None),
                     ("http_client", http_client is not None),
                     ("static_headers", static_headers is not None),
@@ -4751,7 +4759,7 @@ class MCPWebsocketTool(MCPTool):
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         session: ClientSession | None = None,
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
@@ -4798,7 +4806,8 @@ class MCPWebsocketTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
+                ``None`` disables the timeout. Caller-owned sessions retain their own timeout policy.
             session: An existing MCP client session to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.

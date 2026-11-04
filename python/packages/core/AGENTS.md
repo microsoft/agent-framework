@@ -252,7 +252,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   and framework-owned transport options with `mcp_client` rather than ignoring them. Deprecated caller-owned
   `ClientSession` combinations remain compatible until their vNext removal.
 - **MCP request and discovery bounds** - Framework-created high-level Clients use the configured
-  `request_timeout`; `None` preserves the MCP SDK's unlimited request timeout. Caller-supplied Clients and
+  `request_timeout`, which defaults to a 30-second read timeout; `None` explicitly disables the timeout.
+  Caller-supplied Clients and
   `ClientSession`s retain their caller-owned request policy. Agent Framework tool and prompt discovery follows at
   most `max_discovery_pages` pages (default 100) and accepts at most `max_discovery_items` entries (default 1,000)
   per complete catalog fetch; `None` explicitly disables the corresponding limit for a trusted server.
