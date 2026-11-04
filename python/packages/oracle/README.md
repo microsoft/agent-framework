@@ -64,7 +64,7 @@ pass them through `pool_parameters` or use a configured client.
 
 Alternatively, pass a configured `oracledb.AsyncConnection` or
 `oracledb.AsyncConnectionPool` as `client` for advanced authentication. A
-supplied client cannot be combined with connection settings and remains
+supplied client takes precedence over connection settings and remains
 caller-owned. A connector-created pool opens on first use and closes on
 `close()` or async context exit. A collection obtained from a store borrows its
 client; closing that collection does not close the store. The store must remain
