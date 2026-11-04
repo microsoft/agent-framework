@@ -18,6 +18,7 @@ namespace Microsoft.Agents.AI.Hyperlight;
 /// </remarks>
 public sealed class HyperlightCodeActProviderOptions
 {
+
     /// <summary>
     /// Initializes a new instance configured for the JavaScript backend.
     /// Equivalent to <see cref="CreateForJavaScript()"/>.
@@ -68,6 +69,20 @@ public sealed class HyperlightCodeActProviderOptions
     /// <c>"35Mi"</c>. When <see langword="null"/> the backend default is used.
     /// </summary>
     public string? StackSize { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum execution time in seconds. Defaults to 30.
+    /// The value must be between 1 and 4,294,967 seconds.
+    /// </summary>
+    /// <remarks>
+    /// The limit interrupts guest execution but cannot interrupt runtime initialization
+    /// or a host tool callback. Host tools must enforce their own cancellation policy.
+    /// </remarks>
+    public int ExecutionTimeoutSeconds
+    {
+        get;
+        set => field = Throw.IfOutOfRange(value, 1, 4_294_967);
+    } = 30;
 
     /// <summary>
     /// Gets or sets the initial set of provider-owned CodeAct tools made available
