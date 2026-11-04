@@ -23,6 +23,10 @@ import contextlib
 import os
 import signal
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from psutil import Process as PsutilProcess
 
 try:  # pragma: no cover - importable on every platform we ship
     import psutil
@@ -73,7 +77,7 @@ async def _kill_via_psutil(
 ) -> None:
     if psutil is None:
         raise RuntimeError("_kill_via_psutil called without psutil available")
-    victims: list[psutil.Process] = []
+    victims: list[PsutilProcess] = []
     if proc.returncode is None:
         with contextlib.suppress(psutil.NoSuchProcess):
             parent = psutil.Process(proc.pid)
