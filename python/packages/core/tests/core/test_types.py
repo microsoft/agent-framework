@@ -7951,3 +7951,23 @@ def test_agent_response_value_raises_original_error_for_invalid_output() -> None
     )
     with pytest.raises(ValidationError):
         _ = response.value
+
+
+def test_agent_response_value_keeps_provider_value_for_defaulted_aliased_field() -> None:
+    """A defaulted aliased field must not silently fall back to its default for alias-keyed output."""
+    from pydantic import VERSION, ConfigDict
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) < (2, 11):
+        pytest.skip("validate_by_alias/validate_by_name require pydantic 2.11")
+
+    class Defaulted(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(default=0, alias="itemCount")
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"itemCount": 3}'])],
+        response_format=Defaulted,
+    )
+
+    assert response.value is not None
+    assert response.value.item_count == 3

@@ -1325,6 +1325,55 @@ class TestGitHubCopilotAgentStructuredOutput:
         assert response.value is not None
         assert response.value.item_count == 3
 
+    class Defaulted(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(default=0, alias="itemCount")
+
+    async def test_run_keeps_provider_value_for_defaulted_aliased_field(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """An alias-keyed value is not lost to the field default (non-streaming)."""
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"itemCount": 3}', message_id="msg-1"
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hi", options=cast(Any, {"response_format": self.Defaulted}))
+
+        assert response.value is not None
+        assert response.value.item_count == 3
+
+    async def test_streaming_keeps_provider_value_for_defaulted_aliased_field(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """An alias-keyed value is not lost to the field default (streaming)."""
+        events = [
+            create_session_event(
+                SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"itemCount": 3}', message_id="root"
+            ),
+            create_session_event(SessionEventType.SESSION_IDLE),
+        ]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Defaulted}))
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert response.value is not None
+        assert response.value.item_count == 3
+
     async def test_streaming_value_ignores_trailing_subagent_text(
         self,
         mock_client: MagicMock,
