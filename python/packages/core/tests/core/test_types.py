@@ -4698,6 +4698,31 @@ def test_parse_result_pydantic_field_serializer_output_that_cannot_be_encoded_is
     assert json.loads(parsed[0].text) == {"created": "2024-01-01T12:00:00"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
+def test_parse_result_pydantic_fallback_keeps_declared_field_types():
+    """A subclass in a field declared as its base keeps the subclass-only fields out when the fallback is used."""
+
+    class Public(BaseModel):
+        data: bytes
+
+    class Secret(Public):
+        api_key: str
+
+    class Envelope(BaseModel):
+        item: Public
+        items: list[Public]
+        by_name: dict[str, Public]
+
+    secret = Secret(data=b"\xff\xfe", api_key="key")
+    parsed = FunctionTool.parse_result(Envelope(item=secret, items=[secret], by_name={"a": secret}))
+
+    expected_item = {"data": str(b"\xff\xfe")}
+    assert json.loads(parsed[0].text) == {  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        "item": expected_item,
+        "items": [expected_item],
+        "by_name": {"a": expected_item},
+    }
+
+
 # region FunctionTool.parse_result with MCP TextContent-like objects
 
 
