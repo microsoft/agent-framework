@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -71,7 +72,7 @@ public sealed class LoopAgent : DelegatingAIAgent
     private readonly IReadOnlyList<LoopEvaluator> _evaluators;
     private readonly int _maxIterations;
     private readonly long? _maxTokens;
-    private readonly System.TimeSpan? _maxDuration;
+    private readonly TimeSpan? _maxDuration;
     private readonly bool _freshContextPerIteration;
     private readonly string? _onBehalfOfAuthorName;
     private readonly bool _excludeOnBehalfOfMessages;
@@ -185,7 +186,45 @@ public sealed class LoopAgent : DelegatingAIAgent
             // Run the wrapped agent using the context's session once it exists (it may have been replaced for a fresh
             // context), otherwise the resolved session for the first run.
             AgentSession activeSession = context?.Session ?? session;
-            AgentResponse response = await this.InnerAgent.RunAsync(currentMessages, activeSession, options, cancellationToken).ConfigureAwait(false);
+
+            // Compute the remaining budget time for this iteration so a hung call is cancelled.
+            TimeSpan? remaining = budgetStopwatch is not null
+                ? this._maxDuration!.Value - budgetStopwatch.Elapsed
+                : null;
+
+            if (remaining.HasValue && remaining.Value <= TimeSpan.Zero)
+            {
+                // Budget already exhausted: return without running the agent. With no prior response there is nothing to return.
+                if (context is null)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw new OperationCanceledException("MaxDuration elapsed before the first iteration completed.");
+                }
+
+                AgentResponse exhaustedResult = this.BuildResult(context.LastResponse, transcript, aggregatedUsage);
+                (exhaustedResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.TimeBudgetExceeded;
+                return exhaustedResult;
+            }
+
+            using CancellationTokenSource? iterationCts = remaining.HasValue
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+            iterationCts?.CancelAfter(remaining!.Value);
+            CancellationToken iterationToken = iterationCts?.Token ?? cancellationToken;
+
+            AgentResponse response;
+            try
+            {
+                response = await this.InnerAgent.RunAsync(currentMessages, activeSession, options, iterationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (context is not null && IsBudgetTimeout(iterationCts, cancellationToken))
+            {
+                // The in-flight call was cancelled by the duration budget; return the last completed response.
+                AgentResponse timeoutResult = this.BuildResult(context.LastResponse, transcript, aggregatedUsage);
+                (timeoutResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.TimeBudgetExceeded;
+                return timeoutResult;
+            }
+
             iteration++;
 
             UsageAggregator.Accumulate(ref aggregatedUsage, response.Usage);
@@ -307,20 +346,75 @@ public sealed class LoopAgent : DelegatingAIAgent
             // for the first iteration). They are flushed lazily on the first inner update so they can be stamped with
             // that update's ResponseId/AgentId, keeping them grouped with the iteration for downstream mergers.
             bool surfacedPending = currentSurfaced.Count > 0;
-            await foreach (var update in this.InnerAgent.RunStreamingAsync(currentMessages, activeSession, options, cancellationToken).ConfigureAwait(false))
-            {
-                if (surfacedPending)
-                {
-                    foreach (ChatMessage surfaced in currentSurfaced)
-                    {
-                        yield return CreateOnBehalfOfUpdate(surfaced, update.ResponseId);
-                    }
 
-                    surfacedPending = false;
+            // Compute the remaining budget time for this iteration so a hung stream is cancelled.
+            TimeSpan? remaining = budgetStopwatch is not null
+                ? this._maxDuration!.Value - budgetStopwatch.Elapsed
+                : null;
+
+            if (remaining.HasValue && remaining.Value <= TimeSpan.Zero)
+            {
+                if (context is null)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw new OperationCanceledException("MaxDuration elapsed before the first iteration completed.");
                 }
 
-                updates.Add(update);
-                yield return update;
+                yield break;
+            }
+
+            using CancellationTokenSource? iterationCts = remaining.HasValue
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+            iterationCts?.CancelAfter(remaining!.Value);
+            CancellationToken iterationToken = iterationCts?.Token ?? cancellationToken;
+
+            bool budgetTimedOut = false;
+            IAsyncEnumerator<AgentResponseUpdate> enumerator = this.InnerAgent.RunStreamingAsync(currentMessages, activeSession, options, iterationToken).GetAsyncEnumerator(iterationToken);
+            try
+            {
+                while (true)
+                {
+                    bool hasNext;
+                    try
+                    {
+                        hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (context is not null && IsBudgetTimeout(iterationCts, cancellationToken))
+                    {
+                        // The in-flight stream was cancelled by the duration budget; stop with what was already yielded.
+                        budgetTimedOut = true;
+                        break;
+                    }
+
+                    if (!hasNext)
+                    {
+                        break;
+                    }
+
+                    AgentResponseUpdate update = enumerator.Current;
+                    if (surfacedPending)
+                    {
+                        foreach (ChatMessage surfaced in currentSurfaced)
+                        {
+                            yield return CreateOnBehalfOfUpdate(surfaced, update.ResponseId);
+                        }
+
+                        surfacedPending = false;
+                    }
+
+                    updates.Add(update);
+                    yield return update;
+                }
+            }
+            finally
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (budgetTimedOut)
+            {
+                yield break;
             }
 
             // The inner agent produced no updates this iteration; surface the on-behalf-of messages anyway. Since there
@@ -523,6 +617,12 @@ public sealed class LoopAgent : DelegatingAIAgent
         => this._nonStreamingReturnsLastResponseOnly
             ? lastResponse.ApplyAggregatedUsage(aggregatedUsage)
             : lastResponse.ApplyAggregatedUsage(aggregatedUsage, transcript);
+
+    /// <summary>
+    /// Returns whether a cancellation came from the duration budget's timeout rather than the caller's token.
+    /// </summary>
+    private static bool IsBudgetTimeout(CancellationTokenSource? iterationCts, CancellationToken callerToken)
+        => iterationCts?.IsCancellationRequested == true && !callerToken.IsCancellationRequested;
 
     private static bool HasPendingApprovalRequests(AgentResponse response)
     {

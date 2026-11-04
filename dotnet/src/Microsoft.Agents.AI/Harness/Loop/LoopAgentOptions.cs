@@ -156,16 +156,18 @@ public sealed class LoopAgentOptions
     /// <summary>Gets or sets the maximum wall-clock duration for the entire loop run, or <see langword="null"/> for unconstrained.</summary>
     /// <remarks>
     /// <para>
-    /// The duration is checked between iterations: after each inner agent call (or stream) completes, and again after
-    /// the evaluators run. Once it is exceeded, the loop does not start another iteration and returns the last response,
-    /// stamping <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "time_budget_exceeded"</c> (non-streaming only).
-    /// This bounds the number of slow iterations a run can start, which token budgets cannot detect.
+    /// The remaining duration is passed to each inner agent call as a cancellation timeout, so an in-flight call that
+    /// outlives the budget is cancelled. When a call is cancelled by the budget after at least one iteration has
+    /// completed, the loop returns the last response, stamping
+    /// <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "time_budget_exceeded"</c> (non-streaming only); if the
+    /// first iteration is cancelled, an <see cref="OperationCanceledException"/> is thrown. The duration is also checked
+    /// between iterations, after each call completes and again after the evaluators run, so no new iteration starts once it
+    /// is exceeded.
     /// </para>
     /// <para>
-    /// This is not a hard deadline: it does not interrupt an in-flight inner agent call, stream, or evaluator, so a run can
-    /// exceed the duration by as long as that work takes. Callers that need a hard deadline should pass a
-    /// <see cref="CancellationToken"/> that cancels after a timeout (for example via
-    /// <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>).
+    /// Evaluators are not interrupted by the budget; a run can exceed the duration by as long as an evaluator takes.
+    /// Callers that need a hard deadline over evaluators too should pass a <see cref="CancellationToken"/> that cancels
+    /// after a timeout (for example via <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>).
     /// </para>
     /// </remarks>
     public TimeSpan? MaxDuration
@@ -173,9 +175,9 @@ public sealed class LoopAgentOptions
         get;
         set
         {
-            if (value.HasValue && value.Value <= TimeSpan.Zero)
+            if (value.HasValue)
             {
-                throw new ArgumentOutOfRangeException(nameof(value), "MaxDuration must be a positive duration.");
+                _ = Throw.IfLessThanOrEqual(value.Value.Ticks, 0, nameof(value));
             }
 
             field = value;

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Moq.Protected;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
@@ -75,14 +76,19 @@ public class LoopAgentBudgetTests
     }
 
     /// <summary>
-    /// Verify that the loop stops after the first iteration when the duration budget is already exhausted.
+    /// Verify that the loop stops after the first iteration when the duration budget is exhausted during it.
     /// </summary>
     [Fact]
     public async Task RunAsync_TimeBudgetExceeded_StopsAndStampsReasonAsync()
     {
         // Arrange
-        var inner = new InnerAgentCapture(_ => ResponseWithTokens(1));
-        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxDuration = TimeSpan.FromTicks(1), MaxIterations = 10 });
+        // The inner call ignores cancellation and finishes after the budget has elapsed.
+        var inner = new InnerAgentCapture(_ =>
+        {
+            Thread.Sleep(100);
+            return ResponseWithTokens(1);
+        });
+        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxDuration = TimeSpan.FromMilliseconds(20), MaxIterations = 10 });
 
         // Act
         AgentResponse response = await agent.RunAsync("task", new ChatClientAgentSession());
@@ -272,6 +278,101 @@ public class LoopAgentBudgetTests
         Assert.Equal(1, evaluatorCalls);
         Assert.Equal(1, inner.CallCount);
         Assert.DoesNotContain(updates, u => u.Text == "chunk 2");
+    }
+
+    private static Mock<AIAgent> CreateHangingAfterAgent(int hangFromCall, out Func<int> callCount)
+    {
+        int calls = 0;
+        callCount = () => calls;
+        var mock = new Mock<AIAgent>();
+        mock.Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>(async (_, _, _, ct) =>
+            {
+                int call = Interlocked.Increment(ref calls);
+                if (call >= hangFromCall)
+                {
+                    await Task.Delay(Timeout.Infinite, ct);
+                }
+
+                return ResponseWithTokens(1);
+            });
+        mock.Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((_, _, _, ct) =>
+            {
+                int call = Interlocked.Increment(ref calls);
+                return HangingStreamAsync(call, call >= hangFromCall, ct);
+            });
+        return mock;
+    }
+
+    private static async IAsyncEnumerable<AgentResponseUpdate> HangingStreamAsync(int call, bool hang, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        yield return new AgentResponseUpdate(ChatRole.Assistant, $"chunk {call}");
+        if (hang)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+        }
+    }
+
+    /// <summary>
+    /// Verify that MaxDuration cancels an in-flight call after a completed iteration and returns the last response.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MaxDurationCancelsHungCall_ReturnsLastResponseWithReasonAsync()
+    {
+        // Arrange: call 1 completes, call 2 hangs until cancelled.
+        Mock<AIAgent> mock = CreateHangingAfterAgent(hangFromCall: 2, out Func<int> callCount);
+        var agent = new LoopAgent(mock.Object, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxDuration = TimeSpan.FromMilliseconds(300), MaxIterations = 10 });
+
+        // Act
+        AgentResponse response = await agent.RunAsync("task", new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(2, callCount());
+        Assert.Equal(LoopExitReason.TimeBudgetExceeded, response.AdditionalProperties![LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
+    /// Verify that MaxDuration cancelling the very first call surfaces an OperationCanceledException.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MaxDurationCancelsHungFirstCall_ThrowsAsync()
+    {
+        // Arrange
+        Mock<AIAgent> mock = CreateHangingAfterAgent(hangFromCall: 1, out _);
+        var agent = new LoopAgent(mock.Object, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxDuration = TimeSpan.FromMilliseconds(300), MaxIterations = 10 });
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => agent.RunAsync("task", new ChatClientAgentSession()));
+    }
+
+    /// <summary>
+    /// Verify that MaxDuration cancels a hung stream after a completed iteration and ends the stream gracefully.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_MaxDurationCancelsHungStream_EndsGracefullyAsync()
+    {
+        // Arrange
+        Mock<AIAgent> mock = CreateHangingAfterAgent(hangFromCall: 2, out Func<int> callCount);
+        var agent = new LoopAgent(mock.Object, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxDuration = TimeSpan.FromMilliseconds(300), MaxIterations = 10 });
+
+        // Act
+        List<AgentResponseUpdate> updates = await CollectAsync(agent.RunStreamingAsync("task", new ChatClientAgentSession()));
+
+        // Assert
+        Assert.Equal(2, callCount());
+        Assert.Contains(updates, u => u.Text == "chunk 1");
+        Assert.Contains(updates, u => u.Text == "chunk 2");
     }
 
     /// <summary>
