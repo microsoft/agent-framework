@@ -2,14 +2,14 @@
 
 import asyncio
 import os
-from typing import Any
+from typing import cast
 
 from agent_framework import (
     Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    AgentResponse,
     Executor,
-    Message,
     WorkflowContext,
     handler,
 )
@@ -124,8 +124,8 @@ async def main() -> None:
 
     if outputs:
         print("===== Final Aggregated Conversation (messages) =====")
-        messages: list[Message] | Any = outputs[0]  # Get the first (and typically only) output
-        for i, msg in enumerate(messages, start=1):
+        response = cast(AgentResponse, outputs[0])  # The aggregated conversation
+        for i, msg in enumerate(response.messages, start=1):
             name = msg.author_name if msg.author_name else "user"
             print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")
 
