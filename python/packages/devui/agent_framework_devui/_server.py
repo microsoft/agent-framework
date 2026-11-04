@@ -147,9 +147,17 @@ class DevServer:
         """
         host = host_header.strip().lower()
         if host.startswith("["):
-            # IPv6 literal, optionally followed by ":port".
+            # IPv6 literal, optionally followed by ":port". Anything other than an
+            # empty suffix or a numeric port after the closing bracket is a malformed
+            # Host value (e.g. "[::1]evil.example"), so return it unchanged so it fails
+            # the allowlist check instead of being silently accepted as the bracketed host.
             end = host.find("]")
-            return host[: end + 1] if end != -1 else host
+            if end == -1:
+                return host
+            suffix = host[end + 1 :]
+            if suffix == "" or (suffix.startswith(":") and suffix[1:].isdigit()):
+                return host[: end + 1]
+            return host
         if host.count(":") == 1:
             # "example.com:8080". A bare IPv6 literal holds more than one colon and has no port.
             return host.rsplit(":", 1)[0]
