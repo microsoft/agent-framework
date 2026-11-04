@@ -1248,13 +1248,15 @@ async def test_injected_clients_ignore_explicit_settings_before_resolution(
         patch("agent_framework_azure_ai_search._vector_store.SearchIndexClient") as factory,
     ):
         if kind == "store":
-            connector = AzureAISearchStore(**options, managed_client=True)
+            store = AzureAISearchStore(**options, managed_client=True)
+            assert store.index_client is index_client
+            await store.close()
         else:
-            connector = AzureAISearchCollection(dict, definition=definition(), **options, managed_client=True)
-        assert connector.index_client is (None if kind == "collection-search" else index_client)
-        if kind == "collection-search":
-            assert connector.search_client is client
-        await connector.close()
+            collection = AzureAISearchCollection(dict, definition=definition(), **options, managed_client=True)
+            assert collection.index_client is (None if kind == "collection-search" else index_client)
+            if kind == "collection-search":
+                assert collection.search_client is client
+            await collection.close()
     settings_loader.assert_not_called()
     factory.assert_not_called()
     assert index_client.get_search_client.call_count == int(kind == "collection-index")
