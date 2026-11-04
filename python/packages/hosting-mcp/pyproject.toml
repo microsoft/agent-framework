@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
     "agent-framework-hosting==1.0.0a261030",
+    "jsonschema>=4.20.0,<5",
     "mcp>=2.2.0,<3",
     "pydantic>=2,<3",
 ]
