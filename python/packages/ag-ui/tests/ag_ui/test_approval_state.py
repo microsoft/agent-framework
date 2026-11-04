@@ -5,10 +5,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from time import sleep
-from typing import cast
+from typing import Self, cast
 
 import pytest
-from typing_extensions import Self
 
 from agent_framework_ag_ui._approval_lifecycle import ApprovalCapacityError, ApprovalExecutionOwner
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id

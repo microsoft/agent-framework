@@ -242,7 +242,7 @@ async def test_groupchat_kwargs_flow_to_agents() -> None:
 
 async def test_kwargs_stored_in_state() -> None:
     """Test that function_invocation_kwargs are stored in State with the correct key."""
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import AgentResponse, Executor, WorkflowContext, handler
 
@@ -268,7 +268,7 @@ async def test_kwargs_stored_in_state() -> None:
 
 async def test_empty_kwargs_stored_as_empty_dict() -> None:
     """Test that empty kwargs are stored as empty dict in State."""
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import AgentResponse, Executor, WorkflowContext, handler
 
@@ -1316,7 +1316,7 @@ async def test_subworkflow_kwargs_accessible_via_state() -> None:
     Verifies that WORKFLOW_RUN_KWARGS_KEY is populated in the subworkflow's State
     with kwargs from the parent workflow.
     """
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import AgentResponse, Executor, WorkflowContext, handler
     from agent_framework._workflows._workflow_executor import WorkflowExecutor

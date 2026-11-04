@@ -265,7 +265,7 @@ class Case:
             assert case.target.id == "json"
     """
 
-    condition: Callable[[Any], bool]
+    condition: EdgeCondition
     target: Executor | SupportsAgentRun
 
 
@@ -507,14 +507,14 @@ class FanOutEdgeGroup(EdgeGroup):
     """
 
     selection_func_name: str | None
-    _selection_func: Callable[[Any, list[str]], list[str]] | None
+    _selection_func: Callable[[Any, list[str]], list[str] | Awaitable[list[str]]] | None
     _target_ids: list[str]
 
     def __init__(
         self,
         source_id: str,
         target_ids: Sequence[str],
-        selection_func: Callable[[Any, list[str]], list[str]] | None = None,
+        selection_func: Callable[[Any, list[str]], list[str] | Awaitable[list[str]]] | None = None,
         *,
         selection_func_name: str | None = None,
         id: str | None = None,
@@ -578,7 +578,7 @@ class FanOutEdgeGroup(EdgeGroup):
         return list(self._target_ids)
 
     @property
-    def selection_func(self) -> Callable[[Any, list[str]], list[str]] | None:
+    def selection_func(self) -> Callable[[Any, list[str]], list[str] | Awaitable[list[str]]] | None:
         """Expose the runtime callable used to select active fan-out targets.
 
         When no selection function was supplied the property returns `None`,
@@ -659,11 +659,11 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
     target_id: str
     condition_name: str | None
     type: str
-    _condition: Callable[[Any], bool] = field(repr=False, compare=False)
+    _condition: EdgeCondition = field(repr=False, compare=False)
 
     def __init__(
         self,
-        condition: Callable[[Any], bool] | None,
+        condition: EdgeCondition | None,
         target_id: str,
         *,
         condition_name: str | None = None,
@@ -701,7 +701,7 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
             self.condition_name = condition_name
 
     @property
-    def condition(self) -> Callable[[Any], bool]:
+    def condition(self) -> EdgeCondition:
         """Return the predicate associated with this case.
 
         The placeholder installed during deserialisation raises a
@@ -858,15 +858,36 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
                 "This may result in unexpected behavior."
             )
 
-        def selection_func(message: Any, targets: list[str]) -> list[str]:
-            for case in cases:
+        def selection_func(message: Any, targets: list[str]) -> list[str] | Awaitable[list[str]]:
+            for i, case in enumerate(cases):
                 if isinstance(case, SwitchCaseEdgeGroupDefault):
                     return [case.target_id]
                 # Errors raised by a case predicate deliberately surface to the caller, matching
                 # `Edge.should_route`. Swallowing them would route the message to the default
                 # branch, turning a broken predicate into silent misrouting rather than a
                 # visible failure. `FanOutEdgeRunner` records the error on the edge-group span.
-                if case.condition(message):
+                result = case.condition(message)
+                if inspect.isawaitable(result):
+
+                    async def _async_eval(
+                        pending_result: Any,
+                        pending_target: str,
+                        remaining_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault],
+                    ) -> list[str]:
+                        if await pending_result:
+                            return [pending_target]
+                        for rem_case in remaining_cases:
+                            if isinstance(rem_case, SwitchCaseEdgeGroupDefault):
+                                return [rem_case.target_id]
+                            rem_res = rem_case.condition(message)
+                            if inspect.isawaitable(rem_res):
+                                rem_res = await rem_res
+                            if rem_res:
+                                return [rem_case.target_id]
+                        raise RuntimeError("No matching case found in SwitchCaseEdgeGroup")
+
+                    return _async_eval(result, case.target_id, list(cases[i + 1 :]))
+                if result:
                     return [case.target_id]
             raise RuntimeError("No matching case found in SwitchCaseEdgeGroup")
 

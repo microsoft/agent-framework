@@ -47,7 +47,7 @@ class _ProcessOutput:  # pyright: ignore[reportUnusedClass] - used by shell exec
         """Drain after termination without waiting forever for inherited pipes."""
         try:
             await self.wait(_DRAIN_GRACE)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("subprocess output did not close after termination; stopping pipe readers")
         finally:
             await self.close()

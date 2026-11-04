@@ -6753,7 +6753,9 @@ async def test_approval_detects_changes_to_converted_values(
         (
             UUID,
             "12345678-1234-5678-1234-567812345678",
-            lambda value: UUID(str(value), is_safe=SafeUUID.safe),
+            lambda value: UUID(
+                str(value), is_safe=SafeUUID.safe if value.is_safe is not SafeUUID.safe else SafeUUID.unsafe
+            ),
         ),
     ],
     ids=[

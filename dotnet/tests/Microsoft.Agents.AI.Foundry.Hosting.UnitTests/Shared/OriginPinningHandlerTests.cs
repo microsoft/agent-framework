@@ -8,7 +8,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
 /// Unit tests for the shared <see cref="OriginPinningHandler"/>.

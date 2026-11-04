@@ -66,7 +66,7 @@ The goal is to design a subpackage structure for the Python agent framework that
         - makes developer package management more complex, because that meta-extra will include both GA and non-GA packages, so during dev they could use that, but then during prod they have to figure out which one they actually need and make a change in their dependencies, leading to mismatches between dev and prod.
 6. Make all imports happen from `agent_framework.connectors` (or from two or three groups `agent_framework.chat_clients`, `agent_framework.context_providers`, or something similar) while the underlying code comes from different packages.
     * Pros:
-        - best developer experience, since all imports are from the same place and it is easy to find what you need, and we can raise a meaningfull error with which extra to install.
+        - best developer experience, since all imports are from the same place and it is easy to find what you need, and we can raise a meaningful error with which extra to install.
         - easier for users to find and install the right package.
     * Cons:
         - larger overhead in maintaining the `__init__.py` files that do the lazy loading and error handling.

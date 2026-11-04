@@ -13,7 +13,7 @@ import logging
 import sys
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     AgentMiddlewareLayer,
@@ -57,10 +57,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import (
