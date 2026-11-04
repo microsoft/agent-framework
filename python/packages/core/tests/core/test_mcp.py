@@ -5812,30 +5812,12 @@ async def test_connect_preserves_request_timeout_over_24_hours() -> None:
             assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
 
 
-async def test_connect_uses_default_read_timeout_when_request_timeout_is_omitted() -> None:
-    from agent_framework._mcp import _MCP_DEFAULT_READ_TIMEOUT_SECONDS
-
+async def test_connect_preserves_unlimited_request_timeout_by_default() -> None:
     tool = MCPStdioTool(
         name="test",
         command="test-command",
         load_tools=False,
         load_prompts=False,
-    )
-
-    with patch("mcp.Client") as mock_client_class:
-        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
-
-        async with tool:
-            assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
-
-
-async def test_connect_allows_disabling_request_timeout() -> None:
-    tool = MCPStdioTool(
-        name="test",
-        command="test-command",
-        load_tools=False,
-        load_prompts=False,
-        request_timeout=None,
     )
 
     with patch("mcp.Client") as mock_client_class:
@@ -8930,7 +8912,7 @@ def test_mcp_streamable_http_rejects_header_provider_with_supplied_client() -> N
 @pytest.mark.parametrize(
     ("option_name", "option_value"),
     [
-        ("request_timeout", 31),
+        ("request_timeout", 30),
         ("terminate_on_close", False),
         ("http_client", Mock(spec=AsyncClient)),
         ("static_headers", {}),
@@ -8959,7 +8941,7 @@ def test_mcp_streamable_http_lists_all_framework_owned_http_options_with_supplie
         MCPStreamableHTTPTool(
             name="test",
             mcp_client=Mock(),
-            request_timeout=31,
+            request_timeout=30,
             terminate_on_close=False,
             http_client=Mock(spec=AsyncClient),
             static_headers={},
@@ -9027,7 +9009,7 @@ def test_mcp_streamable_http_get_mcp_client_requires_framework_owned_url() -> No
 @pytest.mark.parametrize(
     ("option_name", "option_value"),
     [
-        ("request_timeout", 31),
+        ("request_timeout", 30),
         ("args", []),
         ("env", {}),
         ("encoding", ""),
@@ -9059,7 +9041,7 @@ def test_mcp_stdio_lists_all_framework_owned_options_with_supplied_client() -> N
         MCPStdioTool(
             name="test",
             mcp_client=Mock(),
-            request_timeout=31,
+            request_timeout=30,
             args=[],
             env={},
             encoding="",
