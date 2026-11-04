@@ -771,6 +771,44 @@ class TestGitHubCopilotAgentRunStreaming:
         }
         assert response.additional_properties["model"] == "gpt-5.1-mini"
 
+    async def test_run_streaming_sums_usage_across_multiple_model_calls(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test streaming sums per-call usage events instead of keeping only the last one."""
+        usage_events = [
+            SessionEvent(
+                data=AssistantUsageData(model="gpt-5.1-mini", input_tokens=n * 100, output_tokens=n * 10),
+                id=uuid4(),
+                timestamp=datetime.now(timezone.utc),
+                type=SessionEventType.ASSISTANT_USAGE,
+            )
+            for n in (1, 2, 3)
+        ]
+        events = [assistant_delta_event, *usage_events, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hello", stream=True)
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert response.usage_details == {
+            "input_token_count": 600,
+            "output_token_count": 60,
+            "total_token_count": 660,
+        }
+
     async def test_run_streaming_with_session(
         self,
         mock_client: MagicMock,

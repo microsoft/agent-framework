@@ -1164,7 +1164,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         contents=[
                             Content.from_usage(
                                 usage_details,
-                                merge_mode="replace",
+                                merge_mode="append",
                                 raw_representation=event.data,
                             )
                         ]
