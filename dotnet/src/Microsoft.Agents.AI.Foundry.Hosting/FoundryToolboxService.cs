@@ -776,11 +776,13 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     internal static HttpMessageHandler CreateToolboxHttpMessageHandler(
         Uri endpoint,
         TokenCredential credential,
+        string tokenScope,
         string? featuresHeader,
         HttpMessageHandler? primaryHandler = null)
     {
         _ = Throw.IfNull(endpoint);
         _ = Throw.IfNull(credential);
+        _ = Throw.IfNullOrWhitespace(tokenScope);
 
         primaryHandler ??= CreateToolboxPrimaryHttpMessageHandler();
         var originPinningHandler = new OriginPinningHandler(endpoint)
@@ -790,7 +792,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         // The bearer handler must run before the pinning handler so any credential it adds
         // is removed before network dispatch if a future transport creates a foreign request.
-        return new FoundryToolboxBearerTokenHandler(credential, featuresHeader, endpoint)
+        return new FoundryToolboxBearerTokenHandler(credential, tokenScope, featuresHeader, endpoint)
         {
             InnerHandler = originPinningHandler
         };
@@ -836,7 +838,11 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         var endpoint = new Uri(proxyUrl);
 
         var httpClient = new HttpClient(
-            CreateToolboxHttpMessageHandler(endpoint, this._credential, this._featuresHeader));
+            CreateToolboxHttpMessageHandler(
+                endpoint,
+                this._credential,
+                this._options.TokenScope,
+                this._featuresHeader));
 
         var transportOptions = CreateToolboxTransportOptions(endpoint, toolboxName);
         var transport = new HttpClientTransport(transportOptions, httpClient);

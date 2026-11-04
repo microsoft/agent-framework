@@ -19,6 +19,16 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class FoundryToolboxServiceTests
 {
     [Fact]
+    public void TokenScope_DefaultsToAzurePublicCloud()
+    {
+        // Act
+        var options = new FoundryToolboxOptions();
+
+        // Assert
+        Assert.Equal("https://ai.azure.com/.default", options.TokenScope);
+    }
+
+    [Fact]
     public void Constructor_InvalidAllowedOAuthConsentOrigin_Throws()
     {
         // Arrange
