@@ -31,7 +31,7 @@ import os
 import re
 import sys
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
 from enum import Enum
@@ -98,33 +98,39 @@ def _read_member_access(formula: str, start: int) -> tuple[str, int] | None:
     return _read_powerfx_identifier(formula, _after_trailing_trivia(formula, dot + 1))
 
 
-def _referenced_input_names(formula: str) -> set[str]:
-    """Return the field names of ``inputs.<name>`` / ``Workflow.Inputs.<name>`` references in code.
+def _referenced_input_names(formula: str) -> tuple[set[str], set[str]]:
+    """Return the fields referenced as ``inputs.<name>`` and as ``Workflow.Inputs.<name>`` in code.
 
     String literals and comments are skipped, so input-like text inside them is not a reference.
+    Only identifiers that start a member-access chain count, so ``Local.inputs.name`` is not an
+    ``inputs`` reference.
     """
-    names: set[str] = set()
+    inputs_names: set[str] = set()
+    workflow_inputs_names: set[str] = set()
+    chain_end = 0
     for cursor in _iter_powerfx_expression_indices(formula):
-        if cursor > 0 and (formula[cursor - 1].isalnum() or formula[cursor - 1] in "_."):
+        if cursor < chain_end:
+            continue
+        if cursor > 0 and (formula[cursor - 1].isalnum() or formula[cursor - 1] == "_"):
             continue
         root = _read_powerfx_identifier(formula, cursor)
         if root is None:
             continue
-        root_name, after_root = root
-        if root_name == "Workflow":
-            member = _read_member_access(formula, after_root)
-            if member is None or member[0] != "Inputs":
-                continue
-            after_root = member[1]
-        elif root_name != "inputs":
-            continue
-        field_reference = _read_member_access(formula, after_root)
-        if field_reference is not None:
-            names.add(field_reference[0])
-    return names
+        chain = [root[0]]
+        chain_end = root[1]
+        while (member := _read_member_access(formula, chain_end)) is not None:
+            chain.append(member[0])
+            chain_end = member[1]
+        if chain[0] == "inputs" and len(chain) > 1:
+            inputs_names.add(chain[1])
+        elif chain[:2] == ["Workflow", "Inputs"] and len(chain) > 2:
+            workflow_inputs_names.add(chain[2])
+    return inputs_names, workflow_inputs_names
 
 
-def _bind_missing_input_references(formula: str, symbols: dict[str, Any]) -> dict[str, Any]:
+def _bind_missing_input_references(
+    formula: str, symbols: dict[str, Any], *, inputs_alias_is_canonical: bool
+) -> dict[str, Any]:
     """Expose inputs the formula references but the caller did not supply as blank.
 
     PowerFx rejects ``inputs.name`` at compile time when ``name`` is not a field of the
@@ -132,16 +138,35 @@ def _bind_missing_input_references(formula: str, symbols: dict[str, Any]) -> dic
     such as ``If(IsBlank(inputs.name), "World", inputs.name)``. Binding the missing
     fields to blank only for this evaluation makes them behave like an explicit ``None``
     input without changing the workflow state.
+
+    ``inputs`` is an alias of ``Workflow.Inputs`` unless a custom ``inputs`` namespace
+    replaces it; in that case the two records are completed independently and the custom
+    namespace is left unchanged.
     """
-    inputs = symbols.get("inputs")
-    if not isinstance(inputs, Mapping):
+    workflow = symbols.get("Workflow")
+    if not isinstance(workflow, Mapping):
         return symbols
-    input_values = cast(Mapping[str, Any], inputs)
-    missing = {name for name in _referenced_input_names(formula) if name not in input_values}
+    workflow_values = cast(Mapping[str, Any], workflow)
+    workflow_inputs = workflow_values.get("Inputs")
+    if not isinstance(workflow_inputs, Mapping):
+        return symbols
+    workflow_input_values = cast(Mapping[str, Any], workflow_inputs)
+    inputs_names, workflow_inputs_names = _referenced_input_names(formula)
+    referenced = workflow_inputs_names | inputs_names if inputs_alias_is_canonical else workflow_inputs_names
+    missing = {name for name in referenced if name not in workflow_input_values}
     if not missing:
         return symbols
-    bound_inputs: dict[str, Any] = {**input_values, **dict.fromkeys(sorted(missing))}
-    return {**symbols, "Workflow": {**symbols["Workflow"], "Inputs": bound_inputs}, "inputs": bound_inputs}
+    bound_inputs: dict[str, Any] = {**workflow_input_values, **dict.fromkeys(sorted(missing))}
+    bound = {**symbols, "Workflow": {**workflow_values, "Inputs": bound_inputs}}
+    if inputs_alias_is_canonical:
+        bound["inputs"] = bound_inputs
+    return bound
+
+
+def _is_unrecognized_name_error(error: ValueError) -> bool:
+    """Return whether a PowerFx error reports a name or field that does not resolve."""
+    message = str(error)
+    return "isn't recognized" in message or "Name isn't valid" in message
 
 
 @dataclass(frozen=True)
@@ -677,7 +702,7 @@ class DeclarativeWorkflowState:
                     f"Install dotnet and the powerfx package for full PowerFx support."
                 )
 
-            symbols = _bind_missing_input_references(formula, self._to_powerfx_symbols())
+            symbols = self._to_powerfx_symbols()
             # Use setlocale(category) query form so we can restore the exact prior value.
             # getlocale() returns a normalized tuple and is not always a lossless
             # round-trip for setlocale across platforms/locales.
@@ -690,28 +715,28 @@ class DeclarativeWorkflowState:
                     except locale.Error:
                         continue
 
-                engine = Engine()
                 try:
-                    from System.Globalization import (  # pyright: ignore[reportMissingImports]
-                        CultureInfo,  # pyright: ignore[reportUnknownVariableType]
-                    )
-                except ImportError:
-                    return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
-
-                original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
-                try:
-                    CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)
-                    return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
-                finally:
-                    CultureInfo.CurrentCulture = original_culture
-            except ValueError as e:
-                error_msg = str(e)
+                    return self._eval_powerfx(Engine, formula, symbols)
+                except ValueError as e:
+                    if not _is_unrecognized_name_error(e):
+                        raise
+                # The formula may only fail because it references inputs the caller omitted.
+                # Retry with those inputs bound to blank so IsBlank defaults apply.
+                bound_symbols = _bind_missing_input_references(
+                    formula,
+                    symbols,
+                    inputs_alias_is_canonical="inputs" not in self.get_state_data().get("Custom", {}),
+                )
+                if bound_symbols is not symbols:
+                    try:
+                        return self._eval_powerfx(Engine, formula, bound_symbols)
+                    except ValueError as e:
+                        if not _is_unrecognized_name_error(e):
+                            raise
                 # Handle undefined variable errors gracefully by returning None
                 # This matches the behavior of the legacy fallback parser
-                if "isn't recognized" in error_msg or "Name isn't valid" in error_msg:
-                    logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
-                    return None
-                raise
+                logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
+                return None
             finally:
                 locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
         finally:
@@ -721,6 +746,24 @@ class DeclarativeWorkflowState:
                     self._clear_local_path(path.removeprefix("Local."))
                 else:
                     self.set(path, previous)
+
+    @staticmethod
+    def _eval_powerfx(engine_type: Callable[[], Any], formula: str, symbols: dict[str, Any]) -> Any:
+        """Evaluate ``formula`` with a fresh PowerFx engine in the evaluation culture."""
+        engine = engine_type()
+        try:
+            from System.Globalization import (  # pyright: ignore[reportMissingImports]
+                CultureInfo,  # pyright: ignore[reportUnknownVariableType]
+            )
+        except ImportError:
+            return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+
+        original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
+        try:
+            CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)
+            return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+        finally:
+            CultureInfo.CurrentCulture = original_culture
 
     def _eval_custom_function(self, formula: str) -> Any | None:
         """Handle custom functions not supported by the Python PowerFx library.

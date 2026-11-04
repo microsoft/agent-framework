@@ -486,6 +486,26 @@ actions:
         _text_outputs = [str(o) for o in outputs if isinstance(o, str) or hasattr(o, "data")]  # noqa: F841
         assert any("Condition was true" in str(o) for o in outputs)
 
+    @_requires_powerfx
+    async def test_custom_inputs_namespace_does_not_hide_workflow_inputs(self):
+        """Test that writing ``inputs.<field>`` keeps the supplied ``Workflow.Inputs`` values readable."""
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: custom-inputs-namespace-test
+actions:
+  - kind: SetValue
+    id: set_custom_inputs
+    path: inputs.other
+    value: 1
+  - kind: SendActivity
+    activity:
+      text: =Workflow.Inputs.name
+""")
+
+        result = await workflow.run({"name": "Alice"})
+
+        assert any("Alice" in str(output) for output in result.get_outputs())
+
     @pytest.mark.asyncio
     async def test_entry_join_executor_initializes_workflow_inputs(self):
         """Regression test for #3948: Entry JoinExecutor must initialize Workflow.Inputs.

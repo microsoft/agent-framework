@@ -142,6 +142,35 @@ class TestPowerFxBuiltinFunctions:
 
         assert state.eval(expression) == {"other": 1}
 
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            ('=If(Local . inputs . name = "local", inputs, inputs)', {"other": 1}),
+            ('=If(Local./* member */inputs.name = "local", inputs, inputs)', {"other": 1}),
+            (
+                '=With({inputs: {name: "local"}}, {Chosen: inputs.name, Received: Workflow.Inputs})',
+                {"Chosen": "local", "Received": {"other": 1}},
+            ),
+        ],
+    )
+    async def test_member_names_and_local_bindings_are_not_workflow_inputs(self, mock_state, expression, expected):
+        """Test that ``inputs`` as a member name or a local binding does not add blank workflow inputs."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+        state.set("Local.inputs", {"name": "local"})
+
+        assert state.eval(expression) == expected
+
+    async def test_custom_inputs_namespace_keeps_workflow_inputs(self, mock_state):
+        """Test that a custom ``inputs`` namespace does not replace the workflow inputs record."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"name": "Alice"})
+        state.set("inputs.other", 1)
+
+        assert state.eval("=Workflow.Inputs.name") == "Alice"
+        assert state.eval("=inputs.other") == 1
+        assert state.eval('=If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing)') == "World"
+
     async def test_not_function(self, mock_state):
         """Test Not function."""
         state = DeclarativeWorkflowState(mock_state)
