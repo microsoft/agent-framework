@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import AfterValidator, BaseModel, field_validator
 
-import agent_framework.security as security_module
 from agent_framework import (
     Agent,
     AgentSession,
@@ -38,6 +37,7 @@ from agent_framework import (
 from agent_framework._middleware import (
     ChatContext,
     ChatMiddleware,
+    ChatMiddlewareLayer,
     FunctionMiddlewarePipeline,
     MiddlewareFailure,
     MiddlewareTermination,
@@ -65,6 +65,7 @@ from agent_framework.security import (
     PolicyEnforcementFunctionMiddleware,
     SecureAgentConfig,
     VariableReferenceContent,
+    _replayed_message_label,
     combine_labels,
     get_current_middleware,
     rewritten_arguments,
@@ -3324,6 +3325,47 @@ class TestSecureAgentSessionIsolation:
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
+    @pytest.mark.parametrize("mutation", ["append", "replace"])
+    async def test_changed_input_replay_is_not_covered_by_prior_transcript(self, mutation: str) -> None:
+        """Authenticated transcript coverage applies only to the exact prior prefix."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"changed-input-replay-{mutation}")
+        agent = SimpleNamespace(context_providers=[config])
+        initial_message = Message(role="user", contents=["Previously covered input"])
+        initial_context = SessionContext(session_id=session.session_id, input_messages=[initial_message])
+        state = session.state.setdefault(config.source_id, {})
+
+        await config.before_run(
+            agent=agent,
+            session=session,
+            context=initial_context,
+            state=state,
+        )
+        await config._finalize_history_coverage(  # pyright: ignore[reportPrivateUsage]
+            agent=agent,
+            session=session,
+            context=initial_context,
+            state=state,
+        )
+
+        attacker_message = Message(role="assistant", contents=["New unstamped instructions"])
+        replayed_messages = (
+            [initial_message, attacker_message] if mutation == "append" else [attacker_message]
+        )
+        changed_context = SessionContext(session_id=session.session_id, input_messages=replayed_messages)
+        await config.before_run(
+            agent=agent,
+            session=session,
+            context=changed_context,
+            state=state,
+        )
+
+        tracker = changed_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
     async def test_replayed_function_call_arguments_preserve_private_confidentiality(self) -> None:
         """Function-call arguments are replayed data, not confidentiality-free control content."""
         replayed = Message(
@@ -4038,7 +4080,8 @@ class TestSecureAgentSessionIsolation:
         first_label = json.loads(session.state[config.source_id]["context_label"])
         assert first_label["integrity"] == "trusted"
         assert first_label["confidentiality"] == "public"
-        assert session.state[config.source_id]["history_reconstruction_complete"] is True
+        coverage = json.loads(session.state[config.source_id]["history_reconstruction_coverage"])
+        assert coverage[history.source_id]["count"] > 0
 
         if stream:
             await agent.run("Run the public sink.", session=session, stream=True).get_final_response()
@@ -4050,33 +4093,178 @@ class TestSecureAgentSessionIsolation:
         assert second_label["integrity"] == "trusted"
         assert second_label["confidentiality"] == "public"
 
-    async def test_history_completion_marker_without_context_label_reconstructs(self) -> None:
-        """Current-format state without an authoritative label reconstructs stored history."""
+    async def test_history_coverage_without_context_label_reconstructs(self) -> None:
+        """Coverage without its authoritative cumulative label cannot suppress reconstruction."""
         history = InMemoryHistoryProvider()
         config = SecureAgentConfig()
         session = AgentSession(session_id="marker-without-context-label")
-        session.state[config.source_id] = {
-            "scope_id": session.session_id,
-            "history_reconstruction_complete": True,
-        }
-        context = SessionContext(session_id=session.session_id, input_messages=[])
-        context.extend_messages(
+        stored_message = Message(role="assistant", contents=["Stored untrusted history."])
+        initial_context = SessionContext(session_id=session.session_id, input_messages=[])
+        initial_context.extend_messages(
             history,
-            [Message(role="assistant", contents=["Stored untrusted history."])],
+            [stored_message],
         )
-
         await config.before_run(
             agent=SimpleNamespace(context_providers=[config, history]),
             session=session,
-            context=context,
+            context=initial_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+        await config._prepare_approval_history(  # pyright: ignore[reportPrivateUsage]
+            agent=SimpleNamespace(context_providers=[config, history]),
+            session=session,
+            context=initial_context,
+            state=session.state[config.source_id],
+        )
+        session.state[config.source_id].pop("context_label")
+
+        restored_context = SessionContext(session_id=session.session_id, input_messages=[])
+        restored_context.extend_messages(history, [stored_message])
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config, history]),
+            session=session,
+            context=restored_context,
             state=session.state[config.source_id],
         )
 
-        tracker = context.get_middleware()[0]
+        tracker = restored_context.get_middleware()[0]
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    @pytest.mark.parametrize("mutation", ["append", "replace"])
+    async def test_changed_history_reconstructs_only_from_authenticated_coverage(self, mutation: str) -> None:
+        """Appended or replaced provider history cannot inherit coverage from an older snapshot."""
+
+        class MutableHistoryProvider(HistoryProvider):
+            def __init__(self) -> None:
+                super().__init__("mutable-history")
+                self.messages = [Message(role="user", contents=["Previously covered user input"])]
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return list(self.messages)
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, messages, state, kwargs
+
+        class NoopClient:
+            async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
+                del args, kwargs
+                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
+
+        history = MutableHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"changed-history-{mutation}")
+        agent = Agent(
+            client=cast(SupportsChatGetResponse, NoopClient()),
+            context_providers=[history, config],
+        )
+
+        initial_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[],
+            options={},
+        )
+        initial_tracker = initial_context.get_middleware()[0]
+        assert isinstance(initial_tracker, LabelTrackingFunctionMiddleware)
+        assert initial_tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+        attacker_message = Message(role="assistant", contents=["New unstamped history instructions"])
+        if mutation == "append":
+            history.messages.append(attacker_message)
+        else:
+            history.messages[:] = [attacker_message]
+
+        changed_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[],
+            options={},
+        )
+
+        changed_tracker = changed_context.get_middleware()[0]
+        assert isinstance(changed_tracker, LabelTrackingFunctionMiddleware)
+        changed_label = changed_tracker.get_context_label()
+        assert changed_label.integrity == IntegrityLabel.UNTRUSTED
+        assert changed_label.confidentiality == ConfidentialityLabel.PRIVATE
+        coverage = json.loads(session.state[config.source_id]["history_reconstruction_coverage"])
+        assert coverage[history.source_id]["count"] == len(history.messages)
+        restored = AgentSession.from_dict(session.to_dict())
+        restored_coverage = json.loads(restored.state[config.source_id]["history_reconstruction_coverage"])
+        assert restored_coverage == coverage
+
+    @pytest.mark.parametrize("provider_order", ["history-first", "security-first"])
+    async def test_history_is_folded_once_regardless_of_provider_order(
+        self,
+        provider_order: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The post-provider finalizer does not fold history already handled by SecureAgentConfig."""
+
+        class StaticHistoryProvider(HistoryProvider):
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return [Message(role="assistant", contents=["One unstamped history item"])]
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, messages, state, kwargs
+
+        class NoopClient:
+            async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
+                del args, kwargs
+                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
+
+        history = StaticHistoryProvider("ordered-history")
+        config = SecureAgentConfig()
+        providers = [history, config] if provider_order == "history-first" else [config, history]
+        agent = Agent(
+            client=cast(SupportsChatGetResponse, NoopClient()),
+            context_providers=providers,
+        )
+        session = AgentSession(session_id=f"history-order-{provider_order}")
+        replay_calls = 0
+
+        def count_replayed_message(*args: Any, **kwargs: Any) -> ContentLabel:
+            nonlocal replay_calls
+            replay_calls += 1
+            return _replayed_message_label(*args, **kwargs)
+
+        monkeypatch.setattr("agent_framework.security._replayed_message_label", count_replayed_message)
+
+        await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[],
+            options={},
+        )
+
+        assert replay_calls == 1
 
     async def test_non_history_context_provider_messages_remain_deferred(self) -> None:
         """SecureAgentConfig does not silently impose policy on trusted context-provider plugins."""
@@ -4181,6 +4369,100 @@ class TestSecureAgentSessionIsolation:
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
+    async def test_per_service_loaded_history_is_enforced_before_tool_execution(self) -> None:
+        """Per-service loaded history taints FIDES before a model-selected protected tool can run."""
+        executed: list[str] = []
+        messages_received: list[list[Message]] = []
+
+        class StaticHistoryProvider(HistoryProvider):
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return [Message(role="assistant", contents=["Unstamped stored instructions"])]
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, messages, state, kwargs
+
+        class ScriptedClient:
+            STORES_BY_DEFAULT = False
+
+            async def get_response(
+                self,
+                messages: list[Message],
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                del options, kwargs
+                assert stream is False
+                messages_received.append(messages)
+                return ChatResponse(
+                    messages=[
+                        Message(
+                            role="assistant",
+                            contents=[
+                                Content.from_function_call(
+                                    call_id="protected-call",
+                                    name="protected_action",
+                                    arguments={},
+                                )
+                            ],
+                        )
+                    ]
+                )
+
+        client_type = type(
+            "PerServiceSecurityClient",
+            (FunctionInvocationLayer, ChatMiddlewareLayer, ScriptedClient),
+            {},
+        )
+        client = client_type()
+
+        def protected_action() -> str:
+            executed.append("protected")
+            return "must not run"
+
+        protected_tool = FunctionTool(
+            func=protected_action,
+            name="protected_action",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+            },
+        )
+        history = StaticHistoryProvider("per-service-security-history")
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="per-service-security")
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[protected_tool],
+            context_providers=[config, history],
+            require_per_service_call_history_persistence=True,
+        )
+
+        response = await agent.run("Continue", session=session)
+
+        assert executed == []
+        assert messages_received
+        assert any(message.text == "Unstamped stored instructions" for message in messages_received[0])
+        assert "Policy violation" in str([message.to_dict() for message in response.messages])
+        context_label = json.loads(session.state[config.source_id]["context_label"])
+        assert context_label["integrity"] == "untrusted"
+        assert context_label["confidentiality"] == "private"
+
     @pytest.mark.parametrize("stream", [False, True])
     async def test_replacement_policy_approval_executes_through_agent_run(self, stream: bool) -> None:
         """A session-pending replacement request authenticates its later approval response."""
@@ -4262,7 +4544,6 @@ class TestSecureAgentSessionIsolation:
                 "integrity": "trusted",
                 "confidentiality": "private",
             }),
-            "history_reconstruction_complete": True,
         }
 
         if stream:
@@ -4414,7 +4695,7 @@ class TestSecureAgentSessionIsolation:
         self,
         control_shape: str,
     ) -> None:
-        """History authentication survives the later chat-middleware replay pass."""
+        """History authentication survives volatile transport metadata in the chat replay pass."""
         function_call = Content.from_function_call(
             call_id="history-approval-call",
             id="history-approval-occurrence",
@@ -4468,6 +4749,12 @@ class TestSecureAgentSessionIsolation:
         fresh_history_messages = [
             Message.from_dict(message.to_dict()) for message in context.context_messages[history.source_id]
         ]
+        for message in fresh_history_messages:
+            for content in message.contents:
+                if content.type in {"function_approval_request", "function_approval_response"}:
+                    content.additional_properties["transport_nonce"] = "changed-after-snapshot"
+                    if content.function_call is not None:
+                        content.function_call.additional_properties["provider_trace"] = "volatile"
         chat_context = ChatContext(
             client=cast(Any, SimpleNamespace()),
             messages=fresh_history_messages,
@@ -4482,6 +4769,61 @@ class TestSecureAgentSessionIsolation:
 
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_history_replay_rejects_live_control_mutation(self) -> None:
+        """Mutating an authenticated live control invalidates its object-bound authority."""
+        function_call = Content.from_function_call(
+            call_id="mutable-approval-call",
+            id="mutable-approval-occurrence",
+            name="mutable_approval_sink",
+            arguments={"value": "reviewed value"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id="mutable-approval-occurrence",
+            function_call=function_call,
+        )
+        session = AgentSession(session_id="mutable-pending-approval")
+        _store_pending_approval_requests(session, [approval_request])
+        history = InMemoryHistoryProvider()
+        config = SecureAgentConfig()
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(
+            history,
+            [Message(role="assistant", contents=[function_call, approval_request])],
+        )
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config, history]),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        tracker, _, replay_middleware = context.get_middleware()
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+        live_message = context.context_messages[history.source_id][0]
+        live_request = next(
+            content for content in live_message.contents if content.type == "function_approval_request"
+        )
+        assert live_request.function_call is not None
+        live_request.function_call.arguments = json.dumps({"value": "changed prompt-injection value"})
+        chat_context = ChatContext(
+            client=cast(Any, SimpleNamespace()),
+            messages=[live_message],
+            options={},
+            session=session,
+        )
+
+        async def call_next() -> None:
+            return None
+
+        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
     async def test_history_replay_rejects_recycled_identity_for_changed_approval(
@@ -4525,10 +4867,8 @@ class TestSecureAgentSessionIsolation:
 
         authenticated_control_id = builtins.id(approval_request)
         monkeypatch.setattr(
-            security_module,
-            "id",
+            "agent_framework.security._builtin_id",
             lambda value: authenticated_control_id if isinstance(value, Content) else builtins.id(value),
-            raising=False,
         )
         altered_call = Content.from_function_call(
             call_id="recycled-approval-call",

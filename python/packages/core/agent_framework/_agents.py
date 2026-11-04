@@ -657,6 +657,24 @@ class BaseAgent(SerializationMixin):
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
+        history_coverage_consumers = [
+            (provider, finalize)
+            for provider in self.context_providers
+            if callable(finalize := getattr(provider, "_finalize_history_coverage", None))
+        ]
+        if history_coverage_consumers:
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when history coverage is finalized.")
+            for provider, finalize in history_coverage_consumers:
+                finalized = finalize(
+                    agent=self,
+                    session=provider_session,
+                    context=context,
+                    state=provider_session.state.setdefault(provider.source_id, {}),
+                )
+                if isawaitable(finalized):
+                    _ = await finalized
+
     def as_tool(
         self,
         *,
@@ -1758,6 +1776,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 providers=per_service_call_history_providers,
                 service_stores_history=service_stores_history,
             )
+        if per_service_call_history_middleware is not None:
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                per_service_call_history_middleware,
+            ]
+
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             # Providers may only contribute chat/function middleware (enforced by
@@ -1776,15 +1803,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     *_as_middleware_list(existing_middleware),
                     *provider_function_chat_middleware,
                 ]
-
-        if per_service_call_history_middleware is not None:
-            existing_middleware = cast(
-                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
-            )
-            effective_client_kwargs["middleware"] = [
-                *_as_middleware_list(existing_middleware),
-                per_service_call_history_middleware,
-            ]
 
         evaluation_tools: dict[str, dict[str, Any]] = {}
         if isinstance(self.client, BaseChatClient):

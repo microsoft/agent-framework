@@ -231,9 +231,10 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
   input normalization and even when the session already has persisted FIDES state.
 - Framework-authenticated approval requests and responses remain control-plane content. Their embedded function-call
   arguments still add confidentiality restrictions. Caller-only unbound controls are reconstructed conservatively.
-- Stored `HistoryProvider` messages are also folded into the label. A restored FIDES label remains authoritative for
-  unstamped stored history already represented by that state, while explicit replay labels may still add restrictions.
-  If the FIDES state is missing, unstamped assistant/tool history is reconstructed as **UNTRUSTED + PRIVATE**.
+- Stored `HistoryProvider` messages are also folded into the label. FIDES records bounded, authenticated snapshots of
+  each ordered provider history and the completed run transcript. Exact covered prefixes are not re-tainted, while
+  appended, replaced, or otherwise changed unstamped assistant/tool content is reconstructed as
+  **UNTRUSTED + PRIVATE**. Explicit replay labels may still add restrictions.
 - Policy enforcement uses the context label for validation
 
 `ContextProvider` implementations are trusted plugins and can already read the full conversation and session state.
