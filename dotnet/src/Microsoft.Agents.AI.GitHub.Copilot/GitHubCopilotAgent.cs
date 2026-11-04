@@ -535,6 +535,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             OutputTokenCount = (int?)(usageEvent.Data?.OutputTokens),
             TotalTokenCount = (int?)((usageEvent.Data?.InputTokens ?? 0) + (usageEvent.Data?.OutputTokens ?? 0)),
             CachedInputTokenCount = (int?)(usageEvent.Data?.CacheReadTokens),
+            ReasoningTokenCount = usageEvent.Data?.ReasoningTokens,
             AdditionalCounts = GetAdditionalCounts(usageEvent),
         };
 

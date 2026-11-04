@@ -21,24 +21,33 @@ internal static class ToolBridge
     /// Registers every <paramref name="tools"/> entry against the provided
     /// <paramref name="sandbox"/> as a raw JSON-in / JSON-out async tool.
     /// </summary>
-    public static void RegisterAll(Sandbox sandbox, IReadOnlyList<AIFunction> tools)
+    public static void RegisterAll(Sandbox sandbox, IReadOnlyList<AIFunction> tools, bool includeDetailedErrors = false)
     {
         foreach (var tool in tools)
         {
-            RegisterOne(sandbox, tool);
+            RegisterOne(sandbox, tool, includeDetailedErrors);
         }
     }
 
-    private static void RegisterOne(Sandbox sandbox, AIFunction tool)
+    private static void RegisterOne(Sandbox sandbox, AIFunction tool, bool includeDetailedErrors)
         => sandbox.RegisterToolAsync(
             tool.Name,
-            async (string argsJson) => await InvokeAsync(tool, argsJson).ConfigureAwait(false));
+            async (string argsJson) => await InvokeAsync(tool, argsJson, includeDetailedErrors).ConfigureAwait(false));
 
-    internal static async Task<string> InvokeAsync(AIFunction tool, string argsJson)
+    internal static async Task<string> InvokeAsync(AIFunction tool, string argsJson, bool includeDetailedErrors = false)
     {
         try
         {
-            var arguments = ParseArguments(argsJson);
+            IDictionary<string, object?> arguments;
+            try
+            {
+                arguments = ParseArguments(argsJson);
+            }
+            catch (Exception ex) when (ex is JsonException or ArgumentException)
+            {
+                return SerializeError(includeDetailedErrors ? ex.ToString() : ex.Message);
+            }
+
             var result = await tool.InvokeAsync(new AIFunctionArguments(arguments)).ConfigureAwait(false);
             return SerializeResult(result);
         }
@@ -46,9 +55,12 @@ internal static class ToolBridge
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            return JsonSerializer.Serialize(new HyperlightToolError(ex.Message), HyperlightJsonContext.Default.HyperlightToolError);
+            return SerializeError(includeDetailedErrors ? ex.ToString() : "Host tool execution failed.");
         }
     }
+
+    private static string SerializeError(string message) =>
+        JsonSerializer.Serialize(new HyperlightToolError(message), HyperlightJsonContext.Default.HyperlightToolError);
 
     internal static IDictionary<string, object?> ParseArguments(string argsJson)
     {

@@ -100,7 +100,13 @@ Deployment lookup order:
 - `OpenAIEmbeddingClient`: `AZURE_OPENAI_EMBEDDING_MODEL` -> `AZURE_OPENAI_MODEL`
 
 For Azure routing, the same rule applies: the client-specific deployment variable is checked first,
-then the generic `AZURE_OPENAI_MODEL` fallback. Passing `model=` overrides both environment variables.
+then the generic `AZURE_OPENAI_MODEL` fallback. Passing `model=` overrides both environment variables
+and the deployment configured on an injected client.
+
+When `model=` is omitted and an `AsyncAzureOpenAI` client is injected, that client's configured
+deployment is used instead of the `AZURE_OPENAI_*` model variables. A plain `AsyncOpenAI` client
+has no Azure deployment, so the OpenAI model variables above still apply. The injected client
+stays caller-owned.
 
 When both OpenAI and Azure environment variables are present, the generic clients prefer OpenAI
 when `OPENAI_API_KEY` is configured. To use Azure explicitly, pass `azure_endpoint` or

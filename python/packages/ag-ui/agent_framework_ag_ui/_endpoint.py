@@ -412,7 +412,7 @@ def add_agent_framework_fastapi_endpoint(
                                 reader_started.wait(),
                                 timeout=_DETACHED_READER_START_TIMEOUT_SECONDS,
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             reader_abandoned.set()
                         async for frame in event_generator():
                             if reader_abandoned.is_set():
@@ -459,7 +459,7 @@ def add_agent_framework_fastapi_endpoint(
                             asyncio.shield(producer_task),
                             timeout=detached_run_timeout_seconds,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.error(
                             "[%s] Detached run exceeded %.1f seconds after reader disconnect; cancelling",
                             path,

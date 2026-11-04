@@ -57,7 +57,7 @@ AIAgent agent = scenario switch
 if (scenario == "happy-path")
 {
     var agentHostBuilder = AgentHost.CreateBuilder(args);
-    agentHostBuilder.Services.AddFoundryResponses(agent);
+    agentHostBuilder.WebApplicationBuilder.AddFoundryResponses(agent);
     agentHostBuilder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 
     var agentHostApp = agentHostBuilder.Build();
@@ -73,7 +73,7 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://+:{port}");
 }
 
-builder.Services.AddFoundryResponses(agent, configure: options =>
+builder.AddFoundryResponses(agent, configure: options =>
 {
     options.ResilientBackground =
         scenario is "resilient-workflow" or "steerable-long-running";

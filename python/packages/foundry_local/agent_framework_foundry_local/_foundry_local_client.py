@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, cast, overload
+from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
@@ -33,11 +33,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
-
 
 __all__ = [
     "FoundryLocalChatOptions",
@@ -349,4 +344,5 @@ class FoundryLocalClient(
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
+        self._owns_client = True
         self.manager = manager

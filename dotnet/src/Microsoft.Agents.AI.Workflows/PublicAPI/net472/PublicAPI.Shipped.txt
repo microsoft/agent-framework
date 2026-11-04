@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 Microsoft.Agents.AI.Workflows.AIAgentBinding
 Microsoft.Agents.AI.Workflows.AIAgentBinding.AIAgentBinding(Microsoft.Agents.AI.AIAgent! Agent, Microsoft.Agents.AI.Workflows.AIAgentHostOptions? Options = null) -> void
 Microsoft.Agents.AI.Workflows.AIAgentBinding.AIAgentBinding(Microsoft.Agents.AI.AIAgent! agent, bool emitEvents = false) -> void
@@ -148,6 +148,8 @@ Microsoft.Agents.AI.Workflows.Executor.Id.get -> string!
 Microsoft.Agents.AI.Workflows.Executor.InputTypes.get -> System.Collections.Generic.ISet<System.Type!>!
 Microsoft.Agents.AI.Workflows.Executor.Options.get -> Microsoft.Agents.AI.Workflows.ExecutorOptions!
 Microsoft.Agents.AI.Workflows.Executor.OutputTypes.get -> System.Collections.Generic.ISet<System.Type!>!
+Microsoft.Agents.AI.Workflows.Executor.RegisterCheckpointRestoringCallback(System.Func<Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! callback) -> void
+Microsoft.Agents.AI.Workflows.Executor.RegisterCheckpointRestoringCallback(object! sharedStateKey, System.Func<Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! callback) -> void
 Microsoft.Agents.AI.Workflows.Executor<TInput, TOutput>
 Microsoft.Agents.AI.Workflows.Executor<TInput, TOutput>.Executor(string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
 Microsoft.Agents.AI.Workflows.Executor<TInput>

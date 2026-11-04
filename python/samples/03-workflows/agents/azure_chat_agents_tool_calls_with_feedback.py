@@ -5,7 +5,7 @@ import json
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Never
 
 from agent_framework import (
     Agent,
@@ -26,7 +26,6 @@ from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
-from typing_extensions import Never
 
 # Load environment variables from .env file
 load_dotenv()

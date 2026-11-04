@@ -12,6 +12,7 @@ from agent_framework._clients import BaseEmbeddingClient
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from agent_framework.observability import EmbeddingTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
@@ -167,10 +168,12 @@ class RawOpenAIEmbeddingClient(
         """Initialize a raw OpenAI embedding client.
 
         Keyword Args:
-            model: Embedding model or Azure OpenAI deployment name. When not provided, the
-                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
-                and then ``AZURE_OPENAI_MODEL``.
+            model: Embedding model or Azure OpenAI deployment name. An explicit value wins
+                over an injected ``AsyncAzureOpenAI`` deployment, which wins over environment
+                variables. Otherwise the constructor reads ``OPENAI_EMBEDDING_MODEL`` and then
+                ``OPENAI_MODEL`` for OpenAI. For Azure it first checks
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then ``AZURE_OPENAI_MODEL``. An injected
+                ``AsyncOpenAI`` client has no deployment, so the OpenAI variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
                 A callable token provider is also accepted for backwards compatibility,
@@ -251,6 +254,21 @@ class RawOpenAIEmbeddingClient(
         """Get the URL of the service."""
         return str(self.client.base_url) if self.client else "Unknown"
 
+    def _prepare_extra_request_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
+        """Return extra keyword arguments for the ``embeddings.create`` request.
+
+        Only the OpenAI embedding schema is forwarded by default. Subclasses for
+        OpenAI-compatible services override this to send provider-specific fields,
+        typically as ``extra_body``, and to reject invalid values before the request.
+
+        Args:
+            options: The embedding options for the current call.
+
+        Returns:
+            Keyword arguments merged into the request. The default adds none.
+        """
+        return {}
+
     async def get_embeddings(
         self,
         values: Sequence[str],
@@ -276,6 +294,7 @@ class RawOpenAIEmbeddingClient(
         model = opts.get("model") or self.model
         if not model:
             raise ValueError("model is required")
+        extra_request_options = self._prepare_extra_request_options(opts)
 
         kwargs: dict[str, Any] = {"input": list(values), "model": model}
         if self._FEATURE_USAGE_INDEX is not None:
@@ -286,6 +305,7 @@ class RawOpenAIEmbeddingClient(
             kwargs["encoding_format"] = encoding_format
         if user := opts.get("user"):
             kwargs["user"] = user
+        kwargs.update(extra_request_options)
 
         response = await self.client.embeddings.create(**kwargs)
 
@@ -294,8 +314,15 @@ class RawOpenAIEmbeddingClient(
         for item in sorted(response.data, key=lambda item: item.index):
             vector: list[float]
             if encoding == "base64" and isinstance(item.embedding, str):
-                # Decode base64-encoded floats (little-endian IEEE 754)
-                raw = base64.b64decode(item.embedding)
+                # Decode base64-encoded floats (little-endian IEEE 754).
+                # base64.b64decode raises binascii.Error for bad padding/alphabet and
+                # UnicodeEncodeError for non-ASCII input; both are ValueError subclasses.
+                try:
+                    raw = base64.b64decode(item.embedding)
+                except ValueError as exc:
+                    raise IntegrationInvalidResponseException(
+                        f"The base64 embedding returned for input index {item.index} could not be decoded: {exc}"
+                    ) from exc
                 if len(raw) % 4:
                     # A misaligned buffer would otherwise fail inside struct.unpack with a
                     # bare buffer-size error and no hint about which response item broke.
@@ -429,10 +456,12 @@ class OpenAIEmbeddingClient(
         """Initialize an OpenAI embedding client.
 
         Keyword Args:
-            model: Embedding model or Azure OpenAI deployment name. When not provided, the
-                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
-                and then ``AZURE_OPENAI_MODEL``.
+            model: Embedding model or Azure OpenAI deployment name. An explicit value wins
+                over an injected ``AsyncAzureOpenAI`` deployment, which wins over environment
+                variables. Otherwise the constructor reads ``OPENAI_EMBEDDING_MODEL`` and then
+                ``OPENAI_MODEL`` for OpenAI. For Azure it first checks
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then ``AZURE_OPENAI_MODEL``. An injected
+                ``AsyncOpenAI`` client has no deployment, so the OpenAI variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
                 A callable token provider is also accepted for backwards compatibility,

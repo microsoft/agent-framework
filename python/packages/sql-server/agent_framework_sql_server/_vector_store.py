@@ -11,7 +11,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, Self, cast
 
 import mssql_python
 from agent_framework import (
@@ -26,7 +26,7 @@ from agent_framework import (
 from agent_framework._vector_filters import FilterExpression
 from agent_framework._vectors import EmbeddingClient, SearchType, Vector
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 from ._sql import (
     MAX_PARAMETERS,
