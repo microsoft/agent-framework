@@ -1825,3 +1825,24 @@ async def test_judge_does_not_set_completed_when_cap_fires() -> None:
     response = await agent.run("do the task")
 
     assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "iteration_cap_reached"
+
+
+async def test_stale_inner_exit_reason_is_cleared_before_outer_evaluation() -> None:
+    """A stale inner loop_exit_reason must not leak into, or block, the outer loop's decision."""
+    agent_client = StaleExitReasonChatClient(texts=["The task is fully complete."])
+    judge_client = RecordingChatClient(texts=['{"answered": true, "reasoning": "done"}'], honor_response_format=True)
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    response = await agent.run("do the task")
+
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "completed"
+
+
+async def test_stale_inner_exit_reason_is_cleared_when_loop_stops_without_reason() -> None:
+    """If the outer loop stops without stamping a reason, the inner stale value must not survive."""
+    client = StaleExitReasonChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(lambda **_: False, max_iterations=5)])
+
+    response = await agent.run("task")
+
+    assert LOOP_EXIT_REASON_KEY not in response.additional_properties

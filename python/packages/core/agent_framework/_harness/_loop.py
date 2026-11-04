@@ -221,7 +221,7 @@ def _build_judge_condition(
                 reasoning = response.text.strip()
         # Continue looping while the request is not yet answered, surfacing the reasoning as feedback.
         if answered:
-            last_result.additional_properties.setdefault(LOOP_EXIT_REASON_KEY, "completed")
+            last_result.additional_properties[LOOP_EXIT_REASON_KEY] = "completed"
         return (not answered), (reasoning or None)
 
     def _next_message(*, feedback: str | None = None, **kwargs: Any) -> AgentRunInputs:
@@ -573,6 +573,9 @@ class AgentLoopMiddleware(AgentMiddleware):
                         f"got {type(result).__name__}."
                     )
 
+                # Clear any loop_exit_reason stamped by an inner agent or nested loop so the outer
+                # loop's own exit-reason decision is not masked by a stale inner value.
+                result.additional_properties.pop(LOOP_EXIT_REASON_KEY, None)
                 final_result = result
                 aggregated.extend(result.messages)
                 if result.usage_details is not None:
@@ -633,7 +636,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         if cap_fired:
-            final_result.additional_properties[LOOP_EXIT_REASON_KEY] = "iteration_cap_reached"
+            final_result.additional_properties.setdefault(LOOP_EXIT_REASON_KEY, "iteration_cap_reached")
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
@@ -677,6 +680,9 @@ class AgentLoopMiddleware(AgentMiddleware):
                             yield update
 
                         holder["final"] = await inner.get_final_response()
+                        # Clear any loop_exit_reason stamped by an inner agent or nested loop so the outer
+                        # loop's own exit-reason decision is not masked by a stale inner value.
+                        holder["final"].additional_properties.pop(LOOP_EXIT_REASON_KEY, None)
                     except MiddlewareTermination:
                         # The pipeline's MiddlewareTermination suppression is no longer active once
                         # process() has returned (the stream is consumed lazily), so a termination
@@ -743,7 +749,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             finally:
                 context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
                 if cap_fired and holder["final"] is not None:
-                    holder["final"].additional_properties[LOOP_EXIT_REASON_KEY] = "iteration_cap_reached"
+                    holder["final"].additional_properties.setdefault(LOOP_EXIT_REASON_KEY, "iteration_cap_reached")
                 await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
