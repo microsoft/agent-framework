@@ -4241,7 +4241,7 @@ async def test_streamable_http_integration():
 
     async with tool:
         # Test that we can connect and load tools
-        assert tool.session is not None
+        assert tool.is_connected is True
         assert isinstance(tool.functions, list)
 
         # If there are functions available, try to get information about one
@@ -4274,7 +4274,7 @@ async def test_mcp_connection_reset_integration():
 
     async with tool:
         # Verify initial connection
-        assert tool.session is not None
+        assert tool._connection is not None
         assert tool.is_connected is True
         assert len(tool.functions) > 0, "The MCP server should have at least one function."
 
@@ -4284,10 +4284,10 @@ async def test_mcp_connection_reset_integration():
         assert first_result is not None
         assert len(first_result) > 0
 
-        # Store the original session and exit stack for comparison
-        original_session = tool.session
+        # Store the original connection and exit stack for comparison
+        original_connection = tool._connection
         original_exit_stack = tool._exit_stack
-        original_call_tool = tool.session.call_tool
+        original_call_tool = original_connection.call_tool
 
         # Simulate connection failure by making call_tool raise ClosedResourceError once
         call_count = 0
@@ -4303,16 +4303,16 @@ async def test_mcp_connection_reset_integration():
             # After reconnection, delegate to the original method
             return await original_call_tool(*args, **kwargs)
 
-        tool.session.call_tool = call_tool_with_error  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        original_connection.call_tool = call_tool_with_error  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
         # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
         second_result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert second_result is not None
         assert len(second_result) > 0
 
-        # Verify we have a new session and exit stack after reconnection
-        assert tool.session is not None
-        assert tool.session is not original_session, "Session should be replaced after reconnection"
+        # Verify we have a new connection and exit stack after reconnection
+        assert tool._connection is not None
+        assert tool._connection is not original_connection, "Connection should be replaced after reconnection"
         assert tool._exit_stack is not original_exit_stack, "Exit stack should be replaced after reconnection"
         assert tool.is_connected is True
 
