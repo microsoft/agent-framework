@@ -127,7 +127,7 @@ async def run_azure_ai_example():
     Prerequisites:
     1. Create a Foundry connection named 'github-mcp-oauth-connection' in your
        Azure AI project with OAuth credentials for GitHub
-    2. Set PROJECT_ENDPOINT environment variable to your Azure AI project endpoint
+    2. Set the FOUNDRY_PROJECT_ENDPOINT environment variable to your Foundry project endpoint
     """
     print("=" * 60)
     print("Example 2: Azure AI with Foundry Connection Reference")
@@ -154,7 +154,7 @@ async def main():
     await run_openai_example()
 
     # Run the Azure AI example (uncomment to run)
-    # Requires: Foundry connection set up and PROJECT_ENDPOINT env var
+    # Requires: Foundry connection set up and FOUNDRY_PROJECT_ENDPOINT env var
     # await run_azure_ai_example()
 
 

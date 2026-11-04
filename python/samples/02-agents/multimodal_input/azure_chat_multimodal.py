@@ -21,7 +21,7 @@ def create_sample_image() -> str:
 async def test_image() -> None:
     """Test image analysis with Azure OpenAI."""
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option. Requires AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+    # authentication option. Requires FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
     # environment variables to be set.
     # Alternatively, you can pass model explicitly:
     # client = FoundryChatClient(credential=AzureCliCredential(), model="your-deployment-name")
