@@ -7,6 +7,10 @@ namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 public sealed class JsonElementComparerTests
 {
     [Theory]
+    [InlineData("null", "null")]
+    [InlineData("true", "true")]
+    [InlineData("1", "1.0e0")]
+    [InlineData("[1,true,null]", "[1.0e0,true,null]")]
     [InlineData("""{"first":1,"second":2}""", """{"second":2,"first":1}""")]
     [InlineData("""{"value":1}""", """{"value":1.0e0}""")]
     [InlineData("""{"value":0}""", """{"value":-0.0}""")]
@@ -14,6 +18,10 @@ public sealed class JsonElementComparerTests
     [InlineData("""{"value":0.123456789012345678901234567890}""", """{"value":0.1234567890123456789012345678900}""")]
     [InlineData("""{"value":"\u0061"}""", """{"value":"a"}""")]
     [InlineData("""{"nested":[{"a":null,"b":true},[],{}]}""", """{"nested":[{"b":true,"a":null},[],{}]}""")]
+    [InlineData("""{"value":1,"value":1}""", """{"value":1,"value":1}""")]
+    [InlineData("""{"value":1,"value":2}""", """{"value":1,"value":2}""")]
+    [InlineData("""{"value":1,"\u0076alue":1}""", """{"value":1,"value":1}""")]
+    [InlineData("""{"items":[{"value":1,"value":1}]}""", """{"items":[{"value":1,"value":1}]}""")]
     public void DeepEquals_EquivalentValues_ReturnsTrueAndNull(string advertised, string fetched)
     {
         // Arrange

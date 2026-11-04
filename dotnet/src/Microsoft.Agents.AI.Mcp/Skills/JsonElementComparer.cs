@@ -14,7 +14,6 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Object key order and number formatting do not affect equality. Key casing, string whitespace,
 /// array order, and the difference between a missing field and null are significant.
-/// Duplicate object keys are rejected because they make field comparison ambiguous.
 /// </remarks>
 internal static class JsonElementComparer
 {
@@ -24,7 +23,14 @@ internal static class JsonElementComparer
     /// </summary>
     internal static bool DeepEquals(JsonElement expected, JsonElement actual, [NotNullWhen(false)] out string? differencePath)
     {
+        if (JsonElement.DeepEquals(expected, actual))
+        {
+            differencePath = null;
+            return true;
+        }
+
         differencePath = FindDifference(expected, actual, "");
+
         return differencePath is null;
     }
 
