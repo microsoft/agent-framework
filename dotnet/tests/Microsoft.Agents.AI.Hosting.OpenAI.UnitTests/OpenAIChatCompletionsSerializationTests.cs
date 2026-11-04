@@ -4,10 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Tests;
 using Microsoft.Extensions.AI;
+using ChatCompletionsAgentResponseExtensions = Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.AgentResponseExtensions;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -396,7 +396,7 @@ public sealed class OpenAIChatCompletionsSerializationTests : ConformanceTestBas
         var functionCall = new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" });
 
         // Act
-        ChoiceMessageToolCall toolCall = functionCall.ToChoiceMessageToolCall();
+        ChoiceMessageToolCall toolCall = ChatCompletionsAgentResponseExtensions.ToChoiceMessageToolCall(functionCall);
 
         // Assert
         Assert.NotNull(toolCall.Function);

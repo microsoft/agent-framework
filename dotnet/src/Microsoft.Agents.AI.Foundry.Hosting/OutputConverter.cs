@@ -768,10 +768,10 @@ internal static class OutputConverter
             string s => s,
             JsonElement je => je.ValueKind == JsonValueKind.String
                 ? (je.GetString() ?? string.Empty)
-                : je.GetRawText(),
+                : JsonSerializer.Serialize(je, s_jsonOptions),
             JsonDocument jd => jd.RootElement.ValueKind == JsonValueKind.String
                 ? (jd.RootElement.GetString() ?? string.Empty)
-                : jd.RootElement.GetRawText(),
+                : JsonSerializer.Serialize(jd.RootElement, s_jsonOptions),
             _ => JsonSerializer.Serialize(result, s_jsonOptions),
         };
 

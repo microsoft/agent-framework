@@ -521,6 +521,32 @@ public class OutputConverterTests
         Assert.Equal("""{"city":"Ереван"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
     }
 
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_JsonElementWithEscapedUnicode_DecodesCharacters()
+    {
+        // Arrange
+        using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse("""{"city":"\u0415"}""");
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(document.RootElement);
+
+        // Assert
+        Assert.Equal("""{"city":"Е"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_JsonDocumentWithEscapedUnicode_DecodesCharacters()
+    {
+        // Arrange
+        using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse("""{"city":"\u0415"}""");
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(document);
+
+        // Assert
+        Assert.Equal("""{"city":"Е"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
     // G-04
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_DoesNotEmitWireItemAsync()
