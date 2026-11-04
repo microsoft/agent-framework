@@ -6109,6 +6109,18 @@ if __name__ == "__main__":
 class TestSecureMCPToolProxyURLMode:
     """Tests for origin-scoped headers in the proxy's URL mode."""
 
+    def test_forwards_discovery_limits(self) -> None:
+        from agent_framework.security import SecureMCPToolProxy
+
+        proxy = SecureMCPToolProxy(
+            url="https://mcp.example/mcp",
+            max_discovery_pages=12,
+            max_discovery_items=345,
+        )
+
+        assert proxy.mcp_tool.max_discovery_pages == 12
+        assert proxy.mcp_tool.max_discovery_items == 345
+
     async def test_static_headers_do_not_serialize_tool_calls(self) -> None:
         from unittest.mock import patch
 
@@ -7000,6 +7012,21 @@ class TestMCPIFCMetaLabels:
             else {"integrity": "untrusted", "confidentiality": "private"}
         )
         assert result[0].additional_properties["security_label"] == expected_label
+
+    async def test_secure_mcp_proxy_refresh_respects_disabled_tool_loading(self) -> None:
+        from agent_framework.security import SecureMCPToolProxy
+
+        annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
+        mcp_tool, function = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta={})
+        mcp_tool.load_tools_flag = False
+        mcp_tool.load_tools = AsyncMock()  # type: ignore[method-assign]
+        proxy = SecureMCPToolProxy(mcp_tool)
+
+        await proxy.refresh_labels()
+
+        mcp_tool.load_tools.assert_not_awaited()  # type: ignore[union-attr]
+        assert function.additional_properties is not None
+        assert function.additional_properties["source_integrity"] == "untrusted"
 
     async def test_secure_mcp_proxy_labels_notification_reload_before_publication(self):
         from mcp import types as mcp_types
