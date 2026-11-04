@@ -716,7 +716,7 @@ def test_init_reports_region_of_supplied_runtime_client(monkeypatch: pytest.Monk
     """A preconfigured runtime client defines the region, so BEDROCK_REGION should not change it."""
     monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
     runtime = _StubBedrockRuntime()
-    runtime.meta = MagicMock(region_name="eu-west-1")  # type: ignore[attr-defined]
+    setattr(runtime, "meta", MagicMock(region_name="eu-west-1"))  # noqa: B010
 
     client = BedrockChatClient(model="amazon.titan-text", client=cast(BaseClient, runtime))
 
