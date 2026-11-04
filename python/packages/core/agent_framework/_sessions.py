@@ -282,38 +282,39 @@ def _model_fields(value_cls: Any) -> Mapping[str, Any]:
 
 
 def _descend_classes(annotation: Any) -> tuple[Any | None, Any | None]:
-    """Name the classes one location segment meets: this value's, then its items'.
+    """Return the model class and item annotation for the next location level.
 
-    Pydantic reports locations as field names and container indexes, so walking
-    one needs to know what governs each level. A ``Child`` field is a model, so
-    its own fields resolve the keys beneath it. ``dict[str, Item]`` and
-    ``list[Item]`` are containers instead: their keys or positions are
-    application data, and the item class is what resolves names further down.
+    Union annotations stay intact until a synthetic branch label identifies the
+    branch. Mappings defer to their value annotation, while fixed tuples keep
+    their complete annotation so a list index can select the element type.
     """
     annotation_origin = getattr(annotation, "__origin__", None)
     if getattr(annotation, "__metadata__", None) is not None and annotation_origin is not None:
         return _descend_classes(annotation_origin)
     origin = get_origin(annotation)
     if origin is Union or origin is UnionType:
-        for arg in get_args(annotation):
-            if arg is None or arg is type(None):
-                continue
-            keyed_cls, item_cls = _descend_classes(arg)
-            if keyed_cls is not None or item_cls is not None:
-                return keyed_cls, item_cls
-        return None, None
+        return annotation, annotation
+    if origin in (dict, Mapping):
+        args = get_args(annotation)
+        return None, args[1] if len(args) == 2 else None
+    if origin is tuple:
+        return None, annotation
     if origin is not None:
-        # A container defers to its item type; the container itself is not a model.
-        for arg in get_args(annotation):
-            if arg is None or arg is type(None) or arg in (str, bytes):
-                continue
-            keyed_cls, item_cls = _descend_classes(arg)
-            if keyed_cls is not None or item_cls is not None:
-                return None, item_cls if item_cls is not None else keyed_cls
-        return None, None
+        args = get_args(annotation)
+        return None, args[0] if args else None
     if annotation is Any or annotation in (str, bytes) or not isinstance(annotation, type):
         return None, None
     return annotation, annotation
+
+
+def _list_item_annotation(annotation: Any, index: int) -> Any:
+    """Select a fixed tuple's element annotation, or the variadic item type."""
+    if get_origin(annotation) is not tuple:
+        return annotation
+    args = get_args(annotation)
+    if len(args) == 2 and args[1] is Ellipsis:
+        return args[0]
+    return args[index] if index < len(args) else None
 
 
 def _location_tree(errors: Sequence[Mapping[str, Any]]) -> _LocationTree | None:
@@ -345,7 +346,7 @@ def _location_tree(errors: Sequence[Mapping[str, Any]]) -> _LocationTree | None:
 def _restore_at_loc_tree(
     value: Any, tree: Any, *, classes: tuple[Any | None, Any | None], path: str
 ) -> tuple[Any, bool]:
-    keyed_cls, item_cls = classes
+    keyed_cls, item_annotation = classes
     if tree is _RESTORE_LEAF:
         return _deserialize_value(value, path=path), True
     subtree = cast("_LocationTree | None", tree)
@@ -361,9 +362,9 @@ def _restore_at_loc_tree(
             # The location reaches inside a payload owned by a registered codec.
             # Only that codec knows the shape, so restore the value as a whole.
             return _deserialize_value(mapping, path=path), True
-        return _restore_mapping(mapping, subtree, keyed_cls=keyed_cls, item_cls=item_cls, path=path)
+        return _restore_mapping(mapping, subtree, keyed_cls=keyed_cls, item_annotation=item_annotation, path=path)
     if isinstance(value, list):
-        return _restore_list(cast("list[Any]", value), subtree, item_cls=item_cls, path=path)
+        return _restore_list(cast("list[Any]", value), subtree, item_annotation=item_annotation, path=path)
     return value, False
 
 
@@ -372,13 +373,31 @@ def _restore_mapping(
     tree: Mapping[Any, Any],
     *,
     keyed_cls: Any,
-    item_cls: Any,
+    item_annotation: Any,
     path: str,
 ) -> tuple[Any, bool]:
     fields = _model_fields(keyed_cls)
+    union_args = get_args(keyed_cls) if get_origin(keyed_cls) in (Union, UnionType) else ()
     out = dict(value)
     changed = False
     for segment, sub in tree.items():
+        branch_cls = next(
+            (arg for arg in union_args if isinstance(arg, type) and arg.__name__ == segment),
+            None,
+        )
+        if branch_cls is not None:
+            # A synthetic union branch label describes the payload's type; it
+            # is not a serialized key. Select that branch without consuming a key.
+            restored, branch_changed = _restore_at_loc_tree(
+                out,
+                sub,
+                classes=_descend_classes(branch_cls),
+                path=f"{path}.{segment}",
+            )
+            if branch_changed:
+                out = dict(cast("Mapping[str, Any]", restored))
+                changed = True
+            continue
         field_name, field = next(
             (
                 (name, candidate)
@@ -397,7 +416,11 @@ def _restore_mapping(
         restored, key_changed = _restore_at_loc_tree(
             out[raw_key],
             sub,
-            classes=_descend_classes(getattr(field, "annotation", None)) if field is not None else (item_cls, item_cls),
+            classes=(
+                _descend_classes(getattr(field, "annotation", None))
+                if field is not None
+                else (item_annotation, item_annotation)
+            ),
             path=f"{path}.{raw_key}",
         )
         if key_changed:
@@ -406,14 +429,19 @@ def _restore_mapping(
     return (out, True) if changed else (value, False)
 
 
-def _restore_list(value: Sequence[Any], tree: Mapping[Any, Any], *, item_cls: Any, path: str) -> tuple[Any, bool]:
+def _restore_list(
+    value: Sequence[Any], tree: Mapping[Any, Any], *, item_annotation: Any, path: str
+) -> tuple[Any, bool]:
     out = list(value)
     changed = False
     for segment, sub in tree.items():
         if not isinstance(segment, int) or not 0 <= segment < len(out):
             continue
         restored, item_changed = _restore_at_loc_tree(
-            out[segment], sub, classes=(item_cls, item_cls), path=f"{path}[{segment}]"
+            out[segment],
+            sub,
+            classes=_descend_classes(_list_item_annotation(item_annotation, segment)),
+            path=f"{path}[{segment}]",
         )
         if item_changed:
             out[segment] = restored
