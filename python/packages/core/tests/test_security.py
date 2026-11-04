@@ -8098,6 +8098,41 @@ class TestVariableArgumentPolicy:
 
         assert executed is False
 
+    @pytest.mark.parametrize("mutation", ["policy", "function"])
+    async def test_function_policy_mutation_after_security_fails_closed(self, mutation: str) -> None:
+        """The exact tool object and parsed FIDES policy remain bound through execution."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        sink = self._sink(accepts_untrusted=True, max_confidentiality="private")
+        replacement = self._sink(accepts_untrusted=True, max_confidentiality="private")
+        context = FunctionInvocationContext(function=sink, arguments={"value": "payload"})
+        executed = False
+
+        class MutateFunctionPolicyMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                call_next: Callable[[], Awaitable[None]],
+            ) -> None:
+                if mutation == "policy":
+                    properties = cast(dict[str, Any], context.function.additional_properties)
+                    properties["max_allowed_confidentiality"] = "public"
+                else:
+                    context.function = replacement
+                await call_next()
+
+        async def execute(_: FunctionInvocationContext) -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await FunctionMiddlewarePipeline(tracker, policy, MutateFunctionPolicyMiddleware()).execute(
+                context,
+                execute,
+            )
+
+        assert executed is False
+
     async def test_runtime_bytes_mutation_after_policy_fails_closed(self) -> None:
         """Immutable non-JSON runtime authority remains bound exactly."""
         tracker = LabelTrackingFunctionMiddleware()

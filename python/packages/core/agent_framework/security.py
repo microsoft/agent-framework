@@ -1077,8 +1077,9 @@ def _strict_json_value(
 
 
 def _security_invocation_authority_token(
-    function_name: str,
+    function: FunctionTool,
     *,
+    tool_policy: _ToolSecurityPolicy,
     session: AgentSession | None,
     security_scope: _SecurityScope,
     source_arguments: Any,
@@ -1090,7 +1091,7 @@ def _security_invocation_authority_token(
     """Bind inspected references, resolved values, and policy labels without validators."""
     arguments_token = _argument_authority_token(
         {
-            "name": function_name,
+            "name": function.name,
             "source_arguments": source_arguments,
             "source_kwargs": dict(source_kwargs),
             "resolved_arguments": resolved_arguments,
@@ -1099,7 +1100,7 @@ def _security_invocation_authority_token(
         },
         boundary="security policy",
     )
-    return session, security_scope, arguments_token
+    return function, tool_policy, session, security_scope, arguments_token
 
 
 def _bindable_runtime_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -1831,7 +1832,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             )
         return value
 
-    def _resolve_invocation_arguments(self, context: FunctionInvocationContext) -> _ResolvedInvocationArguments:
+    def _resolve_invocation_arguments(
+        self,
+        context: FunctionInvocationContext,
+        *,
+        tool_policy: _ToolSecurityPolicy | None = None,
+    ) -> _ResolvedInvocationArguments:
         """Resolve hidden references into detached values without invoking validators."""
         labels: list[ContentLabel] = []
         active_variables: set[str] = set()
@@ -1904,8 +1910,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
         source_security_kwargs = _bindable_runtime_kwargs(source_kwargs)
         security_kwargs = _bindable_runtime_kwargs(kwargs)
+        resolved_tool_policy = tool_policy or _parse_tool_security_policy(
+            context.function,
+            default_confidentiality=self.default_confidentiality,
+        )
         authority_token = _security_invocation_authority_token(
-            context.function.name,
+            context.function,
+            tool_policy=resolved_tool_policy,
             session=context.session,
             security_scope=self._scope,
             source_arguments=source_arguments,
@@ -1940,6 +1951,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
     def _materialized_authority_token(self, context: FunctionInvocationContext) -> Any:
         """Bind one fully materialized execution attempt."""
+        tool_policy = _parse_tool_security_policy(
+            context.function,
+            default_confidentiality=self.default_confidentiality,
+        )
         arguments_token = _argument_authority_token(
             {
                 "name": context.function.name,
@@ -1948,7 +1963,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             },
             boundary="materialized security policy",
         )
-        return context.session, self._scope, arguments_token
+        return context.function, tool_policy, context.session, self._scope, arguments_token
 
     def _materialize_arguments(self, context: FunctionInvocationContext) -> None:
         """Apply preflighted hidden values and validate only after policy allows the call."""
@@ -2172,7 +2187,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             standing_guidance_snapshot = self._get_standing_guidance(context.function)
 
             # Resolve into detached values for label and approval preflight only.
-            resolved = self._resolve_invocation_arguments(context)
+            resolved = self._resolve_invocation_arguments(context, tool_policy=tool_policy)
             resolved_labels = list(resolved.labels)
             context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = resolved.rewritten_arguments
             context.metadata[_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY] = bool(
