@@ -85,6 +85,141 @@ public sealed class AgentMcpSkillsSerializationTests
     }
 
     [Theory]
+    [InlineData("license", "\"MIT\"")]
+    [InlineData("compatibility", "\"Any runtime\"")]
+    [InlineData("allowed-tools", "\"read write\"")]
+    [InlineData("metadata", """{"Owner":"Example","owner":"Other"}""")]
+    [InlineData("future-field", """{"nested":[true,42,1.25,"123",null,{},[]]}""")]
+    [InlineData("Name", "\"Unrecognized case variant\"")]
+    [InlineData("originalJson", """{"server-field":true}""")]
+    [InlineData("explicit-null", "null")]
+    public void Deserialize_Frontmatter_PreservesOriginalJsonAfterDocumentDisposal(string field, string value)
+    {
+        // Arrange
+        JsonObject entry = CreateEntry();
+        entry["frontmatter"]![field] = JsonNode.Parse(value);
+        using JsonDocument document = JsonDocument.Parse(entry.ToJsonString());
+
+        // Act
+        McpSkillEntry? deserialized = document.RootElement.Deserialize(McpSkillsJsonContext.Default.McpSkillEntry);
+        document.Dispose();
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("unit-converter", deserialized.Frontmatter.Name);
+        Assert.Equal("Convert units.", deserialized.Frontmatter.Description);
+        JsonElement snapshot = deserialized.Frontmatter.OriginalJson;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(value), JsonNode.Parse(snapshot.GetProperty(field).GetRawText())));
+        Assert.True(JsonNode.DeepEquals(entry["frontmatter"], JsonNode.Parse(snapshot.GetRawText())));
+
+        JsonElement serialized = JsonSerializer.SerializeToElement(deserialized, McpSkillsJsonContext.Default.McpSkillEntry);
+        Assert.True(JsonNode.DeepEquals(entry["frontmatter"], JsonNode.Parse(serialized.GetProperty("frontmatter").GetRawText())));
+    }
+
+    [Fact]
+    public void Deserialize_Frontmatter_RetainsOriginalRepresentation()
+    {
+        // Arrange
+        const string Json = """
+            {
+              "uri": "skill://unit-converter/SKILL.md",
+              "frontmatter": {
+                "future-field": 1.2300e+2,
+                "description": "Convert \u0075nits.",
+                "name": "unit-converter",
+                "metadata": { "owner": "First", "owner": "Second" }
+              },
+              "resources": []
+            }
+            """;
+        using JsonDocument document = JsonDocument.Parse(Json);
+        string expected = document.RootElement.GetProperty("frontmatter").GetRawText();
+
+        // Act
+        McpSkillEntry? entry = JsonSerializer.Deserialize(Json, McpSkillsJsonContext.Default.McpSkillEntry);
+
+        // Assert
+        Assert.NotNull(entry);
+        Assert.Equal("unit-converter", entry.Frontmatter.Name);
+        Assert.Equal("Convert units.", entry.Frontmatter.Description);
+        Assert.Equal(expected, entry.Frontmatter.OriginalJson.GetRawText());
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("null", "null")]
+    [InlineData("\"MIT\"", """{"Owner":"Example","owner":"Other","count":42,"nested":[true,null,{}]}""")]
+    public void Deserialize_Frontmatter_ReadsLicenseAndMetadata(string? license, string? metadata)
+    {
+        // Arrange
+        JsonObject entry = CreateEntry();
+        if (license is not null)
+        {
+            entry["frontmatter"]!["license"] = JsonNode.Parse(license);
+        }
+
+        if (metadata is not null)
+        {
+            entry["frontmatter"]!["metadata"] = JsonNode.Parse(metadata);
+        }
+
+        using JsonDocument document = JsonDocument.Parse(entry.ToJsonString());
+
+        // Act
+        McpSkillEntry? deserialized = document.RootElement.Deserialize(McpSkillsJsonContext.Default.McpSkillEntry);
+        document.Dispose();
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal(license is null ? null : JsonSerializer.Deserialize<string>(license), deserialized.Frontmatter.License);
+        if (metadata is null or "null")
+        {
+            Assert.Null(deserialized.Frontmatter.Metadata);
+        }
+        else
+        {
+            Assert.NotNull(deserialized.Frontmatter.Metadata);
+            Assert.Equal(3, deserialized.Frontmatter.Metadata.Count);
+            Assert.Equal("Other", Assert.IsType<JsonElement>(deserialized.Frontmatter.Metadata["Owner"]).GetString());
+            Assert.Equal(42, Assert.IsType<JsonElement>(deserialized.Frontmatter.Metadata["count"]).GetInt32());
+            Assert.True(Assert.IsType<JsonElement>(deserialized.Frontmatter.Metadata["nested"])[0].GetBoolean());
+        }
+
+        JsonElement serialized = JsonSerializer.SerializeToElement(deserialized, McpSkillsJsonContext.Default.McpSkillEntry);
+        Assert.True(JsonNode.DeepEquals(entry["frontmatter"], JsonNode.Parse(serialized.GetProperty("frontmatter").GetRawText())));
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("true")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    public void Deserialize_Frontmatter_InvalidLicenseType_Throws(string license)
+    {
+        // Arrange
+        JsonObject entry = CreateEntry();
+        entry["frontmatter"]!["license"] = JsonNode.Parse(license);
+
+        // Act & Assert
+        Assert.Throws<JsonException>(() => entry.Deserialize(McpSkillsJsonContext.Default.McpSkillEntry));
+    }
+
+    [Fact]
+    public void Serialize_FrontmatterWithoutSnapshot_Throws()
+    {
+        // Arrange
+        McpSkillEntry entry = new()
+        {
+            Uri = "skill://unit-converter/SKILL.md",
+            Frontmatter = new McpSkillFrontmatter { Name = "unit-converter", Description = "Convert units." },
+            Resources = [],
+        };
+
+        // Act & Assert
+        Assert.Throws<JsonException>(() => JsonSerializer.Serialize(entry, McpSkillsJsonContext.Default.McpSkillEntry));
+    }
+
+    [Theory]
     [InlineData("null", null)]
     [InlineData("0", 0L)]
     [InlineData("300000", 300000L)]
@@ -338,9 +473,12 @@ public sealed class AgentMcpSkillsSerializationTests
     {
         // Arrange
         var context = McpSkillsJsonContext.Default;
+        JsonObject entry = CreateEntry();
+        entry["frontmatter"] = JsonNode.Parse(json);
 
         // Act & Assert
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, context.McpSkillFrontmatter));
+        Assert.Throws<JsonException>(() => entry.Deserialize(context.McpSkillEntry));
     }
 
     [Theory]

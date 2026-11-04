@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
@@ -374,7 +375,7 @@ internal sealed partial class McpSkillsCatalog
     }
 
     /// <summary>
-    /// Validates the skill URI, name, and description and returns the metadata used to list the skill.
+    /// Validates the skill URI, name, description, and compatibility and returns the metadata used to list the skill.
     /// </summary>
     private static AgentSkillFrontmatter CreateFrontmatter(McpSkillEntry entry)
     {
@@ -386,9 +387,10 @@ internal sealed partial class McpSkillsCatalog
             throw new InvalidOperationException("A skill entry must specify an absolute SKILL.md resource URI.");
         }
 
-        // Validate the metadata needed to advertise the skill.
+        // Validate advertised values before fetched instructions can be compared against them.
         if (!AgentSkillFrontmatter.ValidateName(entry.Frontmatter.Name, out string? reason) ||
-            !AgentSkillFrontmatter.ValidateDescription(entry.Frontmatter.Description, out reason))
+            !AgentSkillFrontmatter.ValidateDescription(entry.Frontmatter.Description, out reason) ||
+            !AgentSkillFrontmatter.ValidateCompatibility(entry.Frontmatter.Compatibility, out reason))
         {
             throw new InvalidOperationException($"Skill '{entry.Uri}' has invalid frontmatter: {reason}");
         }
@@ -412,8 +414,15 @@ internal sealed partial class McpSkillsCatalog
             throw new InvalidOperationException($"Skill URI '{entry.Uri}' must end with its frontmatter name followed by /SKILL.md.");
         }
 
+        AdditionalPropertiesDictionary metadata = entry.Frontmatter.Metadata is { } advertisedMetadata ? advertisedMetadata : [];
+        metadata[nameof(McpSkillFrontmatter.OriginalJson)] = entry.Frontmatter.OriginalJson;
+
         // Project the fields used to advertise the skill.
-        return new AgentSkillFrontmatter(entry.Frontmatter.Name, entry.Frontmatter.Description);
+        return new AgentSkillFrontmatter(entry.Frontmatter.Name, entry.Frontmatter.Description)
+        {
+            License = entry.Frontmatter.License,
+            Metadata = metadata,
+        };
     }
 
     /// <summary>

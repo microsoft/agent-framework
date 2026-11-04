@@ -8,6 +8,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -23,9 +24,11 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The server provides a resource list (manifest) with each resource's URI, expected size, and content hash.
-/// This skill uses that list to check which resources can be read and whether their content has changed.
-/// The name and description at the start of <c>SKILL.md</c> (frontmatter) must also match the server's listing.
+/// The server first describes the skill by providing its metadata (frontmatter) and a list of resources (manifest).
+/// This class loads resources only from that list and checks that their content matches what the server described.
+/// The skill's instructions are stored in a file named <c>SKILL.md</c>.
+/// This file also contains frontmatter at the start.
+/// Every field in that frontmatter is checked against the metadata the server initially provided.
 /// </para>
 /// <para>
 /// Each resource is cached until its time to live (TTL) expires, then fetched again.
@@ -60,7 +63,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkill"/> class.
     /// </summary>
-    /// <param name="frontmatter">The skill's name and description.</param>
+    /// <param name="frontmatter">The skill's frontmatter.</param>
     /// <param name="uri">The resource URI of the skill's <c>SKILL.md</c>.</param>
     /// <param name="resources">The allowed resource URIs and their expected sizes and content hashes, including <c>SKILL.md</c>.</param>
     /// <param name="client">The MCP client used to fetch <c>SKILL.md</c> and supporting resources.</param>
@@ -109,11 +112,12 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <inheritdoc/>
     /// <remarks>
     /// Returns the text of <c>SKILL.md</c>, using cached content until it expires.
-    /// Fetched content is checked against the expected size, content hash, name, and description.
+    /// Fetched content is checked against the expected size, content hash, and complete advertised frontmatter.
     /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The <c>SKILL.md</c> resource is missing or invalid,
-    /// exceeds the size limit, has a different name or description, fails the size or content hash check without cached content to return,
+    /// exceeds the size limit, has different frontmatter,
+    /// fails the size or content hash check without cached content to return,
     /// or is private and no cache partition key is set.</exception>
     public override async ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
@@ -226,7 +230,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             return new(cached.Value, McpCacheLifetime.Infinite);
         }
 
-        // Only the skill's SKILL.md must have frontmatter matching the listed name and description.
+        // Verify all frontmatter fields before the instructions can enter the resource cache.
         if (string.Equals(resource.Uri, this.Uri, StringComparison.Ordinal))
         {
             this.VerifyInstructions(content);
@@ -331,7 +335,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     }
 
     /// <summary>
-    /// Checks that <c>SKILL.md</c> contains text with the name and description advertised for this skill.
+    /// Checks every fetched frontmatter field against the metadata advertised for this skill.
     /// </summary>
     private void VerifyInstructions(ResourceContents content)
     {
@@ -340,27 +344,30 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri}'.");
         }
 
-        if (!AgentSkillFrontmatterParser.TryParse(textContent.Text, this.Uri, this._logger, out AgentSkillFrontmatter? frontmatter))
+        JsonElement frontmatter;
+
+        try
         {
-            throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' contains invalid frontmatter.");
+            frontmatter = McpSkillFrontmatterParser.Parse(textContent.Text, this._maxResourceSizeBytes);
+        }
+        catch (InvalidOperationException exception)
+        {
+            LogInvalidFrontmatter(this._logger, this.Uri, exception);
+            throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' contains invalid frontmatter.", exception);
         }
 
-        if (!string.Equals(frontmatter.Name, this.Frontmatter.Name, StringComparison.Ordinal))
+        if (this.Frontmatter.Metadata is null
+            || !this.Frontmatter.Metadata.TryGetValue(nameof(McpSkillFrontmatter.OriginalJson), out object? snapshot)
+            || snapshot is not JsonElement { ValueKind: JsonValueKind.Object } advertised)
         {
-            throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' has a frontmatter name that differs from the skills/list entry.");
+            throw new InvalidOperationException($"Skill '{this.Uri}' has no advertised frontmatter JSON snapshot.");
         }
 
-        if (!string.Equals(frontmatter.Description, this.Frontmatter.Description, StringComparison.Ordinal))
+        if (!JsonElementComparer.DeepEquals(advertised, frontmatter, out string? mismatch))
         {
-            throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' has a frontmatter description that differs from the skills/list entry.");
+            throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' has frontmatter that differs from the advertised metadata at JSON pointer '{mismatch}'.");
         }
     }
-
-    /// <summary>
-    /// Logs a resource mismatch and the queued skill refresh.
-    /// </summary>
-    [LoggerMessage(LogLevel.Warning, "Resource '{ResourceUri}' has a {Mismatch} that differs from the resource manifest for skill '{SkillUri}'. A skill refresh has been queued.")]
-    private static partial void LogResourceIntegrityMismatch(ILogger logger, string resourceUri, string skillUri, string mismatch);
 
     /// <summary>
     /// Decodes binary content and checks its size.
@@ -473,4 +480,16 @@ internal sealed partial class AgentMcpSkill : AgentSkill
 
         return null;
     }
+
+    /// <summary>
+    /// Logs why the fetched metadata could not be parsed or validated.
+    /// </summary>
+    [LoggerMessage(LogLevel.Error, "SKILL.md resource '{ResourceUri}' contains invalid frontmatter.")]
+    private static partial void LogInvalidFrontmatter(ILogger logger, string resourceUri, Exception exception);
+
+    /// <summary>
+    /// Logs a resource mismatch and the queued skill refresh.
+    /// </summary>
+    [LoggerMessage(LogLevel.Warning, "Resource '{ResourceUri}' has a {Mismatch} that differs from the resource manifest for skill '{SkillUri}'. A skill refresh has been queued.")]
+    private static partial void LogResourceIntegrityMismatch(ILogger logger, string resourceUri, string skillUri, string mismatch);
 }

@@ -46,11 +46,14 @@ public sealed partial class AgentMcpSkillsTests
     public async Task GetSkillsAsync_ListRequest_ProjectsFrontmatterAndIncludesRequestMetadataAsync()
     {
         // Arrange
+        JsonObject entry = Entry();
+        entry["frontmatter"]!["license"] = "MIT";
+        entry["frontmatter"]!["future-field"] = new JsonObject { ["nested"] = 42 };
         List<JsonNode?> requests = [];
         await using var server = CreateServer((request, _) =>
         {
             requests.Add(request.Params?.DeepClone());
-            return ValueTask.FromResult<JsonNode?>(ListResult(Entry()));
+            return ValueTask.FromResult<JsonNode?>(ListResult(entry));
         });
         await using var client = await server.CreateClientAsync();
         using var source = new AgentMcpSkillsSource(client);
@@ -62,7 +65,11 @@ public sealed partial class AgentMcpSkillsTests
         var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
         Assert.Equal("unit-converter", skill.Frontmatter.Name);
         Assert.Equal("Convert units.", skill.Frontmatter.Description);
-        Assert.Null(skill.Frontmatter.License);
+        Assert.Equal("MIT", skill.Frontmatter.License);
+        Assert.NotNull(skill.Frontmatter.Metadata);
+        JsonElement originalJson = Assert.IsType<JsonElement>(skill.Frontmatter.Metadata["OriginalJson"]);
+        Assert.Equal("MIT", originalJson.GetProperty("license").GetString());
+        Assert.Equal(42, originalJson.GetProperty("future-field").GetProperty("nested").GetInt32());
         var request = Assert.Single(requests)!;
         Assert.Null(request["cursor"]);
         Assert.Equal(client.NegotiatedProtocolVersion, request["_meta"]![MetaKeys.ProtocolVersion]!.GetValue<string>());
@@ -749,6 +756,10 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData("frontmatter", """{"name":"INVALID","description":"Description."}""", typeof(InvalidOperationException))]
     [InlineData("frontmatter", """{"name":"unit-converter","description":null}""", typeof(JsonException))]
     [InlineData("frontmatter", """{"name":"unit-converter","description":false}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":42}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":true}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":{}}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":[]}""", typeof(JsonException))]
     [InlineData("resources", "null", typeof(JsonException))]
     [InlineData("resources", "false", typeof(JsonException))]
     [InlineData("resources", "\"other\"", typeof(JsonException))]
@@ -779,6 +790,7 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData("name", 65, "Skill name must be 64 characters or fewer.")]
     [InlineData("description", 0, "Skill description is required.")]
     [InlineData("description", 1025, "Skill description must be 1024 characters or fewer.")]
+    [InlineData("compatibility", 501, "Skill compatibility must be 500 characters or fewer.")]
     public async Task GetSkillsAsync_InvalidFrontmatter_ReportsValidationReasonAsync(string field, int length, string reason)
     {
         // Arrange
@@ -1457,7 +1469,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
-        Assert.Contains($"frontmatter {field}", exception.Message);
+        Assert.Contains($"JSON pointer '/{field}'", exception.Message);
         Assert.Contains(entry["uri"]!.GetValue<string>(), exception.Message);
     }
 
@@ -1520,7 +1532,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
-        Assert.Contains("frontmatter description", exception.Message);
+        Assert.Contains("JSON pointer '/description'", exception.Message);
     }
 
     [Fact]
@@ -1810,8 +1822,6 @@ public sealed partial class AgentMcpSkillsTests
         {
             ["name"] = "unit-converter",
             ["description"] = "Convert units.",
-            ["license"] = "MIT",
-            ["future-field"] = new JsonObject { ["nested"] = 42 },
         },
         ["resources"] = new JsonArray(
             Resource(root + "SKILL.md", content),

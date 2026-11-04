@@ -172,10 +172,10 @@ public sealed partial class AgentMcpSkillTests
     [InlineData(500)]
     [InlineData(1000)]
     [InlineData(1500)]
-    public async Task GetContentAsync_ValidationTime_ConsumesResourceTtlAsync(int validationMilliseconds)
+    public async Task GetContentAsync_PostResponseProcessingTime_ConsumesResourceTtlAsync(int processingMilliseconds)
     {
         // Arrange
-        const string Content = "---\nname: unit-converter\ndescription: Convert units.\nmetadata:\n  key: first\n  key: second\n---\nInstructions.";
+        const string Content = SkillContent;
         var clock = new ResourceTimeProvider();
         int reads = 0;
         await using var server = CreateServer((uri, _) =>
@@ -186,28 +186,22 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(result);
         });
         await using var client = await server.CreateClientAsync();
-        var logger = new Mock<ILogger>();
-        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
-        // Duplicate metadata logs a warning during otherwise successful frontmatter validation.
-        logger.Setup(l => l.Log(
-            LogLevel.Warning,
-            It.IsAny<EventId>(),
-            It.IsAny<It.IsAnyType>(),
-            It.IsAny<Exception?>(),
-            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback(() => clock.Advance(TimeSpan.FromMilliseconds(validationMilliseconds)));
-        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
-            [Resource(SkillUri, Content)], client, logger.Object, timeProvider: clock);
+        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+            [Resource(SkillUri, Content)], client, timeProvider: clock, ttlResolver: ttl =>
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(processingMilliseconds));
+                return ttl.GetValueOrDefault();
+            });
 
         // Act
         Assert.Equal(Content, await skill.GetContentAsync());
 
         // Assert
         Assert.Equal(1, reads);
-        if (validationMilliseconds < 1000)
+        if (processingMilliseconds < 1000)
         {
             // Act
-            clock.Advance(TimeSpan.FromMilliseconds(999 - validationMilliseconds));
+            clock.Advance(TimeSpan.FromMilliseconds(999 - processingMilliseconds));
             Assert.Equal(Content, await skill.GetContentAsync());
 
             // Assert
@@ -225,10 +219,10 @@ public sealed partial class AgentMcpSkillTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task GetContentAsync_CanceledDuringFrontmatterValidation_DoesNotCacheContentAsync(bool cached)
+    public async Task GetContentAsync_CanceledAfterFrontmatterValidation_DoesNotCacheContentAsync(bool cached)
     {
         // Arrange
-        const string Content = "---\nname: unit-converter\ndescription: Convert units.\nmetadata:\n  key: first\n  key: second\n---\nInstructions.";
+        const string Content = SkillContent;
         var clock = new ResourceTimeProvider();
         using var cts = new CancellationTokenSource();
         int reads = 0;
@@ -237,30 +231,22 @@ public sealed partial class AgentMcpSkillTests
             reads++;
             return Task.FromResult(ResourceResponse(uri, Content));
         });
-        var logger = new Mock<ILogger>();
-        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
-        bool cancelDuringValidation = !cached;
-        // Duplicate metadata logs a warning while the otherwise valid SKILL.md is being parsed.
-        logger.Setup(l => l.Log(
-            LogLevel.Warning,
-            It.IsAny<EventId>(),
-            It.IsAny<It.IsAnyType>(),
-            It.IsAny<Exception?>(),
-            It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
-            .Callback(() =>
+        bool cancelAfterValidation = !cached;
+        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
+            [Resource(SkillUri, Content)], client.Object, timeProvider: clock, ttlResolver: ttl =>
             {
-                if (cancelDuringValidation)
+                if (cancelAfterValidation)
                 {
                     cts.Cancel();
                 }
+
+                return ttl.GetValueOrDefault();
             });
-        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
-            [Resource(SkillUri, Content)], client.Object, logger.Object, timeProvider: clock);
         if (cached)
         {
             Assert.Equal(Content, await skill.GetContentAsync());
             clock.Advance(TimeSpan.FromSeconds(1));
-            cancelDuringValidation = true;
+            cancelAfterValidation = true;
         }
 
         // Act & Assert
@@ -268,7 +254,7 @@ public sealed partial class AgentMcpSkillTests
         Assert.Equal(cached ? 2 : 1, reads);
 
         // Act
-        cancelDuringValidation = false;
+        cancelAfterValidation = false;
         Assert.Equal(Content, await skill.GetContentAsync());
         Assert.Equal(Content, await skill.GetContentAsync());
 
@@ -373,7 +359,7 @@ public sealed partial class AgentMcpSkillTests
         await using var client = await server.CreateClientAsync();
         var logger = new Mock<ILogger>();
         logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
-        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
             [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
             client, logger.Object, timeProvider: clock);
         await ReadSnapshotAsync(skill, instructions);
@@ -531,7 +517,7 @@ public sealed partial class AgentMcpSkillTests
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
             .Callback(cts.Cancel);
-        var skill = new AgentMcpSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), SkillUri,
             [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
             client.Object, logger.Object, timeProvider: clock);
         if (cached)
