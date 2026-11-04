@@ -112,16 +112,22 @@ _INTERNAL_SECURITY_TOOL_MARKER = object()
 # with the content and break the lookup.
 _VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
 _REWRITTEN_ARGUMENT_INDICES_KEY = "_rewritten_argument_indices"
-_SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_security_policy_errors"
-_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_security_arguments_materialized"
-_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY = "_security_arguments_require_materialization"
-_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_security_materialized_authority"
-_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_security_resolved_authority"
+_SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_agent_framework_core_security_policy_errors"
+_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_agent_framework_core_security_arguments_materialized"
+_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY = (
+    "_agent_framework_core_security_arguments_require_materialization"
+)
+_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_agent_framework_core_security_materialized_authority"
+_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_agent_framework_core_security_resolved_authority"
+_TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY = "accepts_untrusted"
+_TOOL_POLICY_CONFIDENTIALITY_KEY = "confidentiality"
+_TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY = "max_allowed_confidentiality"
+_TOOL_POLICY_SOURCE_INTEGRITY_KEY = "source_integrity"
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
-    "accepts_untrusted",
-    "confidentiality",
-    "max_allowed_confidentiality",
-    "source_integrity",
+    _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY,
+    _TOOL_POLICY_CONFIDENTIALITY_KEY,
+    _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY,
+    _TOOL_POLICY_SOURCE_INTEGRITY_KEY,
 })
 
 
@@ -447,7 +453,21 @@ class _ToolSecurityPolicy:
     confidentiality: ConfidentialityLabel
     max_allowed_confidentiality: ConfidentialityLabel | None
     accepts_untrusted: bool
+    principal_state: str
+    principals: tuple[_Principal, ...] | None
+    internal_security_tool: bool
     errors: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SecurityInvocationAuthority:
+    """Exact security authority inspected for one function invocation."""
+
+    function: FunctionTool
+    tool_policy: _ToolSecurityPolicy
+    session: AgentSession | None
+    security_scope: _SecurityScope
+    arguments_token: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -458,7 +478,7 @@ class _ResolvedInvocationArguments:
     kwargs: dict[str, Any]
     labels: tuple[ContentLabel, ...]
     rewritten_arguments: dict[str, set[int]]
-    authority_token: Any
+    authority_token: _SecurityInvocationAuthority
 
 
 def _parse_tool_security_policy(
@@ -492,23 +512,42 @@ def _parse_tool_security_policy(
             errors.append(f"{key} has unknown value {raw_value!r}")
             return None
 
-    source_integrity = parse_enum("source_integrity", IntegrityLabel)
-    confidentiality = parse_enum("confidentiality", ConfidentialityLabel)
-    max_allowed_confidentiality = parse_enum("max_allowed_confidentiality", ConfidentialityLabel)
+    source_integrity = parse_enum(_TOOL_POLICY_SOURCE_INTEGRITY_KEY, IntegrityLabel)
+    confidentiality = parse_enum(_TOOL_POLICY_CONFIDENTIALITY_KEY, ConfidentialityLabel)
+    max_allowed_confidentiality = parse_enum(
+        _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY,
+        ConfidentialityLabel,
+    )
 
     accepts_untrusted = False
-    if "accepts_untrusted" in props:
-        accepts_untrusted_raw = props["accepts_untrusted"]
+    if _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY in props:
+        accepts_untrusted_raw = props[_TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY]
         if type(accepts_untrusted_raw) is bool:
             accepts_untrusted = accepts_untrusted_raw
         else:
-            errors.append("accepts_untrusted must be a boolean")
+            errors.append(f"{_TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY} must be a boolean")
+
+    principal_state = "absent"
+    principals: tuple[_Principal, ...] | None = None
+    if PRINCIPAL_METADATA_KEY in props:
+        try:
+            principals = _canonical_principals(
+                props[PRINCIPAL_METADATA_KEY],
+                source=f"tool {function.name}",
+            )
+        except ValueError:
+            principal_state = "invalid"
+        else:
+            principal_state = "valid"
 
     return _ToolSecurityPolicy(
         source_integrity=cast(IntegrityLabel | None, source_integrity),
         confidentiality=cast(ConfidentialityLabel | None, confidentiality) or default_confidentiality,
         max_allowed_confidentiality=cast(ConfidentialityLabel | None, max_allowed_confidentiality),
         accepts_untrusted=accepts_untrusted,
+        principal_state=principal_state,
+        principals=principals,
+        internal_security_tool=props.get(_INTERNAL_SECURITY_TOOL) is _INTERNAL_SECURITY_TOOL_MARKER,
         errors=tuple(errors),
     )
 
@@ -1087,7 +1126,7 @@ def _security_invocation_authority_token(
     resolved_arguments: Any,
     resolved_kwargs: Mapping[str, Any],
     labels: Sequence[ContentLabel],
-) -> Any:
+) -> _SecurityInvocationAuthority:
     """Bind inspected references, resolved values, and policy labels without validators."""
     arguments_token = _argument_authority_token(
         {
@@ -1100,7 +1139,13 @@ def _security_invocation_authority_token(
         },
         boundary="security policy",
     )
-    return function, tool_policy, session, security_scope, arguments_token
+    return _SecurityInvocationAuthority(
+        function=function,
+        tool_policy=tool_policy,
+        session=session,
+        security_scope=security_scope,
+        arguments_token=arguments_token,
+    )
 
 
 def _bindable_runtime_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -1949,7 +1994,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             )
         return resolved
 
-    def _materialized_authority_token(self, context: FunctionInvocationContext) -> Any:
+    def _materialized_authority_token(self, context: FunctionInvocationContext) -> _SecurityInvocationAuthority:
         """Bind one fully materialized execution attempt."""
         tool_policy = _parse_tool_security_policy(
             context.function,
@@ -1963,7 +2008,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             },
             boundary="materialized security policy",
         )
-        return context.function, tool_policy, context.session, self._scope, arguments_token
+        return _SecurityInvocationAuthority(
+            function=context.function,
+            tool_policy=tool_policy,
+            session=context.session,
+            security_scope=self._scope,
+            arguments_token=arguments_token,
+        )
 
     def _materialize_arguments(self, context: FunctionInvocationContext) -> None:
         """Apply preflighted hidden values and validate only after policy allows the call."""
@@ -2200,7 +2251,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
             declared_confidentiality_label = ContentLabel(
                 confidentiality=confidentiality,
-                metadata=self._get_function_principal_metadata(context, confidentiality),
+                metadata=self._get_function_principal_metadata(context.function, tool_policy),
             )
             result_policy_label = combine_labels(declared_confidentiality_label, argument_label)
             result_confidentiality = result_policy_label.confidentiality
@@ -2371,22 +2422,16 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
     def _get_function_principal_metadata(
         self,
-        context: FunctionInvocationContext,
-        confidentiality: ConfidentialityLabel,
+        function: FunctionTool,
+        tool_policy: _ToolSecurityPolicy,
     ) -> dict[str, Any]:
         """Read a locally declared source principal set."""
-        if confidentiality != ConfidentialityLabel.USER_IDENTITY:
+        if tool_policy.confidentiality != ConfidentialityLabel.USER_IDENTITY:
             return {}
-        function_props = _get_additional_properties(context.function)
-        try:
-            principals = _canonical_principals(
-                function_props.get(PRINCIPAL_METADATA_KEY),
-                source=f"tool {context.function.name}",
-            )
-        except ValueError as exc:
-            logger.warning("Invalid USER_IDENTITY source principals for tool '%s': %s", context.function.name, exc)
+        if tool_policy.principal_state != "valid" or tool_policy.principals is None:
+            logger.warning("Invalid USER_IDENTITY source principals for tool '%s'.", function.name)
             return {}
-        return {PRINCIPAL_METADATA_KEY: _principal_list(principals)}
+        return {PRINCIPAL_METADATA_KEY: _principal_list(tool_policy.principals)}
 
     def _process_result_with_embedded_labels(
         self,
@@ -3136,10 +3181,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         return "/"
 
     def _destination_principal_key(self, context: FunctionInvocationContext) -> str:
-        function_props = _get_additional_properties(context.function)
-        if function_props.get("max_allowed_confidentiality") != ConfidentialityLabel.USER_IDENTITY.value:
+        tool_policy = _parse_tool_security_policy(context.function)
+        if tool_policy.max_allowed_confidentiality != ConfidentialityLabel.USER_IDENTITY:
             return ""
-        return _principal_binding_key(function_props.get(PRINCIPAL_METADATA_KEY), source="approval destination")
+        if tool_policy.principal_state != "valid" or tool_policy.principals is None:
+            raise ValueError("USER_IDENTITY destination principals are missing or invalid")
+        return _principal_binding_key(_principal_list(tool_policy.principals), source="approval destination")
 
     def _session_key(self, context: FunctionInvocationContext) -> str:
         return context.session.session_id if context.session is not None else ""
@@ -3576,7 +3623,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         Returns:
             Dict with keys: passed (bool), failure_type (str), reason (str).
         """
-        function_props = _get_additional_properties(context.function)
         tool_policy = _parse_tool_security_policy(context.function)
         if tool_policy.errors:
             return {
@@ -3613,21 +3659,20 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                         source="source label",
                     )
                 )
-                if function_props.get(_INTERNAL_SECURITY_TOOL) is _INTERNAL_SECURITY_TOOL_MARKER:
+                if tool_policy.internal_security_tool:
                     destination_principals = source_principals
                 else:
-                    if max_allowed_level != ConfidentialityLabel.USER_IDENTITY:
+                    if (
+                        max_allowed_level != ConfidentialityLabel.USER_IDENTITY
+                        or tool_policy.principal_state != "valid"
+                        or tool_policy.principals is None
+                    ):
                         return {
                             "passed": False,
                             "failure_type": "principal_mismatch",
                             "reason": "USER_IDENTITY destination does not declare an authorized principal set",
                         }
-                    destination_principals = set(
-                        _canonical_principals(
-                            function_props.get(PRINCIPAL_METADATA_KEY),
-                            source=f"tool {context.function.name}",
-                        )
-                    )
+                    destination_principals = set(tool_policy.principals)
             except ValueError:
                 return {
                     "passed": False,

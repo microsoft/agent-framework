@@ -1104,7 +1104,8 @@ normalization must preserve the approved resolved invocation; a changed value fa
 FIDES metadata keys and values are exact and case-sensitive. Misspelled or incorrectly cased FIDES-like keys,
 unknown label values, and non-boolean `accepts_untrusted` declarations are blocked as an `invalid_policy`
 configuration violation instead of falling back to a less restrictive policy. Unrelated integration metadata remains
-allowed.
+allowed. FIDES binds the exact tool object, normalized policy, and canonical USER_IDENTITY principal set through
+terminal execution and retries, so later middleware cannot replace the authorization policy after preflight.
 
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.

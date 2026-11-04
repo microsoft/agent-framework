@@ -41,7 +41,7 @@ from .exceptions import MiddlewareException
 logger = logging.getLogger(__name__)
 
 _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT: contextvars.ContextVar[tuple[Any, asyncio.Task[Any] | None] | None] = (
-    contextvars.ContextVar("_active_function_middleware_context", default=None)
+    contextvars.ContextVar("agent_framework_core_active_function_middleware_context", default=None)
 )
 
 if sys.version_info >= (3, 13):

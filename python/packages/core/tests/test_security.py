@@ -8133,6 +8133,40 @@ class TestVariableArgumentPolicy:
 
         assert executed is False
 
+    async def test_destination_principal_mutation_after_security_fails_closed(self) -> None:
+        """The canonical USER_IDENTITY destination principal set remains bound through execution."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        tracker._context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        sink = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        context = FunctionInvocationContext(function=sink, arguments={"value": "payload"})
+        executed = False
+
+        class MutateDestinationPrincipalsMiddleware(FunctionMiddleware):
+            async def process(
+                self,
+                context: FunctionInvocationContext,
+                call_next: Callable[[], Awaitable[None]],
+            ) -> None:
+                properties = cast(dict[str, Any], context.function.additional_properties)
+                properties[_PRINCIPALS_KEY] = _principal_metadata("user-b")[_PRINCIPALS_KEY]
+                await call_next()
+
+        async def execute(_: FunctionInvocationContext) -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await FunctionMiddlewarePipeline(tracker, policy, MutateDestinationPrincipalsMiddleware()).execute(
+                context,
+                execute,
+            )
+
+        assert executed is False
+
     async def test_runtime_bytes_mutation_after_policy_fails_closed(self) -> None:
         """Immutable non-JSON runtime authority remains bound exactly."""
         tracker = LabelTrackingFunctionMiddleware()
