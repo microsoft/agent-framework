@@ -244,26 +244,36 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import BaseChatClient, ChatResponse, Message
-            from collections.abc import AsyncIterable
+            from agent_framework import (
+                BaseChatClient,
+                ChatResponse,
+                ChatResponseUpdate,
+                Content,
+                Message,
+                ResponseStream,
+            )
 
 
             class CustomChatClient(BaseChatClient):
-                async def _inner_get_response(self, *, messages, stream, options, **kwargs):
+                # Not ``async``: return an awaitable for a single response, or a
+                # ResponseStream when ``stream`` is True.
+                def _inner_get_response(self, *, messages, stream, options, **kwargs):
+                    response = ChatResponse(
+                        messages=[Message(role="assistant", contents=["Hello!"])],
+                        response_id="custom-response",
+                    )
                     if stream:
                         # Streaming implementation
-                        from agent_framework import ChatResponseUpdate
-
                         async def _stream():
-                            yield ChatResponseUpdate(role="assistant", contents=[{"type": "text", "text": "Hello!"}])
+                            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Hello!")])
 
-                        return _stream()
-                    else:
-                        # Non-streaming implementation
-                        return ChatResponse(
-                            messages=[Message(role="assistant", contents=["Hello!"])],
-                            response_id="custom-response",
-                        )
+                        return ResponseStream(_stream(), finalizer=lambda updates: response)
+
+                    # Non-streaming implementation
+                    async def _get_response():
+                        return response
+
+                    return _get_response()
 
 
             # Create an instance of your custom client

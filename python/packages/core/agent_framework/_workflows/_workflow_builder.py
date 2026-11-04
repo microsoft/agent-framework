@@ -533,6 +533,12 @@ class WorkflowBuilder:
                 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 
+                class Dispatcher(Executor):
+                    @handler
+                    async def dispatch(self, seed: int, ctx: WorkflowContext[int]) -> None:
+                        await ctx.send_message(seed)
+
+
                 class Producer(Executor):
                     @handler
                     async def produce(self, seed: int, ctx: WorkflowContext[str]) -> None:
@@ -546,11 +552,18 @@ class WorkflowBuilder:
                         await ctx.yield_output(f"Combined: {combined}")
 
 
+                dispatcher = Dispatcher(id="dispatcher")
                 prod_1 = Producer(id="prod_1")
                 prod_2 = Producer(id="prod_2")
                 agg = Aggregator(id="agg")
 
-                workflow = WorkflowBuilder(start_executor=prod_1).add_fan_in_edges([prod_1, prod_2], agg).build()
+                # Every fan-in source must be reachable, so the dispatcher fans out to both producers.
+                workflow = (
+                    WorkflowBuilder(start_executor=dispatcher)
+                    .add_fan_out_edges(dispatcher, [prod_1, prod_2])
+                    .add_fan_in_edges([prod_1, prod_2], agg)
+                    .build()
+                )
         """
         source_execs = [self._maybe_wrap_agent(s) for s in sources]
         target_exec = self._maybe_wrap_agent(target)
